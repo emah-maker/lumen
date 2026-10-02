@@ -130,17 +130,49 @@ class DownloadCancelled extends Error {
   constructor() { super('cancelled'); this.name = 'DownloadCancelled'; this.code = 'cancelled'; }
 }
 
-// deps: { dir, fetch, now?, timeoutMs? }
-function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = () => Date.now(), timeoutMs = 20000 }) {
+// Free bytes on the volume holding `dir`, or null when it can't be told (old Node, odd filesystem).
+function freeBytesOf(dir) {
+  try {
+    let probe = dir;
+    while (probe && !fs.existsSync(probe)) { const up = path.dirname(probe); if (up === probe) break; probe = up; }
+    const s = fs.statfsSync(probe);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch { return null; }
+}
+const fail = (message, code) => Object.assign(new Error(message), { code });
+const PERMANENT_FS = new Set(['ENOSPC', 'EACCES', 'EPERM', 'EROFS', 'EDQUOT']); // retrying these only repeats the failure
+
+// deps: { dir, fetch, now?, timeoutMs?, stallMs?, retryDelayMs?, freeBytes?, openWrite? }
+//   stallMs: a file with no new bytes for this long is abandoned (and retried once). freeBytes(dir): bytes free on
+//   the disk, or null. openWrite(path): the file's write stream (injectable for tests).
+function createModelStore({
+  dir, fetch: doFetch = (...a) => fetch(...a), now = () => Date.now(), timeoutMs = 20000,
+  stallMs = 30000, retryDelayMs = 1000, freeBytes = freeBytesOf, openWrite = (file) => fs.createWriteStream(file),
+}) {
   let index = null; // parsed registry, in memory
   let indexAt = 0;
   let loading = null;
-  const jobs = new Map(); // pair key -> { promise, controller, listeners }
+  const jobs = new Map(); // pair key -> { promise, controller, listeners, holders }
+  const activeTmp = new Set(); // download folders in use right now (the sweep leaves these alone)
 
   const pairDir = (from, to) => path.join(dir, `${from}-${to}`);
   const manifestPath = (from, to) => path.join(pairDir(from, to), 'manifest.json');
   const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
   const cachePath = path.join(dir, 'registry.json');
+  const rmDir = (target) => fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+
+  // Leftovers of downloads that were interrupted (a crash, or a file Windows still held): <pair>.part-*.
+  function sweepStale() {
+    let names;
+    try { names = fs.readdirSync(dir); } catch { return 0; }
+    let n = 0;
+    for (const name of names) {
+      if (!/^[A-Za-z-]{2,8}-[A-Za-z-]{2,8}\.part-/.test(name) || activeTmp.has(path.join(dir, name))) continue;
+      try { rmDir(path.join(dir, name)); n++; } catch { /* still held: next sweep */ }
+    }
+    return n;
+  }
+  sweepStale();
 
   // The index: memory, else the cached registry on disk, else Mozilla. `refresh` forces a fetch (the
   // cached copy is still the fallback when offline).
@@ -192,6 +224,7 @@ function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = (
   }
   const isInstalled = (from, to) => Boolean(manifestOf(from, to));
   function installed() {
+    sweepStale();
     let names;
     try { names = fs.readdirSync(dir); } catch { return []; }
     const out = [];
@@ -237,68 +270,141 @@ function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = (
 
   // Download one pair. `onProgress({ received, total })`; resolves to the manifest. A second call for the
   // same pair joins the running download. Cancelled (cancel(), or `signal`) rejects with DownloadCancelled.
+  // Each caller's `signal` only detaches that caller: the download itself stops when every caller that
+  // passed a signal has aborted (a tab and the settings page can share one pair), or on cancel().
   function download(from, to, { onProgress, signal } = {}) {
     const key = pairKey(from, to);
-    const running = jobs.get(key);
-    if (running) {
-      if (onProgress) running.listeners.add(onProgress);
-      return running.promise;
+    let job = jobs.get(key);
+    if (!job && signal?.aborted) return Promise.reject(new DownloadCancelled());
+    if (!job) {
+      job = startJob(from, to, key);
+      jobs.set(key, job);
     }
+    return attach(job, { onProgress, signal });
+  }
+  function attach(job, { onProgress, signal }) {
+    if (onProgress) job.listeners.add(onProgress);
+    job.holders++;
+    job.promise.catch(() => {}); // each caller gets its own rejection below; the job's own is never "unhandled"
+    if (!signal) return job.promise;
+    return new Promise((resolve, reject) => {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        if (onProgress) job.listeners.delete(onProgress);
+        if (--job.holders <= 0) job.controller.abort();
+      };
+      const onAbort = () => { release(); reject(new DownloadCancelled()); };
+      if (signal.aborted) { onAbort(); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+      job.promise.then(
+        (v) => { signal.removeEventListener('abort', onAbort); resolve(v); },
+        (e) => { signal.removeEventListener('abort', onAbort); reject(e); },
+      );
+    });
+  }
+  function startJob(from, to, key) {
     const controller = new AbortController();
-    const listeners = new Set(onProgress ? [onProgress] : []);
-    const job = { controller, listeners, promise: null };
-    const onAbort = () => controller.abort();
-    if (signal) { if (signal.aborted) controller.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
+    const job = { controller, listeners: new Set(), holders: 0, promise: null };
     job.promise = (async () => {
       const idx = await loadIndex();
       const entry = idx[key];
       if (!entry) throw new Error(`no model for ${from} to ${to}`);
       if (controller.signal.aborted) throw new DownloadCancelled();
+      const free = freeBytes(dir);
+      const need = Math.ceil(entry.bytes * 1.05) + 16 * 1024 * 1024;
+      if (free !== null && free < need) {
+        throw fail(`Not enough free disk space: ${formatBytes(need)} needed, ${formatBytes(free)} free.`, 'ENOSPC');
+      }
       const final = pairDir(from, to);
       const tmp = `${final}.part-${process.pid}-${now()}`;
-      fs.rmSync(tmp, { recursive: true, force: true });
-      fs.mkdirSync(tmp, { recursive: true });
+      activeTmp.add(tmp);
       const total = entry.bytes;
       const got = new Map();
-      const report = () => { const received = [...got.values()].reduce((n, v) => n + v, 0); for (const fn of listeners) { try { fn({ received, total }); } catch { /* a bad listener */ } } };
+      const report = () => { const received = [...got.values()].reduce((n, v) => n + v, 0); for (const fn of job.listeners) { try { fn({ received, total }); } catch { /* a bad listener */ } } };
+      let firstErr = null;
       try {
+        fs.mkdirSync(dir, { recursive: true });
+        rmDir(tmp);
+        fs.mkdirSync(tmp, { recursive: true });
         report();
-        await Promise.all(entry.files.map((f) => fetchFile(f, path.join(tmp, f.name), controller.signal, (n) => { got.set(f.name, n); report(); })));
+        // Every file runs to its end (or its abort) before anything is removed: on Windows a folder with an open
+        // file can't be deleted, and a surviving sibling would keep downloading into it.
+        await Promise.all(entry.files.map((f) => fetchFile(f, path.join(tmp, f.name), controller.signal, (n) => { got.set(f.name, n); report(); })
+          .catch((e) => { if (!controller.signal.aborted) { firstErr = e; controller.abort(); } })));
+        if (firstErr) throw firstErr;
         if (controller.signal.aborted) throw new DownloadCancelled();
         const manifest = { from, to, version: entry.version, installedAt: now(), files: entry.files.map(({ type, name, hash, size }) => ({ type, name, hash, size })) };
         fs.writeFileSync(path.join(tmp, 'manifest.json'), JSON.stringify(manifest));
-        fs.rmSync(final, { recursive: true, force: true });
+        rmDir(final);
         fs.renameSync(tmp, final);
         return manifest;
       } catch (err) {
-        fs.rmSync(tmp, { recursive: true, force: true });
-        throw controller.signal.aborted ? new DownloadCancelled() : err;
+        try { rmDir(tmp); } catch { /* the sweep takes it later; the real error is what matters */ }
+        throw firstErr || (controller.signal.aborted ? new DownloadCancelled() : err);
+      } finally {
+        activeTmp.delete(tmp);
       }
-    })().finally(() => { jobs.delete(key); signal?.removeEventListener?.('abort', onAbort); });
-    jobs.set(key, job);
-    return job.promise;
+    })().finally(() => { jobs.delete(key); });
+    return job;
   }
+
+  // One file, with one automatic retry (a stalled or dropped connection; not a full disk or a cancel).
   async function fetchFile(f, dest, signal, onBytes) {
-    const res = await doFetch(ATTACHMENT_BASE + f.location, { signal });
-    if (!res.ok || !res.body) throw new Error(`${f.name}: the download answered ${res.status}`);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        onBytes(0);
+        return await fetchOnce(f, dest, signal, onBytes);
+      } catch (err) {
+        if (signal.aborted || attempt >= 1 || PERMANENT_FS.has(err?.code)) throw err;
+        await new Promise((resolve) => { const t = setTimeout(resolve, retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
+        if (signal.aborted) throw err;
+      }
+    }
+  }
+  async function fetchOnce(f, dest, signal, onBytes) {
+    const attempt = new AbortController();
+    const link = () => attempt.abort();
+    if (signal.aborted) attempt.abort(); else signal.addEventListener('abort', link, { once: true });
+    let stalled = false;
+    let timer = null;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; attempt.abort(); }, stallMs); };
     const hash = crypto.createHash('sha256');
-    const out = fs.createWriteStream(dest);
+    const out = openWrite(dest);
+    let outErr = null;
+    let rejectOut;
+    const outFailed = new Promise((_, reject) => { rejectOut = reject; });
+    outFailed.catch(() => {}); // only observed while writing
+    out.on('error', (e) => { outErr = e; rejectOut(e); }); // from the start, and for good: a late ENOSPC must never go unhandled
     let size = 0;
     try {
+      arm();
+      const res = await doFetch(ATTACHMENT_BASE + f.location, { signal: attempt.signal });
+      if (!res.ok || !res.body) throw fail(`${f.name}: the download answered ${res.status}`, 'http');
       const reader = res.body.getReader();
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await Promise.race([reader.read(), outFailed]);
         if (done) break;
+        arm();
         size += value.length;
         if (size > f.size) throw new Error(`${f.name}: larger than the registry says`);
         hash.update(value);
-        if (!out.write(value)) await new Promise((resolve) => out.once('drain', resolve));
+        if (outErr) throw outErr;
+        if (!out.write(value)) await Promise.race([new Promise((resolve) => out.once('drain', resolve)), outFailed]);
         onBytes(size);
       }
-      await new Promise((resolve, reject) => { out.once('error', reject); out.end(resolve); });
+      await Promise.race([new Promise((resolve) => out.end(resolve)), outFailed]);
+      if (outErr) throw outErr;
     } catch (err) {
       out.destroy();
-      throw err;
+      if (!out.closed) await new Promise((resolve) => { out.once('close', resolve); setTimeout(resolve, 2000).unref?.(); }); // the file is released before anyone deletes its folder
+      if (stalled) throw fail(`${f.name}: no data for ${stallMs >= 1000 ? `${Math.round(stallMs / 1000)} seconds` : `${stallMs} ms`}`, 'stalled');
+      throw outErr || err;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', link);
+      attempt.abort(); // closes the connection however this attempt ended
     }
     if (size !== f.size) throw new Error(`${f.name}: ${size} bytes, expected ${f.size}`);
     if (hash.digest('hex') !== f.hash) throw new Error(`${f.name}: the download does not match Mozilla's checksum`);
@@ -315,7 +421,7 @@ function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = (
     return index;
   }
 
-  return { loadIndex, indexNow, installed, installedSet, isInstalled, filesOf, verify, remove, removeAll, usedBytes, download, cancel, downloading, dir };
+  return { loadIndex, indexNow, sweepStale, installed, installedSet, isInstalled, filesOf, verify, remove, removeAll, usedBytes, download, cancel, downloading, dir };
 }
 
 module.exports = {

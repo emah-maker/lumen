@@ -64,7 +64,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cancel: call('prefs:translate-pack-cancel'),
       remove: call('prefs:translate-pack-delete'),
       removeAll: call('prefs:translate-pack-delete-all'),
-      onProgress: (cb) => ipcRenderer.on('translate-packs:progress', (_e, info) => cb(info)),
+      // returns a function that stops listening, so a rebuilt page doesn't pile up listeners
+      onProgress: (cb) => { const fn = (_e, info) => cb(info); ipcRenderer.on('translate-packs:progress', fn); return () => ipcRenderer.removeListener('translate-packs:progress', fn); },
     },
     siteData: call('prefs:site-data'), // [site data] the sites with cookies
     clearSite: call('prefs:clear-site'),

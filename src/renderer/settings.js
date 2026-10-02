@@ -2048,6 +2048,7 @@ function buildTranslate(card) {
 
 // Settings → Translation → the language packs on this device (features/translate-local.js): what is
 // downloaded and how big, delete, and "Download for offline".
+let offTranslateProgress = null; // stops the previous card's progress listener
 function buildTranslatePacks(card) {
   if (!S.translatePacks) return;
   const list = h('div', { class: 'list', id: 'translate-packs' });
@@ -2057,6 +2058,7 @@ function buildTranslatePacks(card) {
   const stop = h('button', { id: 'translate-offline-cancel', text: tr('settings.translate.offline.cancel', 'Cancel'), hidden: true });
   const note = status('translate-offline-status');
   let busy = false;
+  let downloadingCode = '';
   const arrow = (a, b) => `${a === 'en' ? langName('en') : langName(a)} → ${b === 'en' ? langName('en') : langName(b)}`;
   const render = (data) => {
     list.replaceChildren(...(data.installed.length ? data.installed.map((p) => h('div', { class: 'item' },
@@ -2064,31 +2066,41 @@ function buildTranslatePacks(card) {
       h('button', { class: 'danger', text: tr('settings.translate.packs.delete', 'Delete'), onclick: async () => render(await S.translatePacks.remove(p.from, p.to)) })))
       : [h('span', { class: 'note', text: tr('settings.translate.packs.none', 'None yet. A pack downloads the first time you translate to or from a language.') })]));
     total.textContent = data.installed.length ? tr('settings.translate.packs.total', 'Using {size} in total.', { size: bytes(data.used) }) : '';
+    sizes = new Map(data.languages.map((l) => [l.code, l.missing || l.bytes]));
     const chosen = pickLang.value;
     pickLang.replaceChildren(...data.languages.map((l) => h('option', { value: l.code, text: `${langName(l.code)}${l.missing ? ` (${bytes(l.missing)})` : ` (${tr('settings.translate.offline.have', 'downloaded')})`}`, disabled: !l.missing })));
     if (chosen && data.languages.some((l) => l.code === chosen && l.missing)) pickLang.value = chosen;
     go.disabled = busy || !data.languages.some((l) => l.missing);
     if (data.error && !data.languages.length) flash(note, tr('settings.translate.offline.registry', 'Couldn’t reach Mozilla’s list of language packs. Check your connection.'), 'err');
   };
-  S.translatePacks.onProgress((info) => {
-    if (busy) flash(note, tr('settings.translate.offline.progress', 'Downloading… {percent}%', { percent: Math.round(info.fraction * 100) }), 'note');
+  // One listener for the life of this card: a rebuilt page drops the previous one first.
+  offTranslateProgress?.();
+  let sizes = new Map(); // language -> total bytes of its packs, for "Spanish (23 MB) 40%"
+  const progressText = (code, percent) => tr('settings.translate.offline.progress', 'Downloading {language} ({size})… {percent}%', { language: langName(code), size: bytes(sizes.get(code)), percent });
+  offTranslateProgress = S.translatePacks.onProgress((info) => {
+    if (busy && info.code === downloadingCode) flash(note, progressText(info.code, Math.round(info.fraction * 100)), 'note');
   });
   go.addEventListener('click', async () => {
     if (busy || !pickLang.value) return;
     busy = true;
+    downloadingCode = pickLang.value;
     go.disabled = true;
     stop.hidden = false;
-    flash(note, tr('settings.translate.offline.progress', 'Downloading… {percent}%', { percent: 0 }), 'note');
+    flash(note, progressText(downloadingCode, 0), 'note');
     let out;
-    try { out = await S.translatePacks.download(pickLang.value); } catch (err) { out = { failed: String(err?.message || err), ...(await S.translatePacks.list()) }; }
+    try { out = await S.translatePacks.download(downloadingCode); } catch (err) { out = { failed: String(err?.message || err), ...(await S.translatePacks.list()) }; }
     busy = false;
+    downloadingCode = '';
     stop.hidden = true;
     render(out);
-    if (out.failed) flash(note, tr('settings.translate.offline.failed', 'Couldn’t download: {error}', { error: out.failed }), 'err');
+    if (out.failed) {
+      const offline = navigator.onLine === false || /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|network|no data for|timed out/i.test(out.failed);
+      flash(note, offline ? tr('settings.translate.offline.offlineFailed', 'Couldn’t download: you appear to be offline. Check your connection and try again.') : tr('settings.translate.offline.failed', 'Couldn’t download: {error}', { error: out.failed }), 'err');
+    }
     else if (out.cancelled) flash(note, tr('settings.translate.offline.cancelled', 'Cancelled.'), 'note');
     else flash(note, tr('settings.translate.offline.done', 'Downloaded.'));
   });
-  stop.addEventListener('click', () => S.translatePacks.cancel());
+  stop.addEventListener('click', () => { if (downloadingCode) S.translatePacks.cancel(downloadingCode); });
   S.translatePacks.list().then(render).catch(() => {});
   card.append(
     stackRow(tr('settings.translate.packs', 'Language packs on this device'), tr('settings.translate.packsDesc', 'Downloaded from Mozilla, stored in Lumen’s data folder, and used only by on-device translation.'), list,

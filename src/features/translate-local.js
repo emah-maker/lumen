@@ -198,16 +198,31 @@ function createLocal({ store, fork, idleMs = IDLE_MS, maxPairs = MAX_PAIRS }) {
       downloading: store.downloading(),
     };
   }
-  async function downloadLanguage(code, options) {
+  // The downloads the settings page started, by language: cancelling one stops only that, and only for the
+  // page. A tab that is downloading the same pack keeps going (the store shares a pair between callers and
+  // stops it when every caller has let go).
+  const packJobs = new Map(); // code -> AbortController
+  async function downloadLanguage(code, { signal, ...options } = {}) {
     const index = await store.loadIndex();
     const pairs = halves(code, index);
     if (!pairs.length) throw new Error(`No language pack for ${code}.`);
-    await ensure(pairs, options);
+    const mine = new AbortController();
+    const onOuter = () => mine.abort();
+    if (signal?.aborted) mine.abort(); else signal?.addEventListener?.('abort', onOuter, { once: true });
+    packJobs.get(code)?.abort(); // a second request for the same language replaces the first
+    packJobs.set(code, mine);
+    try {
+      await ensure(pairs, { ...options, signal: mine.signal });
+    } finally {
+      if (packJobs.get(code) === mine) packJobs.delete(code);
+      signal?.removeEventListener?.('abort', onOuter);
+    }
   }
+  // Cancel the page's download of `code`, or all of the page's downloads when no code is given.
+  const cancelLanguage = (code) => { for (const [c, ctl] of [...packJobs]) if (!code || c === code) ctl.abort(); };
   const removePair = (from, to) => store.remove(M.modelCode(from), M.modelCode(to));
-  const cancelDownloads = () => { for (const key of store.downloading()) { const [a, b] = key.split('>'); store.cancel(a, b); } };
 
-  return { plan, ensure, translate, warm, readyRoute, supports, overview, downloadLanguage, removePair, removeAll: () => store.removeAll(), cancelDownloads, stop, stats: () => ({ ...stats, running: Boolean(child) }), store, Cancelled };
+  return { plan, ensure, translate, warm, readyRoute, supports, overview, downloadLanguage, removePair, removeAll: () => store.removeAll(), cancelLanguage, stop, stats: () => ({ ...stats, running: Boolean(child) }), store, Cancelled };
 }
 
 module.exports = { createLocal, electronFork, nodeFork, Cancelled, WORKER };

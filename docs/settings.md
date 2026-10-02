@@ -100,7 +100,9 @@ Settings → General → Translation. Translating is always a click (the address
 | Sites never offered translation | `translateNever` | none | Hosts where the bar stays away. |
 | Allowed to receive page text | `translateConsent` | none | Providers (your AI, Google Translate) you let receive a page's text or address. On-device translation needs no entry here. |
 | Language packs on this device | — | — | Each downloaded pack with its size and a Delete button, the total, and Delete all. Packs live in `translation-models/` in Lumen's data folder. |
-| Download for offline | — | — | Download a language's packs (to and from English) ahead of time, with progress and Cancel. |
+| Download for offline | — | — | Download a language's packs (to and from English) ahead of time, with the language, size and percent, and Cancel. Cancel stops only the download started here; a tab that is fetching the same pack keeps going. A download that stalls (no data for 30 seconds) is retried once, a full disk is caught before the download starts, and leftover half-downloads are cleaned up. |
+
+Known limit: HTML-mode translation (sending a whole element with its inline markup to the engine in one piece, as Firefox does, so word order can move across links and emphasis) is not implemented; the engine gets plain text.
 
 Private windows: an unclicked offer never happens there; a click translates on this device with no consent card.
 

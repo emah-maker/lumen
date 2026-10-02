@@ -7960,7 +7960,7 @@ const tabSearch = (() => {
     btn.title = label;
     btn.setAttribute('aria-label', label);
     let key = '';
-    if (tab && !tab.dismissed) key = `${tab.phase}|${tab.provider}|${tab.error}|${tab.lang}|${tab.target}|${tab.progress}|${tab.via}|${tab.size}|${tab.pair}`;
+    if (tab && !tab.dismissed) key = `${tab.phase}|${tab.provider}|${tab.error}|${tab.lang}|${tab.target}|${tab.progress}|${tab.via}|${tab.size}|${tab.pair}|${tab.detail}`;
     if (key === shown) return;
     shown = key;
     if (!key) { bar.hidden = true; bar.replaceChildren(); return; }
@@ -7994,6 +7994,7 @@ const tabSearch = (() => {
         close = 'cancel';
         break;
       case 'download': {
+        close = 'original'; // the download and the translation go on after a plain dismiss, so × cancels like the button
         text.textContent = tr('translate.downloading', 'Downloading {pair} ({size})… {percent}%', vars);
         const meter = el('progress');
         meter.max = 100;
@@ -8003,6 +8004,7 @@ const tabSearch = (() => {
         break;
       }
       case 'working': {
+        close = 'original';
         text.textContent = tr('translate.working', 'Translating… {percent}%', { percent: tab.progress });
         const meter = el('progress');
         meter.max = 100;
@@ -8019,7 +8021,15 @@ const tabSearch = (() => {
         break;
       case 'error': {
         const known = ERRORS[tab.error];
-        text.textContent = known ? tr(known[0], known[1]) : tr('translate.error', 'Couldn’t translate this page: {error}', { error: tab.error });
+        const network = tab.error === 'download-failed' || tab.error === 'registry-failed';
+        const offline = network && (navigator.onLine === false || /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|network|no data for|timed out/i.test(tab.detail || ''));
+        const noSpace = tab.error === 'download-failed' && /ENOSPC|free disk space|no space/i.test(tab.detail || '');
+        if (noSpace) text.textContent = tr('translate.error.noSpace', 'Not enough free disk space for the language pack.');
+        else if (offline) text.textContent = tab.error === 'registry-failed'
+          ? tr('translate.error.registryOffline', 'You appear to be offline, so Lumen can’t get Mozilla’s list of language packs. Connect and try again.')
+          : tr('translate.error.downloadOffline', 'You appear to be offline, so the language pack couldn’t download. Connect and try again.');
+        else text.textContent = known ? tr(known[0], known[1]) : tr('translate.error', 'Couldn’t translate this page: {error}', { error: tab.error });
+        if (tab.detail && network && !offline && !noSpace) text.append(' ', el('span', 'infobar-note', tab.detail));
         parts.push(button(tr('translate.tryAgain', 'Try again'), () => act('translate', tab.target)));
         break;
       }

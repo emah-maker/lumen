@@ -871,7 +871,7 @@ function create(deps) {
       return packs();
     });
     handle('prefs:translate-pack-delete-all', () => { deps.translateLocal().removeAll(); return packs(); });
-    handle('prefs:translate-pack-cancel', () => { deps.translateLocal().cancelDownloads(); return true; });
+    handle('prefs:translate-pack-cancel', (code) => { deps.translateLocal().cancelLanguage(code ? packCodes(code) : undefined); return true; }); // only what this page started, never a tab's download
     ipcMain.handle('prefs:translate-pack-download', async (event, code) => {
       if (!deps.isSettingsSender(event)) throw new Error('Not allowed');
       const lang = packCodes(code);
