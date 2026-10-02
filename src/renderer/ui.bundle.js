@@ -3473,7 +3473,7 @@ function startChat() {
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? '' : tr('chats.clickMoves', ' · click moves it here')) : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? tr('chats.clickGoes', ' · click to go there') : tr('chats.clickMoves', ' · click moves it here')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
@@ -3498,6 +3498,8 @@ function startChat() {
       }
       // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
       const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
+      openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
         if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
       };
@@ -3593,9 +3595,10 @@ function startChat() {
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
-      if (chat.badge === 'queued' && api.stopChat) {
-        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
-        const stopBack = () => { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); };
+      if ((chat.badge === 'queued' || chat.badge === 'running') && api.stopChat) {
+        const stopLabel = chat.badge === 'running' ? tr('chats.stop', 'Stop') : tr('chats.stopWaiting', 'Stop waiting');
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: stopLabel });
+        const stopBack = () => { stop.disabled = false; stop.textContent = stopLabel; };
         let stopsOut = 0, stoppedOnce = false; // (a second click after a timeout must not be failed by an answer about the first)
         stop.onclick = async (e) => {
           e.stopPropagation();
@@ -3617,7 +3620,7 @@ function startChat() {
             // button stays on "Stopping…" unless the chat is still waiting a while later.
             setTimeout(async () => {
               if (!attached() || !stop.disabled) return;
-              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
+              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === chat.badge) fail(); } catch { /* keep the note */ }
             }, wait);
           } catch { stopsOut--; clearTimeout(lost); fail(); }
         };
