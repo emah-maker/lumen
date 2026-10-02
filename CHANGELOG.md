@@ -4,7 +4,11 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- AI tab manners: tabs the AI opens are marked, open in the background and can be closed again in one step (with Undo); a setting keeps the AI from acting on your own pages (it also covers the Automation server, which then only reads); the AI no longer takes your focus or caret and waits while you type; a button in the tab strip hides the tabs the AI opened.
+## 0.5.2 (2026-10-02)
+
+- AI tab manners: tabs the AI opens are marked in the tab strip (with an "Opened by AI" note on hover) and open in the background. Close them again in one step, with Undo, from under the reply, the tab menu or the chat menu; Settings → AI → close tabs the AI opened is Off, Ask or Always, and it never closes a tab you used, a pinned tab or the tab a chat lives in. A button on the tab strip hides the tabs the AI opened (they stay open; the tab in front stays shown).
+- Settings → AI → Don't let the AI act on my pages (off by default): the AI can still read your tabs but not click, type, navigate or run scripts in them, and works only in tabs it opened itself. It covers the sidebar AI, MCP agents and the Automation server, which then only reads.
+- The AI no longer takes your focus or caret: it works in background tabs, puts your caret back after it clicks or types, and pauses (up to 20 seconds) while you type in the same field.
 
 ## 0.5.1 (2026-10-01)
 
