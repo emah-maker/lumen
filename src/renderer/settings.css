@@ -280,7 +280,7 @@ body.interstitial { display: block; }
 .greeting-tiles .gf-hand { font-family: var(--f-hand); font-size: 19px; font-weight: 400; letter-spacing: 0; }
 @media (prefers-reduced-motion: reduce) { .clock-tiles button { transition: none; } .clock-tiles button:hover:not(:disabled) { transform: none; } }
 /* [look] new-tab background tiles (the same gradients as newtab.html) */
-.bg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.bg-tiles { display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); gap: 10px; }
 .bg-tile { position: relative; height: 60px; padding: 0; border: 0; border-radius: 10px; cursor: pointer; overflow: hidden; box-shadow: inset 0 0 0 0.5px var(--border); transition: transform var(--t-fast) cubic-bezier(0.16, 1, 0.3, 1), box-shadow var(--t-fast) ease-out; }
 .bg-tile:hover { transform: translateY(-1px); }
 .bg-tile[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
@@ -442,4 +442,4 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
   #nav.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
 }
 
-@media (max-width: 720px) { .clock-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); } }
+@media (max-width: 720px) { .clock-tiles, .bg-tiles { grid-template-columns: repeat(var(--cols-narrow, 3), minmax(0, 1fr)); } }

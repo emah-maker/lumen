@@ -163,7 +163,7 @@ const ALIASES = {
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', focus: 'extensions' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -638,6 +638,11 @@ function buildLook(card) {
   renderSwatches();
 }
 
+// Tiles in even rows: one row while they fit (7 across), else halves; on a narrow page 3 or 4 across.
+function evenRows(grid, n) {
+  grid.style.setProperty('--cols', String(n <= 7 ? n : Math.ceil(n / 2)));
+  grid.style.setProperty('--cols-narrow', String(n <= 4 ? n : Math.ceil(n / Math.ceil(n / 4))));
+}
 // [look] A row of choices for one setting (radio buttons, arrow keys move between them), saved at once.
 // `content(value, label)` draws a choice; `after` runs once one is saved.
 function choices(key, label, cls, options, content, after) {
@@ -655,7 +660,7 @@ function choices(key, label, cls, options, content, after) {
     next.focus();
   });
   group.append(...buttons);
-  group.style.setProperty('--cols', String(Math.ceil(buttons.length / Math.ceil(buttons.length / 6)))); // even rows (7 tiles: 4 + 3, not 6 + 1)
+  evenRows(group, buttons.length);
   paint(String(st.prefs[key]));
   group.repaint = () => paint(String(st.prefs[key]));
   return group;
@@ -703,6 +708,7 @@ async function buildHome(card) {
       has ? h('button', { text: 'Remove picture', onclick: async () => { st = await S.removeWallpaper(); renderTiles(); } }) : null,
     ].filter(Boolean));
     tiles.querySelector('[data-value="image"]').hidden = !has;
+    evenRows(tiles, tiles.querySelectorAll('button:not([hidden])').length);
   };
   for (const [value, label] of [...BACKGROUND_CHOICES, ['image', 'Your picture']]) {
     tiles.append(h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${value}`, 'data-value': value, 'aria-label': label, title: label,
@@ -1674,7 +1680,7 @@ async function buildPrivacy(card) {
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
   const box = (id, text, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked }), text);
   const result = status('clear-status');
-  card.append(stackRow('Clear browsing data', 'For a time range, cookies and site data are removed for the sites you visited or that stored cookies in that time (all of that site’s data, not only the recent part). Cached images and files are always cleared for all time, whatever range you pick.',
+  card.append(stackRow('Clear browsing data', 'Removes cookies and site data for sites used in the range. Cached files are always cleared completely.',
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
@@ -2476,6 +2482,7 @@ function route() {
   else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
+  if (document.activeElement === $('search') && !query()) $('search').blur(); // (#search is also the sidebar field's id: the browser would focus it)
   if (query()) $('search').value = '';
   show();
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
@@ -2519,12 +2526,13 @@ async function init() {
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
   mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok cost');
+  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
     ['ai-model', buildAi], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
-    ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions', buildExtensions], ['reset', buildReset], ['about', buildAbout],
+    ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];
   await Promise.all(BUILDS.map(async ([sid, build]) => {
