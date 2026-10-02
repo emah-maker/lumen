@@ -258,7 +258,9 @@ const path = require('path');
     agent.browser.openTab(`${h}/search?q=private+stuff&token=abc#section`);
     agent.browser.openTab(); // a new-tab page
     global.__settings?.open?.();
-    await new Promise((r) => setTimeout(r, 1500));
+    // (The new tabs commit their pages at their own pace; under load that can take longer than a fixed wait.)
+    for (let end = Date.now() + 8000; Date.now() < end && !agent.browser.listTabs().some((t) => t.url.startsWith(`${h}/search`)); ) await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 300));
     const raw = agent.browser.listTabs();
     const seen = JSON.parse(await agent.execute('list_tabs', {}));
     const web = seen.find((t) => t.url === `${h}/search`);
