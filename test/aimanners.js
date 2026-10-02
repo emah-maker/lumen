@@ -37,7 +37,7 @@ const launch = (profile) => electron.launch({
   const openAi = (url) => app.evaluate((_e, u) => global.__agent.browser.openTab(u, { ai: true }).id, url);
   const openUser = (url) => app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, url);
   const tabEl = (id) => ui.evaluate((i) => { const el = document.querySelector(`#tabs .tab[data-id="${i}"]`); return el ? { ai: el.classList.contains('ai-opened'), label: el.getAttribute('aria-label'), mark: getComputedStyle(el.querySelector('.tab-ai-mark')).display } : null; }, id);
-  const toggle = () => ui.evaluate(() => { const b = document.getElementById('hide-ai-tabs'); return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), label: b.getAttribute('aria-label'), count: document.getElementById('hide-ai-tabs-count').hidden ? '' : document.getElementById('hide-ai-tabs-count').textContent }; });
+  const toggle = () => ui.evaluate(() => { const b = document.getElementById('hide-ai-tabs'); return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), label: b.title, count: document.getElementById('hide-ai-tabs-count').hidden ? '' : document.getElementById('hide-ai-tabs-count').textContent }; });
   const tabCount = () => ui.evaluate(() => document.querySelectorAll('#tabs .tab').length);
   const wcOf = (id, fn, arg) => app.evaluate(({ webContents }, a) => { const t = global.__aiTabs.tab(a.id); return webContents.fromId(t.view.webContents.id).executeJavaScript(a.code); }, { id, code: fn, arg });
   const run = (id, fn) => app.evaluate(async (_e, a) => {
