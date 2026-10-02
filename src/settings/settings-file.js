@@ -33,9 +33,29 @@ function loadJson(file) {
   return {};
 }
 
-function writeJsonAtomic(file, data) {
+// The same recovery, off the main thread (a big file such as history.json on the startup path).
+async function loadJsonAsync(file) {
+  const fsp = fs.promises;
+  const read = async (f) => { try { return { data: JSON.parse(await fsp.readFile(f, 'utf8')) }; } catch (error) { return { error }; } };
+  const main = await read(file);
+  if (main.data && typeof main.data === 'object') return main.data;
+  const missing = main.error?.code === 'ENOENT';
+  const backup = await read(`${file}.bak`);
+  if (backup.data && typeof backup.data === 'object') {
+    if (!missing) console.error(`[lumen] ${path.basename(file)} was unreadable; restored the backup`);
+    return backup.data;
+  }
+  if (!missing) {
+    try { await fsp.rename(file, `${file}.corrupt-${Date.now()}`); } catch {}
+    console.error(`[lumen] ${path.basename(file)} was unreadable and had no backup; it was set aside`);
+  }
+  return {};
+}
+
+// `space`: the JSON indent (settings.json is read by people; the big data files pass 0).
+function writeJsonAtomic(file, data, space = 2) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const text = JSON.stringify(data, null, 2);
+  const text = JSON.stringify(data, null, space);
   const tmp = `${file}.tmp`;
   const fd = fs.openSync(tmp, 'w');
   try {
@@ -60,11 +80,11 @@ function writeJsonAtomic(file, data) {
 // rename when `stillLatest()` says a newer write (a synchronous one) has happened meanwhile, so it can never put
 // older data over newer. Its temp file is its own, apart from the synchronous writer's.
 let chain = Promise.resolve();
-function writeJsonAtomicAsync(file, data, stillLatest = () => true) {
+function writeJsonAtomicAsync(file, data, stillLatest = () => true, space = 2) {
   // (`data` is a snapshot the caller no longer changes: it is turned into text only if this write still runs.)
   const run = async () => {
     if (!stillLatest()) return; // a newer write is queued: this one has nothing to do
-    const text = JSON.stringify(data, null, 2);
+    const text = JSON.stringify(data, null, space);
     const fsp = fs.promises;
     const tmp = `${file}.tmp-async`;
     await fsp.mkdir(path.dirname(file), { recursive: true });
@@ -82,4 +102,4 @@ function writeJsonAtomicAsync(file, data, stillLatest = () => true) {
   return chain;
 }
 
-module.exports = { loadJson, writeJsonAtomic, writeJsonAtomicAsync };
+module.exports = { loadJson, loadJsonAsync, writeJsonAtomic, writeJsonAtomicAsync };

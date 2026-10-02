@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { hostOf } = require('./adblock');
 const { t } = require('./i18n');
+const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
 const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
@@ -27,13 +28,13 @@ function createDownloads(deps) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const kept = downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
-      fs.promises.writeFile(listFile(), JSON.stringify(kept)).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
+      settingsFile.writeJsonAtomicAsync(listFile(), kept, undefined, 0).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
     }, 500);
   }
   // Last session's list. A download that was still running when Lumen quit can only be retried.
   function load() {
     let list = [];
-    try { list = JSON.parse(fs.readFileSync(listFile(), 'utf8')); } catch (err) { if (err.code !== 'ENOENT') console.error('[lumen] could not read the downloads list:', err.message); }
+    try { list = settingsFile.loadJson(listFile()); } catch (err) { console.error('[lumen] could not read the downloads list:', err.message); } // (an unparseable file is restored from .bak or set aside, never overwritten)
     if (!Array.isArray(list)) return;
     for (const d of list.slice(0, KEEP)) {
       if (!d || typeof d.id !== 'number' || typeof d.name !== 'string') continue;
