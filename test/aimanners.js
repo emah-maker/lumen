@@ -67,7 +67,7 @@ const launch = (profile) => electron.launch({
   await ui.keyboard.press('Space');
   t = await waitFor(async () => { const x = await toggle(); return x.pressed === 'true' && x; });
   check('keyboard: Space turns it on (aria-pressed), the label says the tab is hidden', t && /is hidden/.test(t.label), JSON.stringify(t));
-  check('on: the AI\'s tab is out of the strip, still open, and the count stays', (await waitFor(async () => (await tabCount()) === before - 1)) && (await tabEl(aiTab)) === null && t.count === '1' && (await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), aiTab)));
+  check('on: the AI\'s tab is out of the strip, still open, and the count stays', (await waitFor(async () => (await tabCount()) === before - 1)) && (await tabEl(aiTab)) === null && (await ui.evaluate(() => document.getElementById('hide-ai-tabs-label').textContent)) === '1 hidden' && (await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), aiTab)));
   check('on: the user\'s own tab is still shown', (await tabEl(user)) !== null);
   // the tab in front stays shown even though it is the AI's (the user went there: a click in the page would hand it over, a look does not)
   await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), aiTab);
@@ -184,6 +184,51 @@ const launch = (profile) => electron.launch({
   await run(ai6, { name: 'scroll', input: { direction: 'down' } });
   const after2 = { focus: await ui.evaluate(() => document.activeElement?.id || document.activeElement?.tagName), active: await active(), form, ai6 };
   check('opening and working in the AI\'s tab left the omnibox focused and the user on their tab', after2.focus === 'address' && after2.active === form, JSON.stringify(after2));
+
+  // ---- 7. A click through the tool leaves the keyboard in the address bar.
+  await ui.evaluate(() => document.getElementById('address').focus());
+  const clicked = await run(form, { name: 'click', input: { element_id: bId } });
+  check('a click through the tool keeps the keyboard in the address bar', clicked.ok && (await ui.evaluate(() => document.activeElement?.id)) === 'address' && (await active()) === form, JSON.stringify(clicked));
+
+  // ---- 8. A page the AI opened that opens another: behind, and the AI's own.
+  const idsOf = () => app.evaluate(() => global.__windows.list()[0].tabs.map((x) => x.id));
+  const known = await idsOf();
+  await wcOf(ai6, "(() => { window.open(location.origin + '/popped', '_blank'); return true; })()");
+  const popped = await waitFor(async () => (await idsOf()).find((i) => !known.includes(i)));
+  check('window.open from an AI tab makes a tab', Boolean(popped), JSON.stringify(await idsOf()));
+  await waitFor(() => app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), popped));
+  check('...marked as the AI\'s own, so it can be closed again', await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)?.openedBy), popped));
+  check('...and it opened behind: the user stays on their tab and keeps the address bar', (await active()) === form && (await ui.evaluate(() => document.activeElement?.id)) === 'address');
+  await app.evaluate((_e, i) => global.__aiTabs.close({}).then(() => i), popped); // (tidy)
+
+  // ---- 9. The strip says so: hands-off mode, and tabs hidden.
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  check('hands-off: the tab strip shows its cue too', await waitFor(() => ui.evaluate(() => { const b = document.getElementById('hands-off-strip'); return b && !b.hidden && b.getBoundingClientRect().width > 0; })));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
+  check('...and it goes when the setting is off', await waitFor(() => ui.evaluate(() => document.getElementById('hands-off-strip').hidden)));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await app.evaluate(() => global.__settings.backend.set('hideAiTabs', true));
+  const chip = await waitFor(() => ui.evaluate(() => { const l = document.getElementById('hide-ai-tabs-label'); return l && !l.hidden && l.textContent.trim(); }));
+  const nHidden = await app.evaluate(() => global.__windows.list()[0].tabs.filter((x) => global.__aiTabs.tab(x.id)?.openedBy && x.id !== global.__windows.list()[0].activeId).length);
+  check('hiding says so in words in the strip ("N hidden")', chip === `${nHidden} hidden` && nHidden > 0, `${chip} / ${nHidden}`);
+  const shownIds = await ui.evaluate(() => [...document.querySelectorAll('#tabs .tab')].map((e) => Number(e.dataset.id)));
+  await app.evaluate(() => global.__aiTabs.cycle(1));
+  const cycled = await waitFor(async () => { const a = await active(); return a !== form && a; });
+  check('Ctrl+Tab skips the hidden AI tabs', shownIds.includes(cycled) && await app.evaluate((_e, i) => !global.__aiTabs.tab(i)?.openedBy, cycled), `${cycled} of ${shownIds}`);
+  await app.evaluate(() => global.__settings.backend.set('hideAiTabs', false));
+
+  // ---- 10. Undo puts a tab back in its group.
+  const gTab = await openAi(`${base}/grp`);
+  await waitFor(() => app.evaluate((_e, i) => /\/grp$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), gTab));
+  const gid = await app.evaluate((_e, ids) => global.__tabGroups.create('Mixed', ids).id, [gTab, form]);
+  const res = await app.evaluate(() => global.__aiTabs.close({}));
+  await waitFor(async () => !(await app.evaluate((_e, i) => global.__aiTabs.tab(i), gTab)));
+  await app.evaluate((_e, tok) => global.__aiTabs.reopen(tok), res.token);
+  const back = await waitFor(() => app.evaluate(() => global.__windows.list()[0].tabs.find((x) => /\/grp$/.test(x.url))));
+  check('Undo puts the tab back in its group', Boolean(back) && back.groupId === gid, JSON.stringify({ back, gid }));
+  const second = await app.evaluate((_e, tok) => global.__aiTabs.reopen(tok), res.token);
+  check('a second Undo of the same close reopens nothing', second.reopened === 0, JSON.stringify(second));
 
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();

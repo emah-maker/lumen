@@ -2372,7 +2372,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   }
   if (activeId === id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
   else sendTabs();
-  chatTabGone(id); // [chat per tab] a chat still working there goes on in a background tab
+  chatTabGone(id, tab.rec); // [chat per tab] a chat still working there goes on in a background tab
 }
 
 // The interactive "close this tab" entry points (the tab strip's ✕, Ctrl/Cmd+W, the tab menu) go
@@ -4049,15 +4049,16 @@ function bindOpenChatHere(sender) {
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
-function chatTabGone(id) {
+function chatTabGone(id, goneRec = null) {
+  const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
   chatBind.unbindTab(id);
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
     if (r.queued && r.homeTab === id) r.homeTab = null;
     if (r.queued || agent.runTabIdFor(r.messages) !== id || !tabs.length) continue;
-    const tab = openTab(undefined, { background: true, openedBy: { chatId: r.chatId, runId: r.runId } }); // [ai manners] opened for the chat: it may work there
-    agent.repinRun(r.messages, tab.id, { rec: curRec });
-    r.rec = curRec;
+    const tab = withWindow(rec, () => openTab(undefined, { background: true, openedBy: { chatId: r.chatId, runId: r.runId } })); // [ai manners] opened for the chat: it may work there
+    agent.repinRun(r.messages, tab.id, { rec });
+    r.rec = rec;
     r.homeTab = tab.id;
     chatBind.bind(tab.id, r.chatId);
   }
@@ -4139,6 +4140,7 @@ function closeAiTab(rec, tab) {
 }
 // The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
 function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
+  if (!rcAlive(rec) || !winRecs.has(rec)) rec = focusedRec(); // the window the tabs were in is gone: the toast (and its Undo) goes to the one the user is in
   const plural = (base, n) => t(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
   const text = [closed ? plural('chat.aiTabs.closed', closed) : kept ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : ''].filter(Boolean).join(' ');
   if (!rcAlive(rec) || !winRecs.has(rec)) return;
@@ -4157,7 +4159,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
-    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
+    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec, groupId: tab.groupId || null };
     return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
   }));
   const items = results.filter((r) => r.item).map((r) => r.item);
@@ -4181,7 +4183,7 @@ function aiTabsReopen(token) {
     const at = closedTabs.lastIndexOf(item.url);
     if (at >= 0) closedTabs.splice(at, 1);
     const rec = item.rec && winRecs.has(item.rec) && rcAlive(item.rec) ? item.rec : curRec;
-    withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}) }));
+    withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}), ...(item.groupId && tabGroups.groups.has(item.groupId) ? { groupId: item.groupId } : {}) })); // (back in its group, when the group is still there)
     reopened++;
   }
   return { reopened };
@@ -4237,7 +4239,7 @@ async function closeAiTabsEverywhere() {
 }
 if (TEST) global.__manners = manners;
 if (TEST) global.__taskbar = { closeAiTabs: closeAiTabsEverywhere, wants: taskbarTasks.wantsCloseAiTabs, secondInstance: (argv) => app.emit('second-instance', {}, argv) };
-if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
+if (TEST) global.__aiTabs = { cycle: (d) => cycleTab(d), switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
 // on in a tab behind another one (a screenshot, wait_for); back on once no run works there.

@@ -1556,6 +1556,8 @@
   "sidebar.hideAiTabs": "Hide tabs the AI opened",
   "sidebar.hideAiTabs.off.one": "Hide the {count} tab the AI opened",
   "sidebar.hideAiTabs.off.other": "Hide the {count} tabs the AI opened",
+  "sidebar.hideAiTabs.chip": "{count} hidden",
+  "strip.handsOff": "Hands-off mode is on",
   "sidebar.hideAiTabs.on.none": "Tabs the AI opens are hidden. Show them",
   "sidebar.hideAiTabs.on.one": "{count} tab the AI opened is hidden. Show it again",
   "sidebar.hideAiTabs.on.other": "{count} tabs the AI opened are hidden. Show them again",
