@@ -37,7 +37,7 @@ const launch = (profile) => electron.launch({
   const openAi = (url) => app.evaluate((_e, u) => global.__agent.browser.openTab(u, { ai: true }).id, url);
   const openUser = (url) => app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, url);
   const tabEl = (id) => ui.evaluate((i) => { const el = document.querySelector(`#tabs .tab[data-id="${i}"]`); return el ? { ai: el.classList.contains('ai-opened'), label: el.getAttribute('aria-label'), mark: getComputedStyle(el.querySelector('.tab-ai-mark')).display } : null; }, id);
-  const toggle = () => ui.evaluate(() => { const b = document.getElementById('hide-ai-tabs'); return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), label: b.getAttribute('aria-label'), count: document.getElementById('hide-ai-tabs-count').hidden ? '' : document.getElementById('hide-ai-tabs-count').textContent }; });
+  const toggle = () => ui.evaluate(() => { const b = document.getElementById('hide-ai-tabs'); return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), label: b.title, count: document.getElementById('hide-ai-tabs-count').hidden ? '' : document.getElementById('hide-ai-tabs-count').textContent }; });
   const tabCount = () => ui.evaluate(() => document.querySelectorAll('#tabs .tab').length);
   const wcOf = (id, fn, arg) => app.evaluate(({ webContents }, a) => { const t = global.__aiTabs.tab(a.id); return webContents.fromId(t.view.webContents.id).executeJavaScript(a.code); }, { id, code: fn, arg });
   const run = (id, fn) => app.evaluate(async (_e, a) => {
@@ -118,6 +118,22 @@ const launch = (profile) => electron.launch({
   check('Undo reopens them, as the user\'s own tabs (no mark)', reopened.reopened === 2 && after.urls.filter((u) => /\/c[14]$/.test(u)).length === 2 && after.aiLeft === 0, JSON.stringify(after));
   check('the user never left their tab', (await active()) === user2);
 
+  // ---- 4b. The taskbar's command (a second instance started with --close-ai-tabs): same rules, no window brought forward.
+  const b1 = await openAi(`${base}/c1`);
+  const b2 = await openAi(`${base}/c2`);
+  await app.evaluate((_e, id) => { global.__aiTabs.tab(id).pinned = true; }, b2);
+  await waitFor(() => app.evaluate((_e, i) => /\/c1$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), b1));
+  const focusBefore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.isFocused()));
+  await app.evaluate(() => global.__taskbar.secondInstance(['Lumen.exe', '--close-ai-tabs']));
+  check('taskbar: the command closes the AI\'s tab', await waitFor(() => app.evaluate((_e, i) => !global.__aiTabs.tab(i), b1)));
+  check('taskbar: a pinned AI tab stays, and so does the user\'s tab', await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), b2) && (await active()) === user2);
+  check('taskbar: the strip says what closed, with Undo', Boolean(await waitFor(() => ui.evaluate(() => /Closed 1 tab the AI opened/.test(document.body.innerText)))));
+  check('taskbar: no window took the focus', JSON.stringify(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.isFocused()))) === JSON.stringify(focusBefore));
+  const none = await app.evaluate(() => global.__taskbar.closeAiTabs());
+  check('taskbar: with none left to close it does nothing', none.closed === 0 && none.windows === 0, JSON.stringify(none));
+  await app.evaluate((_e, id) => { global.__aiTabs.tab(id).pinned = false; return global.__aiTabs.close({}); }, b2); // (tidy: the later steps count the AI's tabs)
+  await waitFor(() => app.evaluate((_e, i) => !global.__aiTabs.tab(i), b2));
+
   // ---- 5. Hands-off mode.
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
   const badge = await waitFor(async () => ui.evaluate(() => { const b = document.getElementById('hands-off'); return b && !b.hidden && b.textContent.trim(); }));
@@ -156,6 +172,8 @@ const launch = (profile) => electron.launch({
   const keyBefore = await app.evaluate((_e, i) => global.__manners.userInput.typedAt(global.__aiTabs.tab(i).view.webContents), form);
   await run(form, { name: 'press_key', input: { key: 'Shift' } });
   check('keys the AI sends do not count as the user typing', (await app.evaluate((_e, i) => global.__manners.userInput.typedAt(global.__aiTabs.tab(i).view.webContents), form)) === keyBefore);
+  // (the pause is for the field the user is typing in: put them in field B, the one the AI is about to type into)
+  await wcOf(form, "(() => { document.getElementById('b').focus(); return true; })()");
   await app.evaluate((_e, i) => global.__manners.userInput.key(global.__aiTabs.tab(i).view.webContents, Date.now()), form);
   const started = Date.now();
   await run(form, { name: 'type_text', input: { element_id: bId, text: 'y' } });

@@ -86,17 +86,20 @@ function create(deps) {
   const runs = createRunTracker();
 
   const chatTabs = () => deps.tabs().filter((t) => t.managerPage === 'chat' && deps.alive(t) && !t.closing);
+  // Chat pages in every window (deps.allTabs): a page in a window that is not the one in front is still a chat page,
+  // its calls are still allowed and it still hears broadcasts (a model picked in another window, say).
+  const everyChatTab = () => (deps.allTabs || deps.tabs)().filter((t) => t.managerPage === 'chat' && deps.alive(t) && !t.closing);
   const isChatSender = (event) => {
     const wc = event?.sender;
     return Boolean(wc) && event.senderFrame === wc.mainFrame && isChatUrl(event.senderFrame?.url)
-      && chatTabs().some((t) => t.view.webContents === wc);
+      && everyChatTab().some((t) => t.view.webContents === wc);
   };
   const allows = (event, channel) => CHAT_IPC.has(channel) && isChatSender(event);
 
   // The sidebar plus every open chat page; nothing but the sender itself when there is no page, so
   // the sidebar behaves exactly as it always did until a page exists.
   function surfaces() {
-    const pages = chatTabs().map((t) => t.view.webContents);
+    const pages = everyChatTab().map((t) => t.view.webContents);
     if (!pages.length) return [];
     const ui = deps.ui();
     return [...(ui ? [ui] : []), ...pages].filter((wc) => !wc.isDestroyed());
@@ -171,7 +174,7 @@ function create(deps) {
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 
-  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, pick, chatTabs, surfaces, runs };
+  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
 module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };

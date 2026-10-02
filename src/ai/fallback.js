@@ -242,6 +242,21 @@ function createCooldowns() {
     cooling(model, at = Date.now()) { return Boolean(this.entry(model, at)); },
     until(model, at = Date.now()) { return this.entry(model, at)?.until || 0; },
     clear(model) { if (model == null) entries.clear(); else { entries.delete(`m:${model}`); entries.delete(`p:${providerOf(model)}`); } },
+    // What is being left alone, per provider, for a status display: { [provider]: { until, kind, exact, scope, model? } }. A whole-provider
+    // cooldown wins; otherwise the model one that lasts longest (`model` is its id without the provider).
+    snapshot(at = Date.now()) {
+      const out = {};
+      for (const [key, e] of [...entries]) {
+        if (e.until <= at) { entries.delete(key); continue; }
+        const wide = key.startsWith('p:');
+        const id = key.slice(2);
+        const provider = wide ? id : providerOf(id);
+        const mine = { until: e.until, kind: e.kind, exact: Boolean(e.exact), scope: wide ? 'provider' : 'model', ...(wide ? {} : { model: id.replace(/^[a-z][a-z0-9]*:/, '') }) };
+        const old = out[provider];
+        if (!old || (mine.scope === 'provider' && old.scope !== 'provider') || (mine.scope === old.scope && mine.until > old.until)) out[provider] = mine;
+      }
+      return out;
+    },
     size(at = Date.now()) { for (const key of [...entries.keys()]) live(key, at); return entries.size; },
   };
 }

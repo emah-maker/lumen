@@ -145,6 +145,8 @@ const STRINGS = {
   'newtab.edit.type.countdown.hint': 'Days until a date',
   'newtab.edit.type.timer': 'Timer',
   'newtab.edit.type.timer.hint': 'A timer or Pomodoro focus and break',
+  'newtab.edit.type.aistatus': 'AI status',
+  'newtab.edit.type.aistatus.hint': 'Which AIs are ready, working or at a limit',
   'newtab.edit.type.custom': 'Custom',
   'newtab.edit.type.custom.hint': 'Your own card from a JSON recipe',
   'newtab.edit.type.other.hint': 'Set up in Settings',
@@ -167,6 +169,7 @@ const TYPE_INFO = {
   notes: ['newtab.edit.type.notes', 'newtab.edit.type.notes.hint'],
   countdown: ['newtab.edit.type.countdown', 'newtab.edit.type.countdown.hint'],
   timer: ['newtab.edit.type.timer', 'newtab.edit.type.timer.hint'],
+  aistatus: ['newtab.edit.type.aistatus', 'newtab.edit.type.aistatus.hint'],
   custom: ['newtab.edit.type.custom', 'newtab.edit.type.custom.hint'],
   embed: ['newtab.edit.type.embed', 'newtab.edit.type.embed.hint'],
 };
