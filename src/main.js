@@ -3261,14 +3261,15 @@ function newTabUrl() {
 const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
 function homeAssistant() {
   const options = modelOptions();
-  if (!options.length) return { name: 'AI', agentUsable: false }; // nothing connected: no provider to privilege
-  const saved = readSettings().model;
-  const modelId = options.some((o) => o.id === saved) ? saved : options[0].id;
-  if (String(modelId).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
-  if (String(modelId).startsWith('grokbuild:')) return { name: 'Grok', agentUsable: true };
-  if (String(modelId).startsWith('antigravity:')) return { name: 'Antigravity', agentUsable: true };
+  if (!options.length) return { name: 'AI', agentUsable: false, model: null }; // nothing connected: no provider to privilege
+  const modelId = shownModel(options, { forChat: false }).model; // what the sidebar's picker shows right now (a stand-in during a usage limit included)
+  const label = options.find((o) => o.id === modelId)?.name || String(modelId);
+  const named = (name) => ({ name, agentUsable: true, model: modelId, label });
+  if (String(modelId).startsWith('claudecode:')) return named('Claude');
+  if (String(modelId).startsWith('grokbuild:')) return named('Grok');
+  if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
   const { provider } = providers.splitModel(modelId);
-  return { name: ASSISTANT_NAMES[provider] || 'AI', agentUsable: true };
+  return named(ASSISTANT_NAMES[provider] || 'AI');
 }
 
 // The new-tab page asks by loading itself with ?ask=<prompt>: cancel that and hand the prompt to the
@@ -3828,6 +3829,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && (snapshot || live)) chats().setCurrent(id);
   else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   pushAttention();
+  announceModelIfChanged(); // each chat keeps its own model: the picker and the placeholders follow the chat now open
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
   return chatView();
@@ -6074,6 +6076,7 @@ agentTargetHook = pushAgentTarget;
 chatPageRt = chatPage.create({
   ipcMain,
   tabs: () => tabs,
+  allTabs: () => allTabsEverywhere(),
   alive,
   ui,
   openTab: (url, opts) => openTab(url, opts),
@@ -6170,11 +6173,23 @@ const skillPageScripts = require('./ai/page-scripts');
 const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
 const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+// Told whenever the model shown for the open chat may have changed without a pick (another chat opened, a new one begun).
+let lastShownModel = null;
+function announceModelIfChanged() {
+  let now;
+  try { now = shownModel().model; } catch { return; }
+  if (now === lastShownModel) return;
+  lastShownModel = now;
+  modelsChanged();
+}
 // The model list or the chosen model changed: every window's sidebar, every chat page and Settings reload theirs.
 function modelsChanged() {
+  try { lastShownModel = shownModel().model; } catch { /* not set up yet */ }
+  try { refreshNewTabs(); } catch { /* not set up yet (startup) */ } // the new-tab pages' Ask AI box says who it asks: it follows the pick at once, in every window
   for (const rec of winRecs) if (rcAlive(rec) && !isSpare(rec)) rec.win.webContents.send('models-updated');
-  for (const wc of [...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
+  for (const wc of [...chatPageRt.everyChatTab().map((t) => t.view.webContents), ...allTabsEverywhere().filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
 }
+if (TEST) { global.__modelsChanged = modelsChanged; global.__aiFallback = aiFallback; }
 const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
 // One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
 async function completeSkillJson(args) {
@@ -6236,7 +6251,7 @@ if (TEST) global.__skills = skillsFeature;
 // [look] New-tab pages already open take a new background, accent or layout at once (the page
 // reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
 function refreshNewTabs() {
-  const open = tabs.filter((t) => alive(t) && isNewTab(t.view.webContents.getURL()));
+  const open = allTabsEverywhere().filter((t) => alive(t) && isNewTab(t.view.webContents.getURL())); // every window's, not just the one in front
   if (!open.length) return;
   const url = newTabUrl();
   for (const t of open) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {});
@@ -6663,7 +6678,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
-    else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
+    else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; modelsChanged(); }
   };
   const skillRun = skillsFeature.takeRun(askText);
   const tabsPicked = tabsAsk.cleanIds(tabIds);
@@ -6807,6 +6822,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     chatId = chats().newId();
     chatBind.bind(activeId, chatId);
     chats().remove(id);
+    announceModelIfChanged();
     pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };
@@ -6872,11 +6888,24 @@ function effectiveModel(preferred = readSettings().model) {
   return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
 
+// The one answer to "which model is the user on right now": the pick (or what replaces one that is gone),
+// and, while it cools down after a usage limit, the stand-in that is really answering. The sidebar, the chat
+// page, Settings and the new-tab page's Ask AI box all show this.
+// The sidebar and the chat page show the OPEN chat's model (each chat keeps its own; a pick made mid-reply is the
+// next message's), so what the picker says is what the next message there uses. A new chat, and so the new-tab
+// page's Ask AI, starts on the saved default (forChat: false).
+function chatModelPick() {
+  const s = agent.messages?.settings;
+  return agent.nextModel || (s ? s.fallbackFrom || s.model : null) || undefined;
+}
+function shownModel(options = modelOptions(), { forChat = true } = {}) {
+  const model = effectiveModel(forChat ? chatModelPick() : undefined);
+  const standIn = fallbackOn() ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
+  return { pick: model, model: standIn.from ? standIn.model : model, standIn };
+}
 ipcMain.handle('settings:get', () => {
   const options = modelOptions();
-  const model = effectiveModel();
-  // [model fallback] While the picked model cools down, the picker shows the model that is really answering, marked as temporary.
-  const standIn = fallbackOn() ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
+  const { pick: model, standIn } = shownModel(options);
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
@@ -7090,7 +7119,7 @@ ipcMain.handle('cli:login', async (event) => {
     progress('Finish signing in in your web browser…');
     const result = await cliAuth.login(ant);
     client = null; // the next request picks up the new profile
-    if (result.ok) { cliLoginValid = null; ui()?.send('models-updated'); }
+    if (result.ok) { cliLoginValid = null; modelsChanged(); }
     return { ...(await cliStatus()), ok: result.ok, cancelled: Boolean(result.cancelled), message: result.ok ? '' : result.message || 'Sign-in did not complete.' };
   } catch (err) {
     return { ...(await cliStatus()), ok: false, message: err.message };
@@ -7143,7 +7172,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   // Every other provider's key-save calls refreshModels(), which sends this; Anthropic's own key
   // has no such step (no model list to fetch), so it needs its own nudge — otherwise the picker and
   // "Set up an AI" card would stay stuck on the old (dis)connected state until something else refreshed them.
-  ui()?.send('models-updated');
+  modelsChanged();
   return true;
 });
 
@@ -7155,6 +7184,7 @@ const aiAgents = setupAiAgents({
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
+  modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
 

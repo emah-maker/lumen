@@ -81,6 +81,8 @@ const toMcpContent = (result) => (typeof result === 'string'
 //         automationPlan, userTabs, openTab, closeTab, switchTab, isWebUrl }
 function setupAiAgents(deps) {
   const { app, ipcMain, agent, readSettings, writeSettings, ui } = deps;
+  // The picked or connected models changed: main tells every window, chat page, Settings and new-tab page (deps.modelsChanged).
+  const modelsChanged = () => (deps.modelsChanged ? deps.modelsChanged() : ui()?.send('models-updated'));
 
   // ---------- MCP ----------
 
@@ -545,7 +547,7 @@ function setupAiAgents(deps) {
       claudeCodeFound = s.installed;
       claudeCodeSignedIn = s.signedIn;
       claudeCodeDetail = s.detail;
-      if (s.installed) ui()?.send('models-updated');
+      if (s.installed) modelsChanged();
       return s;
     });
   }
@@ -558,7 +560,7 @@ function setupAiAgents(deps) {
       grokBuildSignedIn = s.signedIn;
       grokBuildDetail = s.detail;
       grokBuildModels = s.models || [];
-      if (s.installed) ui()?.send('models-updated');
+      if (s.installed) modelsChanged();
       return s;
     });
   }
@@ -570,7 +572,7 @@ function setupAiAgents(deps) {
       antigravitySignedIn = s.signedIn;
       antigravityModels = s.models || [];
       antigravityNames = s.names || {};
-      if (s.installed) ui()?.send('models-updated');
+      if (s.installed) modelsChanged();
       return s;
     });
   }
@@ -607,7 +609,7 @@ function setupAiAgents(deps) {
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false)])
-          .then(() => { detecting = false; ui()?.send('models-updated'); grokWarmup.afterLook(); });
+          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
@@ -619,14 +621,14 @@ function setupAiAgents(deps) {
     async useGrokBuild() {
       if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });
       const s = await refreshGrokBuildStatus(true).catch(() => ({ installed: false, signedIn: false }));
-      ui()?.send('models-updated');
+      modelsChanged();
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
     // The setup card's "Use your own Antigravity": on in the sidebar, looked for again (just installed or signed in).
     async useAntigravity() {
       if (readSettings().antigravitySidebar !== true) writeSettings({ ...readSettings(), antigravitySidebar: true });
       const s = await refreshAntigravityStatus(true).catch(() => ({ installed: false, signedIn: false }));
-      ui()?.send('models-updated');
+      modelsChanged();
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
