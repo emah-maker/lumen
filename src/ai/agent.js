@@ -3,6 +3,7 @@ let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only 
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
+const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
@@ -506,6 +507,7 @@ function capHistoryImages(historyImages, currentImages, emit) {
 
 // ---- [page context] Comet-style: each sidebar message carries the current tab's readable text.
 const PAGE_CONTEXT_CHARS = 7000;
+const FRAME_ELEMENTS = 150; // elements of embedded frames a full read_page lists (at most 60 from one frame)
 const PAGE_BLOCK = /<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g;
 // ---- [/page context]
 
@@ -1515,7 +1517,7 @@ class Agent {
     let page;
     // (Read at once even while the page still loads: Electron's own isolated-world call waited for the load,
     // up to these 4 s, and then sent no page at all. See page-text.js.)
-    try { page = await readPageText(wc, { timeoutMs: 4000, fallback: (script, ms) => runScript(wc, script, ms) }); } catch { return ''; }
+    try { page = await readPageText(wc, { chars: PAGE_CONTEXT_CHARS, timeoutMs: 4000, fallback: (script, ms) => runScript(wc, script, ms), allow: this.frameAllow() }); } catch { return ''; }
     const body = String(page?.text || '').slice(0, PAGE_CONTEXT_CHARS);
     if (!body.trim()) return '';
     const last = this.pageContexts.get(messages);
@@ -2131,7 +2133,7 @@ class Agent {
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name !== 'click' && name !== 'type_text') return null;
       const wc = this.taskTab()?.webContents;
-      const info = wc ? await runScript(wc, scripts.labelOf(input.element_id), 1000) : null;
+      const info = wc ? await this.elementRun(wc, input.element_id, scripts.labelOf, { timeoutMs: 1000 }) : null;
       const target = info?.label ? quote(info.label) : `element ${input.element_id}`;
       const kind = { a: ' link', button: ' button', select: ' menu' }[info?.tag] || '';
       if (name === 'click') return `Clicking ${target}${kind}`;
@@ -2143,10 +2145,10 @@ class Agent {
 
   // Maps visible text or a label to an element id, reading the page first if needed.
   async resolveTarget(wc, text, mode, refresh = true) {
-    let found = await runScript(wc, scripts.findTarget(text, mode));
+    let found = await this.findTargetAll(wc, text, mode);
     if (found.error && refresh) {
-      await runScript(wc, scripts.readPage(0, 0));
-      found = await runScript(wc, scripts.findTarget(text, mode));
+      await this.refreshRegistry(wc);
+      found = await this.findTargetAll(wc, text, mode);
     }
     if (found.error && mode === 'field') {
       // Narrow layouts often hide a field behind a toggle button with the same name ("Search").
@@ -2154,8 +2156,8 @@ class Agent {
       if (toggle) {
         await runScript(wc, scripts.domClick(toggle));
         await settleAfterAction(wc, 5000); // a toggle may expand in place or open a search page
-        await runScript(wc, scripts.readPage(0, 0));
-        found = await runScript(wc, scripts.findTarget(text, mode));
+        await this.refreshRegistry(wc);
+        found = await this.findTargetAll(wc, text, mode);
       }
     }
     if (found.error) throw new Error(`Nothing on the page matches ${quote(text)}. Call read_page to see what is there.`);
@@ -2514,8 +2516,9 @@ class Agent {
   // ---- read_tabs / tabs a message attaches (features/tabs-ask.js): the text of open tabs of this window,
   // read where they are (no switching), a sleeping tab only by its address. browser.askTabs() lists
   // this window's tabs with their state; anything the rules refuse is named, not read.
-  async readTabEntries(ids) {
+  async readTabEntries(ids, { perTab } = {}) {
     const open = this.browser.askTabs?.() || [];
+    const chars = tabsAsk.perTabBudget(tabsAsk.cleanIds(ids).length, perTab ? { perTab } : {}); // (the frames' text fits in it too)
     const ctx = { windowId: undefined, isPrivate: false };
     const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
       const tab = open.find((t) => t.id === id);
@@ -2524,7 +2527,7 @@ class Agent {
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
       try {
-        const page = await readPageText(tab.webContents, { timeoutMs: 4000, fallback: (script, ms) => runScript(tab.webContents, script, ms) }); // (not held until the tab stops loading: page-text.js)
+        const page = await readPageText(tab.webContents, { chars, timeoutMs: 4000, fallback: (script, ms) => runScript(tab.webContents, script, ms), allow: this.frameAllow() }); // (not held until the tab stops loading: page-text.js)
         return { id, title: tab.webContents.getTitle() || tab.title, url: tab.webContents.getURL() || tab.url, text: String(page?.text || ''), totalChars: page?.totalTextChars };
       } catch {
         return { id, title: tab.title, url: tab.url, skipped: 'the page did not answer' };
@@ -2537,7 +2540,7 @@ class Agent {
     const ids = tabsAsk.cleanIds(input.ids);
     if (!ids.length) throw new Error('Give at least one tab id from list_tabs.');
     const perTab = Math.min(Math.max(Number(input.max_chars_each) || tabsAsk.PER_TAB_CHARS, 500), 12000);
-    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids), { perTab });
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids, { perTab }), { perTab });
     return `<untrusted_page_content>
 ${rendered.text}
 </untrusted_page_content>`;
@@ -2646,6 +2649,87 @@ ${out.text}${note}
     const tab = this.taskTab();
     if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
     return tab.webContents;
+  }
+
+  // ---- embedded frames (frames.js): an element id above frames.ID_BASE names one of the tab's frames,
+  // and its scripts run in Claude's isolated world of that frame. A frame on a site where the user
+  // turned AI off is never listed, so it is never read and none of its ids resolve.
+  frameAllow() { return (url) => !this.browser.aiOff?.(url); }
+
+  // An element's script, make(id in its own frame), run where the element is. `missing`: the answer
+  // when its frame has gone.
+  async elementRun(wc, id, make, { timeoutMs = 10000, missing = null } = {}) {
+    const at = frames.decodeId(id);
+    if (!at) return runScript(wc, make(id), timeoutMs);
+    const frame = await frames.find(wc, at.n, { allow: this.frameAllow() });
+    return frame ? frames.run(wc, frame, make(at.k), timeoutMs) : missing;
+  }
+
+  // locate (page-scripts.js) for any element id, in the tab's coordinates (CSS px), with the frame it
+  // is in (null: the main frame). A point outside its frame's box counts as covered.
+  async locateElement(wc, id) {
+    const at = frames.decodeId(id);
+    if (!at) {
+      const target = await runScript(wc, scripts.locate(id));
+      return target && { ...target, frame: null };
+    }
+    const opts = { allow: this.frameAllow() };
+    let frame = await frames.find(wc, at.n, opts);
+    const target = frame && await frames.run(wc, frame, scripts.locate(at.k));
+    if (!target) return null;
+    frame = (await frames.find(wc, at.n, opts)) || frame; // placed again: scrolling the element into view can move its frame
+    const inside = target.x >= 0 && target.y >= 0 && target.x <= frame.w && target.y <= frame.h;
+    return { ...target, x: Math.round(frame.x + target.x), y: Math.round(frame.y + target.y), covered: target.covered || !inside, frame };
+  }
+
+  // The element registries again: the main frame's (read_page's walk) and each embedded frame's.
+  async refreshRegistry(wc) {
+    const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
+    await runScript(wc, scripts.readPage(0, 0, { frames: own }));
+    if (own) return;
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() });
+    await frames.each(wc, list, snapshot.registryScript(scripts, { frames: false }));
+  }
+
+  // read_page's first page gets the embedded frames: their elements join `elements` (ids naming the
+  // frame, inFrame), their text follows the page's under each frame's label, and `frames` lists them.
+  async readFrames(wc, page) {
+    const { frames: list, aiOff } = await frames.list(wc, { allow: this.frameAllow() });
+    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false }), 5000);
+    delete page.crossOriginFrames; // (every frame is read in its own frame now)
+    if (aiOff) page.framesNotRead = `${aiOff} embedded frame${aiOff === 1 ? '' : 's'} on a site where the user turned AI off`;
+    if (!read.length) return;
+    let room = frames.FRAMES_CHARS;
+    let slots = FRAME_ELEMENTS;
+    page.frames = [];
+    for (const { frame, value } of read) {
+      if (!value || !Array.isArray(value.elements)) continue;
+      const label = frames.labelOf(frame, value.title);
+      const elements = value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n }));
+      slots -= elements.length;
+      page.elements.push(...elements);
+      const text = String(value.text || '').trim().slice(0, Math.min(frames.FRAME_CHARS, room));
+      room -= text.length;
+      page.frames.push({ frame: frame.n, label, url: frame.url.slice(0, 150), box: [frame.x, frame.y, frame.w, frame.h], totalElements: value.totalElements, elementsShown: elements.length, totalTextChars: value.totalTextChars });
+      if (text) page.text += `\n\n${label}\n${frames.defang(text)}`;
+    }
+  }
+
+  async framesInclude(wc, probe) {
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow(), timeoutMs: 1500 });
+    return (await frames.each(wc, list, probe, 1500)).some((h) => h.value === true);
+  }
+
+  // findTarget in the main frame, then in the embedded frames: { id } (a frame's element: its id
+  // encoded) or { error }.
+  async findTargetAll(wc, text, mode) {
+    const found = await runScript(wc, scripts.findTarget(text, mode));
+    if (!found.error || !frames.available(wc)) return found;
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() });
+    const hits = (await frames.each(wc, list, scripts.findTarget(text, mode))).filter((h) => h.value && !h.value.error);
+    if (!hits.length) return found;
+    const best = hits.reduce((a, b) => (b.value.score > a.value.score ? b : a));
+    return { id: frames.encodeId(best.frame.n, best.value.id), ambiguous: best.value.ambiguous };
   }
 
   // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs (and for
@@ -2811,7 +2895,9 @@ ${out.text}${note}
         const wc = this.requireTab();
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
-        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset));
+        const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
+        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own }));
+        if (!own && !textOffset && !elementOffset) await this.readFrames(wc, page); // with the first page of a read
         const { text, ...rest } = page;
         const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
 ${text}`);
@@ -2850,14 +2936,16 @@ ${same}
       case 'click': {
         const wc = this.requireTab();
         const id = input.element_id ?? await this.resolveTarget(wc, input.text, 'click');
-        const target = await runScript(wc, scripts.locate(id));
+        const target = await this.locateElement(wc, id);
         if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
-        // screen, so it gets a DOM click instead.
-        if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
+        // screen, so it gets a DOM click instead. In an embedded frame the mouse goes through the
+        // DevTools session (frames.js), and a DOM click is the fallback.
+        if (target.covered || !this.taskTabInFront()) await this.elementRun(wc, id, scripts.domClick);
+        else if (target.frame) await frames.mouseClick(wc, target.x, target.y).catch(() => this.elementRun(wc, id, scripts.domClick));
         else await this.mouseClick(wc, x, y);
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
@@ -2865,14 +2953,14 @@ ${same}
       }
       case 'fill_form': {
         const wc = this.requireTab();
-        await runScript(wc, scripts.readPage(0, 0)); // fresh element registry for label matching
+        await this.refreshRegistry(wc); // fresh element registries for label matching (embedded frames' too)
         const report = [];
         let lastId = null;
         for (const { label, value } of input.fields) {
           try {
             const id = await this.resolveTarget(wc, label, 'field', false);
             lastId = id;
-            const state = await runScript(wc, scripts.toggleState(id));
+            const state = await this.elementRun(wc, id, scripts.toggleState);
             if (state && ['checkbox', 'switch'].includes(state.type)) {
               const want = /^(true|yes|on|checked|1)$/i.test(value.trim());
               if (want !== state.checked) await this.execute('click', { element_id: id });
@@ -2899,7 +2987,7 @@ ${same}
         }
         if (input.submit && lastId !== null) {
           const urlBefore = wc.getURL();
-          const submitted = await runScript(wc, scripts.submitForm(lastId));
+          const submitted = await this.elementRun(wc, lastId, scripts.submitForm, { missing: false });
           if (!submitted) this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           report.push(`Submitted.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : ''}`);
@@ -2957,6 +3045,7 @@ ${same}
         while (Date.now() < deadline && !this.signalAborted()) {
           if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;
+          if (frames.available(wc) && await this.framesInclude(wc, probe)) return `Found ${quote(input.text)} in an embedded frame of the page.`;
           await sleep(300);
         }
         if (this.signalAborted()) throw new Error('Stopped by the user.');
@@ -2964,18 +3053,22 @@ ${same}
       }
       case 'type_text': {
         const wc = this.requireTab();
-        const status = await runScript(wc, scripts.focusForTyping(input.element_id));
+        const status = await this.elementRun(wc, input.element_id, scripts.focusForTyping, { missing: 'missing' });
         if (status === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
         if (status === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
         if (status === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
         if (status === 'setvalue') {
-          const set = await runScript(wc, scripts.setValue(input.element_id, input.text));
+          const set = await this.elementRun(wc, input.element_id, (id) => scripts.setValue(id, input.text));
           if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
           return `Set element ${input.element_id} to "${set}".`;
         }
-        await wc.insertText(input.text);
+        // (Into an embedded frame through the DevTools session: Electron's insertText into a frame of
+        // another process crashed the page.)
+        if (frames.decodeId(input.element_id)) await frames.insertText(wc, input.text);
+        else await wc.insertText(input.text);
         if (input.press_enter) {
-          this.pressKey(wc, 'Enter');
+          if (frames.decodeId(input.element_id)) await frames.pressKey(wc, 'Enter');
+          else this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
         }
@@ -2985,7 +3078,12 @@ ${same}
         const wc = this.requireTab();
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
-        this.pressKey(wc, input.key, modifiers);
+        // The focus is inside an embedded frame: the key goes there through the DevTools session (frames.js).
+        // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
+        const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
+        const inFrame = !macCommand && frames.available(wc) && await runScript(wc, frames.FOCUS_IN_FRAME, 1000).catch(() => false);
+        if (inFrame) await frames.pressKey(wc, input.key, modifiers);
+        else this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
         return `Pressed ${[...modifiers, input.key].join('+')}.`;
       }
@@ -3002,11 +3100,12 @@ ${same}
       }
       case 'hover': {
         const wc = this.requireTab();
-        const target = await runScript(wc, scripts.locate(input.element_id));
+        const target = await this.locateElement(wc, input.element_id);
         if (!target) throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
         const zoom = wc.getZoomFactor();
         // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
-        if (!this.taskTabInFront()) await runScript(wc, scripts.domHover(input.element_id));
+        if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
+        else if (target.frame) await frames.mouseMove(wc, target.x, target.y).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await sleep(500);
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;

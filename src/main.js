@@ -43,6 +43,7 @@ const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput:
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
 const providers = require('./ai/providers');
+const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
 const { engineModel } = require('./ai/cli-utils');
@@ -182,7 +183,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
@@ -3482,6 +3483,7 @@ function applyChromeIdentity(wc) {
     return; // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
   }
   identified.add(wc);
+  aiFrames.track(wc); // before the auto-attach below: every out-of-process frame's session is recorded
   const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
   const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
   const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
