@@ -172,7 +172,7 @@
       };
       // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
       const moveHere = async () => {
-        let ok = true;
+        let ok;
         try { ok = (await onOpen(chat.id)) !== false; } catch { ok = false; }
         if (!ok) { say(tr('chats.openFailed', 'Could not open this chat')); setTimeout(() => { if (attached()) rerender(); }, 2600); } // the note is read, then the list is drawn again without it
       };
