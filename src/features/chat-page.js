@@ -28,7 +28,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
@@ -141,7 +141,7 @@ function create(deps) {
     let pinned = null;
     if (fromChat) {
       pinned = pick();
-      if (pinned == null) pinned = deps.openTab(undefined, { background: true }).id;
+      if (pinned == null) pinned = deps.openTab(undefined, { background: true, openedBy: {} }).id; // [ai manners] the tab the run works in is the AI's (kept out of the strip when "hide tabs the AI opened" is on)
     }
     runs.start({ runId, text, fromChat, target: pinned });
     if (fromChat) pushTarget();

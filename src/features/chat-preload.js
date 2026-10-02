@@ -27,6 +27,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),
       showTab: (id) => ipcRenderer.invoke('chats:show-tab', id),
+      share: (id) => ipcRenderer.invoke('chats:share', id),
       stopChat: (id) => ipcRenderer.invoke('chats:stop', id),
       rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
       remove: (id) => ipcRenderer.invoke('chats:delete', id),

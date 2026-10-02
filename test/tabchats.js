@@ -212,6 +212,137 @@ const fakeModel = (app) => app.evaluate(() => {
   await waitFor(async () => (await tc(() => global.__tabChats.shown() === global.__tabChats.chatId())));
   check('the tab it left starts a chat of its own', (await bubbles()).length === 0, await messagesText());
 
+  // ---- 5b. One chat in two tabs ("Also show in this tab"): the chat has one home tab where its run works; both tabs
+  // show the same messages and marks; a new chat in either tab only unbinds that tab; Stop works from either tab.
+  const chatIdOf = async (who) => (await ui.evaluate(() => window.assistant.chats.list())).chats.find((c) => c.title.includes(`chat-${who}`))?.id;
+  const bindings = (id) => tc((_e, i) => ({ tabs: global.__tabChats.bindings.tabsOf(i), home: global.__tabChats.bindings.homeOf(i) }), id);
+  const tabCount = () => tc(() => global.__windows.list()[0].tabs.length);
+  const runOf = () => tc(() => global.__tabChats.runs().find((r) => r.live));
+  const clickShare = async (id) => {
+    await ui.evaluate(() => document.getElementById('chat-history').click());
+    await waitFor(() => ui.evaluate((i) => Boolean(document.querySelector(`.chat-item[data-id="${i}"] .chat-act-share`)), id));
+    await ui.evaluate((i) => document.querySelector(`.chat-item[data-id="${i}"] .chat-act-share`).click(), id);
+    await waitFor(async () => (await bindings(id)).tabs.length >= 2);
+  };
+  // A chat working in tab 1 (its home), then shown in tab 2 from the chat list; tab 2 is in front.
+  const sharedChat = async (who) => {
+    const t1 = await openTab(`${base}/${who.toLowerCase()}1`); await waitFor(async () => (await active()) === t1);
+    await send(`chat-${who}: go`); await inflight(who);
+    const t2 = await openTab(`${base}/${who.toLowerCase()}2`); await waitFor(async () => (await active()) === t2);
+    const id = await chatIdOf(who);
+    await clickShare(id);
+    await waitFor(async () => new RegExp(`${who} is working`).test(await messagesText()));
+    return { t1, t2, id };
+  };
+  const finish = async (who) => { await tc((_e, w) => global.__release(w), who); await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000); };
+
+  // S: marks, tools on the home tab, the list line, where a click goes, a message from the other tab.
+  const S = await sharedChat('S');
+  let st = await bindings(S.id);
+  check('Also show in this tab: the chat is in both tabs, and the first tab stays its home', JSON.stringify(st.tabs) === JSON.stringify([S.t1, S.t2]) && st.home === S.t1, JSON.stringify(st));
+  check('the second tab shows the same chat, with its live words', /chat-S/.test(await messagesText()) && /S is working/.test(await messagesText()), await messagesText());
+  const runS = await runOf('S');
+  check('its run keeps working in the home tab, not the tab it is viewed in', runS?.tab === S.t1, JSON.stringify(runS));
+  check('both tabs carry the working mark', (await mark(S.t1)) === 'running' && (await mark(S.t2)) === 'running' && await waitFor(async () => (await stripMark(S.t1)) === 'running' && (await stripMark(S.t2)) === 'running'), `${await mark(S.t1)} ${await mark(S.t2)}`);
+  const listS = (await ui.evaluate(() => window.assistant.chats.list())).chats.find((c) => c.id === S.id);
+  check('the list says it is in 2 tabs and which is home', listS.tabs?.length === 2 && listS.tabs.find((x) => x.home)?.id === S.t1 && listS.tabs.find((x) => x.here)?.id === S.t2, JSON.stringify(listS.tabs));
+  await ui.evaluate(() => document.getElementById('chat-history').click());
+  const rowS = await waitFor(() => ui.evaluate((i) => document.querySelector(`.chat-item[data-id="${i}"] .chat-place`)?.textContent || '', S.id));
+  check('the row reads "In 2 tabs: ... (home), This tab"', /^In 2 tabs: .*\(home\), This tab/.test(rowS), rowS);
+  await ui.evaluate(() => document.getElementById('chat-history').click());
+  await showTab(S.t1);
+  await waitFor(async () => /S is working/.test(await messagesText()));
+  check('the home tab shows it too', /chat-S/.test(await messagesText()) && /S is working/.test(await messagesText()), await messagesText());
+  check('coming to the front does not change the home', (await bindings(S.id)).home === S.t1, JSON.stringify(await bindings(S.id)));
+  const neutral = await openTab(`${base}/neutral`); await waitFor(async () => (await active()) === neutral);
+  await finish('S');
+  check('its tool read the home tab (not the tab it was shown in)', (await tc(() => global.__seen.S)) === 'S1', await tc(() => global.__seen.S));
+  check('finished while neither tab was in front: both tabs say done', await waitFor(async () => (await mark(S.t1)) === 'done' && (await mark(S.t2)) === 'done') && await waitFor(async () => (await stripMark(S.t1)) === 'done' && (await stripMark(S.t2)) === 'done'), `${await mark(S.t1)} ${await mark(S.t2)}`);
+  await ui.evaluate((id) => window.assistant.chats.showTab(id), S.id);
+  check('a click on a shared chat from a tab that does not show it goes to the home tab', await waitFor(async () => (await active()) === S.t1), await active());
+  await ui.evaluate((id) => window.assistant.chats.showTab(id), S.id);
+  check('... from the home tab it goes to the other tab', await waitFor(async () => (await active()) === S.t2), await active());
+  await ui.evaluate((id) => window.assistant.chats.showTab(id), S.id);
+  check('... and from the other tab back to the home', await waitFor(async () => (await active()) === S.t1), await active());
+  await waitFor(async () => /S finished/.test(await messagesText()));
+  check('both tabs show the finished reply', /S finished/.test(await messagesText()), await messagesText());
+  await showTab(S.t2);
+  await waitFor(async () => /S finished/.test(await messagesText()));
+  check('... the other tab too', /S finished/.test(await messagesText()) && /chat-S/.test(await messagesText()), await messagesText());
+  await send('chat-S: once more');
+  await waitFor(async () => (await bubbles()).some((b) => /once more/.test(b)) && (await messagesText()).split('S finished').length > 2);
+  check('any tab can send a message: it answers in this tab', (await bubbles()).some((b) => /once more/.test(b)), await messagesText());
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0));
+  check('a message sent from the other tab of an idle chat starts there, and that tab is now its home', (await bindings(S.id)).home === S.t2 && (await bindings(S.id)).tabs.length === 2, JSON.stringify(await bindings(S.id)));
+  await showTab(S.t1);
+  await waitFor(async () => (await bubbles()).some((b) => /once more/.test(b)));
+  check('the first tab shows the new message and reply too', (await bubbles()).some((b) => /once more/.test(b)), await messagesText());
+
+  // T: Stop from the tab that only shows the chat. U: Stop from the home tab.
+  const clickStop = async () => { await ui.waitForSelector('#send.stop'); await ui.click('#send'); };
+  const T = await sharedChat('T');
+  await clickStop();
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 6000) || await tc(() => global.__release('T'));
+  check('Stop in the tab that only shows the chat ends the run', await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000), JSON.stringify(await tc(() => global.__tabChats.runs())));
+  check('... and says stopped, with no working mark left on either tab', (await ui.evaluate(() => Boolean(document.querySelector('.notice.stopped')))) && (await mark(T.t1)) !== 'running' && (await mark(T.t2)) !== 'running', `${await mark(T.t1)} ${await mark(T.t2)}`);
+  const U = await sharedChat('U');
+  await showTab(U.t1);
+  await waitFor(async () => /U is working/.test(await messagesText()));
+  await clickStop();
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 6000) || await tc(() => global.__release('U'));
+  check('Stop in the home tab ends the run', await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000), JSON.stringify(await tc(() => global.__tabChats.runs())));
+  await showTab(U.t2);
+  await waitFor(async () => /chat-U/.test(await messagesText()));
+  check('... and the other tab shows it stopped as well', await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('.notice.stopped')))), await messagesText());
+
+  // V: a new chat in the tab that only shows it. W: a new chat in the home tab. The other tab keeps the chat and its work.
+  const V = await sharedChat('V');
+  await ui.click('#new-chat');
+  await waitFor(async () => (await bindings(V.id)).tabs.length === 1);
+  st = await bindings(V.id);
+  check('new chat in the viewing tab: only that tab leaves the chat', JSON.stringify(st.tabs) === JSON.stringify([V.t1]) && st.home === V.t1 && (await tc((_e, t) => global.__tabChats.bindings.chatOf(t), V.t2)) !== V.id, JSON.stringify(st));
+  check('... the chat keeps working in its tab', (await runOf('V'))?.tab === V.t1 && (await mark(V.t1)) === 'running', JSON.stringify(await runOf('V')));
+  check('... the tab with the new chat has an empty sidebar and no working mark', (await bubbles()).length === 0 && (await mark(V.t2)) !== 'running', await messagesText());
+  await showTab(V.t1);
+  await waitFor(async () => /V is working/.test(await messagesText()));
+  check('the other tab still shows the old chat, working', /chat-V/.test(await messagesText()) && /V is working/.test(await messagesText()), await messagesText());
+  await finish('V');
+  const W = await sharedChat('W');
+  await showTab(W.t1);
+  await waitFor(async () => /W is working/.test(await messagesText()));
+  await ui.click('#new-chat');
+  await waitFor(async () => (await tc((_e, t) => global.__tabChats.bindings.chatOf(t), W.t1)) !== W.id);
+  st = await bindings(W.id);
+  check('new chat in the home tab: the other tab keeps showing the chat', JSON.stringify(st.tabs) === JSON.stringify([W.t2]), JSON.stringify(st));
+  check('... and the run goes on, in the tab it works in', (await runOf('W'))?.tab === W.t1 && (await mark(W.t2)) === 'running', JSON.stringify(await runOf('W')));
+  await showTab(W.t2);
+  await waitFor(async () => /W is working/.test(await messagesText()));
+  check('... the other tab shows it working', /chat-W/.test(await messagesText()), await messagesText());
+  await finish('W');
+  await waitFor(async () => /W finished/.test(await messagesText()));
+  check('... and receives the reply', /W finished/.test(await messagesText()), await messagesText());
+
+  // Y: closing the tab that only shows a working chat. Z: closing its home tab.
+  const Y = await sharedChat('Y');
+  const countY = await tabCount();
+  await app.evaluate((_e, id) => global.__closeTabInteractive(id), Y.t2);
+  await waitFor(async () => (await tabCount()) < countY);
+  await sleep(500);
+  st = await bindings(Y.id);
+  check('closing a tab that only shows the chat just unbinds it (no new tab, the run is untouched)', (await tabCount()) === countY - 1 && JSON.stringify(st.tabs) === JSON.stringify([Y.t1]) && (await runOf('Y'))?.tab === Y.t1, JSON.stringify({ st, count: await tabCount(), countY, run: await runOf('Y') }));
+  await finish('Y');
+  const Z = await sharedChat('Z');
+  await app.evaluate((_e, id) => global.__closeTabInteractive(id), Z.t1);
+  const moved2 = await waitFor(() => tc((_e, [a, b]) => { const r = global.__tabChats.runs().find((x) => x.live); return r && r.tab != null && r.tab !== a ? r : null; }, [Z.t1]));
+  st = await bindings(Z.id);
+  check('closing the home tab of a working chat keeps it going in a background tab', Boolean(moved2) && moved2.tab !== Z.t2 && moved2.tab !== Z.t1, JSON.stringify(moved2));
+  check('... the other tab still shows the chat, and the background tab is its new home', st.tabs.includes(Z.t2) && st.home === moved2?.tab, JSON.stringify(st));
+  await finish('Z');
+
+  // P: a finished chat in two tabs comes back in two tabs after a restart (checked in step 8).
+  const P = await sharedChat('P');
+  await finish('P');
+
   // ---- 6. A tab closed under a working chat does not stop it; the chat stays reachable.
   const doomed = await openTab(`${base}/doomed`);
   await waitFor(async () => (await active()) === doomed);
@@ -243,11 +374,21 @@ const fakeModel = (app) => app.evaluate(() => {
   check('the old window sidebar is not touched by it', !/chat-M/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 'M shows in the old window');
   const homeM = await tc(() => { const r = global.__tabChats.runs().find((x) => x.live); return { run: r, bound: global.__tabChats.bindings.chatOf(r?.tab) === r?.chatId }; });
   check('its run goes on in the moved tab', homeM.run?.tab === mover && homeM.bound, JSON.stringify(homeM));
+  // The chat is shown in a tab of the first window too: that window's sidebar follows the run live as well.
+  const idM = await chatIdOf('M');
+  await ui.evaluate(() => document.getElementById('chat-history').click());
+  await waitFor(() => ui.evaluate((i) => Boolean(document.querySelector(`.chat-item[data-id="${i}"] .chat-act-share`)), idM));
+  await ui.evaluate((i) => document.querySelector(`.chat-item[data-id="${i}"] .chat-act-share`).click(), idM);
+  await waitFor(async () => (await bindings(idM)).tabs.length >= 2);
+  await waitFor(async () => /M is working/.test(await messagesText()));
+  const homeAfterShare = await bindings(idM);
+  check('a chat working in a tab of another window can be shown here too, and the home stays where the run is', /chat-M/.test(await messagesText()) && homeAfterShare.home === mover, JSON.stringify(homeAfterShare));
   await tc(() => global.__release('M'));
   await waitFor(() => tc(() => global.__seen.M));
   check('its tool read the moved tab, now in the other window', (await tc(() => global.__seen.M)) === 'MOVEME', await tc(() => global.__seen.M));
   await waitFor(async () => /M finished/.test(await text2()));
   check('its reply streams into the new window sidebar', /M finished/.test(await text2()), await text2());
+  check('... and into the first window\'s sidebar, which shows the same chat', await waitFor(async () => /M finished/.test(await messagesText())), await messagesText());
 
   // ---- 8. After a restart each tab shows its chat; nothing is re-run.
   const beforeRestart = await tc(() => ({ entries: global.__tabChats.bindings.entries(), saved: global.__chats.store().list().map((c) => c.id) }));
@@ -264,6 +405,9 @@ const fakeModel = (app) => app.evaluate(() => {
   const restored = await tc(() => ({ entries: global.__tabChats.bindings.entries(), runs: global.__tabChats.runs(), tabs: global.__windows.list()[0].tabs.length, active: global.__windows.list()[0].activeId }));
   check('after a restart the tabs are bound to their saved chats again', restored.entries.length >= 1 && restored.entries.every(([, c]) => beforeRestart.saved.includes(c)), JSON.stringify({ restored, wanted }));
   check('after a restart nothing is re-run', restored.runs.length === 0, JSON.stringify(restored.runs));
+  const pAfter = await tc((_e, id) => { const b = global.__tabChats.bindings; const home = b.homeOf(id); return { tabs: b.tabsOf(id), home, homeUrl: global.__windows.list().flatMap((w) => w.tabs).find((t) => t.id === home)?.url || '' }; }, P.id);
+  check('a chat shown in two tabs comes back in two tabs after a restart', pAfter.tabs.length === 2, JSON.stringify(pAfter));
+  check('... with the same tab as its home', /\/p1$/.test(pAfter.homeUrl), JSON.stringify(pAfter));
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), restored.entries[0][0]);
   const shown = await waitFor(async () => { const t = (await ui.evaluate(() => document.getElementById('messages').innerText)).trim(); return /finished|working|chat-/.test(t) && t; });
   check('a tab shows its saved chat again', Boolean(shown) && /finished|working|chat-/.test(shown), shown);
