@@ -98,7 +98,7 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     }
     console.log('sizes seen:', JSON.stringify(Object.fromEntries(Object.entries(seen).map(([k, m]) => [k, `${m.w}x${m.h} sum${m.sum} dots${m.dots} rows${m.rows} det${m.details} live${m.live} sub${m.sub} more${m.more}`]))));
     const m22 = seen['2x2'];
-    check('2x2: the compact summary line, "N ready · M working", and a dot per AI', m22.sum === 1 && /^\d+ ready · \d+ working/.test(m22.sumText) && m22.rows === 0 && m22.live === 0 && m22.dots === 8, JSON.stringify(m22));
+    check('2x2: the compact summary line, "N ready · M working", and a chip per AI (the rest counted as "+N")', m22.sum === 1 && /^\d+ ready · \d+ working/.test(m22.sumText) && m22.rows === 0 && m22.live === 0 && m22.dots >= 4 && (m22.dots === 8 || m22.more === 1), JSON.stringify(m22));
     check('3x3 and up: a row per AI, as many as fit', seen['3x3'].rows >= 3 && seen['3x3'].sum === 0, JSON.stringify(seen['3x3']));
     check('6x4: every AI has a row, or the rest are counted as "+N more"', seen['6x4'].rows >= 7 || (seen['6x4'].rows >= 3 && seen['6x4'].more === 1), JSON.stringify(seen['6x4']));
     check('6x6: the second lines (model, limit, usage) and the live strip show', seen['6x6'].details >= 3 && seen['6x6'].live === 1, JSON.stringify(seen['6x6']));
@@ -114,6 +114,59 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
       console.log(`  ${w}x${h}px: body ${m.bodyW}x${m.bodyH} sumH ${m.sumH} dotsH ${m.dotsH} compactH ${m.compactH} sum${m.sum} dots${m.dots} rows${m.rows} det${m.details} live${m.live} sub${m.sub} more${m.more}`);
     }
 
+    // The smallest sizes: every chip is a logo, then the connector dot, then a word, and all of it is inside the card and uncut.
+    const chips = () => inTab(`(() => {
+      const body = document.querySelector('.w-card.aistatus .w-body');
+      const br = body.getBoundingClientRect();
+      const shown = (n) => n.getClientRects().length > 0 && n.getBoundingClientRect().width > 0;
+      const inside = (n) => { const r = n.getBoundingClientRect(); return r.left >= br.left - 1 && r.right <= br.right + 1 && r.top >= br.top - 1 && r.bottom <= br.bottom + 1; };
+      const all = [...body.querySelectorAll('.ai-dot')].filter(shown);
+      const more = [...body.querySelectorAll('.ai-more')].filter(shown).map((n) => n.textContent);
+      return {
+        count: all.length, more,
+        logos: all.filter((c) => { const l = c.querySelector('svg.ai-logo'); return l && shown(l) && l.getBoundingClientRect().width >= 12 && l.querySelector('path'); }).length,
+        dots: all.filter((c) => { const m = c.querySelector('.ai-mark'); return m && shown(m) && m.getBoundingClientRect().width >= 8; }).length,
+        words: all.filter((c) => { const w = c.querySelector('.ai-lab'); return w && shown(w) && w.textContent.trim(); }).length,
+        order: all.every((c) => { const l = c.querySelector('.ai-logo').getBoundingClientRect(); const m = c.querySelector('.ai-mark').getBoundingClientRect(); return l.right <= m.left + 1; }),
+        inside: all.every((c) => [...c.children].filter((n) => !n.classList.contains('ai-sr') && shown(n)).every(inside)),
+        named: all.every((c) => c.title && c.querySelector('.ai-sr') && c.querySelector('.ai-sr').textContent === c.title && c.querySelector('svg').getAttribute('aria-hidden') === 'true'),
+        facts: all.filter((c) => { const f = c.querySelector('.ai-fact'); return f && shown(f); }).length,
+        bodyY: body.scrollHeight - body.clientHeight, bodyX: body.scrollWidth - body.clientWidth,
+        sample: all.slice(0, 3).map((c) => c.title),
+      };
+    })()`);
+    await setFacts(MANY);
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    await setCells(2, 2);
+    for (const [w, h] of [[100, 94], [130, 120], [160, 140], [300, 100]]) {
+      await inTab(`(() => { const c = document.querySelector('.w-card.aistatus'); c.style.width = '${w}px'; c.style.height = '${h}px'; })()`);
+      await sleep(350);
+      const c = await chips();
+      await shot(`chips-${w}x${h}`);
+      check(`${w}x${h}px chips: each shown AI has its logo, then the connector dot (and a word while it fits), all inside the card`, c.count >= 1 && c.logos === c.count && c.dots === c.count && c.order && c.inside && c.bodyY <= 2 && c.bodyX <= 1, JSON.stringify(c));
+      check(`${w}x${h}px chips: every chip has the whole sentence as tooltip and for a screen reader; hidden ones are counted`, c.named && (c.count === 8 || c.more.some((t) => /^\+\d+$/.test(t))), JSON.stringify(c));
+      console.log(`  ${w}x${h}px chips: ${c.count}/8 shown, words ${c.words}, facts ${c.facts}, more ${c.more}`);
+    }
+    // A few AIs on a card with room: the state word and the one fact (when it resets, the 5-hour reading) show beside each dot.
+    await setFacts({ ...MANY, apis: ['anthropic'], engines: { ...MANY.engines, grokbuild: { installed: false }, antigravity: { installed: false } }, meter: null });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    await waitFor("document.querySelectorAll('.w-card.aistatus .ai-dot').length === 4");
+    await sleep(400);
+    for (const [w, h] of [[300, 130], [200, 120]]) {
+      await inTab(`(() => { const c = document.querySelector('.w-card.aistatus'); c.style.width = '${w}px'; c.style.height = '${h}px'; })()`);
+      await sleep(350);
+      const c = await chips();
+      await shot(`chips-few-${w}x${h}`);
+      check(`${w}x${h}px, four AIs: every chip shows logo, dot and its word, inside the card`, c.count === 4 && c.logos === 4 && c.dots === 4 && c.words === 4 && c.order && c.inside && c.bodyY <= 2 && c.bodyX <= 1, JSON.stringify(c));
+      if (w === 300) check('300x130px, four AIs: the limit’s reset time shows as the extra fact', c.facts >= 1, JSON.stringify(c));
+    }
+    await setFacts(MANY);
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    await inTab(`(() => { const c = document.querySelector('.w-card.aistatus'); c.style.width = ''; c.style.height = ''; })()`);
+    // Reduced motion: the chips never animate (they do not at all), so nothing pulses to turn off; assert it stays so.
+    const motion = await inTab(`[...document.querySelectorAll('.w-card.aistatus .ai-dot, .w-card.aistatus .ai-dot *')].every((n) => { const s = getComputedStyle(n); return s.animationName === 'none' && /^0s/.test(s.transitionDuration); })`);
+    check('chips: no animation or transition on the logos and dots (nothing to pulse under reduced motion)', motion, '');
+
     // Text content at a large size: states in words, the model, the limit with its reset time, the live strip.
     await setCells(3, 3);
     await setCells(12, 8);
@@ -126,8 +179,8 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     check('accessible: the card is a named group, lists are lists, the shapes are hidden from a screen reader', aria.role === 'group' && /^AI status: \d+ ready/.test(aria.label) && aria.lists >= 2 && aria.mark, JSON.stringify(aria));
     // Compact: the dots are named in text.
     await setCells(2, 2);
-    const dotsText = await inTab("[...document.querySelectorAll('.w-card.aistatus .ai-dot')].map((d) => d.textContent + '|' + d.title).join('; ')");
-    check('compact: every dot has its AI and state as text (and a tooltip)', /Claude Code: Limit reached\|Claude Code: Limit reached/.test(dotsText) && /Antigravity: Not installed/.test(dotsText), dotsText);
+    const dotsText = await inTab("[...document.querySelectorAll('.w-card.aistatus .ai-dot')].map((d) => d.querySelector('.ai-sr').textContent + '|' + d.title).join('; ')");
+    check('compact: every dot has its AI and state as text (and a tooltip)', /Claude Code: Limit reached\. Resets [^;]*\|Claude Code: Limit reached\. Resets/.test(dotsText) && /Antigravity: Not installed/.test(dotsText), dotsText);
 
     // Live: the facts change, one nudge from main, and the open page redraws by itself (no reload, nothing called on the page).
     await setFacts({ ...MANY, cooling: {}, runs: { working: 3, waiting: 0, max: 3 }, aiTabs: 0, handsOff: false });
