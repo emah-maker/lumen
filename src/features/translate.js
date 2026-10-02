@@ -175,27 +175,64 @@ const SEAM_RE = /\s*⟦\s*(\p{Nd}+)\s*⟧\s*/u;
 const SEAM_CHARS = /[⟦⟧]/;
 const UNSPACED = /[฀-๿぀-ヿ㐀-鿿가-힯＀-￯]/; // scripts written without spaces between words
 // The engine may write the marker's number in the target language's digits (Arabic-Indic, Devanagari ...).
-const DIGIT_ZEROS = [0x30, 0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xe50, 0xed0, 0xf20, 0x1040, 0xff10];
+// A decimal digit's value in any script: Unicode lays digits out in contiguous runs of ten (category Nd), so the value is
+// the offset from the start of the run. (No table to go stale as Unicode adds scripts.)
+function digitValue(cp) {
+  let start = cp;
+  while (start > 0 && /\p{Nd}/u.test(String.fromCodePoint(start - 1))) start--;
+  return (cp - start) % 10;
+}
 function asciiDigits(str) {
   let out = '';
   for (const ch of str) {
-    const cp = ch.codePointAt(0);
-    const zero = DIGIT_ZEROS.find((z) => cp >= z && cp < z + 10);
-    if (zero === undefined) return null;
-    out += String(cp - zero);
+    if (!/\p{Nd}/u.test(ch)) return null;
+    out += String(digitValue(ch.codePointAt(0)));
   }
   return out;
 }
-// The digits of `str` as ASCII, everything else (separators, currency, words) dropped; null when a digit is one we can't read.
-function digitSequence(str) {
+// `str` with every digit as ASCII, the Arabic decimal and thousands marks as . and a space (null: unreadable digit).
+function asciiText(str) {
   let out = '';
   for (const ch of String(str)) {
-    if (!/\p{Nd}/u.test(ch)) continue;
-    const d = asciiDigits(ch);
-    if (d === null) return null;
-    out += d;
+    if (ch === '٫') out += '.';
+    else if (ch === '٬') out += ' ';
+    else if (/\p{Nd}/u.test(ch)) { const d = asciiDigits(ch); if (d === null) return null; out += d; } else out += ch;
   }
   return out;
+}
+const NUMBER_TOKEN = /\d{1,3}(?:[\s'’]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)*/g;
+// One number token's value, locale-agnostic: with both . and , the last one is the decimal mark; a mark that repeats, or
+// one followed by exactly three digits after 1 to 3 (1,000 / 1.000), is a thousands mark; any other single mark is decimal.
+function numberValue(token) {
+  let t = token.replace(/[\s'’]/g, '');
+  const dots = (t.match(/\./g) || []).length;
+  const commas = (t.match(/,/g) || []).length;
+  if (dots && commas) {
+    const decimal = t.lastIndexOf('.') > t.lastIndexOf(',') ? '.' : ',';
+    t = t.split(decimal === '.' ? ',' : '.').join('').replace(decimal, '.');
+  } else if (dots + commas > 1) t = t.replace(/[.,]/g, '');
+  else if (dots + commas === 1) {
+    const [before, after] = t.split(/[.,]/);
+    t = after.length === 3 && before.length <= 3 && before !== '0' ? before + after : `${before}.${after}`;
+  }
+  return Number(t);
+}
+// A bare number (or symbol, date, time) as the engine returned it -> 'ok' (apply it), 'keep' (the page keeps what it had:
+// a benign reformat such as 2024-05-01 -> 01/05/2024, 22:30 -> 10:30 PM, 5 -> five, EUR -> euro) or 'corrupt' (a number
+// whose digits or value the engine changed: 200 -> 2000, 1.5 -> 15, 1,000 -> 1,0). Only 'corrupt' counts against the pair.
+function checkNumber(was, now) {
+  const a = asciiText(was);
+  const b = asciiText(now);
+  if (a === null || b === null) return 'keep';
+  const digitsA = a.replace(/\D/g, '');
+  const digitsB = b.replace(/\D/g, '');
+  if (!digitsA) return /[\p{L}\p{N}]/u.test(b) ? 'keep' : 'ok'; // a symbol stays a symbol; "€" -> "euro" is left alone
+  if (!digitsB) return 'keep'; // the number became a word
+  const tokensA = a.match(NUMBER_TOKEN) || [];
+  const tokensB = b.match(NUMBER_TOKEN) || [];
+  if (tokensA.length !== 1) return digitsA === digitsB && tokensB.length === tokensA.length ? 'ok' : 'keep'; // dates, times, ranges: never corruption
+  if (tokensB.length !== 1) return 'corrupt';
+  return numberValue(tokensA[0]) === numberValue(tokensB[0]) ? 'ok' : 'corrupt';
 }
 // Items from the page: { id, text, v, g (block), l, t (space before / after), n (no letters: a number, price, symbol) }.
 // A letterless node is only worth sending as part of a sentence ("Showing <b>10</b> of <b>200</b> results");
@@ -241,16 +278,18 @@ function splitSegment(segment, text) {
   }
   const pairs = [];
   let mismatches = 0;
+  let checked = 0;
   for (let i = 0; i < k; i++) {
     const node = segment.nodes[i];
     // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧").
     // A bare number or symbol that comes back empty is left as written.
     if (node.n && !parts[i].trim()) continue;
-    // A bare number may be re-formatted for the target (200 -> ٢٠٠, 1,000.5 -> 1.000,5, $5.99 -> 5,99 €) but must keep
-    // its digits. If they differ the engine changed the number: the page keeps what it had.
+    // A bare number may be re-formatted for the target (200 -> ٢٠٠, 1,000.5 -> 1.000,5, $5.99 -> 5,99 €) but must keep its
+    // value. Anything else leaves the page as it was, and only real corruption counts against the pair.
     if (node.n) {
-      const was = digitSequence(node.text);
-      if (was === null || was !== digitSequence(parts[i])) { mismatches++; continue; }
+      const verdict = checkNumber(node.text, parts[i]);
+      if (verdict !== 'ok') { if (verdict === 'corrupt') mismatches++; continue; }
+      checked++;
     }
     let out = parts[i];
     // Written without spaces (Chinese, Japanese, Thai) into a language with them: nothing in the page separated
@@ -260,7 +299,8 @@ function splitSegment(segment, text) {
       && /[\p{L}\p{N}]$/u.test(out) && /^[\p{L}\p{N}]/u.test(parts[i + 1]) && !UNSPACED.test(out.slice(-1)) && !UNSPACED.test(parts[i + 1].charAt(0))) out += ' ';
     pairs.push([node.id, out, segment.id]);
   }
-  pairs.numberMismatches = mismatches; // bare numbers whose digits the engine changed (kept as written)
+  pairs.numberMismatches = mismatches; // bare numbers the engine corrupted (kept as written)
+  pairs.numbersChecked = checked; // bare numbers that came back intact
   return pairs;
 }
 
@@ -478,6 +518,7 @@ function createTranslate(deps) {
   const seamPause = new Map(); // pair -> the last pause length, so the next one doubles (survives the pause ending)
   const seamWorks = new Set(); // pairs whose markers came back at least once this session
   const numbersOff = new Map(); // pair -> until: bare numbers are not put into its sentences
+  const numberPause = new Map(); // pair -> the last such pause length (survives the pause ending, so the next one doubles)
   const seamProbation = new Set(); // pairs that were paused: their next grouped run is a probe
   const nowMs = () => (deps.now ? deps.now() : Date.now());
   let testEngine = null;
@@ -615,7 +656,7 @@ function createTranslate(deps) {
     }
     if (pairs.length) { await script(tab, 'apply', pairs); ctx.firstAt ||= performance.now(); }
     if (!ctx.runner) throw new Error('no-engine');
-    const chunks = ctx.via === 'local' ? chunkItems(fresh, LOCAL_CHUNK, seamWorks.has(ctx.pair) ? LOCAL_FIRST : LOCAL_PROBE_FIRST) : chunkItems(fresh);
+    const chunks = ctx.via === 'local' ? chunkItems(fresh, LOCAL_CHUNK, seamWorks.has(ctx.pair) || !fresh.some((i) => i.nodes) ? LOCAL_FIRST : LOCAL_PROBE_FIRST) : chunkItems(fresh);
     const weight = (item) => (item.nodes ? item.nodes.reduce((n, x) => n + x.text.length, 0) : item.text.length) + 1; // text, not request counts: a fallback to node by node does not move the bar
     const total = fresh.reduce((n, item) => n + weight(item), 0);
     let done = 0;
@@ -644,7 +685,7 @@ function createTranslate(deps) {
             ctx.seamStreak = 0;
             if (ctx.pair) seamWorks.add(ctx.pair);
             if (ctx.probing) { ctx.probing = false; seamProbation.delete(ctx.pair); seamPause.delete(ctx.pair); } // the markers work again
-            if (cut.numberMismatches) noteNumberMismatch(ctx);
+            if (cut.numberMismatches) noteNumberMismatch(ctx); else if (cut.numbersChecked) noteNumbersClean(ctx);
             good.push(...cut);
             map.set(item.text, ok.get(item.id));
           } else {
@@ -658,6 +699,7 @@ function createTranslate(deps) {
       done += chunk.reduce((n, item) => n + weight(item), 0);
       onProgress?.(Math.min(1, done / Math.max(1, total)));
     }
+    if (ctx.pair && ctx.via === 'local' && !ctx.noSeams && !ctx.seamStreak && fresh.some((i) => i.nodes)) seamWorks.add(ctx.pair); // a whole run without a marker failure: proven enough
     return true;
   }
 
@@ -671,18 +713,30 @@ function createTranslate(deps) {
     if (!ctx.probing && ctx.seamStreak < (seamWorks.has(ctx.pair) ? SEAM_FAILS : SEAM_FAILS - 1)) return;
     ctx.noSeams = true;
     if (!ctx.pair) return;
-    const ms = ctx.probing ? Math.min((seamPause.get(ctx.pair) || SEAM_PAUSE_MS) * 2, 60 * 60 * 1000) : SEAM_PAUSE_MS; // 10, 20, 40, 60 minutes
+    // 10, 20, 40, 60 minutes. Never shorter than a pause the pair already has (a second tab's trip must not rewrite it).
+    const ms = Math.min(Math.max((seamPause.get(ctx.pair) || 0) * (ctx.probing ? 2 : 1), SEAM_PAUSE_MS), 60 * 60 * 1000);
     seamPause.set(ctx.pair, ms); // kept apart from seamsBroken, which is cleared when a pause ends
     seamsBroken.set(ctx.pair, { until: nowMs() + ms });
     seamProbation.add(ctx.pair);
     ctx.probing = false;
   }
 
-  // A bare number whose digits the engine changed is never written to the page. After NUMBER_MISMATCHES such
-  // segments the pair's numbers are left out of its sentences for a while (they split the sentence, as before).
+  // A bare number the engine corrupted (digits or value changed) is never written to the page. After NUMBER_MISMATCHES such
+  // segments in a row the pair's numbers are left out of its sentences for 10 minutes (they split the sentence, as before);
+  // then one run probes with numbers again, a failure doubles the pause (up to an hour), a clean segment clears it.
+  // Benign reformats (a date reordered, 22:30 -> 10:30 PM, 5 -> five) are kept as written and count for nothing.
   function noteNumberMismatch(ctx) {
     ctx.numberMismatches = (ctx.numberMismatches || 0) + 1;
-    if (ctx.numberMismatches >= NUMBER_MISMATCHES && ctx.pair) numbersOff.set(ctx.pair, nowMs() + SEAM_PAUSE_MS);
+    if (!ctx.pair || (!ctx.numbersProbing && ctx.numberMismatches < NUMBER_MISMATCHES)) return;
+    const ms = Math.min(Math.max((numberPause.get(ctx.pair) || 0) * (ctx.numbersProbing ? 2 : 1), SEAM_PAUSE_MS), 60 * 60 * 1000);
+    numberPause.set(ctx.pair, ms);
+    numbersOff.set(ctx.pair, nowMs() + ms);
+    ctx.numbersProbing = false;
+    ctx.numberMismatches = 0;
+  }
+  function noteNumbersClean(ctx) {
+    ctx.numberMismatches = 0;
+    if (ctx.numbersProbing) { ctx.numbersProbing = false; numberPause.delete(ctx.pair); }
   }
 
   // Group for the on-device engine unless its markers are known not to survive for this pair (for now).
@@ -693,7 +747,7 @@ function createTranslate(deps) {
     if (broken) { seamsBroken.delete(ctx.pair); } // the pause is over: this run probes
     if (ctx.pair && seamProbation.has(ctx.pair)) ctx.probing = true;
     const off = numbersOff.get(ctx.pair);
-    if (off && nowMs() >= off) numbersOff.delete(ctx.pair);
+    if (off && nowMs() >= off) { numbersOff.delete(ctx.pair); if (numberPause.has(ctx.pair)) ctx.numbersProbing = true; }
     return groupItems(items, { numbers: !(off && nowMs() < off) });
   }
 
@@ -946,6 +1000,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, NUMBER_MISMATCHES, LOCAL_PROBE_FIRST, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, checkNumber, numberValue, asciiDigits, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, NUMBER_MISMATCHES, LOCAL_PROBE_FIRST, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };

@@ -355,18 +355,18 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
       ['1,000.5', '١٬٠٠٠٫٥', true, 'Arabic separators and digits'],
       ['$5.99', '5,99 €', true, 'a price in the other style, other currency sign'],
       ['$5.99', '5.99 dollars', true, 'a currency word'],
-      ['2024-05-01', '01/05/2024', false, 'a date reordered (digit order changed: kept as written)'],
+      ['2024-05-01', '01/05/2024', false, 'a date reordered (benign: kept as written, counts for nothing)', 0],
       ['200', '٢٠٠٠', false, 'an extra digit'],
       ['200', '20', false, 'a dropped digit'],
       ['200', '300', false, 'a different number'],
       ['45%', '٪٤٥', true, 'a percentage with a percent sign moved'],
       ['1st', '1.', true, 'an ordinal mark (letters in the page: not a bare number)'],
     ];
-    for (const [orig, reply, accepted, why] of cases) {
+    for (const [orig, reply, accepted, why, extra] of cases) {
       if (orig === '1st') continue; // has letters, so it is an ordinary node, covered elsewhere
       const cut = T.splitSegment(segOf(orig), `Showing${M(1)}${reply}${M(2)}results`);
       const kept = cut && !cut.some((p) => p[0] === 2);
-      check(`numbers: ${why} (${orig} -> ${reply}) is ${accepted ? 'applied' : 'kept as written'}`, cut && (accepted ? ids(cut) === '1,2,3' : kept && cut.numberMismatches === 1), `${ids(cut)} ${cut?.numberMismatches}`);
+      check(`numbers: ${why} (${orig} -> ${reply}) is ${accepted ? 'applied' : 'kept as written'}`, cut && (accepted ? ids(cut) === '1,2,3' : kept && cut.numberMismatches === (extra === undefined ? 1 : extra)), `${ids(cut)} ${cut?.numberMismatches}`);
     }
     check('numbers: the other words of the segment are still applied when a number is rejected', ids(T.splitSegment(segOf('200'), `Showing${M(1)}300${M(2)}results`)) === '1,3', '');
     // through a run: a locale-converting engine, then one that mangles digits
@@ -413,6 +413,131 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     await run(blocks, 'x', { tr: newTr(engine) });
     const firstRequest = log[0] || [];
     check(`first request: with no history a pair's first request stays under ${T.LOCAL_PROBE_FIRST + 200} characters, so a bad engine costs one small request`, firstRequest.join('').length <= T.LOCAL_PROBE_FIRST + 200 && firstRequest.some((t) => /⟦/.test(t)), JSON.stringify(firstRequest.map((t) => t.length)));
+  }
+
+  // ---- numeric value, not just digits ----
+  {
+    const v = (a, b) => T.checkNumber(a, b);
+    check('value: 1.5 -> 1,5 is the same number', v('1.5', '1,5') === 'ok' && v('1.5', '١٫٥') === 'ok', v('1.5', '1,5'));
+    check('value: 1.5 -> 15 lost its decimal mark (corruption)', v('1.5', '15') === 'corrupt', v('1.5', '15'));
+    check('value: 1,000 -> 1.000 is the same number (thousands in both)', v('1,000', '1.000') === 'ok' && v('1,000', '1 000') === 'ok' && v('1,000', '1’000') === 'ok', v('1,000', '1.000'));
+    check('value: 1,000 -> 1,0 is a different number', v('1,000', '1,0') === 'corrupt', v('1,000', '1,0'));
+    check('value: $5.99 -> 5,99 € is the same number; 5.99 -> 599 is not', v('$5.99', '5,99 €') === 'ok' && v('5.99', '599') === 'corrupt' && v('$5.99', '$599') === 'corrupt', '');
+    check('value: 1,234,567.89 -> 1.234.567,89 and 1 234 567,89 are the same number', v('1,234,567.89', '1.234.567,89') === 'ok' && v('1,234,567.89', '1 234 567,89') === 'ok' && v('1,234,567.89', '1.234.567,8') === 'corrupt', '');
+    check('value: percentages and plain integers', v('45%', '45 %') === 'ok' && v('45%', '٤٥٪') === 'ok' && v('45%', '54%') === 'corrupt' && v('200', '2000') === 'corrupt', '');
+    check('value: 0.5 -> 0,5 stays 0.5 (not read as a thousands mark)', v('0.500', '0,500') === 'ok' && v('0.5', '0,5') === 'ok', '');
+    check('value: dates, times and words are a benign reformat (kept as written), never corruption', v('2024-05-01', '01/05/2024') === 'keep' && v('22:30', '10:30 PM') === 'keep' && v('5', 'five') === 'keep' && v('2024-05-01', 'May 1, 2024') === 'keep' && v('22:30', '22.30') === 'keep', `${v('22:30', '10:30 PM')} ${v('22:30', '22.30')}`);
+    check('value: a date with the same digits and shape is applied', v('2024-05-01', '2024/05/01') === 'ok', v('2024-05-01', '2024/05/01'));
+    check('symbols: € -> euro is left alone, € -> $ is applied, empty is left alone', v('€', 'euro') === 'keep' && v('€', '$') === 'ok' && v('—', '–') === 'ok', '');
+    const seg = T.groupItems([{ id: 1, text: 'Price', g: 1, l: false, t: true }, { id: 2, text: '€', g: 1, n: true, l: false, t: true }, { id: 3, text: 'only', g: 1, l: false, t: false }])[0];
+    const cut = T.splitSegment(seg, `Prix${M(1)}euro${M(2)}seulement`);
+    check('symbols: a symbol-only node that came back as a word stays as written and counts for nothing', cut.length === 2 && !cut.some((p) => p[0] === 2) && cut.numberMismatches === 0, JSON.stringify(cut));
+  }
+
+  // ---- every Unicode decimal digit is readable ----
+  {
+    let nd = 0;
+    let unreadable = [];
+    for (let cp = 0; cp < 0x1fc00; cp++) {
+      if (cp >= 0xd800 && cp < 0xe000) continue;
+      const ch = String.fromCodePoint(cp);
+      if (!/\p{Nd}/u.test(ch)) continue;
+      nd++;
+      const d = T.asciiDigits(ch);
+      if (d === null) unreadable.push(cp.toString(16));
+    }
+    check(`digits: all ${nd} Unicode decimal digits map to 0-9 (none unreadable)`, nd > 600 && unreadable.length === 0, unreadable.join(' '));
+    const val = (zero) => T.asciiDigits(String.fromCodePoint(zero) + String.fromCodePoint(zero + 7) + String.fromCodePoint(zero + 9));
+    check('digits: Khmer, Mongolian, Myanmar (incl. Shan), Tibetan, Thai, Lao, full-width and mathematical digits read as 0, 7, 9', [0x17e0, 0x1810, 0x1040, 0x1090, 0xf20, 0xe50, 0xed0, 0xff10, 0x1d7ce, 0x1d7f6, 0x1fbf0].every((z) => val(z) === '079'), [0x17e0, 0x1810, 0x1040, 0x1090, 0xf20].map(val).join());
+    const two = T.groupItems([{ id: 1, text: 'a', g: 1 }, { id: 2, text: 'b', g: 1 }, { id: 3, text: 'c', g: 1 }])[0];
+    check('digits: a marker numbered in Khmer or Mongolian digits is read', T.splitSegment(two, 'x ⟦១⟧ y ⟦២⟧ z')?.length === 3 && T.splitSegment(two, 'x ⟦᠑⟧ y ⟦᠒⟧ z')?.length === 3, '');
+  }
+
+  // ---- numbers: benign reformats do not switch numbers off; real corruption in a row does, and the pause backs off ----
+  {
+    let clock = 20000;
+    const log = [];
+    const mode = { current: 'mangle' };
+    const engine = fakeLocal((t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => {
+        if (!/^\d/.test(p)) return p.toUpperCase();
+        if (mode.current === 'clean') return p;
+        return `${p}0`;
+      });
+      return parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    }, log);
+    const api = newTr(engine, {}, { now: () => clock });
+    const nums = (list) => list.map((n, i) => el('p', [text(`Item ${'abcdefgh'[i]} is `), el('b', [text(String(n))]), text(' pieces')]));
+    const numbersSent = async (list) => { log.length = 0; api.clearCache(); await run(nums(list), 'x', { tr: api }); return log.flat().some((t) => /\d/.test(t)); };
+    const MIN = 60 * 1000;
+    // corrupt, corrupt, clean, corrupt, corrupt: the clean segment resets the count, so numbers stay in
+    mode.current = 'mangle';
+    const log2 = [];
+    const picky = fakeLocal((t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => (/^\d/.test(p) ? (p === '102' ? p : `${p}0`) : p.toUpperCase()));
+      return parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    }, log2);
+    const api2 = newTr(picky, {}, { now: () => clock });
+    await run(nums([100, 101, 102, 103, 104]), 'x', { tr: api2 });
+    log2.length = 0;
+    api2.clearCache();
+    await run(nums([100, 101]), 'x', { tr: api2 });
+    check('numbers: a clean segment between corrupt ones resets the count (two, clean, two does not switch numbers off)', log2.flat().some((t) => /\d/.test(t)), JSON.stringify(log2.flat()));
+
+    check('numbers: three corrupt segments in a row switch numbers off for the pair', (await numbersSent([100, 101, 102, 103])) === true && (await numbersSent([100, 101])) === false, '');
+    clock += 10 * MIN + 1;
+    check('numbers: after 10 minutes one run probes with numbers again; a corrupt number pauses them for 20', (await numbersSent([100, 101])) === true && (clock += 19 * MIN, await numbersSent([100, 101])) === false, '');
+    clock += 1 * MIN + 1;
+    mode.current = 'clean';
+    check('numbers: a probe whose numbers come back intact clears the pause', (await numbersSent([100, 101])) === true && (await numbersSent([100, 101])) === true, '');
+  }
+
+  // ---- one pair, several tabs: a late trip never shortens a longer pause ----
+  {
+    let clock = 40000;
+    const log = [];
+    let hold = null;
+    const base = fakeLocal('drop', log);
+    const engine = { ...base, translate: async (r, t) => { const gate = hold; hold = null; if (gate) await gate; return base.translate(r, t); } };
+    const api = newTr(engine, {}, { now: () => clock });
+    const blocks = () => [0, 1, 2].map((i) => el('p', [text(`Tabs ${i} ${'t'.repeat(50)} `), el('b', [text(`bold ${i}`)])]));
+    const grouping = async () => { log.length = 0; api.clearCache(); await run(blocks(), 'x', { tr: api }); return withSeams(log).length > 0; };
+    const MIN = 60 * 1000;
+    // tab Y starts grouping while the pair is healthy, and its request is held
+    let release;
+    hold = new Promise((resolve) => { release = resolve; });
+    const slow = run(blocks(), 'x', { tr: api });
+    await sleep(60);
+    await grouping(); // tab X trips the pair: 10 minutes
+    clock += 10 * MIN + 1;
+    await grouping(); // X probes and fails: 20 minutes
+    release(); // tab Y's request comes back bad: a non-probing trip
+    await slow;
+    clock += 11 * MIN; // 11 minutes after the 20-minute pause began
+    check('shared pair: a second tab\'s late trip does not rewrite a 20 minute pause back to 10', (await grouping()) === false, '');
+    clock += 10 * MIN;
+    check('shared pair: and the pause still ends at 20 minutes', (await grouping()) === true, '');
+  }
+
+  // ---- a pair with no multi-node segments does not pay the small first request ----
+  {
+    const log = [];
+    const singles = Array.from({ length: 8 }, (_v, i) => el('p', [text(`Single ${i} ${'s'.repeat(150)}`)]));
+    await run(singles, 'keep', { tr: newTr(fakeLocal('keep', log)) });
+    check('first request: a page with only one-node blocks uses the normal first chunk', (log[0] || []).join('').length > T.LOCAL_PROBE_FIRST + 300, JSON.stringify((log[0] || []).map((t) => t.length)));
+    const log2 = [];
+    const api = newTr(fakeLocal('keep', log2));
+    const multi = () => Array.from({ length: 8 }, (_v, i) => el('p', [text(`Multi ${i} ${'m'.repeat(60)} `), el('b', [text(`bold ${i}`)])]));
+    await run(multi(), 'x', { tr: api });
+    const firstSize = (log2[0] || []).length;
+    log2.length = 0;
+    api.clearCache();
+    await run(multi(), 'x', { tr: api });
+    check('first request: once a pair\'s markers have worked, its first request is the normal size (more segments than the small probe)', (log2[0] || []).length > firstSize, `${firstSize} -> ${(log2[0] || []).length}`);
   }
 
   // ---- a download that is stopped from elsewhere ----

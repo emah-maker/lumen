@@ -2065,7 +2065,7 @@ function buildTranslatePacks(card) {
   let downloadingCode = '';
   // Delete asks twice (a second click within 4 seconds): a pack is 20 to 55 MB of download.
   const confirmDelete = (label, confirmLabel, action, cls = 'danger', id) => {
-    const b = h('button', { class: cls, text: label, ...(id ? { id } : {}) });
+    const b = h('button', { class: cls, text: label, 'aria-label': label, ...(id ? { id } : {}) }); // the name stays put; the live region says "Click again"
     const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' }); // screen readers hear "Click again" (one region per button)
     const wrap = h('span', { class: 'confirm-delete' }, b, announce);
     wrap.style.display = 'contents';
