@@ -37,12 +37,12 @@ const J = (v) => JSON.stringify(v);
   check('close: a tab the user pinned after the AI opened it is not closed even if handOver was missed', ids(M.closeSelection([mk(9, { pinned: true })])) === '');
   check('close setting: only off / ask / always, anything else is off', J(['off', 'ask', 'always', 'x', null, 1].map(M.cleanCloseSetting)) === '["off","ask","always","off","off","off"]');
   check('after a run: nothing opened, nothing to offer', M.closeAfterRun({ setting: 'always', n: 0 }) === 'none');
-  check('after a run: Off still offers a quiet "Close N tabs"; Ask asks; Always closes', M.closeAfterRun({ setting: 'off', n: 2 }) === 'offer' && M.closeAfterRun({ setting: 'ask', n: 2 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 2 }) === 'close');
+  check('after a run: Off shows nothing under the reply; Ask asks; Always closes', M.closeAfterRun({ setting: 'off', n: 2 }) === 'none' && M.closeAfterRun({ setting: 'ask', n: 2 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 2 }) === 'close');
 }
 
 // ---- hands-off mode: the pure rule
 {
-  const actions = ['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab'];
+  const actions = ['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab', 'group_tabs', 'ungroup_tabs'];
   check('hands-off: every tool that acts is refused on a tab the AI did not open', actions.every((tool) => M.handsOffCheck({ tool, handsOff: true, ownTab: false }) !== null));
   check('hands-off: reading is never refused', ['read_page', 'find', 'screenshot', 'read_tabs', 'list_tabs', 'read_urls', 'web_search', 'wait_for', 'read_pdf', 'open_tab', 'switch_tab'].every((tool) => M.handsOffCheck({ tool, handsOff: true, ownTab: false }) === null));
   check('hands-off: a tab the AI opened is its to work in', actions.every((tool) => M.handsOffCheck({ tool, handsOff: true, ownTab: true }) === null));
@@ -126,7 +126,8 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const state = { active: 1, open: new Set([1]), ai: new Set(), handsOff: false };
     const agent = newAgent(state);
     const events = [];
-    const w = { isDestroyed: () => false };
+    const field = { same: true };
+    const w = { isDestroyed: () => false, executeJavaScriptInIsolatedWorld: async () => field.same };
     M.userInput.key(w, Date.now() - 1300); // 200 ms left
     const started = Date.now();
     await agent.inTask(null, new AbortController().signal, async () => {
@@ -139,6 +140,49 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     await agent.waitForUserTyping({ isDestroyed: () => false });
     check('agent: no wait when the user has not typed there', Date.now() - idle < 100);
     void events;
+    // a different field in the same tab: no wait; the user still typing in the same field after the cap: stop and say so
+    const other = { isDestroyed: () => false, executeJavaScriptInIsolatedWorld: async () => false };
+    M.userInput.key(other, Date.now());
+    const t0 = Date.now();
+    await agent.waitForUserTyping(other, 3);
+    check('agent: the user typing in another field of the tab does not hold the AI up', Date.now() - t0 < 100);
+    const capped = { isDestroyed: () => false, executeJavaScriptInIsolatedWorld: async () => true };
+    const realCap = M.TYPING_WAIT_CAP_MS;
+    M.TYPING_WAIT_CAP_MS = 400; // (the module's own constant, shortened for this check)
+    let stopped = null;
+    M.userInput.key(capped, Date.now());
+    const keepTyping = setInterval(() => M.userInput.key(capped, Date.now()), 100);
+    try { await agent.waitForUserTyping(capped, 3); } catch (e) { stopped = e.message; }
+    clearInterval(keepTyping);
+    M.TYPING_WAIT_CAP_MS = realCap;
+    check('agent: past the cap it stops and asks instead of typing over the user', /still typing in this field/.test(stopped || ''), String(stopped));
+
+    // group_tabs / ungroup_tabs move the user's tabs about: refused for tabs the AI did not open
+    {
+      const st = { active: 1, open: new Set([1, 2]), ai: new Set([2]), handsOff: true };
+      const ag = newAgent(st);
+      const sig = new AbortController().signal;
+      const m = []; m.settings = { model: 'claude-opus-5' };
+      const go = (name, input) => ag.inTask(1, sig, () => ag.ensureAllowed(name, () => {}, sig, { input }), m).then(() => null, (e) => e.message);
+      check('hands-off: group_tabs with a tab of the user\'s is refused', /Hands-off/.test(await go('group_tabs', { name: 'x', tab_ids: [1, 2] }) || ''));
+      check('hands-off: ungroup_tabs likewise', /Hands-off/.test(await go('ungroup_tabs', { tab_ids: [1] }) || ''));
+      check('hands-off: grouping only the AI\'s own tabs is fine', (await go('group_tabs', { name: 'x', tab_ids: [2] })) === null);
+    }
+
+    // closing: the guards live in main.js (checked here as source, since the main process cannot load in plain Node)
+    {
+      const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
+      const close = /async function aiTabsClose[\s\S]*?\n\}\n/.exec(main)?.[0] || '';
+      check('close: the unsaved-text guard runs on every path, not only the automatic one', /hasUnsavedInput\(tab\.view\.webContents\)/.test(close) && !/auto && alive\(tab\) && \(await hasUnsavedInput/.test(close));
+      check('close: busy / bound / user-owned is checked again after that wait', /aiTabSelect\(\{ \.\.\.selector, auto, rec \}\)\.some\(\(x\) => x\.tab === tab\)/.test(close));
+      check('close: Undo is recorded only for tabs that really closed', /results\.filter\(\(r\) => r\.item\)/.test(close) && /await closeAiTab\(rec, tab\)\) \? \{ item \}/.test(close));
+      const unload = /wc\.on\('will-prevent-unload'[\s\S]*?tab\.unloadAsked = true/.exec(main)?.[0] || '';
+      check('close: a "Leave site?" page is kept open without the question (which would bring the tab to the front)', /tab\.aiClosing/.test(unload) && /tab\.closing = false/.test(unload) && unload.indexOf('tab.aiClosing') < unload.indexOf('unloadAsked = true'));
+      check('close: Always closes through the same guarded path and reports what it kept', /aiTabsClose\(\{ runId \}, \{ auto: true \}\)\.then\(\(\{ closed, kept, token \}\)/.test(main));
+      check('close: a call naming neither a run nor a chat closes nothing', /s\.runId === null && s\.chatId === null \? \{ closed: 0, kept: 0, token: 0 \}/.test(main) && /ipcMain\.handle\('agent:ai-tabs-close', \(_e, o\) => aiTabsCloseFor\(o\)\)/.test(main));
+      const ag = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8');
+      check('clicks: a background tab gets a trusted click (Input.dispatchMouseEvent, no focus) before page events', /backgroundClick\(wc, target\.x, target\.y\)/.test(ag) && /Input\.dispatchMouseEvent/.test(ag) && !/\.focus\(\)/.test(/async backgroundClick[\s\S]*?\n {2}\}/.exec(ag)?.[0] || ''));
+    }
 
     // the user's caret is saved before a tool acts in the page and put back after, only when it matters
     const ran = [];
@@ -203,7 +247,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: it is a saved setting (off by default) and reaches the strip through prefs:ui', /hideAiTabs: false/.test(backend) && /hideAiTabs: p\.hideAiTabs === true/.test(backend) && /'aiHandsOff', 'hideAiTabs'\]\.includes\(key\)/.test(backend));
     const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8');
     const button = /<button[^>]*id="hide-ai-tabs"[^>]*>/.exec(html)?.[0] || '';
-    check('hide toggle: a real button with aria-pressed and a label, in the sidebar', /aria-pressed="false"/.test(button) && /aria-label=/.test(button) && /type="button"/.test(button) && html.indexOf('id="hide-ai-tabs"') > html.indexOf('id="sidebar"'));
+    check('hide toggle: a real button with aria-pressed and a label, on the tab strip (not the crowded sidebar head)', /aria-pressed="false"/.test(button) && /aria-label=/.test(button) && /type="button"/.test(button) && html.indexOf('id="hide-ai-tabs"') < html.indexOf('id="sidebar"') && html.indexOf('id="hide-ai-tabs"') > html.indexOf('id="tabs"') && !app.includes("hideAiButton.setAttribute('aria-label'"));
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
     check('hide toggle: its labels say the count, singular and plural', ['off', 'on'].every((k) => en[`sidebar.hideAiTabs.${k}.one`]?.includes('{count}') && en[`sidebar.hideAiTabs.${k}.other`]?.includes('{count}')));
     const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');

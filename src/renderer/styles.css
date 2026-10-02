@@ -266,7 +266,9 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab.pinned .tab-ai-mark, .tab.sleeping .tab-ai-mark { opacity: 0.6; }
 @container tab (max-width: 60px) { .tab-ai-mark { display: none !important; } }
 /* [ai manners] The sidebar's "hide the tabs the AI opened" toggle: shown while the AI has tabs open (or the toggle is on), with their count. */
-.hide-ai-tabs { position: relative; }
+.hide-ai-tabs { position: relative; width: 28px; height: 28px; flex: none; }
+.hide-ai-count { position: absolute; top: 0; right: -1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 13px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
+.hide-ai-count[hidden] { display: none; }
 .hide-ai-tabs[hidden] { display: none; }
 .hide-ai-tabs .slash { opacity: 0; }
 .hide-ai-tabs[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }

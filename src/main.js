@@ -1996,6 +1996,13 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   let allowNextUnload = false;
   wc.on('will-prevent-unload', (event) => {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
+    if (tab.aiClosing) { // [ai manners] closing a tab the AI opened never asks "Leave site?" (that would pull the tab to the front): the page keeps it, the tab stays open
+      tab.aiCloseKept = true;
+      tab.closing = false;
+      event.preventDefault();
+      sendTabs();
+      return;
+    }
     tab.unloadAsked = true; // requestCloseTab's frozen-page timeout leaves this close to the user
     sendTabs(); // back in the strip while it asks
     dialogs.showMessageBox(win, {
@@ -4071,20 +4078,41 @@ function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null } =
 }
 // Closes them (each goes through requestCloseTab: a page's "Leave site?" is still asked). `auto`: also keeps a tab that holds
 // typed text. Returns { closed, token }; the token undoes it (aiTabsReopen).
-async function aiTabsClose(selector = {}, { auto = false } = {}) {
-  const items = [];
-  for (const { rec, tab } of aiTabSelect({ ...selector, auto })) {
-    if (auto && alive(tab) && (await hasUnsavedInput(tab.view.webContents).catch(() => false))) continue;
-    if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id)) continue; // the user took it over, or it closed, while this waited
-    items.push({ url: tabUrl(tab), partition: tab.isolated || null, rec });
+// A tab holding text typed into a form is never closed (by any path: the button, a menu, the chat row or the setting): the text
+// would be lost, and Undo only brings the address back. A page that asks "Leave site?" is kept open too, without the question being
+// shown (it would bring the tab to the front). Only tabs that really closed are recorded for Undo.
+// Returns { closed, kept, token }: `kept` tabs stayed open for one of those reasons.
+function closeAiTab(rec, tab) {
+  return new Promise((resolve) => {
+    tab.aiClosing = true;
+    tab.aiCloseKept = false;
     withWindow(rec, () => requestCloseTab(tab.id));
-  }
+    const began = Date.now();
+    const poll = setInterval(() => {
+      const gone = !tabAnywhere(tab.id);
+      if (!gone && !tab.aiCloseKept && Date.now() - began < CLOSE_TIMEOUT_MS + 1500) return;
+      clearInterval(poll);
+      tab.aiClosing = false;
+      resolve(gone);
+    }, 50);
+  });
+}
+async function aiTabsClose(selector = {}, { auto = false } = {}) {
+  const picked = aiTabSelect({ ...selector, auto });
+  const results = await Promise.all(picked.map(async ({ rec, tab }) => {
+    if (alive(tab) && (await hasUnsavedInput(tab.view.webContents).catch(() => false))) return { kept: true };
+    // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
+    if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
+    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
+    return (await closeAiTab(rec, tab)) ? { item } : { kept: true };
+  }));
+  const items = results.filter((r) => r.item).map((r) => r.item);
   const token = items.length ? ++aiCloseSeq : 0;
   if (token) {
     aiCloseUndo.set(token, items);
     while (aiCloseUndo.size > 20) aiCloseUndo.delete(aiCloseUndo.keys().next().value);
   }
-  return { closed: items.length, token };
+  return { closed: items.length, kept: results.filter((r) => r.kept).length, token };
 }
 // Undo of a close: the tabs come back in the background, as the user's own tabs (they are theirs to keep now), and leave the
 // "Reopen Closed Tab" list again.
@@ -4109,8 +4137,10 @@ function aiTabsAfterRun(runId) {
   if (mode === 'none') return null;
   return { n: aiTabSelect({ runId, auto: mode === 'close' }).length, mode };
 }
-const cleanSelector = (o) => ({ runId: o?.runId ?? null, chatId: typeof o?.chatId === 'string' ? o.chatId : null });
-ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsClose(cleanSelector(o)));
+// A close always names the run or the chat whose tabs it means: a call with neither closes nothing (it must never mean "every AI tab").
+const cleanSelector = (o) => ({ runId: Number.isFinite(Number(o?.runId)) && o?.runId !== null && o?.runId !== undefined ? Number(o.runId) : null, chatId: typeof o?.chatId === 'string' && o.chatId ? o.chatId : null });
+const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === null && s.chatId === null ? { closed: 0, kept: 0, token: 0 } : aiTabsClose(s); };
+ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
 // The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
 // the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
@@ -6566,7 +6596,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
-        aiTabsClose({ runId }, { auto: true }).then(({ closed, token }) => chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: closed, token })).catch(() => {});
+        aiTabsClose({ runId }, { auto: true }).then(({ closed, kept, token }) => chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: closed, kept, token })).catch(() => {});
       }
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }

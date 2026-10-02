@@ -261,6 +261,26 @@ function focusSave() {
   })()`;
 }
 
+// Is the field the user's caret is in the one a tool is about to type into? `id` null: whichever field has the page's focus (a key press
+// goes there). false when the user is in no text field, or in another one than element `id`.
+function userInField(id = null) {
+  return `(() => {
+    ${HELPERS}
+    let a = document.activeElement;
+    for (let i = 0; i < 10 && a; i++) {
+      let inner = a.shadowRoot && a.shadowRoot.activeElement;
+      if (!inner && a.tagName === 'IFRAME') { try { inner = a.contentDocument && a.contentDocument.activeElement; } catch { inner = null; } }
+      if (!inner || inner === a) break;
+      a = inner;
+    }
+    const plain = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'];
+    const typable = a && a !== document.body && a !== document.documentElement && (a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !plain.includes(a.type)));
+    if (!typable) return false;
+    const target = ${id === null ? 'null' : `entryFor(${Number(id)})`};
+    return ${id === null ? 'true' : 'Boolean(target && target.el === a)'};
+  })()`;
+}
+
 // ...and back. `exceptId`: the element the tool just typed into (a tool that typed into the very field the user was in
 // has changed its text on purpose: its caret is left where the typing put it).
 function focusRestore(exceptId = null) {
@@ -408,4 +428,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

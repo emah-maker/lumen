@@ -2097,21 +2097,31 @@ class Agent {
   // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
   handsOffCheck(name, input = {}) {
     if (!manners.isActionTool(name) || !this.browser.handsOff?.()) return;
-    let id = null;
-    try { id = name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null); } catch { return; } // (no tab / a closed one: the tool says so itself)
-    if (id === null || id === undefined) return;
-    const refusal = manners.handsOffCheck({ tool: name, handsOff: true, ownTab: Boolean(this.browser.isAiTab?.(id)) });
-    if (refusal) throw new Error(refusal);
+    let ids = [];
+    try {
+      if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
+      else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
+    } catch { return; } // (no tab / a closed one: the tool says so itself)
+    for (const id of ids) {
+      if (id === null || id === undefined) continue;
+      const refusal = manners.handsOffCheck({ tool: name, handsOff: true, ownTab: Boolean(this.browser.isAiTab?.(id)) });
+      if (refusal) throw new Error(refusal);
+    }
   }
 
-  // The user is typing in this tab right now: the AI's typing waits (their keys and ours would mix in one field).
-  // Gives up after TYPING_WAIT_CAP_MS so a user who never stops can't stall the run for ever.
-  async waitForUserTyping(wc) {
+  // The user is typing in the field the AI is about to type into (`elementId`; null: whichever field has the page's focus): the AI's
+  // typing waits (their keys and ours would mix in one field). A different field in the same tab does not wait (the caret is put back
+  // after). After TYPING_WAIT_CAP_MS the AI stops and says so instead of typing over the user.
+  async waitForUserTyping(wc, elementId = null) {
     const began = Date.now();
     let told = false;
     for (;;) {
       const wait = manners.typingWait({ typedAt: manners.userInput.typedAt(wc) });
-      if (!wait || Date.now() - began >= manners.TYPING_WAIT_CAP_MS || this.signalAborted()) return;
+      if (!wait || this.signalAborted()) return;
+      let same = true; // (unsure: assume the same field)
+      try { same = await runScript(wc, scripts.userInField(elementId), 3000); } catch {}
+      if (!same) return;
+      if (Date.now() - began >= manners.TYPING_WAIT_CAP_MS) throw new Error('The user is still typing in this field, so nothing was typed. Stop here and ask them to pause or to finish the field themselves.');
       if (!told) { told = true; try { taskScope.getStore()?.gate?.emit?.({ type: 'notice', text: this.browser.typingText?.() || 'Waiting while you type…' }); } catch {} }
       await sleep(Math.min(wait, 250));
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
@@ -2736,8 +2746,10 @@ ${same}
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
         // screen, so it gets a DOM click instead.
         await this.keepUserFocus(wc, async () => {
-          if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
-          else await this.mouseClick(wc, x, y);
+          if (target.covered) await runScript(wc, scripts.domClick(id));
+          else if (!this.taskTabInFront()) { // behind another tab: a trusted click through the tab's own protocol session, else page events
+            if (!(await this.backgroundClick(wc, target.x, target.y))) await runScript(wc, scripts.domClick(id));
+          } else await this.mouseClick(wc, x, y);
         });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
@@ -2844,7 +2856,7 @@ ${same}
       }
       case 'type_text': {
         const wc = this.requireTab();
-        await this.waitForUserTyping(wc); // [ai manners] the user is typing in this tab: wait for a pause
+        await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
         const status = await this.keepUserFocus(wc, async () => {
           const st = await runScript(wc, scripts.focusForTyping(input.element_id));
           if (st === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
@@ -2886,6 +2898,7 @@ ${same}
         await this.keepUserFocus(wc, async () => {
           if (inFront) { await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)); return; }
           const zoom = wc.getZoomFactor();
+          if (await this.backgroundClick(wc, input.x * ratio / zoom, input.y * ratio / zoom)) return;
           if (!(await runScript(wc, scripts.domClickAt(Math.round(input.x * ratio / zoom), Math.round(input.y * ratio / zoom))))) throw new Error('Nothing is at that position.');
         });
         await settleAfterAction(wc);
@@ -3016,6 +3029,25 @@ ${same}
       }
       wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
     });
+  }
+
+  // [ai manners] A click in a tab that is not on screen, as the browser's own (trusted) input: Input.dispatchMouseEvent over the tab's
+  // debugger session, which needs neither the view in front nor the window's focus (so file pickers, popups and payment buttons that
+  // ignore script-made clicks still work). x, y: CSS pixels. Reuses a session someone else holds; false when it cannot (the caller
+  // falls back to page events).
+  async backgroundClick(wc, x, y) {
+    const dbg = wc.debugger;
+    let attached = false;
+    try {
+      if (!dbg.isAttached()) { dbg.attach('1.3'); attached = true; }
+      const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
+      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
+      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+      return true;
+    } catch { return false; } finally {
+      if (attached) { try { dbg.detach(); } catch {} }
+    }
   }
 
   async mouseClick(wc, x, y) {

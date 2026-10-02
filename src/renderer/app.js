@@ -1642,9 +1642,9 @@ function layoutSig(state) {
 }
 
 // [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
-// in front (and one being dragged), so what you are looking at never vanishes. They stay open; the toggle shows how many are out of sight.
+// in front (and one being dragged), and one playing sound (its speaker button would vanish), so nothing you are using vanishes. They stay open; the toggle shows how many are out of sight.
 function aiHiddenTab(tab, state) {
-  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 function syncHideAiToggle(state) {
@@ -1657,7 +1657,6 @@ function syncHideAiToggle(state) {
   hideAiButton.setAttribute('aria-pressed', String(on));
   const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
   hideAiButton.title = label;
-  hideAiButton.setAttribute('aria-label', label);
   const badge = $('hide-ai-tabs-count');
   badge.hidden = count === 0;
   badge.textContent = count > 99 ? '99+' : String(count);

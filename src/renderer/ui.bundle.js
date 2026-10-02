@@ -5263,9 +5263,9 @@ function layoutSig(state) {
 }
 
 // [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
-// in front (and one being dragged), so what you are looking at never vanishes. They stay open; the toggle shows how many are out of sight.
+// in front (and one being dragged), and one playing sound (its speaker button would vanish), so nothing you are using vanishes. They stay open; the toggle shows how many are out of sight.
 function aiHiddenTab(tab, state) {
-  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 function syncHideAiToggle(state) {
@@ -5278,7 +5278,6 @@ function syncHideAiToggle(state) {
   hideAiButton.setAttribute('aria-pressed', String(on));
   const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
   hideAiButton.title = label;
-  hideAiButton.setAttribute('aria-label', label);
   const badge = $('hide-ai-tabs-count');
   badge.hidden = count === 0;
   badge.textContent = count > 99 ? '99+' : String(count);
@@ -7186,10 +7185,10 @@ $('agent-stop')?.addEventListener('click', () => {
   // closes them itself and sends 'ai_tabs_closed' ({ n, token }): the row then says so and offers Undo. Never closes a tab you
   // used, a pinned tab or the one a chat lives in (main skips those: the count is what can really close).
   function aiTabsRow(append) {
-    return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs' }));
+    return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs', role: 'status' }));
   }
   const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
-  function undoRow(box, closed, token) {
+  function undoRow(box, closed, token, kept = 0) {
     box.replaceChildren();
     box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
     const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
@@ -7199,6 +7198,7 @@ $('agent-stop')?.addEventListener('click', () => {
       box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.reopened', result?.reopened || 0, 'Reopened {count} tabs.') }));
     });
     box.append(undo);
+    if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
     box.setAttribute('role', 'status');
   }
   window.showAiTabs = function showAiTabs(append, info, runId) {
@@ -7212,7 +7212,7 @@ $('agent-stop')?.addEventListener('click', () => {
       close.disabled = true;
       const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
       if (!result?.closed) { box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: window.t?.('chat.aiTabs.none') || 'Nothing to close.' })); return; }
-      undoRow(box, result.closed, result.token);
+      undoRow(box, result.closed, result.token, result.kept);
     });
     box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
     if (info.mode === 'ask') {
@@ -7223,7 +7223,7 @@ $('agent-stop')?.addEventListener('click', () => {
   };
   window.showAiTabsClosed = function showAiTabsClosed(append, event) {
     if (!event?.n || !event.token) return;
-    undoRow(aiTabsRow(append), event.n, event.token);
+    undoRow(aiTabsRow(append), event.n, event.token, event.kept);
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {
