@@ -1,5 +1,7 @@
 // TradingView widget (run from test/units.js): symbol and option checks, the embed addresses, and the
 // connector through createWidgets' pure parts (no network, no Electron, nothing opens).
+const fs = require('fs');
+const path = require('path');
 const TV = require('../src/features/tradingview-view');
 const { cleanWidget, CONNECTORS } = require('../src/features/widgets');
 const WL = require('../src/features/widget-layout');
@@ -82,7 +84,7 @@ module.exports = async function tradingviewUnits(check) {
   let fd = await K.fetch(linkedCfg, fake([{ id: 11, name: 'Tech (renamed)', symbols: ['NVDA', 'AMD', 'AAPL'] }]));
   let hashOpts = JSON.parse(decodeURIComponent(new URL(fd.dark).hash.slice(1)));
   check('tradingview: a synced watchlist shows the account’s current symbols and name', fd.synced && hashOpts.tabs[0].symbols.map((x) => x.s).join() === 'NVDA,AMD,AAPL' && fd.name === 'Tech (renamed)' && !fd.note, JSON.stringify(fd));
-  check('tradingview: a synced list refreshes every 15 minutes, a plain one daily', K.ttl(fd) === TV.SYNC_MS && K.ttl({ synced: false }) === 24 * 3600e3, '');
+  check('tradingview: a synced list refreshes every 15 minutes, a plain one daily', K.ttl(fd) === TV.SYNC_MS && K.ttl({ fit: 1, synced: false }) === 24 * 3600e3, '');
   fd = await K.fetch(linkedCfg, fake([{ id: null, name: 'Watchlist', symbols: ['SPX'] }]));
   hashOpts = JSON.parse(decodeURIComponent(new URL(fd.dark).hash.slice(1)));
   check('tradingview: signed out, a synced list keeps its last symbols and says to sign in', /Sign in to TradingView/.test(fd.note) && hashOpts.tabs[0].symbols.map((x) => x.s).join() === 'AAPL,TSLA', JSON.stringify(fd));
@@ -97,6 +99,42 @@ module.exports = async function tradingviewUnits(check) {
   check('tradingview: sync off means the account isn’t read either', !called && !fd.synced, '');
   check('tradingview: a watchlist survives cleanWidget', cleanWidget({ id: 'wtv00003', type: 'tradingview', tv: { view: 'watchlist', symbols: ['###A', 'AAPL'], list: { id: 5, name: 'A' } } })?.tv?.list?.id === 5, '');
   check('tradingview: the watchlist summary line names the list and count', WS.widgetSummary({ type: 'tradingview', tv: { view: 'watchlist', symbols: ['###A', 'AAPL', 'TSLA'], list: { id: 5, name: 'Tech' }, sync: true } }, {}) === 'Tech · 2 symbols · synced', WS.widgetSummary({ type: 'tradingview', tv: { view: 'watchlist', symbols: ['###A', 'AAPL', 'TSLA'], list: { id: 5, name: 'Tech' }, sync: true } }, {}));
+  // ---- small cards: the compact addresses and how the page fits them (features/tradingview-fit.js) ----
+  const FIT = require('../src/features/tradingview-fit');
+  const hashOf = (u) => JSON.parse(decodeURIComponent(new URL(u).hash.slice(1)));
+  const chartCfg = { symbol: 'NASDAQ:AAPL', interval: 'D', view: 'chart', theme: 'light' };
+  const cChart = TV.embedUrl(chartCfg, false, true);
+  check('tradingview compact: a chart becomes the mini price view (the full chart is all toolbar on a small card)', new URL(cChart).pathname === '/embed-widget/mini-symbol-overview/' && hashOf(cChart).symbol === 'NASDAQ:AAPL' && TV.isEmbedUrl(cChart), cChart);
+  check('tradingview compact: leaving compact off changes nothing (the default is the full address)', TV.embedUrl(chartCfg, false) === TV.embedUrl(chartCfg, false, false) && new URL(TV.embedUrl(chartCfg, false)).pathname === '/widgetembed/', '');
+  const miniCfg = { symbol: 'BINANCE:BTCUSDT', view: 'mini', interval: 'W', theme: 'dark' };
+  check('tradingview compact: the mini view is already compact and stays as it is', TV.embedUrl(miniCfg, true, true) === TV.embedUrl(miniCfg, true), '');
+  const multi = { view: 'watchlist', theme: 'light', chart: true, symbols: ['###Tech', 'AAPL', 'TSLA', '###Crypto', 'BINANCE:BTCUSDT', '###Index', 'SPX'] };
+  const fullTabs = hashOf(TV.embedUrl(multi, false));
+  const compTabs = hashOf(TV.embedUrl(multi, false, true));
+  check('tradingview compact: a watchlist with several tabs becomes one flat list with no tab row and no chart on top', fullTabs.tabs.length === 3 && fullTabs.showChart === true && compTabs.tabs.length === 1 && compTabs.showChart === false && compTabs.tabs[0].symbols.length === 4 && compTabs.tabs[0].symbols.map((x) => x.s).join() === 'AAPL,TSLA,BINANCE:BTCUSDT,FOREXCOM:SPXUSD', JSON.stringify(compTabs.tabs));
+  const oneTab = hashOf(TV.embedUrl({ view: 'watchlist', symbols: 'AAPL, TSLA', chart: false }, false, true));
+  check('tradingview compact: a one-tab watchlist keeps its tab and symbols', oneTab.tabs.length === 1 && oneTab.tabs[0].symbols.length === 2, JSON.stringify(oneTab.tabs));
+  check('tradingview compact: every address still fits the new-tab page’s safe URL rule', [cChart, TV.embedUrl(multi, true, true)].every((x) => TV.isEmbedUrl(x) && x.length < 8000 && /^https:\/\/[^\s"'<>\\]+$/i.test(x)), '');
+
+  const P = (view, w, h, extra = {}, was = null, can = true) => FIT.plan({ view, sections: 0, chart: false, ...extra }, w, h, was, can);
+  check('tradingview fit: no size yet means no plan', P('chart', 0, 100) === null && P('chart', 200, 0) === null && FIT.plan(null, 200, 100) === null, '');
+  check('tradingview fit: a roomy chart stays the full chart at full size', JSON.stringify(P('chart', 420, 300)) === '{"compact":false,"scale":1}', JSON.stringify(P('chart', 420, 300)));
+  check('tradingview fit: a chart under 300 x 230 goes compact (the 2 x 2 card is about 160 x 68)', P('chart', 240, 68).compact && P('chart', 299, 400).compact && P('chart', 400, 229).compact && !P('chart', 300, 230).compact, '');
+  check('tradingview fit: a compact chart shrinks the mini view to fit instead of clipping its price', JSON.stringify(P('chart', 160, 68)) === '{"compact":true,"scale":0.65}' && P('chart', 240, 120).scale === 1, JSON.stringify(P('chart', 160, 68)));
+  check('tradingview fit: text never shrinks below 0.6', P('chart', 60, 30).scale === 0.6 && P('mini', 40, 20).scale === 0.6, '');
+  check('tradingview fit: a card at the edge doesn’t flip back at once (20 px margin to leave compact)', P('chart', 310, 240, {}, { compact: true, scale: 1 }).compact && !P('chart', 320, 250, {}, { compact: true, scale: 1 }).compact && !P('chart', 310, 240, {}, null).compact, '');
+  check('tradingview fit: the mini view never goes compact, it only scales', !P('mini', 160, 68).compact && P('mini', 160, 68).scale === 0.65 && P('mini', 300, 200).scale === 1, '');
+  check('tradingview fit: a watchlist with several tabs goes compact when short, one tab never does', P('watchlist', 240, 150, { sections: 3 }).compact && !P('watchlist', 240, 220, { sections: 3 }).compact && !P('watchlist', 240, 68, { sections: 1 }).compact, '');
+  check('tradingview fit: a watchlist with a chart on top goes compact under 320 px', P('watchlist', 300, 300, { sections: 1, chart: true }).compact && !P('watchlist', 300, 330, { sections: 1, chart: true }).compact, '');
+  check('tradingview fit: a narrow watchlist shrinks so its price and change show', P('watchlist', 160, 120, { sections: 1 }).scale === 0.7 && P('watchlist', 400, 120, { sections: 1 }).scale === 1, JSON.stringify(P('watchlist', 160, 120, { sections: 1 })));
+  check('tradingview fit: without a compact address (old data) nothing goes compact, the card still scales', !P('chart', 240, 68, {}, null, false).compact && P('mini', 160, 68, {}, null, false).scale === 0.65, '');
+
+  const cardData = await K.fetch(K.clean({ tv: { view: 'watchlist', symbols: ['###A', 'AAPL', '###B', 'TSLA'], chart: true } }), { tvLists: async () => ({ signedIn: false, lists: [] }) });
+  check('tradingview: the card data carries the compact addresses, the tab count and the chart switch', cardData.fit === 1 && cardData.sections === 2 && cardData.chart === true && TV.isEmbedUrl(cardData.compactLight) && TV.isEmbedUrl(cardData.compactDark) && hashOf(cardData.compactDark).tabs.length === 1, JSON.stringify([cardData.fit, cardData.sections, cardData.chart]));
+  check('tradingview: data without the compact addresses is stale at once, current data keeps its normal life', K.ttl({ view: 'chart' }) === 0 && K.ttl(null) === 0 && K.ttl(cardData) === 24 * 3600e3, String(K.ttl(cardData)));
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'newtab.html'), 'utf8');
+  const wsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'newtab-widgets.js'), 'utf8');
+  check('tradingview: the new-tab page loads the fit module before the widgets and sizes the frame through it', html.indexOf('<script src="../features/tradingview-fit.js">') > 0 && html.indexOf('<script src="../features/tradingview-fit.js">') < html.indexOf('<script src="newtab-widgets.js">') && /TradingViewFit/.test(wsrc) && /ResizeObserver\(place\)/.test(wsrc) && /\.tv-fit \.w-frame/.test(html), '');
   const size = WL.defaultSize('tradingview');
   check('tradingview: a new chart starts wide (not squeezed into the side area)', size.w === 6 && size.h === 6, JSON.stringify(size));
 };

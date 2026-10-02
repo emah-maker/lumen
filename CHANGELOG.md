@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- TradingView on the home page fits small cards: a chart that is too small for TradingView's toolbar shows the compact price view instead of a strip of buttons, a watchlist with several tabs becomes one flat list when the card is short, and the price view shrinks to fit rather than being cut off. They switch back to the full views when the card grows.
+- Close tabs the AI opened from your taskbar: right-click Lumen's taskbar icon (Windows) or Dock icon (macOS) and choose Close tabs the AI opened. It closes them in every window without bringing Lumen forward, with the same rules and Undo as before (never a tab you used, a pinned tab, the tab a chat lives in, or one holding text you typed). The same command is in the ⋯ menu (Close Tabs Opened by AI) and, on macOS, the Tab menu.
+
 ## 0.5.2 (2026-10-02)
 
 - AI tab manners: tabs the AI opens are marked in the tab strip (with an "Opened by AI" note on hover) and open in the background. Close them again in one step, with Undo, from under the reply, the tab menu or the chat menu; Settings → AI → close tabs the AI opened is Off, Ask or Always, and it never closes a tab you used, a pinned tab or the tab a chat lives in. A button on the tab strip hides the tabs the AI opened (they stay open; the tab in front stays shown).

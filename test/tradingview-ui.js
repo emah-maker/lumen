@@ -24,7 +24,8 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     await ui.waitForSelector('.tab');
     const account = (lists) => app.evaluate((_e, l) => { global.__tvCalls = 0; global.__tvLists = async () => { global.__tvCalls++; return l; }; }, lists);
     const W = (method, ...args) => app.evaluate((_e, [m, a]) => global.__widgets[m](...a), [method, args]);
-    const settingsFile = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'));
+    // settings.json is written off the main thread, so the file can lag what Settings shows: flush first (main.js __settingsFlush), then read.
+    const settingsFile = async () => { await app.evaluate(() => { if (global.__settingsFlush) global.__settingsFlush(); }); return JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')); };
 
     // Signed out: TradingView answers with its sample list, whose id is null.
     await account([{ id: null, name: 'Watchlist', symbols: ['###Indices', 'SPCFD:SPX'] }]);
@@ -52,7 +53,7 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     await sp("{ const l = document.getElementById('widget-tv-lists'); l.value = '11'; l.dispatchEvent(new Event('change')); }");
     await sp("document.getElementById('widget-save').click()");
     await waitFor("!document.getElementById('widget-form')");
-    let saved = (settingsFile().homeWidgets || []).find((w) => w.type === 'tradingview');
+    let saved = ((await settingsFile()).homeWidgets || []).find((w) => w.type === 'tradingview');
     check('Settings: the watchlist is saved linked to the account list, sync on, the account’s sections kept', saved && saved.tv.view === 'watchlist' && saved.tv.list?.id === 11 && saved.tv.sync === true && saved.tv.symbols.join() === '###Big,NASDAQ:AAPL,NASDAQ:MSFT', JSON.stringify(saved));
     const item = await sp("[...document.querySelectorAll('.widget-item')].map((e) => e.textContent).join('|')");
     check('Settings: the list row says which list, how many symbols, and that it syncs', /Tech · 2 symbols · synced/.test(item), item);
@@ -77,7 +78,7 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     const page = (code) => app.evaluate((_e, c) => global.__wtab.webContents.executeJavaScript(c), code);
     let got = null;
     for (let i = 0; i < 40 && !got; i++) {
-      got = await page(`(() => { const c = document.querySelector('.w-card[data-id="${saved.id}"]'); const f = c && c.querySelector('iframe'); return f ? { cls: c.className, src: f.getAttribute('src'), sandbox: f.getAttribute('sandbox'), note: (c.querySelector('.tv-note') || {}).textContent || '', title: f.title } : null; })()`);
+      got = await page(`(() => { const c = document.querySelector('.w-card[data-id="${saved.id}"]'); const f = c && c.querySelector('iframe'); return f && f.getAttribute('src') ? { cls: c.className, src: f.getAttribute('src'), sandbox: f.getAttribute('sandbox'), note: (c.querySelector('.tv-note') || {}).textContent || '', title: f.title } : null; })()`);
       if (!got) await sleep(150);
     }
     check('new tab: the watchlist card frames TradingView’s market overview, sandboxed without top navigation', got && /tv-watchlist/.test(got.cls) && new URL(got.src).pathname === '/embed-widget/market-overview/' && !/allow-top-navigation/.test(got.sandbox) && got.title === 'Tech from TradingView', JSON.stringify(got));
@@ -89,7 +90,7 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     await sp("{ const a = document.getElementById('widget-tv-symbols'); a.value += '\\nNYSE:SPY'; a.dispatchEvent(new Event('input', { bubbles: true })); }");
     await sp("document.getElementById('widget-save').click()");
     await waitFor("!document.getElementById('widget-form')");
-    saved = settingsFile().homeWidgets.find((w) => w.id === saved.id);
+    saved = (await settingsFile()).homeWidgets.find((w) => w.id === saved.id);
     check('Settings: typing over an imported list unlinks it and keeps what was typed', saved && !saved.tv.list && saved.tv.symbols.includes('NYSE:SPY'), JSON.stringify(saved && saved.tv));
   } finally {
     await app.close().catch(() => {});
