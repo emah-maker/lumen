@@ -67,7 +67,7 @@ const CLI_ACCESS_EXTRA = {
   grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
   antigravityFullAccess: ', with its terminal sandbox off',
 };
-const cliAccessDesc = (name, extra) => `${name} in the sidebar works as it does in your terminal: it can run commands and read and change any of your files${extra}, all without asking first. Lumen’s approval cards and “Don’t let the AI act on my pages” still cover Lumen’s browser tools, but not ${name}’s own tools. This applies to ${name} only. Only turn it on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.`;
+const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Off by default; applies from the next message.`;
 function syncCliAccess() {
   const CA = window.cliAccess;
   const state = CA.masterState(st.prefs);
@@ -84,10 +84,12 @@ function cliAccessRows() {
     for (const key of CA.KEYS) await save(key, value);
     syncCliAccess();
   });
-  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together (each is explained below). Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);
+  for (const r of rows) r.classList.add('sub-row'); // the three switches belong to the master above
+  for (const r of [master, ...rows]) r.classList.add('warn');
   return [master, ...rows];
 }
 function select(key, label, desc, options, { number = false, after } = {}) {
@@ -1642,7 +1644,7 @@ async function buildPrivacy(card) {
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
   const box = (id, text, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked }), text);
   const result = status('clear-status');
-  card.append(stackRow('Clear browsing data', 'For a time range, cookies and site data are removed for the sites you visited or that stored cookies in that time (all of that site’s data, not only the recent part). Cached images and files are always cleared for all time: Electron has no time range for the cache.',
+  card.append(stackRow('Clear browsing data', 'For a time range, cookies and site data are removed for the sites you visited or that stored cookies in that time (all of that site’s data, not only the recent part). Cached images and files are always cleared for all time, whatever range you pick.',
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
@@ -1660,7 +1662,7 @@ async function buildPrivacy(card) {
     }))));
 
   card.group('Tracking and connections').append(
-    toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them: Electron has no full third-party cookie switch.'),
+    toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
     toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
     toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
@@ -2038,7 +2040,7 @@ function buildLanguages(card) {
   const spell = h('div', { class: 'list', id: 'spellcheck-languages' });
   const renderSpell = () => {
     if (st.platform === 'darwin') {
-      spell.replaceChildren(h('span', { class: 'note', text: 'macOS checks spelling in the languages set in System Settings.' }));
+      spell.replaceChildren(h('span', { class: 'note', text: tr('settings.spell.macos', 'macOS checks spelling in the languages set in System Settings.') }));
       return;
     }
     const active = st.spellcheckActive;
@@ -2054,7 +2056,14 @@ function buildLanguages(card) {
     }));
   };
   renderSpell();
-  card.append(stackRow('Spell check languages', null, spell));
+  const spellDetails = h('details', { class: 'disclosure', id: 'spellcheck-details' }, h('summary', {}), spell);
+  const spellSummary = () => {
+    const n = st.platform === 'darwin' ? 0 : (st.spellcheckActive || []).length;
+    spellDetails.querySelector('summary').textContent = n ? tr('settings.spell.summary', 'Spell check languages ({n} selected)', { n }) : tr('settings.spell.summaryNone', 'Spell check languages');
+  };
+  spellSummary();
+  spellDetails.addEventListener('change', () => setTimeout(spellSummary, 0));
+  card.append(h('div', { class: 'row stack' }, spellDetails));
   buildTranslate(card);
 }
 
@@ -2218,9 +2227,9 @@ async function buildExtensions(card) {
     h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.description ? ` · ${e.description}` : ''}` })),
     e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
     h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })))
-    : [h('span', { class: 'note', text: 'No extensions installed.' })]));
+    : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))]));
   render(await S.extensions());
-  card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused: Electron has no disable switch.', list,
+  card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. t’t be paused: Electron has no disable switch.', list,
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
 }
 
@@ -2357,11 +2366,19 @@ function show() {
     const hits = own + subs;
     c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub);
     any ||= hits > 0;
-    c.link.classList.toggle('dim', searching && hits === 0);
+    const dim = searching && hits === 0;
+    c.link.classList.toggle('dim', dim);
+    if (dim) { c.link.setAttribute('aria-disabled', 'true'); c.link.tabIndex = -1; } else { c.link.removeAttribute('aria-disabled'); c.link.removeAttribute('tabindex'); }
+    let badge = c.link.querySelector('.hits');
+    if (searching && hits > 0) {
+      if (!badge) { badge = h('span', { class: 'hits', 'aria-hidden': 'true' }); c.link.append(badge); }
+      badge.textContent = String(hits);
+    } else badge?.remove();
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
   for (const slot of slots.values()) if (slot.isSub) slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id;
   $('no-results').hidden = !searching || any;
+  if (searching && !any) $('no-results-query').textContent = tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() });
 }
 
 function route() {
@@ -2436,6 +2453,7 @@ async function init() {
   }));
   refreshRestartNotes();
   $('search').addEventListener('input', show);
+  $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);

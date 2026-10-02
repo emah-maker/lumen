@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="settings-skills.css" />
 </head>
 <body>
+  <a class="skip" href="#main" data-i18n="settings.skip">Skip to settings</a>
   <aside class="nav">
     <div class="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.1 3.1"/></svg>
@@ -16,9 +17,14 @@
     </div>
     <nav id="nav" aria-label="Settings sections" data-i18n-aria-label="settings.sections"></nav>
   </aside>
-  <main>
+  <main id="main" tabindex="-1">
     <div id="sections"></div>
-    <p id="no-results" class="empty" data-i18n="settings.noResults" hidden>No settings match your search.</p>
+    <div id="no-results" class="empty-state" role="status" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.1 3.1"/></svg>
+      <strong id="no-results-query" data-i18n="settings.noResults">No settings match your search.</strong>
+      <span data-i18n="settings.noResultsHint">Try a different word, like “privacy”, “theme” or “download”.</span>
+      <button type="button" id="clear-search" data-i18n="settings.clearSearch">Clear search</button>
+    </div>
     <p id="unavailable" class="empty" data-i18n="settings.unavailable" hidden>Settings can only be changed from Lumen's own settings tab. Open ⋯ → Settings.</p>
   </main>
   <script src="i18n.js"></script>
