@@ -156,6 +156,53 @@ function prioritize(items) {
   return [...head, ...rest.filter((i) => i.v), ...rest.filter((i) => !i.v)];
 }
 
+// ---- sentences made of several text nodes (on-device engine) ----
+// `A <b>quick</b> brown <a>fox</a> jumps.` is four text nodes. Sent one by one the engine sees four
+// fragments with no context, so the nodes of one block (items with the same `g` from the page's collect) are
+// joined into one segment, a private-use pair marking each seam, and the reply is cut at the seams again.
+// A reply whose seams don't add up is not trusted: that segment goes back to one request per node.
+const SEAM = '\uE000\uE001';
+const SEAM_SPLIT = /\s*\uE000\s*\uE001\s*/;
+const SEGMENT_CHARS = 1200;
+function groupItems(items) {
+  const out = [];
+  let cur = null;
+  const flush = () => {
+    if (!cur) return;
+    if (cur.list.length === 1) { out.push(cur.list[0]); cur = null; return; }
+    let text = '';
+    cur.list.forEach((item, i) => {
+      text += item.text;
+      const next = cur.list[i + 1];
+      if (next) text += ((item.t || next.l) ? ' ' : '') + SEAM; // the space the page had between them stays outside the seam
+    });
+    out.push({ id: cur.list[0].id, text, v: cur.list.some((i) => i.v), nodes: cur.list.map((i) => ({ id: i.id, text: i.text, v: i.v, l: i.l, t: i.t })) });
+    cur = null;
+  };
+  for (const item of items) {
+    if (item.id === 0 || item.g === undefined) { flush(); out.push(item); continue; }
+    if (cur && (cur.g !== item.g || cur.chars + item.text.length > SEGMENT_CHARS)) flush();
+    if (!cur) cur = { g: item.g, list: [], chars: 0 };
+    cur.list.push(item);
+    cur.chars += item.text.length;
+  }
+  flush();
+  return out;
+}
+// A segment's translation -> [[nodeId, text]] or null when the seams were dropped, moved or invented.
+function splitSegment(segment, text) {
+  if (typeof text !== 'string') return null;
+  const parts = text.split(SEAM_SPLIT);
+  if (parts.length !== segment.nodes.length) return null;
+  const pairs = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (/[\uE000\uE001]/.test(parts[i])) return null;
+    if (segment.nodes[i].text.trim() && !parts[i].trim()) return null;
+    pairs.push([segment.nodes[i].id, parts[i]]);
+  }
+  return pairs;
+}
+
 // ---- which engine ----
 const ENGINES = ['local', 'ai'];
 const cleanEngine = (value) => (ENGINES.includes(value) ? value : null);
@@ -241,6 +288,23 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let capped = false;
     const seen = new Map(); // element -> is it on screen (or just below it)?
+    const blocks = new Map(); // element -> its nearest block-level ancestor
+    const blockOf = (el) => {
+      let b = blocks.get(el);
+      if (b === undefined) {
+        b = document.body;
+        for (let e = el; e && e !== document.body; e = e.parentElement) {
+          let d = 'block';
+          try { d = getComputedStyle(e).display; } catch { /* treat as a block */ }
+          if (d !== 'inline' && d !== 'contents' && d !== 'ruby' && d !== 'ruby-text') { b = e; break; }
+        }
+        blocks.set(el, b);
+      }
+      return b;
+    };
+    let gid = 0;
+    let lastBlock = null;
+    let seam = true; // something that is not translated sits between this node and the last one
     const onScreen = (el) => {
       if (!el) return false;
       let v = seen.get(el);
@@ -252,15 +316,17 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
       return v;
     };
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (known.has(n) && !(mine.has(n) && n.data !== mine.get(n))) continue;
-      if (!translatableText(n.data, n.parentElement)) { known.add(n); continue; }
+      if (known.has(n) && !(mine.has(n) && n.data !== mine.get(n))) { seam = true; continue; }
+      if (!translatableText(n.data, n.parentElement)) { known.add(n); if (/\\S/.test(n.data)) seam = true; continue; }
       const [lead, core, trail] = split(n.data);
       if (chars + core.length > limit) { capped = true; break; }
       known.add(n);
       const id = next++;
       byId.set(id, { node: n, orig: n.data, lead, trail });
       chars += core.length;
-      out.push({ id, text: core, v: onScreen(n.parentElement) });
+      const bk = blockOf(n.parentElement);
+      if (seam || bk !== lastBlock) { gid++; lastBlock = bk; seam = false; }
+      out.push({ id, text: core, v: onScreen(n.parentElement), g: gid, l: Boolean(lead), t: Boolean(trail) });
     }
     return { items: out, chars, capped };
   }
@@ -448,7 +514,11 @@ function createTranslate(deps) {
     const pairs = [];
     const fresh = [];
     for (const item of items) {
-      if (map.has(item.text)) pairs.push([item.id, map.get(item.text)]); else fresh.push(item);
+      if (!map.has(item.text)) { fresh.push(item); continue; }
+      const cut = item.nodes ? splitSegment(item, map.get(item.text)) : null;
+      if (!item.nodes) pairs.push([item.id, map.get(item.text)]);
+      else if (cut) pairs.push(...cut);
+      else fresh.push(...item.nodes);
     }
     if (pairs.length) { await script(tab, 'apply', pairs); ctx.firstAt ||= performance.now(); }
     if (!ctx.runner) throw new Error('no-engine');
@@ -457,20 +527,35 @@ function createTranslate(deps) {
     for (const chunk of chunks) {
       if (ctx.token !== runs.get(tab)?.token) return false;
       let pending = chunk;
-      for (let attempt = 0; attempt < 2 && pending.length; attempt++) {
+      const attempts = pending.some((item) => item.nodes) ? 3 : 2; // a segment that fails gets one more round, node by node
+      for (let attempt = 0; attempt < attempts && pending.length; attempt++) {
         const reply = await ctx.runner(pending, ctx.abort.signal);
         if (ctx.token !== runs.get(tab)?.token || !live(tab)) return false;
-        const { ok, missing } = validateReply(pending, reply);
+        const { ok } = validateReply(pending, reply);
         const good = [];
-        for (const item of pending) if (ok.has(item.id)) { good.push([item.id, ok.get(item.id)]); if (item.id !== 0) map.set(item.text, ok.get(item.id)); }
+        const retry = [];
+        for (const item of pending) {
+          if (!ok.has(item.id)) { retry.push(...(item.nodes || [item])); continue; }
+          if (item.nodes) {
+            const cut = splitSegment(item, ok.get(item.id));
+            if (!cut) { retry.push(...item.nodes); continue; }
+            good.push(...cut);
+            map.set(item.text, ok.get(item.id));
+          } else {
+            good.push([item.id, ok.get(item.id)]);
+            if (item.id !== 0) map.set(item.text, ok.get(item.id));
+          }
+        }
         if (good.length) { await script(tab, 'apply', good); ctx.firstAt ||= performance.now(); }
-        pending = pending.filter((item) => missing.includes(item.id));
+        pending = retry;
       }
       done += chunk.length;
       onProgress?.(done / Math.max(1, fresh.length));
     }
     return true;
   }
+
+  const grouped = (items, ctx) => (ctx.via === 'local' ? groupItems(items) : items); // the on-device engine gets whole sentences
 
   const failure = (code) => Object.assign(new Error(code), { code });
 
@@ -509,11 +594,18 @@ function createTranslate(deps) {
       }
       set(tab, { phase: 'download', pair, size, progress: 0 });
       const began = performance.now();
-      try {
-        await loc.ensure(plan.route, { signal: ctx.abort.signal, onProgress: (fraction) => { if (mine()) set(tab, { progress: Math.round(fraction * 100) }); } });
-      } catch (err) {
-        if (err?.code === 'cancelled' || !mine()) throw err;
-        throw Object.assign(failure('download-failed'), { detail: err?.message });
+      for (let tries = 0; ; tries++) {
+        try {
+          await loc.ensure(plan.route, { signal: ctx.abort.signal, onProgress: (fraction) => { if (mine()) set(tab, { progress: Math.round(fraction * 100) }); } });
+          break;
+        } catch (err) {
+          if (!mine()) throw err;
+          // "cancelled" that this run didn't ask for (the pack's download was stopped from elsewhere as ours began): go again.
+          if (err?.code === 'cancelled' && !ctx.abort.signal.aborted && tries < 2) continue;
+          if (err?.code === 'cancelled') throw err;
+          if (err?.code === 'removed') throw failure('pack-removed');
+          throw Object.assign(failure('download-failed'), { detail: err?.message });
+        }
       }
       if (!mine()) return false;
       ctx.downloadMs = performance.now() - began;
@@ -545,7 +637,7 @@ function createTranslate(deps) {
       ctx.workStart = performance.now();
       await script(tab, 'reset').catch(() => {});
       const { items, capped } = await script(tab, 'collect', MAX_CHARS);
-      const all = prioritize(wc.getTitle() ? [{ id: 0, text: wc.getTitle(), v: true }, ...items] : items);
+      const all = prioritize(grouped(wc.getTitle() ? [{ id: 0, text: wc.getTitle(), v: true }, ...items] : items, ctx));
       const ok = await translateItems(tab, all, target, ctx, (p) => set(tab, { progress: Math.round(p * 100) }));
       if (!ok || runs.get(tab)?.token !== token) return;
       await script(tab, 'watch');
@@ -558,7 +650,7 @@ function createTranslate(deps) {
         ctx.busy = true;
         try {
           const more = await script(tab, 'fresh');
-          if (more?.items?.length) await translateItems(tab, prioritize(more.items), target, ctx);
+          if (more?.items?.length) await translateItems(tab, prioritize(grouped(more.items, ctx)), target, ctx);
         } catch { /* a page that went away, or a model error: the new text stays as written */ } finally { ctx.busy = false; }
       }, POLL_MS);
       ctx.timer.unref?.();
@@ -713,6 +805,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, SEAM, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };

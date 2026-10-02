@@ -225,4 +225,15 @@ function createLocal({ store, fork, idleMs = IDLE_MS, maxPairs = MAX_PAIRS }) {
   return { plan, ensure, translate, warm, readyRoute, supports, overview, downloadLanguage, removePair, removeAll: () => store.removeAll(), cancelLanguage, stop, stats: () => ({ ...stats, running: Boolean(child) }), store, Cancelled };
 }
 
-module.exports = { createLocal, electronFork, nodeFork, Cancelled, WORKER };
+// Run `cancel` once when `sender` (a webContents) is destroyed or its page navigates away: a download started
+// from a page must not go on after the page is gone. Returns a function that stops watching.
+function cancelWhenGone(sender, cancel) {
+  let done = false;
+  const fire = () => { if (!done) { done = true; cancel(); } };
+  const nav = (details) => { if (details?.isMainFrame && !details.isSameDocument) fire(); };
+  sender.once('destroyed', fire);
+  sender.on('did-start-navigation', nav);
+  return () => { done = true; sender.removeListener?.('destroyed', fire); sender.removeListener?.('did-start-navigation', nav); };
+}
+
+module.exports = { createLocal, cancelWhenGone, electronFork, nodeFork, Cancelled, WORKER };

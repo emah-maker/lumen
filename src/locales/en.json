@@ -1527,5 +1527,6 @@
   "settings.translate.offlineDesc": "Get a language’s packs (to and from English) now, so translating works with no connection. Two languages without a pack between them go through English.",
   "translate.error.noSpace": "Not enough free disk space for the language pack.",
   "translate.error.registryOffline": "You appear to be offline, so Lumen can’t get Mozilla’s list of language packs. Connect and try again.",
-  "translate.error.downloadOffline": "You appear to be offline, so the language pack couldn’t download. Connect and try again."
+  "translate.error.downloadOffline": "You appear to be offline, so the language pack couldn’t download. Connect and try again.",
+  "translate.error.packRemoved": "The language pack was deleted while it was downloading. Try again to download it."
 }

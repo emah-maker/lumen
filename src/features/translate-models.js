@@ -142,12 +142,13 @@ function freeBytesOf(dir) {
 const fail = (message, code) => Object.assign(new Error(message), { code });
 const PERMANENT_FS = new Set(['ENOSPC', 'EACCES', 'EPERM', 'EROFS', 'EDQUOT']); // retrying these only repeats the failure
 
-// deps: { dir, fetch, now?, timeoutMs?, stallMs?, retryDelayMs?, freeBytes?, openWrite? }
+// deps: { dir, fetch, now?, timeoutMs?, stallMs?, retryDelayMs?, setTimer?, clearTimer?, freeBytes?, openWrite? }
 //   stallMs: a file with no new bytes for this long is abandoned (and retried once). freeBytes(dir): bytes free on
-//   the disk, or null. openWrite(path): the file's write stream (injectable for tests).
+//   the disk, or null. openWrite(path): the file's write stream. setTimer(fn, ms, tag) / clearTimer(t): the stall
+//   watchdog and the retry pause (tag: the file's name, or 'retry'), so tests can drive them without real waiting.
 function createModelStore({
   dir, fetch: doFetch = (...a) => fetch(...a), now = () => Date.now(), timeoutMs = 20000,
-  stallMs = 30000, retryDelayMs = 1000, freeBytes = freeBytesOf, openWrite = (file) => fs.createWriteStream(file),
+  stallMs = 30000, retryDelayMs = 1000, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t), freeBytes = freeBytesOf, openWrite = (file) => fs.createWriteStream(file),
 }) {
   let index = null; // parsed registry, in memory
   let indexAt = 0;
@@ -260,7 +261,8 @@ function createModelStore({
   });
 
   function remove(from, to) {
-    if (jobs.has(pairKey(from, to))) cancel(from, to);
+    const job = jobs.get(pairKey(from, to));
+    if (job) { job.removed = true; job.controller.abort(); } // deleting is explicit: the callers hear "removed", not a bare "cancelled"
     fs.rmSync(pairDir(from, to), { recursive: true, force: true });
   }
   function removeAll() {
@@ -275,6 +277,9 @@ function createModelStore({
   function download(from, to, { onProgress, signal } = {}) {
     const key = pairKey(from, to);
     let job = jobs.get(key);
+    if (job?.controller.signal.aborted) { // being torn down (a quick Cancel, then Translate): wait for it to finish, then start clean
+      return job.promise.catch(() => {}).then(() => download(from, to, { onProgress, signal }));
+    }
     if (!job && signal?.aborted) return Promise.reject(new DownloadCancelled());
     if (!job) {
       job = startJob(from, to, key);
@@ -306,7 +311,7 @@ function createModelStore({
   }
   function startJob(from, to, key) {
     const controller = new AbortController();
-    const job = { controller, listeners: new Set(), holders: 0, promise: null };
+    const job = { controller, listeners: new Set(), holders: 0, promise: null, removed: false };
     job.promise = (async () => {
       const idx = await loadIndex();
       const entry = idx[key];
@@ -334,7 +339,7 @@ function createModelStore({
         await Promise.all(entry.files.map((f) => fetchFile(f, path.join(tmp, f.name), controller.signal, (n) => { got.set(f.name, n); report(); })
           .catch((e) => { if (!controller.signal.aborted) { firstErr = e; controller.abort(); } })));
         if (firstErr) throw firstErr;
-        if (controller.signal.aborted) throw new DownloadCancelled();
+        if (controller.signal.aborted) throw job.removed ? fail('The language pack was deleted.', 'removed') : new DownloadCancelled();
         const manifest = { from, to, version: entry.version, installedAt: now(), files: entry.files.map(({ type, name, hash, size }) => ({ type, name, hash, size })) };
         fs.writeFileSync(path.join(tmp, 'manifest.json'), JSON.stringify(manifest));
         rmDir(final);
@@ -342,7 +347,7 @@ function createModelStore({
         return manifest;
       } catch (err) {
         try { rmDir(tmp); } catch { /* the sweep takes it later; the real error is what matters */ }
-        throw firstErr || (controller.signal.aborted ? new DownloadCancelled() : err);
+        throw firstErr || (job.removed ? fail('The language pack was deleted.', 'removed') : controller.signal.aborted ? new DownloadCancelled() : err);
       } finally {
         activeTmp.delete(tmp);
       }
@@ -358,7 +363,7 @@ function createModelStore({
         return await fetchOnce(f, dest, signal, onBytes);
       } catch (err) {
         if (signal.aborted || attempt >= 1 || PERMANENT_FS.has(err?.code)) throw err;
-        await new Promise((resolve) => { const t = setTimeout(resolve, retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
+        await new Promise((resolve) => { const t = setTimer(resolve, retryDelayMs, 'retry'); signal.addEventListener('abort', () => { clearTimer(t); resolve(); }, { once: true }); });
         if (signal.aborted) throw err;
       }
     }
@@ -369,7 +374,7 @@ function createModelStore({
     if (signal.aborted) attempt.abort(); else signal.addEventListener('abort', link, { once: true });
     let stalled = false;
     let timer = null;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; attempt.abort(); }, stallMs); };
+    const arm = () => { clearTimer(timer); timer = setTimer(() => { stalled = true; attempt.abort(); }, stallMs, f.name); };
     const hash = crypto.createHash('sha256');
     const out = openWrite(dest);
     let outErr = null;
@@ -402,7 +407,7 @@ function createModelStore({
       if (stalled) throw fail(`${f.name}: no data for ${stallMs >= 1000 ? `${Math.round(stallMs / 1000)} seconds` : `${stallMs} ms`}`, 'stalled');
       throw outErr || err;
     } finally {
-      clearTimeout(timer);
+      clearTimer(timer);
       signal.removeEventListener('abort', link);
       attempt.abort(); // closes the connection however this attempt ended
     }

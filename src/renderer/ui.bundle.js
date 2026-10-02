@@ -7948,6 +7948,7 @@ const tabSearch = (() => {
     'unknown-language': ['translate.error.unknownLanguage', 'Couldn’t tell what language this page is in.'],
     'same-language': ['translate.error.sameLanguage', 'This page is already in that language.'],
     'download-failed': ['translate.error.downloadFailed', 'Couldn’t download the language pack. Check your connection and try again.'],
+    'pack-removed': ['translate.error.packRemoved', 'The language pack was deleted while it was downloading. Try again to download it.'],
     'registry-failed': ['translate.error.registryFailed', 'Couldn’t reach Mozilla’s list of language packs. Check your connection and try again.'],
   };
   let shown = '';

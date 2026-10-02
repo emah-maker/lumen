@@ -877,12 +877,14 @@ function create(deps) {
       const lang = packCodes(code);
       if (!lang) throw new Error('Unknown language');
       let cancelled = false;
+      // The page was closed or reloaded: stop what it started (its download is no one's to finish).
+      const unwatch = require('../features/translate-local').cancelWhenGone(event.sender, () => deps.translateLocal().cancelLanguage(lang));
       try {
         await deps.translateLocal().downloadLanguage(lang, { onProgress: (fraction, received, total) => { try { event.sender.send('translate-packs:progress', { code: lang, fraction, received, total }); } catch { /* the page closed */ } } });
       } catch (err) {
         if (err?.code !== 'cancelled') return { ...(await packs()), failed: String(err?.message || err).slice(0, 160) };
         cancelled = true;
-      }
+      } finally { unwatch(); }
       return { ...(await packs()), cancelled };
     });
     handle('prefs:extensions', listExtensions);
