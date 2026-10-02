@@ -819,7 +819,8 @@ const WIDGET_RENDERERS = {
     const d = w.data;
     const symbol = text(d.symbol, 60) || 'Chart';
     const scheme = matchMedia('(prefers-color-scheme: dark)');
-    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && scheme.matches);
+    // A wallpaper or video background makes every card dark whatever the system scheme says (newtab.js does the same for the accent).
+    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || document.body.classList.contains('on-media')));
     const url = tvUrl(isDark() ? d.dark : d.light);
     const list = d.view === 'watchlist';
     if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }
@@ -843,8 +844,25 @@ const WIDGET_RENDERERS = {
     wrap.append(frame);
     card.body.append(wrap);
     const fit = globalThis.TradingViewFit;
-    let small = tvUrl(isDark() ? d.compactDark : d.compactLight); // none in data from before compact views existed
-    let src0 = url;
+    // Interval picker (kept per card in this browser): the full chart takes the bar size in its address, the
+    // mini and watchlist views a date range in their options (the nearest one, as features/tradingview-view.js does).
+    const TV_STEPS = [['1', '1m'], ['5', '5m'], ['15', '15m'], ['30', '30m'], ['60', '1h'], ['240', '4h'], ['D', '1D'], ['W', '1W'], ['M', '1M']];
+    const TV_RANGE = { 1: '1D', 5: '1D', 15: '1D', 30: '1D', 60: '1D', 240: '1M', D: '1M', W: '12M', M: '60M' };
+    const memKey = `tv-interval:${w.id}`;
+    let picked = ''; try { picked = localStorage.getItem(memKey) || ''; } catch {}
+    if (!TV_STEPS.some(([v]) => v === picked)) picked = '';
+    const withInterval = (u) => {
+      if (!u || !picked) return u;
+      try {
+        const x = new URL(u);
+        if (x.pathname === '/widgetembed/') x.searchParams.set('interval', picked);
+        else { const o = JSON.parse(decodeURIComponent(x.hash.slice(1))); o.dateRange = TV_RANGE[picked]; x.hash = encodeURIComponent(JSON.stringify(o)); }
+        return tvUrl(x.href) || u;
+      } catch { return u; }
+    };
+    const pickUrl = (full) => withInterval(tvUrl(isDark() ? (full ? d.dark : d.compactDark) : (full ? d.light : d.compactLight)));
+    let small = pickUrl(false); // none in data from before compact views existed
+    let src0 = pickUrl(true) || url;
     let shown = '';
     let was = null;
     const place = () => {
@@ -860,13 +878,33 @@ const WIDGET_RENDERERS = {
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(wrap);
     else frame.src = url;
-    // The system scheme (which the in-app dark setting drives) changed: load the other theme's address.
-    scheme.addEventListener('change', () => {
+    // The system scheme (which the in-app dark setting drives) or the page's background changed: load the other theme's address.
+    const restyle = () => {
       if (!frame.isConnected) return;
-      src0 = tvUrl(isDark() ? d.dark : d.light) || src0;
-      small = tvUrl(isDark() ? d.compactDark : d.compactLight);
+      const next = pickUrl(true) || src0;
+      if (next === src0) return;
+      src0 = next;
+      small = pickUrl(false);
       if (shown) place(); else frame.src = src0;
+    };
+    scheme.addEventListener('change', restyle);
+    new MutationObserver(restyle).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    const menu = document.createElement('select');
+    menu.className = 'tv-interval';
+    menu.title = list || d.view === 'mini' ? 'Time range' : 'Chart interval';
+    menu.setAttribute('aria-label', menu.title);
+    const start = picked || (TV_STEPS.some(([v]) => v === String(d.interval)) ? String(d.interval) : 'D');
+    for (const [v, label] of TV_STEPS) { const o = el('option', '', label); o.value = v; menu.append(o); }
+    menu.value = start;
+    menu.addEventListener('change', () => {
+      picked = menu.value;
+      try { localStorage.setItem(memKey, picked); } catch {}
+      src0 = pickUrl(true) || src0;
+      small = pickUrl(false);
+      shown = '';
+      place();
     });
+    card.head.append(menu);
   },
 
   // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.
