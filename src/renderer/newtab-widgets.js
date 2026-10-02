@@ -834,8 +834,30 @@ const WIDGET_RENDERERS = {
     frame.referrerPolicy = 'no-referrer';
     frame.loading = 'lazy';
     frame.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
-    frame.src = url;
-    card.body.append(frame);
+    // The frame sits in a box that clips and positions it, so a small card can swap what TradingView shows
+    // and shrink it to fit (features/tradingview-fit.js: the full chart is all toolbar below ~300 x 230, the
+    // mini price view clips below ~190 x 104, a watchlist's tab row eats 45 px). The address is set once the
+    // box has a size, so a small card never loads the big view first and reloads.
+    const wrap = el('div', 'tv-fit');
+    wrap.append(frame);
+    card.body.append(wrap);
+    const fit = globalThis.TradingViewFit;
+    const small = tvUrl(dark ? d.compactDark : d.compactLight); // none in data from before compact views existed
+    let shown = '';
+    let was = null;
+    const place = () => {
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      const next = fit ? fit.plan({ view: d.view, sections: d.sections, chart: d.chart === true }, w, h, was, Boolean(small)) : (w > 0 && h > 0 ? { compact: false, scale: 1 } : null);
+      if (!next) return; // not laid out yet (a card in a stack that isn't showing): the observer calls again
+      const src = next.compact && small ? small : url;
+      if (src !== shown) { shown = src; frame.src = src; }
+      if (next.scale < 1) { frame.style.width = `${Math.round(w / next.scale)}px`; frame.style.height = `${Math.round(h / next.scale)}px`; frame.style.transform = `scale(${next.scale})`; }
+      else { frame.style.width = ''; frame.style.height = ''; frame.style.transform = ''; }
+      was = next;
+    };
+    if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(wrap);
+    else frame.src = url;
   },
 
   // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.

@@ -14,7 +14,7 @@
 //   parseSymbols(v)       a typed or pasted list ("AAPL, TSLA" / "###Tech,NASDAQ:AAPL" / an array) -> entries, "###Name" for a section
 //   sections(entries)     entries -> [{ title, symbols }] (the watchlist's tabs)
 //   shapeLists(json)      TradingView's account answer -> { signedIn, lists: [{ id, name, symbols }] }
-//   embedUrl(tv, dark)    the frame's https address on s.tradingview.com
+//   embedUrl(tv, dark, compact?)  the frame's https address on s.tradingview.com (compact: the small-card version)
 //   isEmbedUrl(u)         whether an address is one embedUrl() could have made (the page checks this too)
 'use strict';
 
@@ -137,16 +137,23 @@ function shapeLists(json) {
   return { signedIn: rows.some((r) => r && cleanId(r.id)), lists };
 }
 
-function embedUrl(tv, dark) {
+// `compact` is the same view for a small card (features/tradingview-fit.js decides when). TradingView's own
+// pages need room: the full chart is a toolbar above and a date bar below with almost no chart between at a
+// card's smallest sizes, and a watchlist's tab row takes the first 45 px. So compact turns the chart into the
+// mini price view, and a watchlist into one flat list with no tab row and no chart on top (TradingView draws
+// no tab row for a single tab). The mini view is already compact and stays as it is.
+function embedUrl(tv, dark, compact = false) {
   const c = cleanConfig(tv);
   if (!c) return null;
   const theme = c.theme === 'auto' ? (dark ? 'dark' : 'light') : c.theme;
   if (c.view === 'watchlist') {
-    const tabs = sections(c.symbols, c.list?.name).map((t) => ({ title: t.title, originalTitle: t.title, symbols: t.symbols.map(widgetRow) }));
-    const opts = { colorTheme: theme, dateRange: miniRange(c.interval), showChart: c.chart, locale: 'en', width: '100%', height: '100%', isTransparent: true, showSymbolLogo: true, showFloatingTooltip: true, tabs };
+    let tabs = sections(c.symbols, c.list?.name);
+    if (compact && tabs.length > 1) tabs = [{ title: c.list?.name || 'Watchlist', symbols: tabs.flatMap((t) => t.symbols) }];
+    tabs = tabs.map((t) => ({ title: t.title, originalTitle: t.title, symbols: t.symbols.map(widgetRow) }));
+    const opts = { colorTheme: theme, dateRange: miniRange(c.interval), showChart: compact ? false : c.chart, locale: 'en', width: '100%', height: '100%', isTransparent: true, showSymbolLogo: true, showFloatingTooltip: true, tabs };
     return `https://${HOST}/embed-widget/market-overview/?locale=en#${encodeURIComponent(JSON.stringify(opts))}`;
   }
-  if (c.view === 'mini') {
+  if (c.view === 'mini' || compact) {
     // The mini widget reads its options from the hash, as JSON.
     const opts = { symbol: WIDGET_TWINS[c.symbol] || c.symbol, width: '100%', height: '100%', dateRange: miniRange(c.interval), colorTheme: theme, isTransparent: true, autosize: true, locale: 'en' };
     return `https://${HOST}/embed-widget/mini-symbol-overview/?locale=en#${encodeURIComponent(JSON.stringify(opts))}`;

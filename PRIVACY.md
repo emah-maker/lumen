@@ -34,6 +34,8 @@ Lumen has no account, no servers of its own, no telemetry, no analytics and no c
 
 If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Antigravity or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default. Whatever those apps read is then sent to their own AI provider, under that app's privacy policy.
 
+Settings → AI also has optional **Give … full access to this computer** switches for Claude Code, Grok Build and Antigravity in the sidebar (all off by default, one each plus a master switch). With one on, that command-line AI can read any file on your computer and run commands, as it does in your terminal, and what it reads is sent to its own AI provider under that provider's privacy policy. Lumen does not see or keep it.
+
 The same goes for **Allow automation tools (Chrome DevTools Protocol)**, also off by default: while it's on, programs on your computer can read and control your tabs without asking.
 
 ## Removing your data

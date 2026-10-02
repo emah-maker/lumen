@@ -60,6 +60,36 @@ function toggle(key, label, desc, after) {
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
 }
+// [full access] "Give all command-line AIs full access to this computer" and one switch per CLI (renderer/cli-access.js).
+// The master switch is derived from the three (never stored): half-way when they differ.
+const CLI_ACCESS_EXTRA = {
+  claudeCodeFullAccess: ', and use your own MCP servers, skills and slash commands',
+  grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
+  antigravityFullAccess: ', with its terminal sandbox off',
+};
+const cliAccessDesc = (name, extra) => `${name} in the sidebar works as it does in your terminal: it can run commands and read and change any of your files${extra}, all without asking first. Lumen’s approval cards and “Don’t let the AI act on my pages” still cover Lumen’s browser tools, but not ${name}’s own tools. This applies to ${name} only. Only turn it on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.`;
+function syncCliAccess() {
+  const CA = window.cliAccess;
+  const state = CA.masterState(st.prefs);
+  const master = $('pref-cliFullAccess');
+  if (master) { master.checked = state === 'on'; master.indeterminate = state === 'mixed'; master.setAttribute('aria-checked', state === 'mixed' ? 'mixed' : String(state === 'on')); }
+  for (const key of CA.KEYS) { const input = $(`pref-${key}`); if (input) input.checked = st.prefs[key] === true; }
+}
+function cliAccessRows() {
+  const CA = window.cliAccess;
+  const label = tr('settings.ai.cliFullAccess', 'Give all command-line AIs full access to this computer');
+  const input = h('input', { type: 'checkbox', class: 'switch', id: 'pref-cliFullAccess', role: 'switch', 'aria-label': label });
+  input.addEventListener('change', async () => {
+    const value = CA.masterNext(CA.masterState(st.prefs)); // (a click on the half-way state clears all)
+    for (const key of CA.KEYS) await save(key, value);
+    syncCliAccess();
+  });
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together (each is explained below). Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  master.querySelector('.label').addEventListener('click', () => input.click());
+  const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
+  queueMicrotask(syncCliAccess);
+  return [master, ...rows];
+}
 function select(key, label, desc, options, { number = false, after } = {}) {
   const el = h('select', { id: `pref-${key}`, 'aria-label': label },
     options.map(([value, text]) => h('option', { value: String(value), text })));
@@ -237,10 +267,10 @@ async function buildAi(card) {
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
     toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
-    toggle('claudeCodeFullAccess', tr('settings.ai.claudeCodeFullAccess', 'Give Claude Code full access to this computer'), tr('settings.ai.claudeCodeFullAccessDesc', 'Claude Code in the sidebar works as it does in your terminal: it can run commands, read and change any of your files, and use your own MCP servers, skills and slash commands, all without asking first. Only turn this on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.')),
+    ...cliAccessRows(),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server.')),
+    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
   );
