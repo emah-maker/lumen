@@ -83,11 +83,11 @@
 .chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: normal; overflow-wrap: anywhere; } /* AA for small text on the row and the selected row */
 .chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-open:focus-visible { outline: none; }
-.chat-item:has(.chat-open:focus-visible) { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; } /* on the whole row (Stop included), not just the title button */ /* softer than the global ring: the row is already tinted */
+.chat-item:has(.chat-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; } /* on the whole row (Stop included), not just the title button */ /* softer than the global ring: the row is already tinted */
 /* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
 .chat-item:is(.has-queued, .has-running) { display: grid; grid-template-columns: 1fr; }
 .chat-item:is(.has-queued, .has-running) .chat-open { grid-column: 1; grid-row: 1; }
-.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: 0 0 8px 12px; padding: 4px 10px; min-height: 28px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; cursor: default; }
+.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: 0 0 8px 12px; padding: 4px 10px; min-height: 28px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; cursor: default; }
 .chat-stop-wait:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, var(--hover)); }
 .chat-stop-wait:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .chat-stop-wait:disabled { opacity: 0.7; }
