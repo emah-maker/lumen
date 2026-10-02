@@ -1,15 +1,14 @@
 // `npm test`: runs the core suites one after another (never in parallel: several of them move focus
 // between windows) and keeps going past a failure, then prints which suites failed.
 // `npm test -- tabstrip groups` runs just those. Suites that need the network, an API key or a
-// signed-in CLI (claudecode, drm, measure, topics-bench, adblock-youtube (loads real YouTube pages), …) stay manual:
-// `node test/<name>.js`.
+// signed-in CLI (claudecode, drm, measure, topics-bench, …) stay manual: `node test/<name>.js`.
 // `LUMEN_TEST_BACKGROUND=1 npm test`: test windows are invisible and never take focus (main.js), so
 // a run doesn't get in the way of a Lumen you're using; checks that need OS focus print SKIP.
 const { spawnSync } = require('child_process');
 const path = require('path');
 
 const SUITES = [
-  'units', 'claudecode-full-units', 'cli-full-access-units', 'tab-chats-units', 'automation-units', 'chat-items-units', 'chat-context-units', 'ai-manners-units', 'model-route-units', 'fallback-units', 'antigravity-units', 'mcp-hardening-units', 'perf-budget', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'adblock-youtube-units', 'pagecontext', 'page-text-units', 'frames', 'frames-units',
+  'units', 'claudecode-full-units', 'cli-full-access-units', 'tab-chats-units', 'automation-units', 'chat-items-units', 'chat-context-units', 'ai-manners-units', 'model-route-units', 'fallback-units', 'antigravity-units', 'mcp-hardening-units', 'perf-budget', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'adblock-youtube-units', 'adblock-youtube', 'pagecontext', 'page-text-units', 'frames', 'frames-units',
   'dialogs', 'recovery', 'tasklock', 'tabstrip', 'tabmenu', 'tabui', 'tabsearch', 'downloads', 'hardening', 'exfil', 'aicontrols', 'security-ui', 'safe-browsing', 'a11y', 'updates',
   'mcp', 'mcpclient', 'netfetch', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'private', 'tabdetach', 'pagetools', 'screenshot', 'translate', 'translate-local-units', 'translate-download-units', 'translate-group-units', 'managers', 'chats', 'chatpage', 'tabchats', 'aimanners', 'files', 'usage', 'look', 'tabsask', 'skills', 'bgtasks', 'routines-units', 'routines', 'widgets', 'calendar-multi-units', 'calendar-multi', 'edit-shake', 'tradingview-ui', 'tradingview-fit', 'cdp-inproc', 'whats-new', 'passwords', 'updates-units', 'signing-units', 'chrome-identity-units', 'google-auth-identity-units', 'basics', 'basics-units', 'persistence-units', 'warm-tabs', 'ask-ai-model',
 ];
