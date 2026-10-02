@@ -194,7 +194,7 @@ const AUDIT = `(() => {
   check('locale: main-process menus use it too, with English for the rest', menu[0] === 'NT-xx' && menu[1] === 'Reload', menu.join(', '));
   const inXxSettings = await openSettingsTab(app, 'appearance');
   const nav = await inXxSettings('[...document.querySelectorAll("#nav a")].map((a) => a.textContent)');
-  check('locale: Settings section names follow it, English for the rest', Array.isArray(nav) && nav.includes('Apparence') && nav.includes('Search engine'), JSON.stringify(nav));
+  check('locale: Settings section names follow it, English for the rest', Array.isArray(nav) && nav.includes('Apparence') && nav.includes('Advanced'), JSON.stringify(nav));
   check('locale: no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
