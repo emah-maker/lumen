@@ -567,6 +567,7 @@ contextBridge.exposeInMainWorld('assistant', {
     list: () => ipcRenderer.invoke('chats:list'),
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
+    share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
     stopChat: (id) => ipcRenderer.invoke('chats:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
     remove: (id) => ipcRenderer.invoke('chats:delete', id),

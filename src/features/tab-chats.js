@@ -1,8 +1,8 @@
 // A sidebar chat per tab, running at the same time (main.js wires this to the tabs and the agent).
 //
 // This file is the pure part:
-//   createBindings()   which chat each tab shows in the sidebar (many tabs may show one chat; a chat
-//                      shows in the tab it was last moved or started in)
+//   createBindings()   which chat each tab shows in the sidebar (many tabs may show one chat; its home
+//                      tab is the one it was last moved or started in)
 //   createRunSlots()   how many chats may work at once, the waiting line behind them, and the rule
 //                      that CLI engines (Claude Code, Grok Build) run one chat at a time
 //   resolveToolTab()   which tab a chat's browser tools act on: its own, never "whichever is in front"
@@ -23,19 +23,44 @@ const clampRuns = (n) => {
 };
 
 // ---- tab <-> chat
+// A chat may show in several tabs at once ("Also show in this tab"). One of them is its home: the tab it was last
+// started or moved in. A run's browser tools act on the home tab, never on the tab you are looking at; showing the
+// chat in a second tab does not change the home. When the home tab goes (closed, or it started a new chat) the
+// most recently added of the others takes over.
 function createBindings() {
   const byTab = new Map(); // tab id -> chat id
+  const homes = new Map(); // chat id -> its home tab id
   const api = {
     chatOf: (tabId) => byTab.get(tabId) ?? null,
+    // Every tab showing the chat, oldest binding first.
     tabsOf: (chatId) => [...byTab].filter(([, c]) => c === chatId).map(([t]) => t),
-    // The tab a chat belongs to: the one it was bound to last.
-    tabOf: (chatId) => { let found = null; for (const [t, c] of byTab) if (c === chatId) found = t; return found; },
+    // The chat's home tab (null: no tab shows it).
+    homeOf: (chatId) => homes.get(chatId) ?? null,
+    tabOf: (chatId) => homes.get(chatId) ?? null,
+    // The tabs showing the chat in the order to try them: home first, then the others, newest binding first.
+    tabsHomeFirst(chatId) {
+      const home = homes.get(chatId);
+      const rest = api.tabsOf(chatId).filter((t) => t !== home).reverse();
+      return home != null ? [home, ...rest] : rest;
+    },
     claimed: (chatId) => chatId != null && [...byTab.values()].includes(chatId),
     // The tab shows `chatId` from now on. A tab holds one chat; its earlier one just loses this tab.
-    bind(tabId, chatId) {
+    // Default: the tab becomes the chat's home (the chat was started or moved there). `share`: it only joins the tabs
+    // already showing the chat and the home stays (a chat no other tab shows gets this tab as its home anyway).
+    bind(tabId, chatId, { share = false } = {}) {
       if (tabId == null || !chatId) return;
-      byTab.delete(tabId); // (re-inserted: the most recently bound tab is the chat's home)
+      const before = byTab.get(tabId);
+      if (before === chatId && share) return;
+      byTab.delete(tabId); // (re-inserted: the newest binding is last)
       byTab.set(tabId, chatId);
+      if (before != null && before !== chatId) api.fixHome(before);
+      if (!share || !api.tabsOf(chatId).some((t) => t !== tabId && homes.get(chatId) === t)) homes.set(chatId, tabId);
+    },
+    // After a tab left a chat: a home that no longer shows it passes to the newest remaining tab (none left: no home).
+    fixHome(chatId) {
+      const left = api.tabsOf(chatId);
+      if (!left.length) homes.delete(chatId);
+      else if (!left.includes(homes.get(chatId))) homes.set(chatId, left[left.length - 1]);
     },
     // "Move chat to this tab": the chat leaves every other tab it showed in.
     move(chatId, tabId) {
@@ -45,18 +70,31 @@ function createBindings() {
       api.bind(tabId, chatId);
       return left;
     },
-    unbindTab: (tabId) => byTab.delete(tabId),
-    unbindChat(chatId) { for (const t of api.tabsOf(chatId)) byTab.delete(t); },
+    unbindTab(tabId) {
+      const chatId = byTab.get(tabId);
+      const had = byTab.delete(tabId);
+      if (chatId != null) api.fixHome(chatId);
+      return had;
+    },
+    unbindChat(chatId) { for (const t of api.tabsOf(chatId)) byTab.delete(t); homes.delete(chatId); },
     size: () => byTab.size,
     entries: () => [...byTab],
     // For the saved session: each tab's chat, in the tab order given (null: none).
     snapshot: (tabIds) => (tabIds || []).map((id) => byTab.get(id) ?? null),
+    // And which of those tabs is its chat's home, so a shared chat comes back with the same home.
+    snapshotHomes: (tabIds) => (tabIds || []).map((id) => byTab.has(id) && homes.get(byTab.get(id)) === id),
     // The other way: tab ids (new ones after a restart) in the same order as the saved chat ids.
     // `exists(chatId)` drops a chat that no longer exists (deleted, or unreadable on this machine).
-    restore(tabIds, chatIds, exists = () => true) {
+    // A chat saved in several tabs comes back in all of them. `homeFlags`: true where that tab was the chat's home;
+    // a chat with no flagged tab (an older session) has the first tab restored as its home.
+    restore(tabIds, chatIds, exists = () => true, homeFlags = []) {
       (tabIds || []).forEach((id, i) => {
         const c = chatIds?.[i];
-        if (typeof c === 'string' && c && exists(c) && !api.claimed(c)) byTab.set(id, c);
+        if (typeof c !== 'string' || !c || !exists(c)) return;
+        const had = byTab.get(id);
+        byTab.set(id, c);
+        if (had != null && had !== c) api.fixHome(had);
+        if (homeFlags?.[i] === true || !homes.has(c)) homes.set(c, id);
       });
     },
   };

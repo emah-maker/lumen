@@ -30,6 +30,7 @@
   const makeItem = window.createChatItems({
     api,
     open: (id) => openChat(id),
+    share: (id) => openChat(id, { share: true }), // "Also show in this tab"
     rerender: () => renderList(),
     cleared: () => { clearChatView(); refreshUsage(''); },
   });
@@ -63,8 +64,8 @@
       (row?.querySelector('.chat-open') || (searchBox && !searchBox.hidden ? searchBox : null) || prompt)?.focus();
     }
   }
-  async function openChat(id) {
-    const view = await api.open(id);
+  async function openChat(id, { share = false } = {}) {
+    const view = await (share ? api.share(id) : api.open(id));
     if (!view) return false; // gone: the row says so, then the list redraws (chat-items.js moveHere) (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);

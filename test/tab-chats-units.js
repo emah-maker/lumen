@@ -41,10 +41,69 @@ const J = (v) => JSON.stringify(v);
   check('persistence: after a restart each new tab shows its chat; a deleted chat and an empty slot stay unbound', r.chatOf(1) === 'c-a' && r.chatOf(2) === 'c-b' && r.chatOf(3) === null && r.chatOf(4) === null, J(r.entries()));
   const dup = TC.createBindings();
   dup.restore([1, 2], ['same', 'same']);
-  check('persistence: a chat saved in two tabs comes back in the first only', dup.chatOf(1) === 'same' && dup.chatOf(2) === null, J(dup.entries()));
+  check('persistence: a chat saved in two tabs comes back in both (not dropped as already claimed)', dup.chatOf(1) === 'same' && dup.chatOf(2) === 'same' && J(dup.tabsOf('same')) === '[1,2]', J(dup.entries()));
+  check('persistence: an older session with no home flags makes the first restored tab the home', dup.homeOf('same') === 1, String(dup.homeOf('same')));
   const oldSession = TC.createBindings();
   oldSession.restore([1, 2], undefined);
   check('persistence: a session from before this feature restores no bindings', oldSession.size() === 0);
+}
+
+// ---- one chat in several tabs ("Also show in this tab")
+{
+  const b = TC.createBindings();
+  b.bind(1, 'x');
+  b.bind(2, 'x', { share: true });
+  check('shared: bind without move adds the tab and leaves the other showing the chat', b.chatOf(1) === 'x' && b.chatOf(2) === 'x' && J(b.tabsOf('x')) === '[1,2]', J(b.entries()));
+  check('shared: showing it in a second tab does not change the home tab', b.homeOf('x') === 1 && b.tabOf('x') === 1);
+  check('shared: tabs are listed home first, then the others newest first', (() => { b.bind(3, 'x', { share: true }); return J(b.tabsHomeFirst('x')) === '[1,3,2]'; })(), J(b.tabsHomeFirst('x')));
+  b.bind(2, 'x', { share: true });
+  check('shared: sharing again into a tab that already shows it changes nothing', J(b.tabsOf('x')) === '[1,2,3]' && b.homeOf('x') === 1, J(b.entries()));
+  b.bind(3, 'x');
+  check('shared: starting or moving it in a tab (a plain bind) makes that tab the home', b.homeOf('x') === 3 && b.tabsOf('x').length === 3);
+  const onlyShare = TC.createBindings();
+  onlyShare.bind(4, 'y', { share: true });
+  check('shared: a chat no other tab shows gets the tab as its home', onlyShare.homeOf('y') === 4);
+
+  // a new chat in one tab only unbinds that tab
+  b.bind(3, 'fresh');
+  check('new chat in one tab: only that tab leaves the old chat, the others keep it', b.chatOf(3) === 'fresh' && b.chatOf(1) === 'x' && b.chatOf(2) === 'x' && J(b.tabsOf('x')) === '[1,2]', J(b.entries()));
+  check('new chat in the home tab: the home passes to the newest remaining tab', b.homeOf('x') === 2 && b.homeOf('fresh') === 3, `${b.homeOf('x')} ${b.homeOf('fresh')}`);
+
+  // closing tabs
+  const c = TC.createBindings();
+  c.bind(1, 'z'); c.bind(2, 'z', { share: true }); c.bind(3, 'z', { share: true });
+  c.unbindTab(2);
+  check('close a non-home tab: it just unbinds, the home stays', J(c.tabsOf('z')) === '[1,3]' && c.homeOf('z') === 1);
+  c.unbindTab(1);
+  check('close the home tab: the chat stays in the remaining tab, which is now home', J(c.tabsOf('z')) === '[3]' && c.homeOf('z') === 3 && c.claimed('z'));
+  c.unbindTab(3);
+  check('close the last tab: the chat is no one\'s and has no home', !c.claimed('z') && c.homeOf('z') === null);
+  const m = TC.createBindings();
+  m.bind(1, 'q'); m.bind(2, 'q', { share: true });
+  const left = m.move('q', 2);
+  check('move still takes the chat out of every other tab and makes this tab home', J(left) === '[1]' && m.chatOf(1) === null && m.homeOf('q') === 2);
+  m.bind(5, 'q', { share: true }); m.unbindChat('q');
+  check('deleting a shared chat unbinds every tab and forgets the home', m.size() === 0 && m.homeOf('q') === null);
+
+  // saved with the session
+  const s = TC.createBindings();
+  s.bind(10, 'sh'); s.bind(11, 'sh', { share: true }); s.bind(12, 'solo');
+  const tabsOrder = [10, 11, 12, 13];
+  const saved = JSON.parse(J({ chats: s.snapshot(tabsOrder), homes: s.snapshotHomes(tabsOrder) }));
+  check('persistence: a shared chat is saved in each tab that shows it, with its home flagged', J(saved.chats) === J(['sh', 'sh', 'solo', null]) && J(saved.homes) === J([true, false, true, false]), J(saved));
+  const r = TC.createBindings();
+  [21, 22, 23, 24].forEach((id, i) => r.restore([id], [saved.chats[i]], () => true, [saved.homes[i]]));
+  check('persistence: a shared chat comes back shared, with the same home', r.chatOf(21) === 'sh' && r.chatOf(22) === 'sh' && r.chatOf(23) === 'solo' && r.chatOf(24) === null && r.homeOf('sh') === 21, J(r.entries()));
+  const r2 = TC.createBindings();
+  [31, 32].forEach((id, i) => r2.restore([id], ['sh'], () => true, [i === 1]));
+  check('persistence: a flagged home tab wins even when it is restored second', r2.homeOf('sh') === 32 && r2.tabsOf('sh').length === 2, String(r2.homeOf('sh')));
+  const r3 = TC.createBindings();
+  r3.restore([1, 2], ['sh', 'gone'], (id) => id !== 'gone');
+  check('persistence: a shared chat that no longer exists is dropped from every tab', r3.chatOf(1) === 'sh' && r3.chatOf(2) === null);
+
+  // the marks: every tab that shows the chat shows its state
+  const marks = (id) => ['x'].includes(b.chatOf(id)) ? TC.tabStatus({ run: 'running' }) : null;
+  check('marks: every tab showing a working chat shows it working', marks(1) === 'running' && marks(2) === 'running' && marks(3) === null);
 }
 
 // ---- run slots: the cap and the waiting line

@@ -196,6 +196,47 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('sizes: --actions-w and --actions-w-narrow are separate inline props, the narrow one a button (24px) smaller for chats elsewhere', w(idleLi, '--actions-w') === 5 * 24 + 8 && w(idleLi, '--actions-w-narrow') === 4 * 24 + 8 && w(workLi, '--actions-w-narrow') === 4 * 24 + 8 && w(hereLi, '--actions-w') === 3 * 24 + 8 && w(hereLi, '--actions-w-narrow') === w(hereLi, '--actions-w'), JSON.stringify([idleLi.vars, hereLi.vars]));
   check('the state word is in the row for a working chat and the badge is hidden from screen readers', workLi.find('chat-state')[0]?.textContent === 'Working' && workLi.find('chat-badge')[0]?.attrs['aria-hidden'] === 'true');
 
+  // "Also show in this tab" and a chat shown in several tabs
+  {
+    const calls = [];
+    let shownTab = 0;
+    const sapi = { exportChat: async () => ({ ok: true }), showTab: async () => { shownTab++; return true; }, stopChat: async () => true, remove: async () => ({}) };
+    const withShare = (chat, shareFn) => sandbox.window.createChatItems({ api: sapi, open: async (id) => { calls.push(['open', id]); return true; }, share: shareFn, rerender() {}, cleared() {} })(chat, false);
+    const shareFn = async (id) => { calls.push(['share', id]); return true; };
+    const other = { ...base, tab: { id: 2, title: 'Docs', here: false }, tabs: [{ id: 2, title: 'Docs', home: true, here: false }] };
+    const btns = (li) => li.find('chat-actions')[0].children;
+    let li = withShare(other, shareFn);
+    const share = btns(li).find((b) => b.classList.contains('chat-act-share'));
+    check('also show: a chat in another tab offers "Also show in this tab" next to Move and Open in its tab', Boolean(share) && share.title === 'Also show in this tab' && btns(li).some((b) => b.classList.contains('chat-act-move')) && btns(li).some((b) => b.classList.contains('chat-act-tab')), btns(li).map((b) => b.className).join('|'));
+    await share.onclick();
+    check('also show: the button calls share (not open), so the chat is not moved', JSON.stringify(calls) === '[["share","c1"]]', JSON.stringify(calls));
+    calls.length = 0;
+    li = withShare(other, null);
+    check('also show: no share handler, no button', !btns(li).some((b) => b.classList.contains('chat-act-share')));
+    li = withShare({ ...base, tab: { id: 1, title: 'Here', here: true }, tabs: [{ id: 1, title: 'Here', home: true, here: true }] }, shareFn);
+    check('also show: not offered for a chat that already shows in this tab, or in no tab', !btns(li).some((b) => b.classList.contains('chat-act-share')) && !btns(withShare(base, shareFn)).some((b) => b.classList.contains('chat-act-share')));
+    let failed = 0;
+    li = withShare(other, async () => { failed++; return false; });
+    await btns(li).find((b) => b.classList.contains('chat-act-share')).onclick();
+    check('also show: a chat that is gone gets the same note as Move', failed === 1 && /Could not open this chat/.test(meta(li).textContent), meta(li).textContent);
+
+    // the list line: "In 2 tabs: A (home), B", and a click goes to a tab instead of moving the chat
+    const two = { ...base, tab: { id: 2, title: 'Docs', here: false }, tabs: [{ id: 2, title: 'Docs', home: true, here: false }, { id: 3, title: 'Mail', home: false, here: false }] };
+    li = withShare(two, shareFn);
+    const placeOf = (l) => l.find('chat-place')[0]?.textContent || '';
+    check('shared: the row says "In 2 tabs" with the titles and marks the home', /^In 2 tabs: Docs \(home\), Mail/.test(placeOf(li)), placeOf(li));
+    await li.find('chat-open')[0].onclick();
+    check('shared: a click on the row goes to a tab (it does not move the chat here)', shownTab === 1 && calls.length === 0, `${shownTab} ${JSON.stringify(calls)}`);
+    const mine = { ...base, tab: { id: 3, title: 'Mail', here: true }, tabs: [{ id: 2, title: 'Docs', home: true, here: false }, { id: 3, title: 'Mail', home: false, here: true }] };
+    li = withShare(mine, shareFn);
+    check('shared: this tab is called "This tab" in the line, and the home is still marked', /^In 2 tabs: Docs \(home\), This tab/.test(placeOf(li)), placeOf(li));
+    check('shared: a chat shown here as well has no Also show button', !btns(li).some((b) => b.classList.contains('chat-act-share')));
+    await li.find('chat-open')[0].onclick();
+    check('shared: a click goes to the other tab even when this tab shows it', shownTab === 2 && calls.length === 0, `${shownTab}`);
+    li = withShare(base, shareFn);
+    check('unshared chats keep the old line and click', !/In \d tabs/.test(placeOf(li)));
+  }
+
   // a failing delete re-enables the button and says so
   let removeFails = true;
   api = { exportChat: async () => ({ ok: true }), showTab: async () => {}, stopChat: async () => true, remove: async () => { if (removeFails) throw new Error('x'); return {}; } };
