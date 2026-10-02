@@ -88,9 +88,9 @@ function cliAccessRows() {
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);
-  for (const r of rows) r.classList.add('sub-row'); // the three switches belong to the master above
-  for (const r of [master, ...rows]) r.classList.add('warn');
-  return [master, ...rows];
+  for (const r of rows) r.classList.add('warn');
+  master.classList.add('warn');
+  return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows)];
 }
 function select(key, label, desc, options, { number = false, after } = {}) {
   const el = h('select', { id: `pref-${key}`, 'aria-label': label },
@@ -263,7 +263,7 @@ async function buildAi(card) {
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
     [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));
   const topicAi = h('input', { type: 'checkbox', class: 'switch', id: 'ai-topic-ai', role: 'switch', 'aria-label': 'Use AI to name and group topics', checked: ai.topicAi, onchange: (e) => S.ai.setTopicAi(e.target.checked) });
-  const topicRow = row('Use AI to name and group topics', 'Sends only tab titles and site names (like example.com, never full addresses) to the cheapest model of your chat’s provider, or through your own Claude Code or Grok Build when you chat with one (no API key needed). Off: topics are found on this computer.', topicAi);
+  const topicRow = row('Use AI to name and group topics', 'Sends only tab titles and site names (never full addresses) to your chat’s cheapest model. Off: topics are found on this computer.', topicAi);
   topicRow.classList.add('sub-row');
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
@@ -294,7 +294,7 @@ async function buildAi(card) {
   // Control of the whole computer is its own group, apart from the everyday switches above.
   card.at('ai-access').append(...cliAccessRows());
   card.at('tabs-groups').append(
-    row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, such as recipes or one trip, once 4 or more are loose. Tabs you group or move by hand stay put.', grouping),
+    row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, once 4 or more are loose. Tabs you group by hand stay put.', grouping),
     topicRow,
     idleRow,
     toggle('organizeOnlyMixed', 'Only when topics are mixed', 'Leave loose tabs alone when they are all about one thing. Off: those get a group too.'),
@@ -312,7 +312,7 @@ async function buildAi(card) {
       h('button', { text: 'Turn on AI', onclick: async () => renderOff(await S.ai.setAiSite(site, false)) })))
       : [h('span', { class: 'note', text: 'None. The AI can work on any site you allow.' })]));
   };
-  card.at('ai-privacy').append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, their tabs aren’t sent with your messages or to Organize Tabs, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
+  card.at('ai-privacy').append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
     h('div', { class: 'controls' }, offInput, h('button', {
       text: 'Turn off AI',
       onclick: async () => { const site = offInput.value.trim(); if (!site) return; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
@@ -332,7 +332,7 @@ async function buildAi(card) {
       h('button', { text: 'Remove', 'aria-label': `Remove ${host}`, onclick: async () => renderSigned(await S.ai.removeSignedInSite(host)) })))
       : [h('span', { class: 'note', text: 'None. The AI reads pages signed out unless you allow a site when it asks.' })]));
   };
-  card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you (your grades, your orders), you can allow it just once or always for that site. It then sees the page as you do; nothing is clicked, typed or submitted there without the usual approvals. Banks, payments, password managers and account-security pages are only ever allowed once. Outside agents never get this.', signedList,
+  card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
 
@@ -395,7 +395,7 @@ async function buildAi(card) {
     }));
   };
   renderKeys();
-  card.at('ai-accounts').append(stackRow('API keys', 'Any one is enough: every provider’s models can chat and use the browser tools (reading, clicking and typing, with your approval). Keys are encrypted with your OS keychain and sent only to their provider.', keys));
+  card.at('ai-accounts').append(stackRow('API keys', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider.', keys));
 
   // Anthropic CLI sign-in: status sits under the description, the button on the right.
   const cliNote = status('ai-cli-status');
@@ -655,6 +655,7 @@ function choices(key, label, cls, options, content, after) {
     next.focus();
   });
   group.append(...buttons);
+  group.style.setProperty('--cols', String(Math.ceil(buttons.length / Math.ceil(buttons.length / 6)))); // even rows (7 tiles: 4 + 3, not 6 + 1)
   paint(String(st.prefs[key]));
   group.repaint = () => paint(String(st.prefs[key]));
   return group;
@@ -1723,7 +1724,7 @@ async function buildPrivacy(card) {
   };
   card.group('Safe Browsing').append(
     toggle('safeBrowsing', 'Warn about dangerous sites (Google Safe Browsing)',
-      'Lumen downloads Google’s lists of suspected phishing and malware sites and checks each page against them on your computer. Only when an address matches the lists does Lumen send Google a short, partial hash of it, never the address itself, and without your cookies. Needs your own Google API key with the Safe Browsing API enabled (free, for non-commercial use). No list is perfect: some unsafe sites may be missed, and some safe sites flagged in error.',
+      'Pages are checked on your computer against Google’s lists of phishing and malware sites. Only a partial hash of a matching address is sent, never the address or your cookies. Needs your own Google API key (free for non-commercial use). No list is perfect.',
       async () => renderSb(await S.ai.safeBrowsing())),
     stackRow('Safe Browsing API key', 'Encrypted with your OS keychain. Create one in the Google Cloud console.', sbNote, sbKey),
   );
@@ -1813,7 +1814,7 @@ async function buildPasswords(card) {
     renderNote();
     renderLogins();
   });
-  const toggleRow = row('Save passwords', 'Offers to save a password when you sign in to a site, and fills it in when you click the key in the address bar. Never in private windows, and never on sites without a secure connection. Passwords are encrypted with your system’s keychain, and the AI in the sidebar, outside agents and page tools can’t read them.', input);
+  const toggleRow = row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input);
   toggleRow.querySelector('.label').addEventListener('click', () => input.click());
   toggleRow.querySelector('.text').append(note); // how many are saved, or why it can't turn on
   card.group('Passwords').append(toggleRow);
@@ -1927,7 +1928,7 @@ function buildAntigravity(slot, refreshModels) {
     buttons.push(h('button', { id: 'ai-agy-check', text: tr('settings.ai.agyCheck', 'Check again'), onclick: async () => { renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
     agyButtons.replaceChildren(...buttons);
   };
-  const agyRow = row(tr('settings.ai.agy', 'Antigravity (replaces Gemini CLI)'), tr('settings.ai.agyDesc', 'Google’s coding agent, signed in with your own Google account: Lumen never sees the login. In the sidebar it gets Lumen’s browser tools only, like Claude Code and Grok Build. The install command below is Google’s own; it runs only when you click the button.'), agyButtons);
+  const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login. The install command below is Google’s own and runs only when you click the button.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
   slot.append(agyRow);

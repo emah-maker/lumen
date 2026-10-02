@@ -258,7 +258,7 @@ body.interstitial { display: block; }
 .swatch-custom.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
 /* [look] new-tab clock styles and greeting fonts: each choice previewed in its own face (the same stacks as newtab.html). */
 .clock-tiles { --f-display: -apple-system, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; --f-rounded: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display", system-ui, sans-serif; --f-serif: ui-serif, "New York", "Iowan Old Style", Cambria, Georgia, serif; --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; --f-hand: "Segoe Print", "Bradley Hand", "Noteworthy", "Chalkboard SE", cursive;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+  display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); gap: 10px; }
 .clock-tiles button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 84px; padding: 8px 6px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: inset 0 0 0 0.5px var(--border); transition: transform var(--t-fast) cubic-bezier(0.16, 1, 0.3, 1), box-shadow var(--t-fast) ease-out; }
 .clock-tiles button:hover:not(:disabled) { background: var(--bg); transform: translateY(-1px); box-shadow: inset 0 0 0 0.5px var(--border); }
 .clock-tiles button[aria-checked="true"], .clock-tiles button[aria-checked="true"]:hover:not(:disabled) { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
@@ -441,3 +441,5 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
   #nav.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
   #nav.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
 }
+
+@media (max-width: 720px) { .clock-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); } }
