@@ -6706,11 +6706,9 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
 ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSelection'));
 
 const tabsAsk = require('./features/tabs-ask');
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const chatImages = require('./features/chat-images');
 ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
-  const valid = (Array.isArray(images) ? images : [])
-    .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
-    .slice(0, 5);
+  const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
   // another tab, another window, a closed sidebar or another chat (switchChat leaves it running).
@@ -6786,6 +6784,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     run.queued = false;
     if (wasQueued) chatPageRt.emit(to(), 'agent:event', { type: 'status', text: '', runId }); // the waiting line goes
     const tabId = fromChatPage ? undefined : runHomeTab(run); // [chat per tab] where this chat is bound, not the tab in front now
+    const leftOut = chatImages.rejectionNotice(rejected);
+    if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running

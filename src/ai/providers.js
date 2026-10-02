@@ -210,7 +210,8 @@ function toChatMessages(system, messages) {
       } else if (b.type === 'text') {
         parts.push({ type: 'text', text: b.text });
       } else if (b.type === 'image') {
-        parts.push(stale ? { type: 'text', text: '[earlier screenshot omitted to save tokens]' } : { type: 'image_url', image_url: { url: imageUrl(b.source) } });
+        // A picture the user attached stays in every later request (a follow-up asks about it); only screenshots a tool returned age out (above).
+        parts.push({ type: 'image_url', image_url: { url: imageUrl(b.source) } });
       }
     }
     if (parts.length) out.push({ role: 'user', content: parts });
@@ -294,6 +295,8 @@ function describeProviderError(err, provider) {
     return { text: `Could not reach ${label}${why ? ` (${why})` : ''}. Check your internet connection and try again.` };
   }
   if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
+  // A model that takes no images, given a chat that holds some (a catalog can be wrong or silent about it).
+  if ([400, 404, 415, 422].includes(err.status) && /image|vision|multimodal|modalit/i.test(String(err.message || ''))) return { text: `This ${label} model can't read images. Remove the image from the chat (start a new chat) or pick a model that can see images.` };
   if (err.status === 401 || err.status === 403) return { text: `That ${label} API key was rejected. Add a valid key to continue.`, action: 'settings' };
   if (err.status === 402) return { text: provider === 'openrouter' ? 'Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits, or pick a free model.' : `${label} says payment is required. Check your ${label} billing.` };
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
@@ -315,4 +318,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { imageUrl, clientFor, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

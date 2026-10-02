@@ -334,6 +334,22 @@ window.addEventListener('hashchange', render);
     if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); }
   });
 
+  // This box passes only words (the address of this page carries them): a picture pasted or dropped here is not
+  // taken in silently. It says where images go.
+  const hint = document.getElementById('mode-hint');
+  const hintText = hint ? hint.textContent : '';
+  let hintTimer = null;
+  const refuseImages = (e, files) => {
+    if (mode !== 'ask' || !hint || ![...files].some((f) => String(f.type).startsWith('image/'))) return;
+    e.preventDefault();
+    hint.textContent = 'Images can’t go in this box. Ask here, then add the picture in the chat (paste, drop, or the attach button).';
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => { hint.textContent = hintText; }, 9000);
+  };
+  input.addEventListener('paste', (e) => refuseImages(e, e.clipboardData?.files || []));
+  form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
+  form.addEventListener('drop', (e) => refuseImages(e, e.dataTransfer?.files || []));
+
   form.addEventListener('submit', (e) => {
     const q = input.value.trim();
     if (mode === 'ask') {

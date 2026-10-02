@@ -12,6 +12,7 @@ const modelRoute = require('../features/model-route'); // [model route]
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
+const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
@@ -1751,6 +1752,14 @@ class Agent {
     return true;
   }
 
+  // The images a CLI engine's model can take: all of them, or none (with a notice) when the picked model is known to be
+  // text-only. The engines cap the size themselves and say so (capImages).
+  engineImages(engineName, pickedModel, images, emit) {
+    if (!images.length || fallback.capsOf(`x:${pickedModel}`).vision !== false) return images;
+    emit({ type: 'notice', text: chatImages.engineNotice(engineName, pickedModel, images.length) });
+    return [];
+  }
+
   async claudeCodeTurn(messages, prompt, images, signal, emit, hint = {}) {
     const settings = messages.settings;
     const { routed, spawn } = hint.plan || this.claudeCodePlan(messages, hint.userText ?? prompt, images.length, hint.tabCount || 0);
@@ -1833,9 +1842,10 @@ class Agent {
     }
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
     emit({ type: 'turn_start' });
+    const sent = this.engineImages('Grok Build', picked, [...historyImages, ...images], emit);
     const out = await this.engines.grokbuild.run({
       prompt: text,
-      images: [...historyImages, ...images],
+      images: sent,
       sessionId: settings.gbSession || crypto.randomUUID(),
       resume,
       model: picked, // 'default' or one of `grok models`' ids
@@ -1890,7 +1900,7 @@ class Agent {
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
     const out = await this.engines.antigravity.run({
       prompt: text,
-      images: [...historyImages, ...images],
+      images: this.engineImages('Antigravity', picked, [...historyImages, ...images], emit),
       sessionId: settings.agySession || null,
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
@@ -1942,6 +1952,13 @@ class Agent {
       messages.chatOnlyNoted = model;
       emit({ type: 'notice', text: `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
     }
+    // A model known to be text-only gets the chat without its images: said once, not dropped silently.
+    const blind = fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false;
+    const pictures = blind ? chatImages.userImageCount(messages) : 0;
+    if (pictures && messages.textOnlyNoted !== model) {
+      messages.textOnlyNoted = model;
+      emit({ type: 'notice', text: chatImages.textOnlyNotice(providers.openRouterName(model) || model, pictures) });
+    }
     return providers.streamTurn({
       provider,
       model,
@@ -1950,7 +1967,7 @@ class Agent {
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
-      messages: (fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
+      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,

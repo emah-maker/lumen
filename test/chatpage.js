@@ -97,6 +97,20 @@ const fakeClient = (app) => app.evaluate(() => {
   check('the page can ask main for the current chat', lonely === true, JSON.stringify(lonely));
   const parts = await inPage(`({ model: document.querySelectorAll('#model option').length, picker: Boolean(document.querySelector('.model-picker .picker-button')), meter: Boolean(document.getElementById('usage-meter')), stop: Boolean(document.getElementById('send')), attach: Boolean(document.getElementById('attachments')), auto: Boolean(document.getElementById('auto-allow')), landmarks: ['nav', 'main', 'header', '[role=log]', 'form'].map((s) => Boolean(document.querySelector(s))).join(), live: document.getElementById('messages').getAttribute('aria-live'), note: Boolean(document.querySelector('body > [role=status][aria-live=polite]')), lang: document.documentElement.lang })`);
   check('model picker, usage bar, composer, attachments and auto-allow are all on the page', parts.model > 0 && parts.picker && parts.meter && parts.stop && parts.attach && parts.auto, JSON.stringify(parts));
+  // The full-page composer takes images too: the attach button, a picked file (a tiny PNG here), the chip and its remove button.
+  const attachedOnPage = await inPage(`(async () => {
+    const btn = document.getElementById('attach');
+    const c = document.createElement('canvas'); c.width = 8; c.height = 8; c.getContext('2d').fillRect(0, 0, 8, 8);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], 'page.png', { type: 'image/png' }));
+    const input = document.getElementById('attach-input'); input.files = dt.files; input.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 600));
+    const chips = document.querySelectorAll('#attachments .attachment').length;
+    const named = Boolean(btn && btn.getAttribute('aria-label') && /up to 5/.test(btn.title));
+    document.querySelector('#attachments .attachment-remove')?.click();
+    return { chips, named, after: document.querySelectorAll('#attachments .attachment').length };
+  })()`);
+  check('the full-page chat has an attach button that adds (and removes) an image', attachedOnPage?.chips === 1 && attachedOnPage?.named && attachedOnPage?.after === 0, JSON.stringify(attachedOnPage));
   // (the list itself is aria-live off so a streaming reply is not read word by word; chat-core's one polite status note announces)
   check('landmarks (nav, main, header, log, form), a quiet log and a polite status note', parts.landmarks === 'true,true,true,true,true' && parts.live === 'off' && parts.note === true, JSON.stringify(parts));
 

@@ -1813,13 +1813,23 @@ function updateSend() {
   send.disabled = !running && !prompt.value.trim() && attachments.length === 0;
 }
 
-// ---------- image attachments: paste or drop images into the sidebar ----------
+// ---------- image attachments: paste, drop or pick images for the message ----------
 
 const MAX_IMAGES = 5;
 const MAX_EDGE = 1568; // larger images are downscaled by the API anyway; resizing first saves upload time
-const MAX_BYTES = 3.5 * 1024 * 1024;
+const MAX_BYTES = 3.5 * 1024 * 1024; // a PNG/JPEG/GIF/WebP under this and within MAX_EDGE goes as it is
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // a bigger file is refused before it is read
+const MAX_SEND_CHARS = 6_500_000; // base64 characters of one image after conversion (main refuses 7 million)
 const PASSTHROUGH = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-let attachments = []; // { media_type, data (base64), url (data URL for previews) }
+const IMAGE_NAME = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|svg|ico|tiff?|heic|heif)$/i;
+const HEIC_NAME = /\.(heic|heif)$/i;
+let attachments = []; // { media_type, data (base64), url (data URL for previews), name }
+let attachNoteTimer = null;
+
+// Some systems give a dropped photo no MIME type: the name decides then.
+const isImageFile = (f) => Boolean(f) && (String(f.type).startsWith('image/') || (!f.type && IMAGE_NAME.test(f.name || '')));
+const isHeic = (f) => /^image\/hei[cf]/.test(f.type) || HEIC_NAME.test(f.name || '');
+const imageLabel = (f) => f.name || t('chat.image');
 
 const readAsDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -1828,36 +1838,95 @@ const readAsDataUrl = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
+// A reason an image could not be added (attachProblem says it in words).
+const imageError = (code) => Object.assign(new Error(code), { code });
+
+// Canvas -> { media_type, data, url } within the size main accepts, or null. Pictures with transparency keep it
+// as PNG; photos (and anything too big as PNG) become JPEG on white.
+function encodeCanvas(canvas, wantPng) {
+  let flat = null;
+  const onWhite = () => {
+    if (flat) return flat;
+    flat = document.createElement('canvas');
+    flat.width = canvas.width;
+    flat.height = canvas.height;
+    const ctx = flat.getContext('2d');
+    ctx.fillStyle = '#fff'; // (a JPEG has no transparent pixels: they would turn black)
+    ctx.fillRect(0, 0, flat.width, flat.height);
+    ctx.drawImage(canvas, 0, 0);
+    return flat;
+  };
+  const attempts = wantPng ? [['image/png'], ['image/jpeg', 0.85], ['image/jpeg', 0.7]] : [['image/jpeg', 0.9], ['image/jpeg', 0.75], ['image/jpeg', 0.6]];
+  for (const [type, quality] of attempts) {
+    const out = (type === 'image/png' ? canvas : onWhite()).toDataURL(type, quality);
+    const data = out.split(',')[1] || '';
+    if (data && data.length <= MAX_SEND_CHARS) return { media_type: type, data, url: out };
+  }
+  return null;
+}
+
 async function toAttachment(file) {
+  if (isHeic(file)) throw imageError('heic');
+  if (!file.size) throw imageError('empty');
+  if (file.size > MAX_FILE_BYTES) throw imageError('big');
   const url = await readAsDataUrl(file);
   const img = new Image();
   img.src = url;
-  await img.decode();
-  const edge = Math.max(img.naturalWidth, img.naturalHeight);
+  try { await img.decode(); } catch { throw imageError('unreadable'); }
+  const w = img.naturalWidth || 1024; // (an SVG without a size)
+  const h = img.naturalHeight || Math.round(w * 0.75);
+  const edge = Math.max(w, h);
+  const name = file.name || '';
   if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES) {
-    return { media_type: file.type, data: url.split(',')[1], url };
+    return { media_type: file.type, data: url.split(',')[1], url, name };
   }
-  const scale = Math.min(1, MAX_EDGE / edge);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-  const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-  const out = canvas.toDataURL(type, 0.9);
-  return { media_type: type, data: out.split(',')[1], url: out };
+  let scale = Math.min(1, MAX_EDGE / edge);
+  const wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
+  for (let tries = 0; tries < 3; tries++, scale *= 0.7) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const encoded = encodeCanvas(canvas, wantPng);
+    if (encoded) return { ...encoded, name };
+  }
+  throw imageError('big');
 }
 
-async function addImages(files) {
-  const images = [...files].filter((f) => f.type.startsWith('image/'));
+function attachProblem(file, code) {
+  const key = { heic: 'composer.attach.heic', empty: 'composer.attach.empty', big: 'composer.attach.big', notImage: 'composer.attach.notImage' }[code] || 'composer.attach.unreadable';
+  return t(key, { name: imageLabel(file), max: 25 });
+}
+
+// What happened to the last pick, under the thumbnails (and read out): an image that couldn't be added is
+// always said, never skipped silently.
+function showAttachNote(lines) {
+  const el = $('attachment-note');
+  if (!el) return;
+  clearTimeout(attachNoteTimer);
+  el.replaceChildren(...lines.map((line) => Object.assign(document.createElement('div'), { textContent: line })));
+  el.hidden = lines.length === 0;
+  if (lines.length) attachNoteTimer = setTimeout(() => showAttachNote([]), 12000);
+}
+
+// Adds the images among `files`; returns whether there was any to add. Says what it left out.
+async function addImages(files, { announceOthers = true } = {}) {
+  const list = [...files];
+  const images = list.filter(isImageFile);
+  const problems = [];
+  if (announceOthers) for (const f of list.filter((x) => !isImageFile(x))) problems.push(attachProblem(f, 'notImage'));
+  let over = 0;
   for (const file of images) {
-    if (attachments.length >= MAX_IMAGES) break;
+    if (attachments.length >= MAX_IMAGES) { over++; continue; }
     try {
       attachments.push(await toAttachment(file));
-    } catch {
-      // Unreadable image (e.g. an unsupported format); skip it.
+    } catch (err) {
+      problems.push(attachProblem(file, err?.code));
     }
   }
+  if (over) problems.push(t('composer.attach.limit', { max: MAX_IMAGES, n: over }));
   renderAttachments();
+  showAttachNote(problems);
   return images.length > 0;
 }
 
@@ -1868,31 +1937,62 @@ function renderAttachments() {
   attachments.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'attachment';
+    chip.setAttribute('role', 'listitem');
+    if (a.name) chip.title = a.name;
     const img = document.createElement('img');
     img.src = a.url;
-    img.alt = t('composer.attachedImage', { n: i + 1 });
+    img.alt = a.name ? t('composer.attachedNamed', { n: i + 1, name: a.name }) : t('composer.attachedImage', { n: i + 1 });
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'attachment-remove';
     remove.setAttribute('aria-label', t('composer.removeImage', { n: i + 1 }));
     remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
-    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); prompt.focus(); };
+    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); showAttachNote([]); prompt.focus(); };
     chip.append(img, remove);
     strip.append(chip);
   });
+  strip.setAttribute('role', 'list');
+  strip.setAttribute('aria-label', t('composer.attachments'));
+  const attachBtn = $('attach');
+  if (attachBtn) {
+    const full = attachments.length >= MAX_IMAGES;
+    attachBtn.disabled = full;
+    attachBtn.title = full ? t('composer.attach.full', { max: MAX_IMAGES }) : t('composer.attach.title', { max: MAX_IMAGES });
+  }
   updateSend();
+  document.dispatchEvent(new CustomEvent('lumen:attachments', { detail: { count: attachments.length } })); // (the background button can't carry images)
+}
+
+window.chatAttachments = { count: () => attachments.length, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
+
+// The attach button: a file picker (Tab to it, then Enter or Space).
+{
+  const attachBtn = $('attach');
+  const picker = $('attach-input');
+  if (attachBtn && picker) {
+    attachBtn.onclick = () => picker.click();
+    picker.addEventListener('change', async () => {
+      const files = [...picker.files];
+      picker.value = ''; // (the same file can be picked again)
+      if (files.length) await addImages(files);
+      prompt.focus();
+    });
+    renderAttachments(); // (the tooltip states the limit)
+  }
 }
 
 prompt.addEventListener('paste', async (e) => {
   const files = [...(e.clipboardData?.files || [])];
-  if (files.some((f) => f.type.startsWith('image/'))) {
+  if (files.some(isImageFile)) {
     e.preventDefault(); // text paste stays untouched; only images are intercepted
-    await addImages(files);
+    await addImages(files, { announceOthers: false });
   }
 });
 const sidebarEl = chatRoot;
+// (Other files dropped here are left to the window, which opens them in a tab; a file with no type may be a photo.)
+const dragHasImages = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file' && (i.type === '' || i.type.startsWith('image/')));
 sidebarEl.addEventListener('dragover', (e) => {
-  if ([...e.dataTransfer.items].some((i) => i.type.startsWith('image/'))) {
+  if (dragHasImages(e.dataTransfer)) {
     e.preventDefault();
     sidebarEl.classList.add('dropping');
   }
@@ -1900,9 +2000,9 @@ sidebarEl.addEventListener('dragover', (e) => {
 sidebarEl.addEventListener('dragleave', (e) => { if (!sidebarEl.contains(e.relatedTarget)) sidebarEl.classList.remove('dropping'); });
 sidebarEl.addEventListener('drop', async (e) => {
   sidebarEl.classList.remove('dropping');
-  if (!e.dataTransfer.files.length) return;
+  if (![...e.dataTransfer.files].some(isImageFile)) return;
   e.preventDefault();
-  await addImages(e.dataTransfer.files);
+  await addImages(e.dataTransfer.files); // (a file that came with the images and is not one is named in the note)
   prompt.focus();
 });
 
@@ -1916,7 +2016,7 @@ function queueControls(entry) {
   edit.onclick = () => {
     drop();
     prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text; // (a draft is kept)
-    if (entry.images?.length) { attachments = [...attachments, ...entry.images]; renderAttachments(); }
+    if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_IMAGES); renderAttachments(); }
     autosize();
     updateSend();
     prompt.focus();
@@ -2907,6 +3007,7 @@ async function sendComposer() {
   const images = attachments;
   attachments = [];
   renderAttachments();
+  showAttachNote([]);
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
@@ -2961,7 +3062,7 @@ function clearChatView() {
     const texts = unsent.map((q) => q.text).filter(Boolean);
     if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
     const images = unsent.flatMap((q) => q.images || []);
-    if (images.length) { attachments = [...attachments, ...images]; renderAttachments(); }
+    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_IMAGES); renderAttachments(); }
     autosize();
     updateSend();
   }
@@ -6616,7 +6717,15 @@ $('agent-stop')?.addEventListener('click', () => {
     }
     updateSendBg();
   }
-  function updateSendBg() { sendBg.disabled = !composerInput.value.trim(); }
+  // A background task is saved as words: it can't carry the images attached to the message, so the button waits
+  // (and says why) rather than running the task without them.
+  const attachedImages = () => window.chatAttachments?.count() || 0;
+  function updateSendBg() {
+    const images = attachedImages() > 0;
+    sendBg.disabled = !composerInput.value.trim() || images;
+    sendBg.title = images ? T('tasks.composer.noImages') : T('tasks.composer.run');
+  }
+  document.addEventListener('lumen:attachments', updateSendBg);
 
   async function refresh() {
     state = await api.state();
@@ -7025,6 +7134,7 @@ $('agent-stop')?.addEventListener('click', () => {
     e.preventDefault();
     e.stopImmediatePropagation();
     if (!state.settings.enabled) return;
+    if (bgCmd && attachedImages() > 0) { window.chatAttachments?.note([T('tasks.composer.noImages')]); return; } // (the request and the images stay in the box)
     composerInput.value = '';
     composerInput.dispatchEvent(new Event('input'));
     if (bgCmd) openCreate({ prompt: bgCmd[1].trim() });
