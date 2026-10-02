@@ -288,6 +288,11 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
   .icon-btn.hands-off-strip:hover { color: var(--text); }
   .hands-off-label { display: inline; }
 }
+/* below ~1100px Organize is its icon (it has a tip and an accessible name): the tabs keep their titles */
+@media (max-width: 1099px) {
+  #organize-tabs { width: 28px; justify-content: center; padding: 0; }
+  #organize-tabs span { display: none; }
+}
 /* narrow window: the chip gives up its words and shows the count as a badge, so the tabs keep the room */
 @media (max-width: 450px) {
   .organize-tabs { display: none !important; } /* (Organize Tabs is also in the tab menu and Tab Groups: the tabs get the room) */

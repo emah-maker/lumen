@@ -302,6 +302,25 @@ const launch = (profile) => electron.launch({
 
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
+
+  // ---- 11. A fresh window at 1000px with 7 tabs of the user's: Organize is its icon and the tab in front keeps a readable width.
+  const profile2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-aimanners2-'));
+  const app2 = await launch(profile2);
+  const ui2 = await app2.firstWindow();
+  await ui2.waitForSelector('.tab');
+  for (let i = 0; i < 6; i++) await app2.evaluate((_e, u) => global.__agent.browser.openTab(u).id, `${base}/seven${i}`);
+  await app2.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(1000, 800); });
+  await waitFor(() => ui2.evaluate(() => innerWidth >= 980 && innerWidth < 1100 && document.querySelectorAll('#tabs .tab').length >= 7));
+  await sleep(500);
+  const seven = await ui2.evaluate(() => {
+    const act = document.querySelector('#tabs .tab.active')?.getBoundingClientRect();
+    const org = document.getElementById('organize-tabs');
+    return { n: document.querySelectorAll('#tabs .tab').length, width: innerWidth, act: act && act.width, orgShown: !org.hidden && org.getBoundingClientRect().width > 0, orgW: org.getBoundingClientRect().width, orgText: getComputedStyle(org.querySelector('span')).display };
+  });
+  check('1000px, 7 tabs: the tab in front is at least 100px wide', seven.act >= 100, JSON.stringify(seven));
+  check('1000px: Organize (when shown) is just its icon', !seven.orgShown || (seven.orgText === 'none' && seven.orgW <= 30), JSON.stringify(seven));
+  await app2.close();
+  fs.rmSync(profile2, { recursive: true, force: true });
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
