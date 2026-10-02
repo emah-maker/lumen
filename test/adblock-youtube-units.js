@@ -115,6 +115,45 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
   walled.tick(); walled.tick();
   check('fallback script: behind the enforcement dialog the paused video is resumed, once', walled.log.played === 1, walled.log.played);
 
+  // ---- Scriptlets that patch JSON.stringify (YouTube has six edit-inbound-object ones), run one after another.
+  // The text below has the shape of the list's scriptlet (names as minified there): its own safeSelf() snapshots
+  // JSON.stringify when it first runs, and the edit deep-copies the argument through that snapshot before testing
+  // a JSONPath. Run in order, each snapshot was the previous scriptlet's proxy, and a stringify cost 2^n copies.
+  const editScriptlet = (tag) => 'if (typeof scriptletGlobals === \'undefined\') { var scriptletGlobals = {}; };'
+    + 'function editInboundObjectFn(t=false,e="",r="",n=""){if(e==="")return;const i=safeSelf();const f={apply:(x)=>(x.attestationRequest?Object.assign(x,{edited:' + JSON.stringify(tag) + '}):void 0)};'
+    + 'const u=t=>0;const s=t=>{let e;try{e=i.JSON_parse(i.JSON_stringify(t))}catch{}if(typeof e!=="object"||e===null)return;const r=f.apply(e);if(r===void 0)return;return r};'
+    + 'JSON.stringify=new Proxy(JSON.stringify,{apply(fn,self,args){const o=s(args[0]);if(o)args[0]=o;return Reflect.apply(fn,self,args)}})};'
+    + 'function safeSelf(){if(safeSelf.safe)return safeSelf.safe;const e=globalThis;const t={JSON_parse:Function.prototype.call.bind(e.JSON.parse,e.JSON),JSON_stringify:Function.prototype.call.bind(e.JSON.stringify,e.JSON)};safeSelf.safe=t;if(scriptletGlobals.bcSecret===void 0)return t;return t}'
+    + ';(function trustedEditInboundObject(t="",n="",d=""){editInboundObjectFn(true,t,n,d)})(...[`JSON.stringify`,`0`,`[?.attestationRequest][?.x]`]);';
+  // Runs the scriptlets the way the preload does (a function scope each, one scriptletGlobals for all), then stringifies once.
+  function stringifyAfter(codes, payload, { shared }) {
+    const counter = { native: 0 };
+    const sandbox = { Reflect, Proxy, Object, Array, Function, console, JSON: { parse: JSON.parse, stringify: (...a) => { counter.native++; return JSON.stringify(...a); } } };
+    const ctx = vm.createContext(sandbox);
+    const globals = {};
+    ctx.__globals = globals;
+    for (const code of codes) vm.runInContext(shared ? `(function(scriptletGlobals){\n${code}\n})(__globals)` : `(function(){\n${code}\n})()`, ctx);
+    counter.native = 0;
+    ctx.__payload = payload;
+    const out = vm.runInContext('JSON.stringify(__payload)', ctx);
+    return { calls: counter.native, out };
+  }
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'].map(editScriptlet);
+  const plain = { videoId: 'x', big: [1, 2, 3] };
+  const before = stringifyAfter(six, plain, { shared: false });
+  check('scriptlets: left as they come, each one\'s snapshot of JSON.stringify is the previous one\'s proxy and a call costs 2^n copies', before.calls >= 32, before.calls);
+  const shareOnly = stringifyAfter(six.map(Y.shareSafeSelf), plain, { shared: true });
+  check('scriptlets: with one shared safeSelf each scriptlet copies the argument once (linear, not 2^n)', shareOnly.calls === 7, shareOnly.calls);
+  const prepared = stringifyAfter(six.map(Y.prepareScriptlet), plain, { shared: true });
+  check('scriptlets: an object that can\'t match the path is passed on without a copy (one stringify in all)', prepared.calls === 1 && JSON.parse(prepared.out).big.length === 3, `${prepared.calls} ${prepared.out}`);
+  const hit = stringifyAfter(six.map(Y.prepareScriptlet), { attestationRequest: {}, x: 1 }, { shared: true });
+  check('scriptlets: an object with the property is still copied and edited by the path', typeof JSON.parse(hit.out).edited === 'string' && hit.calls <= 13, `${hit.calls} ${hit.out}`);
+  const inArray = stringifyAfter(six.map(Y.prepareScriptlet), [{ attestationRequest: {} }], { shared: true });
+  check('scriptlets: arrays are never skipped (the path looks at their elements)', inArray.calls > 1, inArray.calls);
+  const odd = 'function something(){ return 1 }';
+  check('scriptlets: text that does not have the expected shape is left exactly as it was', Y.prepareScriptlet(odd) === odd && Y.prepareScriptlet(editScriptlet('z').replace('safeSelf.safe=t;', '')) !== null && Y.shareSafeSelf(7) === 7, 'changed');
+  check('scriptlets: the same scriptlet text is only handed to a page once', Y.dedupe(['a', 'b', 'a', 'c', 'b']).join('') === 'abc', Y.dedupe(['a', 'b', 'a']));
+
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

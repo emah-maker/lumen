@@ -95,4 +95,42 @@ function withFallback(scripts, hostname) {
   return YOUTUBE_HOST.test(hostname || '') ? [...scripts, FALLBACK_SCRIPT] : scripts;
 }
 
-module.exports = { YOUTUBE_FILTERS, YOUTUBE_HOST, FALLBACK_SCRIPT, withFallback };
+// Each scriptlet carries its own copy of safeSelf(), which snapshots JSON.stringify, fetch... when it first runs. Run
+// one after another, the second scriptlet that patches JSON.stringify snapshots the first one's proxy, the third the
+// second's, and so on: each of YouTube's six edit-inbound-object scriptlets then deep-clones its argument through
+// all the earlier ones (JSON.parse(JSON.stringify(x)) inside the proxies), 2^5 clones for every JSON.stringify call
+// the page makes. uBlock runs them with one shared safeSelf, whose snapshot is taken before any patch; this makes
+// the copies do the same by way of the scriptletGlobals object the preload hands to all of them. A scriptlet whose
+// text doesn't have the expected shape (a future list format) is left as it was.
+const SAFE_HEAD = /function safeSelf\(\)\{if\(safeSelf\.safe\)return safeSelf\.safe;/;
+const SAFE_TAIL = /safeSelf\.safe=(\w+);/;
+function shareSafeSelf(code) {
+  if (typeof code !== 'string' || !SAFE_HEAD.test(code) || !SAFE_TAIL.test(code)) return code;
+  return code
+    .replace(SAFE_HEAD, (head) => `${head}if(scriptletGlobals.safe)return safeSelf.safe=scriptletGlobals.safe;`)
+    .replace(SAFE_TAIL, (_all, name) => `safeSelf.safe=scriptletGlobals.safe=${name};`);
+}
+
+// edit-inbound-object (six of them patch JSON.stringify on YouTube) deep-copies every argument through
+// JSON.parse(JSON.stringify(x)) before it asks whether its JSONPath matches anything; YouTube stringifies
+// big objects all the time. A path that starts with [?.name] can only match an object that has that property
+// (or an array, whose elements it then looks at), so anything else is left alone without the copy. A function
+// whose text doesn't have the expected shape is left as it was.
+const EDIT_PARAMS = /function editInboundObjectFn\(\w+=false,\w+="",\w+="",(\w+)=""\)\{/;
+const EDIT_CLONE = /const (\w+)=(\w+)=>\{let (\w+);try\{\3=(\w+)\.JSON_parse\(\4\.JSON_stringify\(\2\)\)\}catch\{\}/;
+function skipUselessClones(code) {
+  const params = typeof code === 'string' && EDIT_PARAMS.exec(code);
+  if (!params || !EDIT_CLONE.test(code)) return code;
+  return code.replace(EDIT_CLONE, (_all, fn, arg, copy, self) => `const lumenKey=(m=>m?m[1]:null)(/^\\[\\?\\.([A-Za-z_$][\\w$]*)\\]/.exec(${params[1]}));`
+    + `const ${fn}=${arg}=>{if(typeof ${arg}!=="object"||${arg}===null||(lumenKey!==null&&Array.isArray(${arg})===false&&typeof ${arg}.toJSON!=="function"&&(lumenKey in ${arg})===false))return;`
+    + `let ${copy};try{${copy}=${self}.JSON_parse(${self}.JSON_stringify(${arg}))}catch{}`);
+}
+
+// What every scriptlet goes through before it is handed to a page.
+const prepareScriptlet = (code) => skipUselessClones(shareSafeSelf(code));
+
+// The lists carry some scriptlets twice (the same rule in two lists): a second identical copy only wraps fetch,
+// XHR or JSON.parse once more, so each page runs every distinct text once.
+const dedupe = (scripts) => [...new Set(scripts)];
+
+module.exports = { dedupe, prepareScriptlet, shareSafeSelf, skipUselessClones, YOUTUBE_FILTERS, YOUTUBE_HOST, FALLBACK_SCRIPT, withFallback };
