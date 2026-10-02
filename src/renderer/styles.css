@@ -262,16 +262,16 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
    one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
    Self-contained: everything it needs is under .tab-chat-mark. */
-.tab-chat-mark { display: none; flex: none; width: 12px; height: 12px; margin-left: -2px; pointer-events: none; color: var(--accent); }
+.tab-chat-mark { display: none; flex: none; width: 14px; height: 14px; margin-left: -2px; pointer-events: none; color: var(--accent); }
 .tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
-.tab-chat-mark svg { display: block; width: 12px; height: 12px; overflow: visible; }
+.tab-chat-mark svg { display: block; width: 14px; height: 14px; overflow: visible; }
 .tab-chat-mark .cm-spin { animation: spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .tab-chat-mark .cm-still { display: none; }
 .tab-chat-mark.waiting { color: var(--muted); }
 .tab-chat-mark.done { color: var(--success); }
 .tab-chat-mark.approval { color: var(--warning); }
 .tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
-.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
 :root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; }
 :root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
@@ -1050,9 +1050,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 @keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
 :root.pref-reduce-motion .setup.attention .setup-option { animation: none; }
 /* A passing status beside the working dots ("Starting Claude Code…"). */
-.working[data-status] { width: auto; height: auto; overflow: visible; background: none; }
+.working[data-status] { width: auto; max-width: 100%; height: auto; overflow: visible; background: none; }
 .working[data-status]::before { display: none; }
-.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
+.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; animation: status-pulse 1.6s ease-in-out infinite; }
 @keyframes status-pulse { 50% { opacity: 0.55; } }
 :root.pref-reduce-motion .working[data-status]::after { animation: none; }
 

@@ -264,16 +264,16 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
    one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
    Self-contained: everything it needs is under .tab-chat-mark. */
-.tab-chat-mark { display: none; flex: none; width: 12px; height: 12px; margin-left: -2px; pointer-events: none; color: var(--accent); }
+.tab-chat-mark { display: none; flex: none; width: 14px; height: 14px; margin-left: -2px; pointer-events: none; color: var(--accent); }
 .tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
-.tab-chat-mark svg { display: block; width: 12px; height: 12px; overflow: visible; }
+.tab-chat-mark svg { display: block; width: 14px; height: 14px; overflow: visible; }
 .tab-chat-mark .cm-spin { animation: spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .tab-chat-mark .cm-still { display: none; }
 .tab-chat-mark.waiting { color: var(--muted); }
 .tab-chat-mark.done { color: var(--success); }
 .tab-chat-mark.approval { color: var(--warning); }
 .tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
-.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
 :root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; }
 :root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
@@ -1052,9 +1052,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 @keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
 :root.pref-reduce-motion .setup.attention .setup-option { animation: none; }
 /* A passing status beside the working dots ("Starting Claude Code…"). */
-.working[data-status] { width: auto; height: auto; overflow: visible; background: none; }
+.working[data-status] { width: auto; max-width: 100%; height: auto; overflow: visible; background: none; }
 .working[data-status]::before { display: none; }
-.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
+.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; animation: status-pulse 1.6s ease-in-out infinite; }
 @keyframes status-pulse { 50% { opacity: 0.55; } }
 :root.pref-reduce-motion .working[data-status]::after { animation: none; }
 
@@ -1393,17 +1393,31 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
-.chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }
-.chat-badge.running { animation: chat-badge-pulse 1.4s ease-in-out infinite; }
-.chat-badge.approval { background: var(--warning); }
+/* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
+.chat-badge { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; color: var(--accent); }
+.chat-badge svg { display: block; width: 12px; height: 12px; overflow: visible; }
+.chat-badge .cm-spin { animation: chat-spin 0.8s linear infinite; transform-origin: 6px 6px; }
+.chat-badge .cm-still { display: none; }
+.chat-badge.queued { color: var(--muted); }
+.chat-badge.unread { color: var(--success); }
+.chat-badge.approval { color: var(--warning); }
+.chat-badge .cm-on { fill: currentColor; stroke: none; }
+.chat-badge .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
 .chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* AA for small text on the row and the selected row */
 .chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-open:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* softer than the global ring: the row is already tinted */
-.chat-stop-wait { flex: none; margin-right: 4px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 11.5px; cursor: default; }
-.chat-stop-wait:hover { background: var(--hover); }
-.chat-badge.queued { background: none; box-shadow: inset 0 0 0 1.5px var(--faint); } /* in line: a hollow dot */
-@keyframes chat-badge-pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .chat-badge.running { animation: none; } }
+/* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
+.chat-item.has-queued { display: grid; grid-template-columns: 1fr auto; }
+.chat-item.has-queued .chat-open { grid-column: 1; grid-row: 1; }
+.chat-item.has-queued .chat-actions { grid-column: 2; grid-row: 1; }
+.chat-stop-wait { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin: -2px 0 6px 12px; padding: 1px 2px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
+.chat-stop-wait:hover { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; } .chat-badge .cm-still { display: block; } }
+:root.pref-reduce-motion .chat-badge .cm-spin { animation: none; }
+:root.pref-reduce-motion .chat-badge .cm-still { display: block; }
+.chat-state { font-weight: 600; color: var(--text); }
+.chat-place:not(.here)::after { content: " \203A"; } /* a chat in another tab: clicking it goes there */
 /* The Chats button: another chat needs an OK or has a reply not seen yet. */
 #chat-history[data-attention] { position: relative; }
 #chat-history[data-attention]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }

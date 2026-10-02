@@ -107,6 +107,13 @@
       input.onblur = () => finish(true);
     }
 
+    // The tab strip's glyphs (app.js CHAT_MARKS), so a list row and its tab show the same mark.
+    const GLYPHS = {
+      running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
+      queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+      unread: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
+      approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
+    };
     return function item(chat, isCurrent) {
       const li = document.createElement('li');
       li.className = `chat-item${isCurrent ? ' current' : ''}`;
@@ -130,9 +137,13 @@
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
         if (label) {
           const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
+          badge.innerHTML = GLYPHS[chat.badge] || '';
           badge.setAttribute('role', 'img');
           badge.setAttribute('aria-label', label);
           name.prepend(badge);
+          // The state in words as well (not colour or shape alone).
+          const word = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
+          if (word) meta.prepend(Object.assign(document.createElement('span'), { className: 'chat-state', textContent: word }), document.createTextNode(meta.textContent ? ' \u00b7 ' : ''));
           li.classList.add(`has-${chat.badge}`);
         }
       }
