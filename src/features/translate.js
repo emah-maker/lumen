@@ -200,10 +200,17 @@ function asciiText(str) {
   }
   return out;
 }
-const NUMBER_TOKEN = /\d{1,3}(?:[\s'’]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)*/g;
-// One number token's value, locale-agnostic: with both . and , the last one is the decimal mark; a mark that repeats, or
-// one followed by exactly three digits after 1 to 3 (1,000 / 1.000), is a thousands mark; any other single mark is decimal.
-function numberValue(token) {
+const NUMBER_TOKEN = /\d{1,3}(?:[\s'’]\d{3})+(?:[.,]\d+)?|\d*[.,]\d+(?:[.,]\d+)*|\d+/g;
+const MINUS = new RegExp(`[-${String.fromCharCode(0x2212)}${String.fromCharCode(0xff0d)}]`);
+// Languages that write the decimal mark as a comma (and group thousands with a point or a space); the rest write a point.
+const COMMA_DECIMAL = new Set(['de', 'fr', 'es', 'it', 'pt', 'ru', 'uk', 'pl', 'cs', 'sk', 'sl', 'hr', 'sr', 'bg', 'ro', 'hu', 'el', 'tr', 'nl', 'id', 'vi', 'da', 'sv', 'nb', 'no', 'fi', 'lt', 'lv', 'et', 'is', 'ca', 'gl', 'eu', 'mk', 'be', 'ka', 'hy', 'az', 'kk']);
+const POINT_DECIMAL = new Set(['en', 'ja', 'zh', 'ko', 'he', 'th', 'hi', 'ms', 'ar', 'fa', 'ur', 'bn', 'ta', 'te', 'mr', 'gu', 'kn', 'ml', 'si', 'my', 'km', 'lo', 'fil', 'sw']);
+const decimalStyle = (code) => { const base = String(code || '').toLowerCase().split(/[-_]/)[0]; return COMMA_DECIMAL.has(base) ? ',' : POINT_DECIMAL.has(base) ? '.' : ''; };
+// One number token's value. With both . and , the last one is the decimal mark. A mark that repeats is a thousands mark.
+// A single mark is read by the language it is written in when that is known (`style`: ',' or '.' is that language's
+// decimal mark; the other mark followed by exactly three digits is its thousands mark). Without a language: three digits
+// after 1 to 3 (1,000 / 1.000) is thousands, anything else decimal. Spaces and apostrophes are thousands marks.
+function numberValue(token, style = '') {
   let t = token.replace(/[\s'’]/g, '');
   const dots = (t.match(/\./g) || []).length;
   const commas = (t.match(/,/g) || []).length;
@@ -212,27 +219,48 @@ function numberValue(token) {
     t = t.split(decimal === '.' ? ',' : '.').join('').replace(decimal, '.');
   } else if (dots + commas > 1) t = t.replace(/[.,]/g, '');
   else if (dots + commas === 1) {
-    const [before, after] = t.split(/[.,]/);
-    t = after.length === 3 && before.length <= 3 && before !== '0' ? before + after : `${before}.${after}`;
+    const mark = dots ? '.' : ',';
+    const [before, after] = t.split(mark);
+    const groupLike = after.length === 3 && before.length >= 1 && before.length <= 3 && before !== '0';
+    const thousands = style ? mark !== style && groupLike : groupLike;
+    t = thousands ? before + after : `${before || '0'}.${after}`;
   }
   return Number(t);
 }
+// The signed value of the single number token in `str`: a minus before or after it, or brackets around it, is negative.
+function signedValue(str, style) {
+  const re = new RegExp(NUMBER_TOKEN.source);
+  const m = re.exec(str);
+  const before = str.slice(0, m.index);
+  const after = str.slice(m.index + m[0].length);
+  const negative = MINUS.test(before) || MINUS.test(after) || (before.includes('(') && after.includes(')'));
+  return (negative ? -1 : 1) * numberValue(m[0], style);
+}
 // A bare number (or symbol, date, time) as the engine returned it -> 'ok' (apply it), 'keep' (the page keeps what it had:
-// a benign reformat such as 2024-05-01 -> 01/05/2024, 22:30 -> 10:30 PM, 5 -> five, EUR -> euro) or 'corrupt' (a number
-// whose digits or value the engine changed: 200 -> 2000, 1.5 -> 15, 1,000 -> 1,0). Only 'corrupt' counts against the pair.
-function checkNumber(was, now) {
-  const a = asciiText(was);
-  const b = asciiText(now);
+// a benign reformat such as 2024-05-01 -> 01/05/2024, 22:30 -> 10:30 PM, 5 -> five, EUR -> euro, or words added around
+// the number) or 'corrupt' (a number whose digits, sign or value the engine changed: 200 -> 2000, 1.5 -> 15, -5 -> 5,
+// 1,000 -> 1,0). Only 'corrupt' counts against the pair. `locales`: { source, target } language codes, when known,
+// so "1,234" is read as 1234 in English and as 1.234 for a German target.
+function checkNumber(was, now, locales = {}) {
+  const clean = (x) => { const t = asciiText(x); return t === null ? null : t.replace(/\p{Cf}/gu, ''); }; // direction marks are not text
+  const a = clean(was);
+  const b = clean(now);
   if (a === null || b === null) return 'keep';
   const digitsA = a.replace(/\D/g, '');
   const digitsB = b.replace(/\D/g, '');
   if (!digitsA) return /[\p{L}\p{N}]/u.test(b) ? 'keep' : 'ok'; // a symbol stays a symbol; "€" -> "euro" is left alone
   if (!digitsB) return 'keep'; // the number became a word
+  if (/\p{L}/u.test(b)) return 'keep'; // words inside a number's own node belong to a neighbour: the number stays as it was
   const tokensA = a.match(NUMBER_TOKEN) || [];
   const tokensB = b.match(NUMBER_TOKEN) || [];
-  if (tokensA.length !== 1) return digitsA === digitsB && tokensB.length === tokensA.length ? 'ok' : 'keep'; // dates, times, ranges: never corruption
+  const from = decimalStyle(locales.source);
+  const to = decimalStyle(locales.target);
+  if (tokensA.length !== 1) { // dates, times, ranges: a benign reformat is never corruption, but the same digits must keep their values in order
+    if (digitsA !== digitsB || tokensB.length !== tokensA.length) return 'keep';
+    return tokensA.every((tok, i) => numberValue(tok, from) === numberValue(tokensB[i], to)) ? 'ok' : 'corrupt';
+  }
   if (tokensB.length !== 1) return 'corrupt';
-  return numberValue(tokensA[0]) === numberValue(tokensB[0]) ? 'ok' : 'corrupt';
+  return signedValue(a, from) === signedValue(b, to) ? 'ok' : 'corrupt';
 }
 // Items from the page: { id, text, v, g (block), l, t (space before / after), n (no letters: a number, price, symbol) }.
 // A letterless node is only worth sending as part of a sentence ("Showing <b>10</b> of <b>200</b> results");
@@ -265,7 +293,7 @@ function groupItems(items, { numbers = true } = {}) {
 // The nodes of a segment that are worth a request of their own (not bare numbers and symbols).
 const sendable = (nodes) => nodes.filter((x) => !x.n);
 // A segment's translation -> [[nodeId, text, segmentId]] or null when the markers were dropped, moved, repeated or garbled.
-function splitSegment(segment, text) {
+function splitSegment(segment, text, locales = {}) {
   if (typeof text !== 'string') return null;
   const k = segment.nodes.length;
   const pieces = text.split(new RegExp(SEAM_RE.source, 'gu')); // [part, n, part, n, part ...]
@@ -279,16 +307,19 @@ function splitSegment(segment, text) {
   const pairs = [];
   let mismatches = 0;
   let checked = 0;
+  let emptyWords = false;
+  let wordsInNumber = false; // the engine put words into a number's own part
   for (let i = 0; i < k; i++) {
     const node = segment.nodes[i];
     // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧").
     // A bare number or symbol that comes back empty is left as written.
     if (node.n && !parts[i].trim()) continue;
+    if (!node.n && !parts[i].trim()) emptyWords = true; // a word node whose words went elsewhere
     // A bare number may be re-formatted for the target (200 -> ٢٠٠, 1,000.5 -> 1.000,5, $5.99 -> 5,99 €) but must keep its
     // value. Anything else leaves the page as it was, and only real corruption counts against the pair.
     if (node.n) {
-      const verdict = checkNumber(node.text, parts[i]);
-      if (verdict !== 'ok') { if (verdict === 'corrupt') mismatches++; continue; }
+      const verdict = checkNumber(node.text, parts[i], locales);
+      if (verdict !== 'ok') { if (verdict === 'corrupt') mismatches++; if (/\p{L}/u.test(parts[i])) wordsInNumber = true; continue; }
       checked++;
     }
     let out = parts[i];
@@ -299,6 +330,8 @@ function splitSegment(segment, text) {
       && /[\p{L}\p{N}]$/u.test(out) && /^[\p{L}\p{N}]/u.test(parts[i + 1]) && !UNSPACED.test(out.slice(-1)) && !UNSPACED.test(parts[i + 1].charAt(0))) out += ' ';
     pairs.push([node.id, out, segment.id]);
   }
+  // Words that went into a number's part while a word node came back empty would be lost: translate that block node by node instead.
+  pairs.redo = wordsInNumber && emptyWords;
   pairs.numberMismatches = mismatches; // bare numbers the engine corrupted (kept as written)
   pairs.numbersChecked = checked; // bare numbers that came back intact
   return pairs;
@@ -649,9 +682,9 @@ function createTranslate(deps) {
     const fresh = [];
     for (const item of items) {
       if (!map.has(item.text)) { fresh.push(item); continue; }
-      const cut = item.nodes ? splitSegment(item, map.get(item.text)) : null;
+      const cut = item.nodes ? splitSegment(item, map.get(item.text), ctx.locales) : null;
       if (!item.nodes) pairs.push([item.id, map.get(item.text)]);
-      else if (cut) pairs.push(...cut);
+      else if (cut && !cut.redo) pairs.push(...cut);
       else fresh.push(...sendable(item.nodes));
     }
     if (pairs.length) { await script(tab, 'apply', pairs); ctx.firstAt ||= performance.now(); }
@@ -676,7 +709,8 @@ function createTranslate(deps) {
           const again = (list, left) => { for (const x of list) retry.push({ item: x, left }); };
           if (!ok.has(item.id)) { if (item.nodes) again(sendable(item.nodes), 2); else if (p.left > 1) again([item], p.left - 1); continue; }
           if (item.nodes) {
-            const cut = splitSegment(item, ok.get(item.id));
+            const cut = splitSegment(item, ok.get(item.id), ctx.locales);
+            if (cut?.redo) { ctx.seamStreak = 0; again(sendable(item.nodes), 2); continue; } // the markers worked but words landed in a number: node by node
             if (!cut) {
               again(sendable(item.nodes), 2);
               noteSeamFailure(ctx);
@@ -778,6 +812,7 @@ function createTranslate(deps) {
     if (!mine()) return false;
     if (!plan) throw failure('unsupported-pair');
     ctx.route = plan.route;
+    ctx.locales = { source: plan.route[0][0], target: plan.route[plan.route.length - 1][1] };
     ctx.pair = plan.route.map((step) => step.join('>')).join(',');
     const pair = `${langName(lang)} → ${langName(target)}`;
     if (plan.missing > 0) {

@@ -354,7 +354,7 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
       ['1,000.5', '1.000,5', true, 'a German separator style'],
       ['1,000.5', '١٬٠٠٠٫٥', true, 'Arabic separators and digits'],
       ['$5.99', '5,99 €', true, 'a price in the other style, other currency sign'],
-      ['$5.99', '5.99 dollars', true, 'a currency word'],
+      ['$5.99', '5.99 dollars', false, 'a currency word inside the number node (the number stays, the words are not written there)', 0],
       ['2024-05-01', '01/05/2024', false, 'a date reordered (benign: kept as written, counts for nothing)', 0],
       ['200', '٢٠٠٠', false, 'an extra digit'],
       ['200', '20', false, 'a dropped digit'],
@@ -451,6 +451,48 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     check('digits: Khmer, Mongolian, Myanmar (incl. Shan), Tibetan, Thai, Lao, full-width and mathematical digits read as 0, 7, 9', [0x17e0, 0x1810, 0x1040, 0x1090, 0xf20, 0xe50, 0xed0, 0xff10, 0x1d7ce, 0x1d7f6, 0x1fbf0].every((z) => val(z) === '079'), [0x17e0, 0x1810, 0x1040, 0x1090, 0xf20].map(val).join());
     const two = T.groupItems([{ id: 1, text: 'a', g: 1 }, { id: 2, text: 'b', g: 1 }, { id: 3, text: 'c', g: 1 }])[0];
     check('digits: a marker numbered in Khmer or Mongolian digits is read', T.splitSegment(two, 'x ⟦១⟧ y ⟦២⟧ z')?.length === 3 && T.splitSegment(two, 'x ⟦᠑⟧ y ⟦᠒⟧ z')?.length === 3, '');
+  }
+
+  // ---- signs, words around a number, ranges, a leading point, and the target's own number style ----
+  {
+    const v = (a, b, loc) => T.checkNumber(a, b, loc);
+    const MINUS = String.fromCharCode(0x2212);
+    const RLM = String.fromCharCode(0x200f);
+    check('sign: -5 -> 5 and −5 -> 5 lost the sign (corruption); the same sign is fine', v('-5', '5') === 'corrupt' && v(`${MINUS}5`, '5') === 'corrupt' && v('5', '-5') === 'corrupt' && v('-5', `${MINUS}5`) === 'ok' && v('-5', '-5') === 'ok', `${v('-5', '5')} ${v(`${MINUS}5`, '5')}`);
+    check('sign: a trailing minus (Arabic style "5-") and brackets mean negative, and equal each other', v('-5', '5-') === 'ok' && v('(5)', '-5') === 'ok' && v('(5)', '5') === 'corrupt' && v('-5', '(5)') === 'ok', `${v('-5', '5-')} ${v('(5)', '5')}`);
+    check('sign: signed prices and decimals', v('-$5.99', '-5,99 €') === 'ok' && v('-$5.99', '5,99 €') === 'corrupt' && v('-1.5', '-1,5') === 'ok', '');
+    check('sign: direction marks around the number are ignored', v('-5', `${RLM}-5${RLM}`) === 'ok' && v('200', `${RLM}200`) === 'ok', '');
+    check('words: 200 -> "200 results" and "de 200" are not written into the number node (kept as written, not corruption)', v('200', '200 results') === 'keep' && v('200', 'de 200') === 'keep', `${v('200', '200 results')} ${v('200', 'de 200')}`);
+    check('range: 5-10 vs 51-0 is corruption (token values in order); 5-10 vs 5–10 is fine', v('5-10', '51-0') === 'corrupt' && v('5-10', '5–10') === 'ok' && v('5-10', '10-5') === 'keep' && v('2024-05-01', '2024/05/01') === 'ok', `${v('5-10', '51-0')} ${v('5-10', '5–10')}`);
+    check('leading mark: 0.5 -> .5, ,5 and 0,5 are the same number; .5 -> 5 is not', v('0.5', '.5') === 'ok' && v('0.5', ',5') === 'ok' && v('.5', '0,5') === 'ok' && v('.5', '5') === 'corrupt' && v('.500', '0.5') === 'ok', `${v('0.5', '.5')} ${v('.5', '5')}`);
+    const en2de = { source: 'en', target: 'de' };
+    check('target locale: "1,234" in English is 1234; written "1,234" for a German target it reads as 1.234 (corruption); "1.234" is right', v('1,234', '1,234', en2de) === 'corrupt' && v('1,234', '1.234', en2de) === 'ok' && v('1,234', '1 234', en2de) === 'ok', `${v('1,234', '1,234', en2de)} ${v('1,234', '1.234', en2de)}`);
+    const de2en = { source: 'de', target: 'en' };
+    check('target locale: German "1,5" is 1.5 and "1.234" is 1234; the English forms are accepted, a decimal point mistaken for thousands is not', v('1,5', '1.5', de2en) === 'ok' && v('1.234', '1,234', de2en) === 'ok' && v('1.234', '1.234', de2en) === 'corrupt' && v('1,234', '1.234', de2en) === 'ok', `${v('1.234', '1.234', de2en)}`);
+    check('target locale: with no languages given the old rule still reads 1,000 -> 1.000 as the same', v('1,000', '1.000') === 'ok' && v('1,000', '1,0') === 'corrupt', '');
+    check('target locale: a point-decimal target reads a lone point as decimal, so 5.000 stays 5.0 against a German source 5,000', v('5,000', '5.000', { source: 'de', target: 'en' }) === 'ok' && v('5.000', '5.000', { source: 'de', target: 'en' }) === 'corrupt', '');
+    // through splitSegment with the locales of the run
+    const seg = T.groupItems([{ id: 1, text: 'Total', g: 1, l: false, t: true }, { id: 2, text: '1,234', g: 1, n: true, l: false, t: true }, { id: 3, text: 'euros', g: 1, l: false, t: false }])[0];
+    const asIs = T.splitSegment(seg, `Gesamt${M(1)}1,234${M(2)}Euro`, en2de);
+    check('target locale: through a segment, a number written in the wrong style for the target is kept as it was', asIs && !asIs.some((p) => p[0] === 2) && asIs.numberMismatches === 1, JSON.stringify(asIs));
+    const fine = T.splitSegment(seg, `Gesamt${M(1)}1.234${M(2)}Euro`, en2de);
+    check('target locale: and the right style is applied', fine && fine.some((p) => p[0] === 2 && p[1] === '1.234') && fine.numberMismatches === 0, JSON.stringify(fine));
+  }
+
+  // ---- words that landed in a number's part: the sentence is translated node by node, nothing is lost ----
+  {
+    const segW = T.groupItems([{ id: 1, text: 'Showing', g: 1, l: false, t: true }, { id: 2, text: '200', g: 1, n: true, l: false, t: true }, { id: 3, text: 'results', g: 1, l: false, t: false }])[0];
+    const moved = T.splitSegment(segW, `Mostrando${M(1)}200 resultados${M(2)}`);
+    check('words in a number: when the neighbour came back empty the segment is flagged for a node-by-node redo', moved && moved.redo === true && !moved.some((p) => p[0] === 2), JSON.stringify(moved));
+    const fineW = T.splitSegment(segW, `Mostrando${M(1)}200 resultados${M(2)}resultados`);
+    check('words in a number: when every word node has its text the number node just stays (no redo)', fineW && fineW.redo === false && !fineW.some((p) => p[0] === 2) && fineW.length === 2, JSON.stringify(fineW));
+    const engine = (t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase(); // node by node
+      return t.replace(/ ⟦1⟧ (\d+) ⟦2⟧ /, ' ⟦1⟧ $1 RESULTS ⟦2⟧ ').replace(/ ⟦2⟧ results$/, ' ⟦2⟧ ').toUpperCase(); // the words move into the number's part
+    };
+    const r = await run([el('p', [text('Showing '), el('b', [text('200')]), text(' results')])], engine);
+    check('words in a number: through a run the sentence still ends up complete and sensible, with the number intact', r.state.phase === 'done' && r.snap.join('') === 'SHOWING 200 RESULTS' && r.snap[1] === '200', r.snap.join('|'));
   }
 
   // ---- numbers: benign reformats do not switch numbers off; real corruption in a row does, and the pause backs off ----
