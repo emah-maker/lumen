@@ -47,12 +47,20 @@
 
 /* Actions show on hover or keyboard focus, so the list reads as titles first. */
 /* They float over the row's right edge, so the title keeps the whole row while they are hidden (still reachable by keyboard: focus shows them). */
-.chat-actions { position: absolute; right: 4px; top: 4px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
+.chat-actions { position: absolute; right: 4px; top: 3px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
 .chat-actions .icon-btn { width: 24px; height: 22px; }
 /* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
+.chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: var(--actions-w, 100px); }
 .chat-item:has(.chat-delete.armed) .chat-title { padding-right: calc(var(--actions-w, 100px) + 56px); }
+/* A narrow list: an idle chat in another tab drops its "move here" button (clicking the row does the same). */
+.chat-items { container: chatlist / inline-size; }
+@container chatlist (max-width: 240px) {
+  .chat-item.drops-move .chat-act-move { display: none; }
+  .chat-item.drops-move { --actions-w: var(--actions-w-narrow); }
+  .chat-item.drops-move:has(.chat-delete.armed) .chat-title { padding-right: calc(var(--actions-w-narrow) + 56px); }
+}
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
 @media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: var(--actions-w, 100px); } }
 .chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
@@ -106,4 +114,6 @@
   .chat-badge .cm-glyph { stroke: Canvas; }
   .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
   .chat-actions { background: Canvas; border: 1px solid CanvasText; }
+  .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
+  .chat-stop-wait { color: LinkText; forced-color-adjust: none; }
 }

@@ -127,7 +127,7 @@
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? '' : tr('chats.clickMoves', ' · click moves it here')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
@@ -159,9 +159,15 @@
       const rename = iconButton('rename', tr('chats.rename', 'Rename'));
       rename.onclick = () => startRename(li, chat);
       const exportBtn = iconButton('export', tr('chats.export', 'Export as Markdown'));
+      const original = metaText.textContent;
+      let metaTimer = null;
+      const say = (text) => { clearTimeout(metaTimer); metaText.textContent = text; metaTimer = setTimeout(() => { metaText.textContent = original; }, 2500); }; // a passing note, then the usual line
       exportBtn.onclick = async () => {
-        const out = await api.exportChat(chat.id);
-        if (out?.ok) metaText.textContent = tr('chats.exported', 'Exported');
+        try {
+          const out = await api.exportChat(chat.id);
+          if (out?.ok) say(tr('chats.exported', 'Exported'));
+          else if (out && out.canceled !== true && out.cancelled !== true) say(tr('chats.exportFailed', 'Could not export'));
+        } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
       let armed = null;
@@ -176,25 +182,42 @@
           return;
         }
         clearTimeout(armed);
-        const out = await api.remove(chat.id);
-        if (out?.cleared) cleared();
-        await rerender();
+        del.disabled = true; // pending: a second click cannot delete twice
+        try {
+          const out = await api.remove(chat.id);
+          if (out?.cleared) cleared();
+          await rerender();
+        } catch {
+          del.disabled = false;
+          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
+          say(tr('chats.deleteFailed', 'Could not delete'));
+        }
       };
+      const move0 = () => elsewhere && api.showTab && !['running', 'queued', 'approval'].includes(chat.badge);
+      if (move0()) li.classList.add('drops-move');
       const tabActions = [];
       if (elsewhere && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
-        show.onclick = async () => { await api.showTab(chat.id); window.chatList?.close?.(false); };
+        show.classList.add('chat-act-tab');
+        show.onclick = async () => { try { await api.showTab(chat.id); window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); } };
         const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
+        move.classList.add('chat-act-move');
         move.onclick = () => onOpen(chat.id);
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
-      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
+      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`);
+      li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (move0() ? 1 : 0)) * 24 + 8}px`); // a narrow list drops "move here" from an idle chat (clicking the row moves it) // the title leaves room for the floating buttons
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
       if (chat.badge === 'queued' && api.stopChat) {
         const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
-        stop.onclick = (e) => { e.stopPropagation(); api.stopChat(chat.id); };
+        stop.onclick = async (e) => {
+          e.stopPropagation();
+          stop.disabled = true;
+          stop.textContent = tr('chats.stopping', 'Stopping…');
+          try { await api.stopChat(chat.id); } catch { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); say(tr('chats.stopFailed', 'Could not stop it')); }
+        };
         li.append(stop);
       }
       li.append(actions);
