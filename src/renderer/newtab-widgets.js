@@ -7,6 +7,33 @@
 // Each card is a size container: what it shows depends on the room it has (see the @container rules
 // in newtab.html), so a small card shows the essentials and a big one everything.
 
+// The marks the AI status card draws: the same set the toolbar button uses (renderer/chat-core.js), drawn here as SVG, so there are no files and nothing is fetched.
+// [tint, path, rotations (the OpenAI mark is one petal turned five times), filled]
+const AI_LOGOS = {
+  claude: ['#d97757', 'M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8'],
+  openai: ['', 'M8 2.4a2.8 2.8 0 0 1 2.8 2.8v3.4', [60, 120, 180, 240, 300]],
+  grok: ['', 'M3.2 13.4 12.8 2.6M3.4 2.6 6.9 6.8M9.1 9.2 12.6 13.4'],
+  gemini: ['#7b8cff', 'M8 1.6C8.5 5 11 7.5 14.4 8 11 8.5 8.5 11 8 14.4 7.5 11 5 8.5 1.6 8 5 7.5 7.5 5 8 1.6Z', null, true],
+  antigravity: ['', 'M3 13.2 8 3.4l5 9.8M5.6 9.6h4.8M8 1.8h.01'],
+  openrouter: ['', 'M2.5 8h4.5M7 8c2 0 2.5-4 5-4M7 8c2 0 2.5 4 5 4M7 8h5M13 4h.01M13 8h.01M13 12h.01'],
+};
+function aiLogo(brand) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const [tint, d, turns, filled] = AI_LOGOS[brand] || ['', 'M8 2.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 8 2.8Z']; // (an unknown one: a plain ring)
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', `ai-logo${filled ? ' filled' : ''}`);
+  svg.setAttribute('aria-hidden', 'true');
+  if (tint) svg.style.color = tint;
+  for (const deg of [0, ...(turns || [])]) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    if (deg) path.setAttribute('transform', `rotate(${deg} 8 8)`);
+    svg.append(path);
+  }
+  return svg;
+}
+
 const WMO = {
   0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Freezing fog',
   51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 56: 'Freezing drizzle', 57: 'Freezing drizzle',
@@ -1050,9 +1077,14 @@ const WIDGET_RENDERERS = {
     const compact = el('div', 'ai-compact');
     const dots = el('ul', 'ai-dots');
     for (const a of ais) {
-      const li = el('li', `ai-dot s-${stateOf(a)}`);
-      li.title = full(a);
-      li.append(mark(a), el('span', 'ai-sr', full(a)));
+      const li = el('li', `ai-dot s-${stateOf(a)} k-${a.kind === 'cli' ? 'cli' : 'api'}`);
+      li.dataset.keep = a.current || stateOf(a) !== 'ready' ? '1' : '0'; // what a short card keeps last (fitAiStatus)
+      const whole = text(a.label, 200) || full(a);
+      li.title = whole;
+      const lab = el('span', 'ai-lab', text(a.short, 12));
+      lab.setAttribute('aria-hidden', 'true');
+      if (a.fact) { const f = el('span', 'ai-fact', `· ${text(a.fact, 14)}`); lab.append(' ', f); }
+      li.append(aiLogo(a.brand), mark(a), lab, el('span', 'ai-sr', whole));
       dots.append(li);
     }
     const sum = el('p', 'ai-sum');
@@ -1579,6 +1611,7 @@ function fitLists(cardEl, body) {
 // That one drops the note, the "waiting" count, the dots and then the "working" count.
 function fitAiStatus(cardEl, body, compactOnly = false) {
   body.classList.toggle('ai-compact-only', compactOnly);
+  body.classList.remove('ai-nofact', 'ai-nolabel');
   body.querySelectorAll('.ai-more').forEach((n) => n.remove());
   body.querySelectorAll('.fit-off').forEach((n) => n.classList.remove('fit-off'));
   const bad = () => body.scrollHeight > body.clientHeight || body.scrollWidth > body.clientWidth; // (no slack: a line cut by a pixel is still cut)
@@ -1595,6 +1628,7 @@ function fitAiStatus(cardEl, body, compactOnly = false) {
     for (const r of order) { if (rows.length - gone <= keep || !bad()) break; if (r.classList.contains('fit-off')) continue; fitOff(r); gone++; more.textContent = `+${gone} more`; }
   };
   if (!bad()) return;
+  if (!rows.length) { fitAiChips(body, parts, bad, hide); return; }
   hide('.ai-detail');
   if (!bad()) return;
   hide('.ai-sub');
@@ -1608,6 +1642,34 @@ function fitAiStatus(cardEl, body, compactOnly = false) {
   }
   if (bad() && parts[2]) fitOff(parts[2]);
   if (bad()) hide('.ai-dots');
+  if (bad() && parts[1]) fitOff(parts[1]);
+}
+// The small card's chips (logo, dot, word, the one extra fact): what doesn't fit goes in order: the note line, the facts, the summary's
+// "waiting" part, the words (the dot's shape still says the state), then chips from the end (ready ones that aren't in use first) with a "+N", then the "working" part.
+function fitAiChips(body, parts, bad, hide) {
+  hide('.ai-sub'); // (the note repeats what the chip's fact says)
+  if (!bad()) return;
+  body.classList.add('ai-nofact');
+  if (!bad()) return;
+  if (parts[2]) fitOff(parts[2]);
+  if (!bad()) return;
+  body.classList.add('ai-nolabel');
+  if (!bad()) return;
+  const chips = [...body.querySelectorAll('.ai-dot')].filter(isShown);
+  const dots = body.querySelector('.ai-dots');
+  if (chips.length > 1 && dots) {
+    const more = el('li', 'ai-more ai-more-chip');
+    let gone = 0;
+    const order = [...chips].reverse().filter((c) => c.dataset.keep !== '1').concat([...chips].reverse().filter((c) => c.dataset.keep === '1'));
+    for (const c of order) {
+      if (chips.length - gone <= 1 || !bad()) break;
+      fitOff(c);
+      gone++;
+      more.textContent = `+${gone}`;
+      more.title = `${gone} more, hidden to fit`;
+      if (!more.isConnected) dots.append(more);
+    }
+  }
   if (bad() && parts[1]) fitOff(parts[1]);
 }
 function settleCard(cardEl) {

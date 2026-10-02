@@ -14,6 +14,10 @@
 // Fixed order, so the card doesn't reshuffle: an AI with the same state keeps its place.
 const ORDER = ['anthropic', 'claudecode', 'openai', 'xai', 'grokbuild', 'gemini', 'antigravity', 'openrouter'];
 const NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', openai: 'OpenAI', xai: 'Grok', grokbuild: 'Grok Build', gemini: 'Gemini', antigravity: 'Antigravity', openrouter: 'OpenRouter' };
+// Which logo a card draws for each (the page keeps the artwork: it is the same set the toolbar button uses, renderer/chat-core.js). Claude and Claude Code share one.
+const BRANDS = { anthropic: 'claude', claudecode: 'claude', openai: 'openai', xai: 'grok', grokbuild: 'grok', gemini: 'gemini', antigravity: 'antigravity', openrouter: 'openrouter' };
+// The word a small card puts beside the dot (the shape of the dot says it too, and the tooltip has the whole sentence).
+const SHORT = { ready: 'Ready', limited: 'Limit', down: 'Down', out: 'Sign in', off: 'Off', missing: 'Missing' };
 const ENGINES = ['claudecode', 'grokbuild', 'antigravity']; // the user's own CLIs: shown even when not installed (so "not installed" is an answer)
 const STATES = ['ready', 'limited', 'down', 'out', 'off', 'missing'];
 const RANK = { ready: 0, limited: 1, down: 2, out: 3, off: 4, missing: 5 }; // most usable first
@@ -63,30 +67,33 @@ function describe(id, raw, now) {
   } else state = 'ready'; // an API provider is listed once its key is saved
   let stateText = state === 'ready' ? (engine ? 'Signed in' : 'Connected') : { out: 'Signed out', off: 'Off in the sidebar', missing: 'Not installed' }[state] || '';
   const notes = [];
+  let fact = ''; // the one extra thing a small card has room for: when it is back, or the 5-hour reading, or today's cost
   const grok = id === 'grokbuild' && raw.grokLimit ? { until: Number.isFinite(raw.grokLimit.resetsAt) ? raw.grokLimit.resetsAt : null, kind: 'limit', exact: Number.isFinite(raw.grokLimit.resetsAt), scope: 'provider' } : null;
   const lim = grok || cool;
   const active = Boolean(lim) && (lim.until === null || Number(lim.until) > now);
   const whenText = lim && Number(lim.until) > now ? clockText(lim.until, now) : '';
   if (state === 'ready' && active && lim.scope !== 'model') {
-    if (lim.kind === 'unreachable') { state = 'down'; stateText = 'Unreachable'; notes.push(whenText ? `Trying again ${whenText}` : 'Trying again soon'); } else {
+    if (lim.kind === 'unreachable') { state = 'down'; stateText = 'Unreachable'; notes.push(whenText ? `Trying again ${whenText}` : 'Trying again soon'); fact = whenText; } else {
       state = 'limited';
       stateText = 'Limit reached';
       notes.push(!whenText ? 'Resets later' : lim.exact ? `Resets ${whenText}` : `Paused until about ${whenText}`);
+      fact = whenText ? `${lim.exact ? '' : '~'}${whenText}` : '';
     }
   } else if (state === 'ready') {
     // One model (Opus, say) being out leaves the AI usable with the others.
     if (active && lim.kind === 'limit') notes.push(`${str(lim.model, 40) || 'One model'} limit reached${whenText ? `, ${lim.exact ? 'resets' : 'paused until about'} ${whenText}` : ''}`);
     const m = id === 'claudecode' && raw.meter && Number(raw.meter.resetsAt) > now && Number.isFinite(raw.meter.percent) ? raw.meter : null;
-    if (m) notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`);
+    if (m) { notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
     const t = raw.today && raw.today[id];
-    if (t && money(t.costUSD)) notes.push(`${money(t.costUSD)} today`);
+    if (t && money(t.costUSD)) { notes.push(`${money(t.costUSD)} today`); if (!fact) fact = money(t.costUSD); }
   } else if (state === 'out') notes.push('Sign in under Settings');
   else if (state === 'missing') notes.push('Install it to use your own account');
   else if (state === 'off') notes.push('Turn it on under Settings');
   const current = Boolean(raw.current && raw.current.provider === id);
   const full = raw.fullAccess ? raw.fullAccess[id] : undefined;
+  const label = `${NAMES[id]}: ${stateText}${notes.length ? `. ${notes.join('. ')}` : ''}`; // the whole sentence, for a tooltip and a screen reader
   return {
-    id, name: NAMES[id], kind: engine ? 'cli' : 'api', state, stateText, note: notes.join(' · '),
+    id, name: NAMES[id], brand: BRANDS[id], short: SHORT[state], fact, label, kind: engine ? 'cli' : 'api', state, stateText, note: notes.join(' · '),
     current, model: current ? str(raw.current.label, 60) : '',
     ...(full === true && engine ? { fullAccess: true } : {}),
   };
@@ -119,7 +126,7 @@ function shape(rawIn, nowIn) {
   return { ais, counts, summary, summaryParts, sub, live, liveText };
 }
 
-const api = { shape, layoutFor, clockText, THRESHOLDS, ORDER, NAMES, ENGINES };
+const api = { shape, layoutFor, clockText, THRESHOLDS, ORDER, NAMES, ENGINES, BRANDS, SHORT };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.AiStatusView = api;
 })();
