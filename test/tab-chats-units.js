@@ -192,7 +192,32 @@ const J = (v) => JSON.stringify(v);
     const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8');
     check('stop: chats:stop is a handle that returns stopChat()\'s answer, listed as a UI-only channel for the window and the chat page', /ipcMain\.handle\('chats:stop'[^\n]*stopChat\(id\)/.test(mainSrc) && /'chats:stop'/.test(mainSrc.slice(0, mainSrc.indexOf('ipcMain.handle('))) && /'chats:stop'/.test(page));
     check('stop: both preloads invoke it', /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(pre) && /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(chatPre));
-    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /setTimeout\(\(\) => \{ stopBack\(\)/.test(items));
+    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /setTimeout\(fail, wait\)/.test(items) && /clearTimeout\(lost\);\s*setTimeout/.test(items)); // (behaviour: test/chat-items-units.js)
+  }
+  { // the title-padding rules, in the order and with the specificity the cascade needs
+    const spec = (sel) => { // [ids, classes+attrs+pseudo-classes, elements] (a :has()/:is() counts its most specific argument)
+      let ids = 0, cls = 0, el = 0;
+      const rest = sel.replace(/:(has|is|not)\(([^()]*)\)/g, (_m, _n, arg) => { const inner = arg.split(',').map((x) => spec(x.trim())).sort((p, q) => q[0] - p[0] || q[1] - p[1] || q[2] - p[2])[0]; ids += inner[0]; cls += inner[1]; el += inner[2]; return ''; });
+      ids += (rest.match(/#[\w-]+/g) || []).length; cls += (rest.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g) || []).length; el += (rest.replace(/#[\w-]+|\.[\w-]+|\[[^\]]*\]|::?[\w-]+/g, ' ').match(/(^|[\s>+~])[a-z][\w-]*/gi) || []).length;
+      return [ids, cls, el];
+    };
+    const cmp = (p, q) => p[0] - q[0] || p[1] - q[1] || p[2] - q[2];
+    const flat = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = []; // { sel, at: order, spec } for each selector that sets the chat title's padding-right
+    const re = /([^{}@]+)\{([^{}]*)\}/g;
+    let m, n = 0;
+    while ((m = re.exec(flat))) {
+      n++;
+      if (!/padding-right/.test(m[2])) continue;
+      for (const sel of m[1].split(',').map((x) => x.trim()).filter((x) => /\.chat-title\b/.test(x))) rules.push({ sel, at: n, spec: spec(sel), val: (m[2].match(/padding-right:\s*([^;]+)/) || [])[1] });
+    }
+    const find = (needle, not) => rules.filter((r) => r.sel.includes(needle) && (!not || !r.sel.includes(not)));
+    const hover = find('.chat-item:hover .chat-title')[0], armed = find('.chat-delete.armed', 'drops-one')[0];
+    const nHover = find('.drops-one:hover .chat-title')[0], nArmed = find('.drops-one:has(.chat-delete.armed) .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
+    check('padding rules: every one of them was found', [hover, armed, nHover, nArmed, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
+    check('padding rules: the narrow hover rule outranks the plain hover rule, the armed rules come after their hover rules and are not weaker', cmp(nHover.spec, hover.spec) > 0 && armed.at > hover.at && cmp(armed.spec, hover.spec) >= 0 && nArmed.at > nHover.at && cmp(nArmed.spec, nHover.spec) >= 0, J({ hover: hover.spec, nHover: nHover.spec, armed: armed.spec, nArmed: nArmed.spec }));
+    check('padding rules: the narrow touch rule outranks the plain touch rule', cmp(nTouch.spec, find('.chat-title', ':').filter((r) => r.sel === '.chat-title')[0].spec) > 0);
+    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nArmed, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && [hover, armed].every((r) => /--actions-w\b(?!-)/.test(r.val)));
   }
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }

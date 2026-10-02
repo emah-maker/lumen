@@ -23,6 +23,7 @@ class El {
 const text = (s) => Object.assign(new El('#text'), { _text: s });
 const sandbox = { document: { createElement: (t) => new El(t), createTextNode: text }, window: {}, setTimeout, clearTimeout, console };
 sandbox.window = sandbox;
+sandbox.chatItemsStopMs = 40; // the stop button's patience, shortened for the test
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'chat-items.js'), 'utf8'), sandbox, { filename: 'chat-items.js' });
 
@@ -65,6 +66,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   api.stopChat = async () => true;
   await stop.onclick({ stopPropagation() {} });
   check('stop: a true answer leaves "Stopping…" (the list redraws when the run leaves)', stop.disabled === true && /Stopping/.test(stop.textContent), stop.textContent);
+
+  // a successful stop must not turn into a false "Could not stop it" when the list cannot redraw (a rename field open elsewhere)
+  let listed = { chats: [] }; // the chat has left the line
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => {}, stopChat: async () => true, remove: async () => ({}), list: async () => listed };
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  await stop.onclick({ stopPropagation() {} });
+  await sleep(150);
+  check('stop: after a true answer and no redraw, the row stays on "Stopping…" with no false failure note (the chat is gone from the line)', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  listed = { chats: [{ id: 'c1', badge: 'queued' }] }; // ...but still waiting a while later: then it says so
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  await stop.onclick({ stopPropagation() {} });
+  await sleep(150);
+  check('stop: a chat still in the line after a true answer gets its button back and a note', stop.disabled === false && /Could not stop/.test(meta(li).textContent), `${stop.disabled} ${meta(li).textContent}`);
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => { throw new Error('no tab'); }, stopChat: async () => true, remove: async () => ({}) };
+  li = make(api, { ...base, badge: 'running', tab: { id: 2, title: 'Other', here: false } });
+  await li.find('chat-open')[0].onclick();
+  check('row click: opening the working chat\'s tab failing says so (no unhandled rejection)', /Could not open the tab/.test(meta(li).textContent), meta(li).textContent);
 
   // which button a narrow list drops, and the inline sizes
   const idle = { ...base, tab: { id: 2, title: 'Other', here: false } };

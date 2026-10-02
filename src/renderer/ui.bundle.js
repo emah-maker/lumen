@@ -3492,7 +3492,10 @@ function startChat() {
       }
       // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
       const working = ['running', 'queued', 'approval'].includes(chat.badge);
-      openBtn.onclick = () => (elsewhere && working && api.showTab ? api.showTab(chat.id).then(() => window.chatList?.close?.(false)) : onOpen(chat.id));
+      openBtn.onclick = async () => {
+        if (!(elsewhere && working && api.showTab)) { onOpen(chat.id); return; }
+        try { await api.showTab(chat.id); window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); }
+      };
 
       const actions = document.createElement('div');
       actions.className = 'chat-actions';
@@ -3562,10 +3565,19 @@ function startChat() {
           e.stopPropagation();
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
-          const lost = setTimeout(() => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); }, 4000); // never stuck on "Stopping…"
+          const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
+          const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
+          const lost = setTimeout(fail, wait); // no answer at all: never stuck on "Stopping…"
           try {
-            if ((await api.stopChat(chat.id)) === false) { clearTimeout(lost); stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); } // (the chat had already moved on)
-          } catch { clearTimeout(lost); stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); }
+            if ((await api.stopChat(chat.id)) === false) { clearTimeout(lost); fail(); return; } // (the chat had already moved on)
+            // Stopped. The list redraws when the run leaves; if it cannot (a rename field is open, the panel is hidden) the
+            // button stays on "Stopping…" unless the chat is still waiting a while later.
+            clearTimeout(lost);
+            setTimeout(async () => {
+              if (!stop.disabled) return;
+              try { const now = await api.list?.(); if (now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
+            }, wait);
+          } catch { clearTimeout(lost); fail(); }
         };
         li.append(stop);
       }
