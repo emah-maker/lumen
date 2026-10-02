@@ -5372,7 +5372,7 @@ function syncHideAiToggle(state) {
   chip.hidden = !words;
   chip.textContent = words ? t('sidebar.hideAiTabs.chip', { count: out }) : '';
   hideAiButton.classList.toggle('has-label', words);
-  badge.hidden = count === 0 || words;
+  badge.hidden = count === 0; // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count);
 }
 hideAiButton?.addEventListener('click', async () => {
@@ -8299,7 +8299,7 @@ $('agent-stop')?.addEventListener('click', () => {
     style.setProperty('--accent-soft', `rgb(${r} ${g} ${b} / ${dark.matches ? 0.2 : 0.14})`);
   }
   dark.addEventListener('change', applyAccent);
-  for (const id of ['hands-off', 'hands-off-strip']) document.getElementById(id)?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('you-and-ai'));
+  for (const id of ['hands-off', 'hands-off-strip']) document.getElementById(id)?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('hands-off')); // (the one open Settings tab is reused, and the switch is focused)
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
 }

@@ -1663,7 +1663,7 @@ function syncHideAiToggle(state) {
   chip.hidden = !words;
   chip.textContent = words ? t('sidebar.hideAiTabs.chip', { count: out }) : '';
   hideAiButton.classList.toggle('has-label', words);
-  badge.hidden = count === 0 || words;
+  badge.hidden = count === 0; // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count);
 }
 hideAiButton?.addEventListener('click', async () => {

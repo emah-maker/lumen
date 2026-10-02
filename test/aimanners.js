@@ -204,8 +204,13 @@ const launch = (profile) => electron.launch({
   // ---- 9. The strip says so: hands-off mode, and tabs hidden.
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
   check('hands-off: the tab strip shows its cue too', await waitFor(() => ui.evaluate(() => { const b = document.getElementById('hands-off-strip'); return b && !b.hidden && b.getBoundingClientRect().width > 0; })));
+  await ui.click('#hands-off-strip');
+  await sleep(600);
+  await ui.click('#hands-off-strip');
+  const settingsTabs = await waitFor(async () => { const u = await app.evaluate(() => global.__windows.list()[0].tabs.map((x) => x.url).filter((x) => /settings\.html/.test(x))); return u.length && u; });
+  check('the hands-off cue opens Settings at its switch, and a second click reuses that tab', settingsTabs?.length === 1 && /#hands-off$/.test(settingsTabs[0]), JSON.stringify(settingsTabs));
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
-  check('...and it goes when the setting is off', await waitFor(() => ui.evaluate(() => document.getElementById('hands-off-strip').hidden)));
+  check('...and it goes when the setting is off',await waitFor(() => ui.evaluate(() => document.getElementById('hands-off-strip').hidden)));
   await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
   await waitFor(async () => (await active()) === form);
   await app.evaluate(() => global.__settings.backend.set('hideAiTabs', true));

@@ -278,7 +278,19 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .hide-ai-tabs.has-label { display: inline-flex; align-items: center; justify-content: center; width: auto; height: 28px; gap: 5px; padding: 0 10px 0 8px; border-radius: 14px; }
 .hide-ai-tabs.has-label .hide-ai-label { line-height: 1; }
 .hide-ai-tabs.has-label:hover { background: var(--accent-soft); }
-.hands-off-strip { width: 28px; height: 28px; flex: none; color: var(--accent); }
+.hide-ai-tabs.has-label .hide-ai-count { display: none; }
+.hands-off-strip { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 28px; height: 28px; flex: none; color: var(--accent); }
+.hands-off-label { display: none; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+@media (min-width: 700px) {
+  .hands-off-strip { padding: 0 10px 0 8px; border-radius: 14px; background: var(--accent-soft); }
+  .hands-off-label { display: inline; }
+}
+/* narrow window: the chip gives up its words and shows the count as a badge, so the tabs keep the room */
+@media (max-width: 450px) {
+  .hide-ai-tabs.has-label { width: 28px; padding: 0; }
+  .hide-ai-tabs.has-label .hide-ai-label { display: none; }
+  .hide-ai-tabs.has-label .hide-ai-count { display: block; }
+}
 .hands-off-strip[hidden] { display: none; }
 .hands-off-strip svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .hands-off-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -966,7 +978,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 /* Sits in the tab strip's own row, next to the Organize button: web pages cover everything below the strip. */
 .organize-note {
   flex: none; max-width: min(380px, 40vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
-  border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap;
+  border-radius: 8px; background: var(--surface-raised); color: var(--text); font-size: 12px; white-space: nowrap;
+  border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0, 0, 0, calc(var(--shadow-k) * 0.4)); /* a passing message is a raised card, not a tinted state (the accent tint is for state that stays) */
 }
 .organize-note .organize-note-text { min-width: 0; display: inline-flex; white-space: pre; overflow: hidden; }
 .organize-note-lead, .organize-note-more, .organize-note-loose { flex: none; }
