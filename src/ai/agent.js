@@ -16,6 +16,7 @@ const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTIC
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
+const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -296,19 +297,19 @@ const TOOLS = [
   },
   {
     name: 'open_tab',
-    description: 'Open a URL in a new tab and make it active.',
+    description: 'Open a URL in a background tab and work there. show:true to bring it to front.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' } },
+      properties: { url: { type: 'string' }, show: { type: 'boolean' } },
       required: ['url'],
     },
   },
   {
     name: 'switch_tab',
-    description: 'Make another tab active.',
+    description: 'Work in another tab. show:true to bring it to front.',
     input_schema: {
       type: 'object',
-      properties: { tab_id: { type: 'integer' } },
+      properties: { tab_id: { type: 'integer' }, show: { type: 'boolean' } },
       required: ['tab_id'],
     },
   },
@@ -398,7 +399,10 @@ function systemFor(settings) {
     ? SYSTEM
     : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : 'You are the AI assistant built into Lumen, a web browser.')
       + '\n\nweb_search returns top results from DuckDuckGo; open results with read_urls or navigate.';
-  return settings.adhdMode ? base + ADHD_STYLE : base;
+  const style = settings.adhdMode ? base + ADHD_STYLE : base;
+  return settings.handsOff ? `${style}
+
+${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, like the answer style
 }
 
 // ---- [claude code engine] extra guidance when the user's own Claude Code CLI answers (claude-code.js).
@@ -2183,6 +2187,7 @@ class Agent {
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
+    this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
     const gate = { emit, signal, hosts, who, external, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     const scope = taskScope.getStore();
@@ -2255,6 +2260,58 @@ class Agent {
       let url = '';
       try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
       if (off(url)) refuse(url);
+    }
+  }
+
+  // ---- [ai manners] "Don't let the AI act on my pages" (Settings, off by default). Enforced here, in the tool layer, for
+  // every caller (the sidebar's AI, its Claude Code / Grok Build / Antigravity engines, outside agents over MCP, batch steps):
+  // a tool that clicks, types, scrolls, navigates or runs a script is refused on a tab the AI did not open itself. Reading
+  // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
+  handsOffCheck(name, input = {}) {
+    if (!manners.isActionTool(name) || !this.browser.handsOff?.()) return;
+    let ids;
+    try {
+      if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
+      else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
+    } catch { return; } // (no tab / a closed one: the tool says so itself)
+    for (const id of ids) {
+      if (id === null || id === undefined) continue;
+      const refusal = manners.handsOffCheck({ tool: name, handsOff: true, ownTab: Boolean(this.browser.isAiTab?.(id)) });
+      if (refusal) throw new Error(refusal);
+    }
+  }
+
+  // The user is typing in the field the AI is about to type into (`elementId`; null: whichever field has the page's focus): the AI's
+  // typing waits (their keys and ours would mix in one field). A different field in the same tab does not wait (the caret is put back
+  // after). After TYPING_WAIT_CAP_MS the AI stops and says so instead of typing over the user.
+  async waitForUserTyping(wc, elementId = null) {
+    const began = Date.now();
+    let told = false;
+    for (;;) {
+      const wait = manners.typingWait({ typedAt: manners.userInput.typedAt(wc) });
+      if (!wait || this.signalAborted()) return;
+      let same = true; // (unsure: assume the same field)
+      try { same = await runScript(wc, scripts.userInField(elementId), 3000); } catch {}
+      if (!same) return;
+      if (Date.now() - began >= manners.TYPING_WAIT_CAP_MS) throw new Error('The user is still typing in this field, so nothing was typed. Stop here and ask them to pause or to finish the field themselves.');
+      if (!told) { told = true; try { taskScope.getStore()?.gate?.emit?.({ type: 'notice', text: this.browser.typingText?.() || 'Waiting while you type…' }); } catch {} }
+      await sleep(Math.min(wait, 250));
+      if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+    }
+  }
+
+  // Runs `fn` (a tool that clicks or types in the page) and puts the user's caret back after it: the field they were in,
+  // and where in it. Nothing is saved when the user is in no field of this page, or has not been active in it lately.
+  // `exceptId`: the element the tool types into on purpose (its caret stays where the typing put it).
+  async keepUserFocus(wc, fn, exceptId = null) {
+    let kept = false;
+    try {
+      let pageFocused = false;
+      try { pageFocused = wc.isFocused(); } catch {}
+      if (manners.guardsFocus({ pageFocused, userInputAt: manners.userInput.inputAt(wc) })) kept = await runScript(wc, scripts.focusSave(), 3000).catch(() => false);
+    } catch {}
+    try { return await fn(); } finally {
+      if (kept && !wc.isDestroyed()) await runScript(wc, scripts.focusRestore(exceptId), 3000).catch(() => {});
     }
   }
 
@@ -2739,6 +2796,7 @@ ${out.text}${note}
   async execute(name, input) {
     if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
     this.aiOffCheck(name, input);
+    this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
       const result = await this.executeGuarded(name, input);
@@ -2942,11 +3000,15 @@ ${same}
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
-        // screen, so it gets a DOM click instead. In an embedded frame the mouse goes through the
-        // DevTools session (frames.js), and a DOM click is the fallback.
-        if (target.covered || !this.taskTabInFront()) await this.elementRun(wc, id, scripts.domClick);
-        else if (target.frame) await frames.mouseClick(wc, target.x, target.y).catch(() => this.elementRun(wc, id, scripts.domClick));
-        else await this.mouseClick(wc, x, y);
+        // screen, so it gets a click through the tab's own protocol session, else a DOM click. In an embedded frame the mouse goes
+        // through the DevTools session (frames.js), and a DOM click is the fallback.
+        await this.keepUserFocus(wc, async () => {
+          if (target.covered) await this.elementRun(wc, id, scripts.domClick);
+          else if (!this.taskTabInFront()) { // [ai manners] behind another tab: a trusted click (no focus), else page events
+            if (!(await this.backgroundClick(wc, target.x, target.y))) await this.elementRun(wc, id, scripts.domClick);
+          } else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseClick(wc, target.x, target.y)).catch(() => this.elementRun(wc, id, scripts.domClick));
+          else await this.mouseClick(wc, x, y);
+        });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
         return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}`;
@@ -3053,22 +3115,31 @@ ${same}
       }
       case 'type_text': {
         const wc = this.requireTab();
-        const status = await this.elementRun(wc, input.element_id, scripts.focusForTyping, { missing: 'missing' });
-        if (status === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
-        if (status === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
-        if (status === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
-        if (status === 'setvalue') {
-          const set = await this.elementRun(wc, input.element_id, (id) => scripts.setValue(id, input.text));
-          if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
-          return `Set element ${input.element_id} to "${set}".`;
-        }
-        // (Into an embedded frame through the DevTools session: Electron's insertText into a frame of
-        // another process crashed the page.)
-        if (frames.decodeId(input.element_id)) await frames.insertText(wc, input.text);
-        else await wc.insertText(input.text);
+        await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
+        const inFrame = Boolean(frames.decodeId(input.element_id));
+        const status = await this.keepUserFocus(wc, async () => {
+          const st = await this.elementRun(wc, input.element_id, scripts.focusForTyping, { missing: 'missing' });
+          if (st === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
+          if (st === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
+          if (st === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
+          if (st === 'setvalue') {
+            const set = await this.elementRun(wc, input.element_id, (id) => scripts.setValue(id, input.text));
+            if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
+            return { set };
+          }
+          // Typed through the page's own focus (CDP insertText on the focused frame): no window or view takes the OS focus.
+          // (Into an embedded frame through the DevTools session: Electron's insertText into a frame of another process crashed
+          // the page. Those keys are marked as the AI's too.)
+          if (inFrame) await manners.agentInputAsync(wc, () => frames.insertText(wc, input.text));
+          else await wc.insertText(input.text);
+          if (input.press_enter) { // (while the typed-in field still has the page's focus)
+            if (inFrame) await manners.agentInputAsync(wc, () => frames.pressKey(wc, 'Enter'));
+            else this.pressKey(wc, 'Enter');
+          }
+          return st;
+        }, input.element_id);
+        if (status && status.set !== undefined) return `Set element ${input.element_id} to "${status.set}".`;
         if (input.press_enter) {
-          if (frames.decodeId(input.element_id)) await frames.pressKey(wc, 'Enter');
-          else this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
         }
@@ -3078,22 +3149,29 @@ ${same}
         const wc = this.requireTab();
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
+        await this.waitForUserTyping(wc); // [ai manners]
         // The focus is inside an embedded frame: the key goes there through the DevTools session (frames.js).
         // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
         const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
         const inFrame = !macCommand && frames.available(wc) && await runScript(wc, frames.FOCUS_IN_FRAME, 1000).catch(() => false);
-        if (inFrame) await frames.pressKey(wc, input.key, modifiers);
+        if (inFrame) await manners.agentInputAsync(wc, () => frames.pressKey(wc, input.key, modifiers));
         else this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
         return `Pressed ${[...modifiers, input.key].join('+')}.`;
       }
       case 'click_at': {
         const wc = this.requireTab();
-        if (!this.taskTabInFront()) throw new Error('This tab is not on screen right now (the user switched to another tab), so it can\'t be clicked by position. Use click with an element id instead.');
         if (!this.screenshotScale || this.screenshotScale.wc !== wc) throw new Error('Take a screenshot of this tab first.');
         const { ratio } = this.screenshotScale;
         const urlBefore = wc.getURL();
-        await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio));
+        // [ai manners] A tab behind another one (the AI's own, opened in the background) gets the click as page events at that point.
+        const inFront = this.taskTabInFront();
+        await this.keepUserFocus(wc, async () => {
+          if (inFront) { await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)); return; }
+          const zoom = wc.getZoomFactor();
+          if (await this.backgroundClick(wc, input.x * ratio / zoom, input.y * ratio / zoom)) return;
+          if (!(await runScript(wc, scripts.domClickAt(Math.round(input.x * ratio / zoom), Math.round(input.y * ratio / zoom))))) throw new Error('Nothing is at that position.');
+        });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : '';
         return `Clicked at (${input.x}, ${input.y}).${moved}`;
@@ -3105,7 +3183,7 @@ ${same}
         const zoom = wc.getZoomFactor();
         // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
         if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
-        else if (target.frame) await frames.mouseMove(wc, target.x, target.y).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
+        else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseMove(wc, target.x, target.y)).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await sleep(500);
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;
@@ -3143,7 +3221,7 @@ ${same}
         // requestCloseTab finishes once the page lets go: wait for that, so the next step doesn't act
         // on a tab that is about to disappear.
         for (let i = 0; i < 30 && this.browser.listTabs().some((t) => t.id === id); i++) await sleep(100);
-        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} is asking the user whether to leave the page (it may have unsaved changes). Wait for their answer; check list_tabs.`;
+        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} did not close: the page blocked it (it may have unsaved changes), so it was left open and the user was not interrupted. Ask the user to close it; check list_tabs.`;
         return `Closed tab ${id}.`;
       }
       case 'scroll': {
@@ -3171,8 +3249,8 @@ ${same}
           }));
       }
       case 'open_tab': {
-        const tab = this.browser.openTab(webUrl(input.url));
-        this.pinTab(tab.id); // it opens in front; the task carries on there
+        const tab = this.browser.openTab(webUrl(input.url), { ai: true, show: input.show === true }); // [ai manners] opens behind the user's tab, marked as the AI's
+        this.pinTab(tab.id); // the task carries on there, in front or not
         const redirects = this.guardRedirects(tab.webContents, { clientSide: true });
         try {
           await waitForLoad(tab.webContents);
@@ -3186,7 +3264,7 @@ ${same}
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.
         const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
         if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);
-        if (!listed || !this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
+        if (!listed || !this.browser.switchTab(input.tab_id, { show: input.show === true })) throw new Error(`No tab with id ${input.tab_id}.`);
         this.pinTab(input.tab_id);
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
@@ -3214,19 +3292,46 @@ ${same}
       if (command) { wc[command](); return; }
       modifiers = [...mods, 'meta'];
     }
-    wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-    // Only unmodified printable keys produce text.
-    if (!modifiers.some((m) => m !== 'shift')) {
-      const char = key === 'Enter' ? '\r' : key === 'Space' ? ' ' : key.length === 1 ? key : null;
-      if (char) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+    manners.agentInput(wc, () => { // [ai manners] these keys are the AI's, not the user typing
+      wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      // Only unmodified printable keys produce text.
+      if (!modifiers.some((m) => m !== 'shift')) {
+        const char = key === 'Enter' ? '\r' : key === 'Space' ? ' ' : key.length === 1 ? key : null;
+        if (char) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+      }
+      wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    });
+  }
+
+  // [ai manners] A click in a tab that is not on screen, as the browser's own (trusted) input: Input.dispatchMouseEvent over the tab's
+  // debugger session, which needs neither the view in front nor the window's focus (so file pickers, popups and payment buttons that
+  // ignore script-made clicks still work). x, y: CSS pixels. Reuses a session someone else holds; false when it cannot (the caller
+  // falls back to page events).
+  async backgroundClick(wc, x, y) {
+    const dbg = wc.debugger;
+    let attached = false;
+    try {
+      if (!dbg.isAttached()) { dbg.attach('1.3'); attached = true; }
+      const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
+      // marked as the AI's for as long as the commands run (and a moment after): the page view's own mouse handler must not take
+      // this click for the user's, which would hand the AI's tab over to them
+      await manners.agentInputAsync(wc, async () => {
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+      });
+      return true;
+    } catch { return false; } finally {
+      if (attached) { try { dbg.detach(); } catch {} }
     }
-    wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
   }
 
   async mouseClick(wc, x, y) {
-    wc.sendInputEvent({ type: 'mouseMove', x, y });
-    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    manners.agentInput(wc, () => {
+      wc.sendInputEvent({ type: 'mouseMove', x, y });
+      wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    });
   }
 }
 

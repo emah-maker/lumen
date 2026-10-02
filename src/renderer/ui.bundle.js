@@ -2280,10 +2280,13 @@ function endStream() {
   if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
+let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
+  // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
+  if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (!turn || event.runId !== runId) return;
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
@@ -2440,6 +2443,8 @@ window.assistant.onEvent((event) => {
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
       turn.working.remove();
       if (event.undo) window.showRunUndo?.(append, event.undo); // [ai controls] extras.js
+      aiTabsRunId = event.runId;
+      if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
       turn = null;
       setRunning(false);
       setTimeout(sendQueued);
@@ -3367,6 +3372,7 @@ function startChat() {
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
+    closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
     movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
   };
   const iconButton = (name, label) => {
@@ -3569,6 +3575,18 @@ function startChat() {
         if (!working) move.classList.add('chat-act-drop');
         move.onclick = moveHere;
         tabActions.push(show, move);
+      }
+      // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
+      if (chat.aiTabs > 0 && api.closeTabs) {
+        const closeLabel = tr('chats.closeTabs', 'Close this chat’s tabs');
+        const closeTabs = iconButton('closetabs', closeLabel);
+        closeTabs.onclick = async () => {
+          closeTabs.disabled = true;
+          const out = await api.closeTabs(chat.id).catch(() => null);
+          say(out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : tr('chats.closeTabs.none', 'This chat has no tabs it opened'));
+          closeTabs.remove();
+        };
+        tabActions.push(closeTabs);
       }
       actions.append(...tabActions, rename, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
@@ -4815,7 +4833,11 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  inner.append(globeIcon(), chatMark, title, close);
+  // [ai manners] a tab the AI opened: a small sparkle after its title (updateTabEl; styles.css .tab-ai-mark)
+  const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
+  aiMark.setAttribute('aria-hidden', 'true');
+  aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
+  inner.append(globeIcon(), chatMark, title, aiMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
@@ -4871,7 +4893,8 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : ''].filter(Boolean).join(', '));
+  el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -5126,7 +5149,8 @@ function fillHoverCard(el) {
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
-  hostEl.hidden = !host;
+  if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
+  hostEl.hidden = !host && !tab.aiOpened;
   return true;
 }
 
@@ -5255,7 +5279,7 @@ organizeBtn.onclick = () => {
 };
 window.browser.onOrganizing?.(showOrganizing);
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
-window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle }) => {
+window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
   const words = Object.assign(document.createElement('span'), { className: 'organize-note-text', textContent: text });
@@ -5297,7 +5321,7 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle }) => {
     setTimeout(() => { if (note.isConnected) { summary(); summary.fit?.(); } }, 200); // the tab state with the new groups may arrive just after the note
   }
   if (undo) {
-    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { window.browser.undoOrganize(); note.remove(); } })); // (a merge's note brings its own wording)
+    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } })); // ([ai manners] a close of the AI's tabs undoes itself) // (a merge's note brings its own wording)
   }
   organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
   setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000); // main's undo window is the same length as the note's life
@@ -5322,9 +5346,35 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
+
+// [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
+// in front (and one being dragged), and one playing sound (its speaker button would vanish), so nothing you are using vanishes. They stay open; the toggle shows how many are out of sight.
+function aiHiddenTab(tab, state) {
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+}
+const hideAiButton = $('hide-ai-tabs');
+function syncHideAiToggle(state) {
+  if (!hideAiButton) return;
+  const on = window.lumenHideAiTabs === true;
+  const total = (state?.tabs || []).filter((x) => x.aiOpened).length;
+  const out = (state?.tabs || []).filter((x) => aiHiddenTab(x, state)).length;
+  const count = on ? out : total;
+  hideAiButton.hidden = !on && total === 0; // nothing to hide: no button (it stays while the toggle is on, so it can be turned off)
+  hideAiButton.setAttribute('aria-pressed', String(on));
+  const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
+  hideAiButton.title = label;
+  const badge = $('hide-ai-tabs-count');
+  badge.hidden = count === 0;
+  badge.textContent = count > 99 ? '99+' : String(count);
+}
+hideAiButton?.addEventListener('click', async () => {
+  const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);
+  if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
+});
+document.addEventListener('lumen:hide-ai-tabs', () => { if (lastTabState) { syncHideAiToggle(lastTabState); lastLayoutSig = null; renderTabsNow(lastTabState); } });
 
 function renderTabsNow(state) {
   // Updates wait while tabs are being moved here, but not while they are out on the card: the strip then
@@ -5335,6 +5385,7 @@ function renderTabsNow(state) {
     return;
   }
   lastTabState = state;
+  syncHideAiToggle(state);
   if (!drag?.handed) pruneSelection(state);
   const container = $('tabs');
   const sig = layoutSig(state);
@@ -5375,9 +5426,10 @@ function renderTabsNow(state) {
   // just been thrown away, and did nothing.
   const wanted = [];
   for (const tab of state.tabs) {
+    if (aiHiddenTab(tab, state)) continue; // [ai manners] left out of the strip by the sidebar's toggle (still open)
     const group = tab.groupId ? groupsById.get(tab.groupId) : null;
     if (group && currentGroup !== group.id) {
-      wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id).length, crowded, before.get(`g${group.id}`)?.el));
+      wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id && !aiHiddenTab(t, state)).length, crowded, before.get(`g${group.id}`)?.el));
     }
     currentGroup = group ? group.id : null;
     if (group?.collapsed && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue; // the active tab (and one being dragged) stays
@@ -7299,6 +7351,56 @@ $('agent-stop')?.addEventListener('click', () => {
   // `undo` ({ id, undoable, lasting }) comes with the run's 'done' event (agent.js undoSummary):
   // the tabs it opened, closed, moved to other pages or regrouped can be put back; what it did on
   // sites (lasting: clicks, typing, forms) can't, and the button says so.
+  // ---------- [ai manners] "Close N tabs the AI opened" under a reply (main.js aiTabsAfterRun / aiTabsClose) ----------
+  // `info` ({ n, mode: offer | ask }) comes with the run's 'done' event; with Settings > "Close tabs the AI opened" on Always, main
+  // closes them itself and sends 'ai_tabs_closed' ({ n, token }): the row then says so and offers Undo. Never closes a tab you
+  // used, a pinned tab or the one a chat lives in (main skips those: the count is what can really close).
+  function aiTabsRow(append) {
+    return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs', role: 'status' }));
+  }
+  const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
+  function undoRow(box, closed, token, kept = 0) {
+    box.replaceChildren();
+    box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
+    const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
+    undo.addEventListener('click', async () => {
+      undo.disabled = true;
+      const result = await window.assistant.undoCloseAiTabs(token).catch(() => null);
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.reopened', result?.reopened || 0, 'Reopened {count} tabs.') }));
+    });
+    box.append(undo);
+    if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
+    box.setAttribute('role', 'status');
+  }
+  window.showAiTabs = function showAiTabs(append, info, runId) {
+    if (!info?.n || !window.assistant?.closeAiTabs) return;
+    const box = aiTabsRow(append);
+    const n = info.n;
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text' });
+    if (info.mode === 'ask') text.textContent = plural('chat.aiTabs.ask', n, n === 1 ? 'The AI opened {count} tab. Close it?' : 'The AI opened {count} tabs. Close them?');
+    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab the AI opened' : 'Close {count} tabs the AI opened') });
+    close.addEventListener('click', async () => {
+      close.disabled = true;
+      const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
+      if (!result?.closed) {
+        const keptText = result?.kept > 0 ? plural('chat.aiTabs.kept', result.kept, result.kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '';
+        box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: keptText || window.t?.('chat.aiTabs.none') || 'Nothing to close.' }));
+        return;
+      }
+      undoRow(box, result.closed, result.token, result.kept);
+    });
+    box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
+    if (info.mode === 'ask') {
+      const keep = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.keep') || 'Keep' });
+      keep.addEventListener('click', () => box.remove());
+      box.append(' ', keep);
+    }
+  };
+  window.showAiTabsClosed = function showAiTabsClosed(append, event) {
+    if (!event?.n || !event.token) return;
+    undoRow(aiTabsRow(append), event.n, event.token, event.kept);
+  };
+
   window.showRunUndo = function showRunUndo(append, undo) {
     if (!undo?.undoable) return;
     const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));
@@ -8150,6 +8252,10 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
+    const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
+    if (badge) badge.hidden = !p.handsOff;
+    const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
+    if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     accent = p.accent || null;
     applyAccent();
   };
@@ -8171,6 +8277,7 @@ $('agent-stop')?.addEventListener('click', () => {
     style.setProperty('--accent-soft', `rgb(${r} ${g} ${b} / ${dark.matches ? 0.2 : 0.14})`);
   }
   dark.addEventListener('change', applyAccent);
+  document.getElementById('hands-off')?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('you-and-ai'));
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
 }

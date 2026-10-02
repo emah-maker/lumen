@@ -498,7 +498,8 @@ function setupAiAgents(deps) {
       ...deps.automationPlan,
       hooks: {
         tabs: deps.userTabs,
-        openTab: (url, options = {}) => deps.openTab(deps.isWebUrl(url) || url === 'about:blank' ? url : 'about:blank', options),
+        openTab: (url, options = {}) => deps.openTab(deps.isWebUrl(url) || url === 'about:blank' ? url : 'about:blank', { ...options, openedBy: {} }), // [ai manners] a tab an outside agent opens is the AI's to work in (and to close again)
+        handsOffVerdict: (method, tabId) => require('./ai-manners').automationVerdict({ method, handsOff: readSettings().aiHandsOff === true, ownTab: Boolean(deps.isAiTab?.(tabId)) }), // [ai manners] hands-off covers this server too
         closeTab: (id) => deps.closeTab(id),
         switchTab: (id) => deps.switchTab(id),
         // In-process backend only: every web contents, now and as they appear, so a tab's iframes are tracked from the start.

@@ -24,6 +24,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
       remove: (id) => ipcRenderer.invoke('chats:delete', id),
       exportChat: (id) => ipcRenderer.invoke('chats:export', id),
+      closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners]
       onUsage: on('chats:usage'),
       onContext: on('chats:context'),
       onChanged: on('chats:changed'),
@@ -34,6 +35,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onTarget: on('chat:target'),
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
     undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
+    closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners]
+    undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
