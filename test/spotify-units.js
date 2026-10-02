@@ -186,6 +186,10 @@ async function connectorChecks(check) {
   await w.refresh(w.list()[0]);
   data = w.cache.get(id).data;
   check('spotify card: a 204 (nothing playing, no active device) is an idle card, not an error', data.state === 'idle' && data.title === '' && !w.cache.get(id).error && w.forPage()[0].error === null, plain(data));
+  // Play on an idle card: the card must not turn into "playing" a blank track before the next fetch says what is playing.
+  const idlePlay = await w.act({ id, do: 'play' });
+  check('spotify play on an idle card: Spotify is asked, and the card stays idle (no blank "playing" track) until the fetch answers', idlePlay === true && fake.log.filter((l) => l.path === '/v1/me/player/play').length >= 1 && w.cache.get(id).data.state === 'idle' && w.cache.get(id).data.title === '', plain(w.cache.get(id).data));
+  await new Promise((r) => setTimeout(r, 800)); // the follow-up fetch an action schedules
   fake.world.playerStatus = 200;
 
   // signed out on Spotify's side
@@ -277,9 +281,15 @@ async function webChecks(check) {
   check('spotify web: the view is cut to the visible page', clipped && clipped.x === 740 && clipped.y === 500 && clipped.width === 100 && clipped.height === 100, JSON.stringify(clipped));
   check('spotify web: a card scrolled out of view, tiny, or a bad answer hides the view', [SW.viewBounds({ x: 0, y: 600, w: 300, h: 300 }, page), SW.viewBounds({ x: 0, y: -280, w: 300, h: 300 }, page), SW.viewBounds({ x: 0, y: 0, w: 20, h: 300 }, page), SW.viewBounds(null, page), SW.viewBounds({ x: 'a', y: 0, w: 1, h: 1 }, page), SW.viewBounds({ x: 0, y: 0, w: 300, h: 300 }, null)].every((r) => r === null), '');
 
+  check('spotify web: a failed load is told apart: no network says offline, other errors say failed, a replaced navigation or a sub-frame is no failure', SW.loadFailure(-106) === 'offline' && SW.loadFailure(-105) === 'offline' && SW.loadFailure(-102) === 'offline' && SW.loadFailure(-118) === 'offline' && SW.loadFailure(-200) === 'failed' && SW.loadFailure(-3) === null && SW.loadFailure(-106, false) === null && SW.loadFailure(NaN) === null, '');
+  check('spotify web: a stand-in origin (tests only) is the only extra address allowed, https and without credentials', SW.isAllowedUrl('https://127.0.0.1:5/web', 'https://127.0.0.1:5') && !SW.isAllowedUrl('https://127.0.0.1:5/web') && !SW.isAllowedUrl('https://127.0.0.1:6/web', 'https://127.0.0.1:5') && !SW.isAllowedUrl('http://127.0.0.1:5/web', 'https://127.0.0.1:5') && !SW.isAllowedUrl('https://u:p@127.0.0.1:5/', 'https://127.0.0.1:5'), '');
+  check('spotify web: the Widevine check only asks the page for a yes or no', /requestMediaKeySystemAccess\('com\.widevine\.alpha'/.test(SW.DRM_PROBE) && !/fetch|XMLHttpRequest|cookie|localStorage/.test(SW.DRM_PROBE), '');
+
   // The connector: no sign-in or Client ID needed, nothing fetched from Spotify.
   let calls = 0;
   let signedIn = null;
+  let viewStatus = null;
+  let reloads = 0;
   let settings = {};
   const w = createWidgets({
     readSettings: () => settings,
@@ -287,6 +297,8 @@ async function webChecks(check) {
     fetch: async () => { calls++; throw new Error('the Web player must not call any API'); },
     getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}),
     spotifyWebSignedIn: () => signedIn,
+    spotifyWebStatus: () => viewStatus,
+    spotifyWebReload: () => { reloads++; },
   });
   const saved = await w.save({ type: 'spotify', mode: 'web' }).catch((e) => ({ error: e.message }));
   check('spotify web: saving needs no Client ID and no sign-in', !saved.error && w.list()[0]?.mode === 'web', saved.error || '');
@@ -299,11 +311,36 @@ async function webChecks(check) {
   signedIn = true;
   check('spotify web: …and signed in', card().data.signedIn === true, '');
   check('spotify web: play/pause buttons do nothing in this mode', (await w.act({ id, do: 'play' }).catch(() => 'threw')) !== 'threw' && calls === 0, '');
-  check('spotify web: the Settings summary says so', /web player/i.test(w.state().widgets.find((x) => x.id === id)?.summary || ''), JSON.stringify(w.state().widgets.find((x) => x.id === id)));
+  viewStatus = { state: 'offline', drm: 'missing' };
+  check('spotify web: the card is told what the view is doing (offline, no Widevine) so it can say so instead of showing a blank frame', card().data.view?.state === 'offline' && card().data.view?.drm === 'missing', JSON.stringify(card().data));
+  check('spotify web: "Try again" (do=reload) is an accepted page action and reloads the view once', w.actionFrom(`file:///newtab.html?widget=${id}&do=reload`)?.do === 'reload' && (await w.act({ id, do: 'reload' })) === true && reloads === 1, String(reloads));
+  check('spotify web: …and only for a Web player card (an unknown card or the API card is refused)', (await w.act({ id: 'wnope0001', do: 'reload' })) === false && reloads === 1, String(reloads));
+  check('spotify web: the Settings summary says so',/web player/i.test(w.state().widgets.find((x) => x.id === id)?.summary || ''), JSON.stringify(w.state().widgets.find((x) => x.id === id)));
+}
+
+// Disconnect while a token refresh is in flight: the answer is stale and must not store a token (it would sign the user back in).
+async function raceChecks(check) {
+  const secrets = new Map([['spotify', 'R1']]);
+  let settings = { homeWidgets: [{ id: 'wrace0001', type: 'spotify', mode: 'api', clientId: CLIENT, art: false }] };
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const fetch = async (url) => {
+    if (new URL(url).pathname === '/api/token') { await gate; return new Response(JSON.stringify({ access_token: 'A2', refresh_token: 'R2', expires_in: 3600 }), { status: 200 }); }
+    return new Response(JSON.stringify({ is_playing: false }), { status: 200 });
+  };
+  const w = createWidgets({ readSettings: () => settings, writeSettings: (s) => { settings = JSON.parse(JSON.stringify(s)); }, fetch, getSecret: (n) => secrets.get(n) || null, setSecret: (n, v) => { if (v) secrets.set(n, v); else secrets.delete(n); }, onUpdate: () => {}, endpoints: () => ({}) });
+  const pending = w.refresh(w.list()[0], { force: true });
+  await new Promise((r) => setTimeout(r, 50)); // the token request is waiting on the gate
+  const entry = w.cache.get('wrace0001'); // (Disconnect drops the cache entry; the refresh in flight still reports into this one)
+  w.spotifyDisconnect();
+  release();
+  await pending;
+  check('spotify Disconnect during a token refresh: the late answer does not store a token and sign the user back in', !secrets.has('spotify') && /Log in with Spotify/.test(entry?.error || ''), JSON.stringify([...secrets]) + ' ' + entry?.error);
 }
 
 module.exports = async function spotifyUnits(check) {
   viewChecks(check);
   await connectorChecks(check);
   await webChecks(check);
+  await raceChecks(check);
 };

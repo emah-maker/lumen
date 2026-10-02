@@ -444,6 +444,7 @@ const CONNECTORS = {
   spotify: {
     label: 'Spotify',
     ttl: 20e3,
+    minRefresh: 4e3, // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
@@ -478,7 +479,7 @@ const CONNECTORS = {
       return { ...data, art };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
-    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn } : d),
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : d),
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
@@ -486,7 +487,9 @@ const CONNECTORS = {
       if (!req) return false;
       const res = await spotifyCall(x, c, req.method, req.path);
       if (!res.ok) throw new Error(SV.playerError(res.status, res.body));
-      if (action.do === 'play' || action.do === 'pause') {
+      // An idle card has no track to show as playing (it would read "playing" with a blank title until the next fetch):
+      // it only gets its answer from the fetch that follows.
+      if ((action.do === 'play' || action.do === 'pause') && cached.state !== 'idle') {
         cached.progressMs = Math.round(SV.progressNow(cached, x.now()));
         cached.at = x.now();
         cached.state = action.do === 'play' ? 'playing' : 'paused';
@@ -1102,9 +1105,12 @@ async function spotifyAccess(x, clientId, force = false) {
         throw new Error(SV.tokenError(res.status, res.body));
       }
       const t = SV.parseToken(res.body, x.now(), refresh);
+      // If Disconnect (or a newer sign-in) changed the secret while this ran, the answer is stale: keeping it would
+      // store the old account's rotated token and silently sign the user back in.
+      if (x.secret() !== refresh) throw new Error('Log in with Spotify in Settings.');
       s.access = t.access;
       s.exp = t.exp;
-      if (t.refresh !== refresh) x.setSecret(t.refresh);
+      if (t.refresh !== refresh) x.setSecret(t.refresh); // a rotated refresh token replaces the old one
     })().finally(() => { s.pending = null; });
   }
   await s.pending;
@@ -1250,6 +1256,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         spotifyWebStatus()? ({ state: 'loading'|'ready'|'offline'|'failed', drm: 'unknown'|'ok'|'missing' }: the Web player's view), spotifyWebReload()?,
 //         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
@@ -1511,7 +1518,7 @@ function createWidgets(deps) {
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
-    if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
+    if (fresh && (!force || age < (c.minRefresh ?? MIN_REFRESH))) return Promise.resolve(false);
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
@@ -1529,7 +1536,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -1991,7 +1998,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2177,6 +2184,11 @@ function createWidgets(deps) {
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     if (action.do === 'signin') return gmailSignInFromPage(w);
+    if (action.do === 'reload') { // the Spotify Web player's "Try again": load open.spotify.com in its view again
+      if (w.type !== 'spotify' || w.mode !== 'web') return false;
+      deps.spotifyWebReload?.();
+      return true;
+    }
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;

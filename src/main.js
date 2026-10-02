@@ -6374,6 +6374,8 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  spotifyWebStatus: () => spotifyWeb.status(),
+  spotifyWebReload: () => spotifyWeb.reload(),
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
@@ -6431,7 +6433,11 @@ const spotifyWeb = SW.createSpotifyWeb({
   hasWidget: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'),
   openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
   onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  onStatus: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); }, // loading, offline, no Widevine: the card says which
+  testUrl: () => (TEST && global.__spotifyWebUrl) || '', // tests serve a stand-in for open.spotify.com; nothing else can
+  drmProbe: (wc) => (TEST && global.__spotifyDrmProbe ? global.__spotifyDrmProbe(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
+if (TEST) global.__spotifyWeb = spotifyWeb;
 app.on('before-quit', () => spotifyWeb.destroy());
 
 const settingsBackend = settingsPage.create({
