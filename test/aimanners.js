@@ -156,6 +156,8 @@ const launch = (profile) => electron.launch({
   const keyBefore = await app.evaluate((_e, i) => global.__manners.userInput.typedAt(global.__aiTabs.tab(i).view.webContents), form);
   await run(form, { name: 'press_key', input: { key: 'Shift' } });
   check('keys the AI sends do not count as the user typing', (await app.evaluate((_e, i) => global.__manners.userInput.typedAt(global.__aiTabs.tab(i).view.webContents), form)) === keyBefore);
+  // (the pause is for the field the user is typing in: put them in field B, the one the AI is about to type into)
+  await wcOf(form, "(() => { document.getElementById('b').focus(); return true; })()");
   await app.evaluate((_e, i) => global.__manners.userInput.key(global.__aiTabs.tab(i).view.webContents, Date.now()), form);
   const started = Date.now();
   await run(form, { name: 'type_text', input: { element_id: bId, text: 'y' } });

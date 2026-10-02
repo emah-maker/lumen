@@ -1656,6 +1656,7 @@ function syncHideAiToggle(state) {
   hideAiButton.setAttribute('aria-pressed', String(on));
   const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
   hideAiButton.title = label;
+  hideAiButton.setAttribute('aria-label', label); // (the static aria-label would otherwise hide the count and the state from a screen reader)
   const badge = $('hide-ai-tabs-count');
   badge.hidden = count === 0;
   badge.textContent = count > 99 ? '99+' : String(count);
