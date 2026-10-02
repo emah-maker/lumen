@@ -215,15 +215,11 @@ const path = require('path');
   await sleep(900);
   await app.evaluate(() => global.__release?.());
   await runEnded();
-  // The sidebar of the window the tab left shows another chat, so its Stop button going away does not mean the run is over:
-  // the click is still on its way. Wait for the page itself (the tab's title is what the click changes).
-  const m1Title = () => app.evaluate(({ webContents }) => {
+  const errText = await ui.evaluate(() => [...document.querySelectorAll('.notice,.error,.step.failed')].map((n) => n.textContent).join(' | '));
+  const m1 = await app.evaluate(({ webContents }) => {
     const found = global.__windows.list().flatMap((w) => w.tabs).find((t) => t.url.endsWith('/m1'));
     return found ? webContents.fromId(found.contentsId).getTitle() : null;
   });
-  await waitFor(async () => (await m1Title()) === 'clicked /m1', 5000);
-  const errText = await ui.evaluate(() => [...document.querySelectorAll('.notice,.error,.step.failed')].map((n) => n.textContent).join(' | '));
-  const m1 = await m1Title();
   check('a tab torn off to another window mid-run is not reported as closed', moved === true && !/was closed/.test(errText), `${moved} ${errText}`);
   check('and the run\'s click still landed in that tab', m1 === 'clicked /m1', m1);
 
