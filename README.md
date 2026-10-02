@@ -250,6 +250,7 @@ npm install
 npm start             # run from source
 npm test              # the core Playwright suites, one at a time, with a pass/fail summary
 npm test -- tabstrip  # just the named suites
+npm run test:units    # only the pure-node suites (no window; what CI runs)
 ```
 
 ### Build and install locally
@@ -324,15 +325,15 @@ src/                    the app (package.json "main": src/main.js)
 ├── assets/             app icons
 └── vendor/             third-party code shipped as is (Readability)
 mcp.js                  the MCP bridge's stable address (<app>/mcp.js in agents' configs); it starts src/automation/mcp.js
-test/                   Playwright suites, one file per area, and *-units.js pure-logic checks run from test/units.js
-scripts/                build, packaging hooks, test-all.js, bundle-preload.js, build-site.js, capture-media.js, measure-*.js
+test/                   Playwright suites, one file per area, and units.js / *-units.js / cli-json.js pure-logic checks (`npm run test:units`)
+scripts/                build, packaging hooks, test-all.js, test-units.js, bundle-preload.js, build-site.js, capture-media.js, measure-*.js
 docs/                   reference pages (below) and docs/media (the README's screenshots, not shipped)
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
 ```
 
 `src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
 
-**Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
+**Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `npm run test:units` runs every pure-node suite (`scripts/test-units.js`, no window), which CI runs on pull requests and the release build runs before packaging. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 
 ## License
 
