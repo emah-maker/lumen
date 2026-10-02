@@ -445,3 +445,10 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 @media (max-width: 720px) { .clock-tiles, .bg-tiles { grid-template-columns: repeat(var(--cols-narrow, 3), minmax(0, 1fr)); } }
 
 @media (max-width: 720px) { .clock-tiles .last-tile, .bg-tiles .last-tile { grid-column: span var(--last-span, 1); } }
+
+/* A deep link's target flashes once so it is easy to spot. */
+.flash-target { border-radius: 12px; animation: flash-target 1.8s ease-out; }
+@keyframes flash-target { 0%, 55% { background: var(--accent-soft); box-shadow: 0 0 0 8px var(--accent-soft); } 100% { background: transparent; box-shadow: 0 0 0 8px transparent; } }
+.reduce-motion .flash-target { animation: none; }
+.page-foot { margin: 8px 4px 0; text-align: center; color: var(--muted); font-size: 12px; }
+.searching .page-foot { display: none; }

@@ -19,6 +19,10 @@ check('synonym words are still matched at word starts', !S.matchesAll('abdarkene
 check('a word with no synonym only matches itself', !S.matchesAll('dark mode', q('zebra')));
 check('no synonym points back at itself in a loop of nonsense', Object.entries(S.SYNONYMS).every(([k, v]) => !v.includes(k)));
 
+const widgetsLink = 'widgets weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page. weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed';
+check('adblock does not match the Widgets page', S.score(q('adblock'), { label: 'Widgets', titles: 'widgets home', search: widgetsLink }) === 0);
+check('adblock finds the blocker and its site list', S.score(q('adblock'), { label: 'Block ads and trackers', titles: 'ads and trackers privacy and security', search: 'block ads and trackers' }) === 3 && S.score(q('adblock'), { label: 'Sites allowed to show ads', titles: 'ads and trackers', search: '' }) >= 2);
+
 const row = { label: 'Theme', titles: 'appearance', search: 'theme lumen follows this light dark system' };
 check('score: label hit is 3', S.score(q('theme'), row) === 3);
 check('score: title hit is 2', S.score(q('lumen'), { label: 'Theme', titles: 'lumen appearance', search: 'theme' }) === 2);

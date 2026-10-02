@@ -156,14 +156,14 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
-  permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
-  cookies: { cat: 'privacy' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
+  cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -194,6 +194,7 @@ class Slot {
   subpage(id, label, desc, more = '') {
     const sub = new Slot(id, label, this.cat);
     sub.pending = ''; sub.isSub = true;
+    if (slots.has(id) && !slots.get(id).isSub) slots.set(`${id}~parent`, slots.get(id)); // (the Widgets slot and its sub-page share an id)
     slots.set(id, sub);
     const catTitle = categories.get(this.cat).title;
     const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${catTitle}`, onclick: () => { location.hash = `#${this.cat}`; } },
@@ -349,7 +350,7 @@ async function buildAi(card) {
         h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
-          class: 'primary', text: 'Sign in', 'aria-label': 'Sign in with OpenRouter',
+          class: 'primary', text: 'Sign in with OpenRouter', 'aria-label': 'Sign in with OpenRouter',
           // While the sign-in tab is open this is a Cancel button (closing that tab cancels too).
           onclick: async (e) => {
             const btn = e.target;
@@ -395,7 +396,8 @@ async function buildAi(card) {
     }));
   };
   renderKeys();
-  card.at('ai-accounts').append(stackRow('API keys', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider.', keys));
+  const accounts = card.at('ai-accounts').subpage('ai-keys-page', tr('settings.ai.keysPage', 'API keys and sign-ins'), tr('settings.ai.keysPageDesc', 'Connect Claude, OpenAI, Grok, Gemini or OpenRouter with a key or a sign-in.'), 'api key anthropic claude openai grok xai gemini google openrouter sign in console cli account');
+  accounts.group('API keys').append(stackRow('API keys', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider.', keys));
 
   // Anthropic CLI sign-in: status sits under the description, the button on the right.
   const cliNote = status('ai-cli-status');
@@ -405,7 +407,7 @@ async function buildAi(card) {
     cliButtons.replaceChildren(s.signedIn
       ? h('button', { id: 'ai-cli-button', text: 'Sign out', onclick: async () => { renderCli(await S.ai.cliLogout()); await refreshModels(); } })
       : h('button', {
-        id: 'ai-cli-button', class: 'primary', text: 'Sign in',
+        id: 'ai-cli-button', class: 'primary', text: 'Sign in', 'aria-label': 'Sign in with Anthropic',
         // While the browser sign-in is waiting, this is a Cancel button.
         onclick: async (e) => {
           const btn = e.target;
@@ -425,14 +427,14 @@ async function buildAi(card) {
   S.ai.onCliProgress((text) => { cliNote.textContent = text; });
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
-  card.at('ai-accounts').append(cliRow);
+  accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
   S.ai.cliStatus().then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Grok Build, Antigravity and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
+  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen, with your OK for each new site. Off by default.', mcpToggle));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
@@ -2422,7 +2424,7 @@ function show() {
   }
   let any = false;
   for (const [id, c] of categories) {
-    const own = c.slots.reduce((sum, [sid]) => sum + (hitsBySlot.get(slots.get(sid)) || 0), 0);
+    const own = c.slots.reduce((sum, [sid]) => sum + (hitsBySlot.get(slots.get(sid)) || 0) + (hitsBySlot.get(slots.get(`${sid}~parent`)) || 0), 0);
     const subs = [...slots.values()].filter((s) => s.isSub && s.cat === id).reduce((sum, s) => sum + (hitsBySlot.get(s) || 0), 0);
     const hits = own + subs;
     c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub);
@@ -2452,7 +2454,7 @@ function syncNavStop() {
   const stop = nav.contains(document.activeElement) && usable.includes(document.activeElement) ? document.activeElement : usable.find((a) => a.getAttribute('aria-current') === 'page') || usable[0];
   for (const a of nav.querySelectorAll('a')) a.tabIndex = a === stop ? 0 : -1;
   const cur = nav.querySelector('a[aria-current="page"]'); // (the narrow strip scrolls sideways: keep the current page in view)
-  if (cur && nav.scrollWidth > nav.clientWidth && (cur.offsetLeft < nav.scrollLeft || cur.offsetLeft + cur.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = Math.max(0, cur.offsetLeft - 24);
+  if (cur && nav.scrollWidth > nav.clientWidth && (cur.offsetLeft < nav.scrollLeft || cur.offsetLeft + cur.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2);
   edgeFade();
 }
 function edgeFade() { // the narrow strip fades out on a side where more categories are hidden
@@ -2493,8 +2495,9 @@ function route() {
   show();
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
-  const target = focus && $(`sec-${focus}`);
-  if (target) target.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+  const groupTitle = ALIASES[id]?.group;
+  const target = groupTitle ? [...document.querySelectorAll(`#cat-${view.cat} .group`)].find((g) => g.dataset.title === groupTitle) : focus && $(`sec-${focus}`);
+  if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); } else window.scrollTo(0, 0);
   // (Its row may still be loading: looked for over the next second.)
   if (focusEl) for (let i = 0, tries = 10; i < tries; i++) setTimeout(() => { const el = document.querySelector(focusEl); if (el && document.activeElement !== el && !el.dataset.routed) { el.dataset.routed = '1'; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100);
 }
