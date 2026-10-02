@@ -118,6 +118,22 @@ const launch = (profile) => electron.launch({
   check('Undo reopens them, as the user\'s own tabs (no mark)', reopened.reopened === 2 && after.urls.filter((u) => /\/c[14]$/.test(u)).length === 2 && after.aiLeft === 0, JSON.stringify(after));
   check('the user never left their tab', (await active()) === user2);
 
+  // ---- 4b. The taskbar's command (a second instance started with --close-ai-tabs): same rules, no window brought forward.
+  const b1 = await openAi(`${base}/c1`);
+  const b2 = await openAi(`${base}/c2`);
+  await app.evaluate((_e, id) => { global.__aiTabs.tab(id).pinned = true; }, b2);
+  await waitFor(() => app.evaluate((_e, i) => /\/c1$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), b1));
+  const focusBefore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.isFocused()));
+  await app.evaluate(() => global.__taskbar.secondInstance(['Lumen.exe', '--close-ai-tabs']));
+  check('taskbar: the command closes the AI\'s tab', await waitFor(() => app.evaluate((_e, i) => !global.__aiTabs.tab(i), b1)));
+  check('taskbar: a pinned AI tab stays, and so does the user\'s tab', await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), b2) && (await active()) === user2);
+  check('taskbar: the strip says what closed, with Undo', Boolean(await waitFor(() => ui.evaluate(() => /Closed 1 tab the AI opened/.test(document.body.innerText)))));
+  check('taskbar: no window took the focus', JSON.stringify(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.isFocused()))) === JSON.stringify(focusBefore));
+  const none = await app.evaluate(() => global.__taskbar.closeAiTabs());
+  check('taskbar: with none left to close it does nothing', none.closed === 0 && none.windows === 0, JSON.stringify(none));
+  await app.evaluate((_e, id) => { global.__aiTabs.tab(id).pinned = false; return global.__aiTabs.close({}); }, b2); // (tidy: the later steps count the AI's tabs)
+  await waitFor(() => app.evaluate((_e, i) => !global.__aiTabs.tab(i), b2));
+
   // ---- 5. Hands-off mode.
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
   const badge = await waitFor(async () => ui.evaluate(() => { const b = document.getElementById('hands-off'); return b && !b.hidden && b.textContent.trim(); }));
