@@ -84,6 +84,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await stop.onclick({ stopPropagation() {} });
   await sleep(150);
   check('stop: a chat still in the line after a true answer gets its button back and a note', stop.disabled === false && /Could not stop/.test(meta(li).textContent), `${stop.disabled} ${meta(li).textContent}`);
+  // a working chat: "Stop"; a false answer (it just finished) redraws instead of a false failure; a slow abort is not a failure
+
+  const running = { ...base, badge: 'running', tab: { id: 2, title: 'Other', here: false } };
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => {}, stopChat: async () => false, remove: async () => ({}), list: async () => ({ chats: [{ id: 'c1', badge: null }] }) };
+  let redrew = 0; rerenderSpy = () => { redrew++; }; li = make(api, running);
+  stop = li.find('chat-stop-wait')[0];
+  check('running: the row has a "Stop" control', !!stop && stop.textContent === 'Stop', stop && stop.textContent);
+  await stop.onclick({ stopPropagation() {} });
+  check('running: a false answer (it had just finished) redraws the list and shows no failure', redrew === 1 && !/Could not stop/.test(meta(li).textContent), `${redrew}`);
+  api.stopChat = async () => new Promise(() => {}); // an abort that never answers in time, while the run has ended meanwhile
+  li = make(api, running);
+  stop = li.find('chat-stop-wait')[0];
+  stop.onclick({ stopPropagation() {} });
+  await sleep(150);
+  check('running: a slow abort that has ended by the time it is checked shows no failure', !/Could not stop/.test(meta(li).textContent), meta(li).textContent);
   api = { exportChat: async () => ({ ok: true }), showTab: async () => { throw new Error('no tab'); }, stopChat: async () => true, remove: async () => ({}) };
   li = make(api, { ...base, badge: 'running', tab: { id: 2, title: 'Other', here: false } });
   await li.find('chat-open')[0].onclick();

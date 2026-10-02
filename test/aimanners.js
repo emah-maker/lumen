@@ -67,7 +67,7 @@ const launch = (profile) => electron.launch({
   await ui.keyboard.press('Space');
   t = await waitFor(async () => { const x = await toggle(); return x.pressed === 'true' && x; });
   check('keyboard: Space turns it on (aria-pressed), the label says the tab is hidden', t && /is hidden/.test(t.label), JSON.stringify(t));
-  check('on: the AI\'s tab is out of the strip, still open, and the count stays', (await waitFor(async () => (await tabCount()) === before - 1)) && (await tabEl(aiTab)) === null && t.count === '1' && (await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), aiTab)));
+  check('on: the AI\'s tab is out of the strip, still open, and the count stays', (await waitFor(async () => (await tabCount()) === before - 1)) && (await tabEl(aiTab)) === null && (await ui.evaluate(() => document.getElementById('hide-ai-tabs-label').textContent)) === '1 hidden' && (await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), aiTab)));
   check('on: the user\'s own tab is still shown', (await tabEl(user)) !== null);
   // the tab in front stays shown even though it is the AI's (the user went there: a click in the page would hand it over, a look does not)
   await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), aiTab);
@@ -185,8 +185,142 @@ const launch = (profile) => electron.launch({
   const after2 = { focus: await ui.evaluate(() => document.activeElement?.id || document.activeElement?.tagName), active: await active(), form, ai6 };
   check('opening and working in the AI\'s tab left the omnibox focused and the user on their tab', after2.focus === 'address' && after2.active === form, JSON.stringify(after2));
 
+  // ---- 7. A click through the tool leaves the keyboard in the address bar.
+  await ui.evaluate(() => document.getElementById('address').focus());
+  const clicked = await run(form, { name: 'click', input: { element_id: bId } });
+  check('a click through the tool keeps the keyboard in the address bar', clicked.ok && (await ui.evaluate(() => document.activeElement?.id)) === 'address' && (await active()) === form, JSON.stringify(clicked));
+
+  // ---- 8. A page the AI opened that opens another: behind, and the AI's own.
+  const idsOf = () => app.evaluate(() => global.__windows.list()[0].tabs.map((x) => x.id));
+  const known = await idsOf();
+  await wcOf(ai6, "(() => { window.open(location.origin + '/popped', '_blank'); return true; })()");
+  const popped = await waitFor(async () => (await idsOf()).find((i) => !known.includes(i)));
+  check('window.open from an AI tab makes a tab', Boolean(popped), JSON.stringify(await idsOf()));
+  await waitFor(() => app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)), popped));
+  check('...marked as the AI\'s own, so it can be closed again', await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)?.openedBy), popped));
+  check('...and it opened behind: the user stays on their tab and keeps the address bar', (await active()) === form && (await ui.evaluate(() => document.activeElement?.id)) === 'address');
+  await app.evaluate((_e, i) => global.__aiTabs.close({}).then(() => i), popped); // (tidy)
+
+  // ---- 9. The strip says so: hands-off mode, and tabs hidden.
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  check('hands-off: the tab strip shows its cue too', await waitFor(() => ui.evaluate(() => { const b = document.getElementById('hands-off-strip'); return b && !b.hidden && b.getBoundingClientRect().width > 0; })));
+  await ui.click('#hands-off-strip');
+  await sleep(600);
+  await ui.click('#hands-off-strip');
+  const settingsTabs = await waitFor(async () => { const u = await app.evaluate(() => global.__windows.list()[0].tabs.map((x) => x.url).filter((x) => /settings\.html/.test(x))); return u.length && u; });
+  check('the hands-off cue opens Settings at its switch, and a second click reuses that tab', settingsTabs?.length === 1 && /#hands-off$/.test(settingsTabs[0]), JSON.stringify(settingsTabs));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
+  check('...and it goes when the setting is off',await waitFor(() => ui.evaluate(() => document.getElementById('hands-off-strip').hidden)));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await app.evaluate(() => global.__settings.backend.set('hideAiTabs', true));
+  const chip = await waitFor(() => ui.evaluate(() => { const l = document.getElementById('hide-ai-tabs-label'); return l && !l.hidden && l.textContent.trim(); }));
+  const nHidden = await app.evaluate(() => global.__windows.list()[0].tabs.filter((x) => global.__aiTabs.tab(x.id)?.openedBy && x.id !== global.__windows.list()[0].activeId).length);
+  check('hiding says so in words in the strip ("N hidden")', chip === `${nHidden} hidden` && nHidden > 0, `${chip} / ${nHidden}`);
+  // three or more tabs of the user's in the strip, hidden AI tabs among them: a full lap (both ways) never lands on a hidden one
+  await openUser(`${base}/u2`);
+  await openUser(`${base}/u3`);
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await waitFor(async () => (await ui.evaluate(() => document.querySelectorAll('#tabs .tab').length)) >= 3);
+  const landed = [];
+  for (const d of [1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1]) {
+    await app.evaluate((_e, dir) => global.__aiTabs.cycle(dir), d);
+    await sleep(120);
+    landed.push(await active());
+  }
+  const aiAmong = await app.evaluate((_e, ids) => ids.filter((i) => global.__aiTabs.tab(i)?.openedBy), landed);
+  check('Ctrl+Tab never lands on a hidden AI tab (3+ visible tabs, a full lap each way)', new Set(landed).size >= 3 && aiAmong.length === 0, JSON.stringify({ landed, aiAmong }));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+
+  // layout: at 1200px the cue and the chip are single-line pills, and a toast never sits on the cue
+  await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.fromId(global.__windows.list()[0].windowId); w.setSize(1200, 800); });
+  await waitFor(() => ui.evaluate(() => innerWidth >= 1100));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  await waitFor(() => ui.evaluate(() => { const b = document.getElementById('hands-off-strip'); return !b.hidden && b.getBoundingClientRect().width > 0; }));
+  await app.evaluate(() => global.__chatPage.ui().send('tabs:organize-note', { text: 'Closed 3 tabs the AI opened.', undo: true, ttl: 9000, aiUndo: 0, undoLabel: 'Undo', undoTitle: 'Undo' }));
+  await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('.organize-note'))));
+  const lay = await ui.evaluate(() => {
+    const r = (el) => { const b = el?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height, r: b.right, b: b.bottom }; };
+    const line = (el) => { const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length; };
+    const cue = document.getElementById('hands-off-strip');
+    const chipEl = document.getElementById('hide-ai-tabs');
+    const toast = document.querySelector('.organize-note');
+    return {
+      width: innerWidth, cue: r(cue), chip: r(chipEl), toast: r(toast),
+      cueLabelLines: line(cue.querySelector('.hands-off-label')), chipLabelLines: line(document.getElementById('hide-ai-tabs-label')),
+      cueLabelShown: getComputedStyle(cue.querySelector('.hands-off-label')).display !== 'none',
+    };
+  });
+  const overlap = (a, b) => a && b && a.x < b.r && b.x < a.r && a.y < b.b && b.y < a.b;
+  check('1200px: the hands-off cue is one line, a pill no taller than 30px, with its words', lay.cueLabelShown && lay.cueLabelLines === 1 && lay.cue.h <= 30 && lay.cue.w > 60, JSON.stringify(lay));
+  check('1200px: the "N hidden" chip is one line and no taller than 30px', lay.chipLabelLines === 1 && lay.chip.h <= 30, JSON.stringify(lay));
+  check('1200px: the toast does not sit on the cue or the chip', !overlap(lay.toast, lay.cue) && !overlap(lay.toast, lay.chip), JSON.stringify(lay));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
+  await app.evaluate(() => global.__settings.backend.set('hideAiTabs', false));
+
+  // crowded: 5+ tabs of the user's and 3+ of the AI's at 700px, hands-off on: the controls stay in view and apart, the tab in front stays readable
+  for (let i = 0; i < 3; i++) await openUser(`${base}/crowd${i}`);
+  for (let i = 0; i < 2; i++) await openAi(`${base}/crowdai${i}`);
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(700, 800); });
+  await waitFor(() => ui.evaluate(() => innerWidth <= 720));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await waitFor(() => ui.evaluate(() => document.querySelectorAll('#tabs .tab').length >= 8));
+  await sleep(400);
+  const crowd = await ui.evaluate(() => {
+    const r = (el) => { const b = el?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height, r: b.right, b: b.bottom, shown: !el.hidden && b.width > 0 }; };
+    const cue = r(document.getElementById('hands-off-strip'));
+    const organize = r(document.getElementById('organize-tabs'));
+    const search = r(document.getElementById('tab-search'));
+    const chipB = r(document.getElementById('hide-ai-tabs'));
+    const add = r(document.getElementById('new-tab'));
+    const act = r(document.querySelector('#tabs .tab.active'));
+    return { n: document.querySelectorAll('#tabs .tab').length, width: innerWidth, cue, organize, search, chipB, add, act, cueLabel: getComputedStyle(document.querySelector('#hands-off-strip .hands-off-label')).display };
+  });
+  const apart = (list) => list.filter((x) => x?.shown).every((a, i, all) => all.every((b, j) => i === j || !(a.x < b.r - 0.5 && b.x < a.r - 0.5 && a.y < b.b && b.y < a.b)));
+  check('crowded (700px, 8+ tabs): the cue is icon-only and the strip controls do not overlap', crowd.cueLabel === 'none' && apart([crowd.cue, crowd.organize, crowd.search, crowd.chipB, crowd.add]), JSON.stringify(crowd));
+  check('crowded: tab search stays inside the window and the tab in front is at least 60px wide', crowd.search.r <= crowd.width && crowd.act.w >= 60, JSON.stringify({ act: crowd.act, n: crowd.n }));
+  console.log(`      (crowded: ${crowd.n} tabs at ${crowd.width}px, the tab in front is ${Math.round(crowd.act.w)}px wide)`);
+  check('crowded: Organize (when shown) is as tall as the pills beside it', !crowd.organize.shown || crowd.organize.h === crowd.chipB.h, JSON.stringify(crowd));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(1200, 800); });
+
+  // ---- 10. Undo puts a tab back in its group.
+  const gTab = await openAi(`${base}/grp`);
+  await waitFor(() => app.evaluate((_e, i) => /\/grp$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), gTab));
+  const gid = await app.evaluate((_e, ids) => global.__tabGroups.create('Mixed', ids).id, [gTab, form]);
+  const res = await app.evaluate(() => global.__aiTabs.close({}));
+  await waitFor(async () => !(await app.evaluate((_e, i) => global.__aiTabs.tab(i), gTab)));
+  await app.evaluate((_e, tok) => global.__aiTabs.reopen(tok), res.token);
+  const back = await waitFor(() => app.evaluate(() => global.__windows.list()[0].tabs.find((x) => /\/grp$/.test(x.url))));
+  check('Undo puts the tab back in its group', Boolean(back) && back.groupId === gid, JSON.stringify({ back, gid }));
+  const second = await app.evaluate((_e, tok) => global.__aiTabs.reopen(tok), res.token);
+  check('a second Undo of the same close reopens nothing', second.reopened === 0, JSON.stringify(second));
+
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
+
+  // ---- 11. A fresh window at 1000px with 7 tabs of the user's: Organize is its icon and the tab in front keeps a readable width.
+  const profile2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-aimanners2-'));
+  const app2 = await launch(profile2);
+  const ui2 = await app2.firstWindow();
+  await ui2.waitForSelector('.tab');
+  for (let i = 0; i < 6; i++) await app2.evaluate((_e, u) => global.__agent.browser.openTab(u).id, `${base}/seven${i}`);
+  await app2.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(1000, 800); });
+  await waitFor(() => ui2.evaluate(() => innerWidth >= 980 && innerWidth < 1100 && document.querySelectorAll('#tabs .tab').length >= 7));
+  await sleep(500);
+  const seven = await ui2.evaluate(() => {
+    const act = document.querySelector('#tabs .tab.active')?.getBoundingClientRect();
+    const org = document.getElementById('organize-tabs');
+    return { n: document.querySelectorAll('#tabs .tab').length, width: innerWidth, act: act && act.width, orgShown: !org.hidden && org.getBoundingClientRect().width > 0, orgW: org.getBoundingClientRect().width, orgText: getComputedStyle(org.querySelector('span')).display };
+  });
+  check('1000px, 7 tabs: the tab in front is at least 100px wide', seven.act >= 100, JSON.stringify(seven));
+  check('1000px: Organize (when shown) is just its icon', !seven.orgShown || (seven.orgText === 'none' && seven.orgW <= 30), JSON.stringify(seven));
+  await app2.close();
+  fs.rmSync(profile2, { recursive: true, force: true });
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');

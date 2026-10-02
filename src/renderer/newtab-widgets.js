@@ -844,13 +844,11 @@ const WIDGET_RENDERERS = {
     wrap.append(frame);
     card.body.append(wrap);
     const fit = globalThis.TradingViewFit;
-    // Interval picker (kept per card in this browser): the full chart takes the bar size in its address, the
+    // Interval picker (the pick is saved as the widget's Interval): the full chart takes the bar size in its address, the
     // mini and watchlist views a date range in their options (the nearest one, as features/tradingview-view.js does).
     const TV_STEPS = [['1', '1m'], ['5', '5m'], ['15', '15m'], ['30', '30m'], ['60', '1h'], ['240', '4h'], ['D', '1D'], ['W', '1W'], ['M', '1M']];
     const TV_RANGE = { 1: '1D', 5: '1D', 15: '1D', 30: '1D', 60: '1D', 240: '1M', D: '1M', W: '12M', M: '60M' };
-    const memKey = `tv-interval:${w.id}`;
-    let picked = ''; try { picked = localStorage.getItem(memKey) || ''; } catch {}
-    if (!TV_STEPS.some(([v]) => v === picked)) picked = '';
+    let picked = ''; // set once the menu is used; until then the addresses already carry the stored interval
     const withInterval = (u) => {
       if (!u || !picked) return u;
       try {
@@ -893,12 +891,12 @@ const WIDGET_RENDERERS = {
     menu.className = 'tv-interval';
     menu.title = list || d.view === 'mini' ? 'Time range' : 'Chart interval';
     menu.setAttribute('aria-label', menu.title);
-    const start = picked || (TV_STEPS.some(([v]) => v === String(d.interval)) ? String(d.interval) : 'D');
+    const start = TV_STEPS.some(([v]) => v === String(d.interval)) ? String(d.interval) : 'D';
     for (const [v, label] of TV_STEPS) { const o = el('option', '', label); o.value = v; menu.append(o); }
     menu.value = start;
     menu.addEventListener('change', () => {
       picked = menu.value;
-      try { localStorage.setItem(memKey, picked); } catch {}
+      widgetAct(w.id, 'tvinterval', { arg: picked }); // stored as the widget's Interval (the same one Settings edits)
       src0 = pickUrl(true) || src0;
       small = pickUrl(false);
       shown = '';

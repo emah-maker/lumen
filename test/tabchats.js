@@ -91,7 +91,11 @@ const fakeModel = (app) => app.evaluate(() => {
   const tabB = await openTab(`${base}/beta`); // in front now, with a chat of its own
   await waitFor(async () => (await active()) === tabB);
   await waitFor(() => tc(() => global.__tabChats.shown() === global.__tabChats.chatId()));
-  check('a new tab starts with its own empty chat', (await bubbles()).length === 0 && !/is working/.test(await messagesText()), await messagesText());
+  // (The sidebar redraws a moment after the main side switches chats, so wait for it to settle, then make sure it stays empty.)
+  const emptyNow = async () => (await bubbles()).length === 0 && !/is working/.test(await messagesText());
+  const settled = await waitFor(emptyNow, 4000);
+  await sleep(400);
+  check('a new tab starts with its own empty chat', Boolean(settled) && (await emptyNow()), await messagesText());
   const ids = await tc(() => ({ a: global.__tabChats.bindings.chatOf(1), b: [...global.__tabChats.bindings.entries()] }));
   check('the two tabs are bound to two different chats', ids.b.length === 2 && ids.b[0][1] !== ids.b[1][1], JSON.stringify(ids));
   await send('chat-B: read this tab');
@@ -104,13 +108,13 @@ const fakeModel = (app) => app.evaluate(() => {
 
   // ---- 2. Switching tabs shows that tab's chat, live.
   await showTab(tabA);
-  await waitFor(async () => (await bubbles()).some((b) => /chat-A/.test(b)));
+  await waitFor(async () => { const t = await messagesText(); return /chat-A/.test(t) && !/chat-B/.test(t); });
   let text = await messagesText();
   check('switching to tab A shows chat A, still working, not chat B', /chat-A/.test(text) && !/chat-B/.test(text), text);
   check('its streamed words are there too, not only a spinner', await waitFor(async () => /A is working/.test(await messagesText())), await messagesText());
   check('chat A shows as running in the sidebar', await ui.evaluate(() => document.body.classList.contains('agent-active')), 'not running');
   await showTab(tabB);
-  await waitFor(async () => (await bubbles()).some((b) => /chat-B/.test(b)));
+  await waitFor(async () => { const t = await messagesText(); return /chat-B/.test(t) && !/chat-A/.test(t); });
   text = await messagesText();
   check('switching back to tab B shows chat B, not chat A', /chat-B/.test(text) && !/chat-A/.test(text), text);
   check('the user was never moved by a tool', (await active()) === tabB, await active());
@@ -260,7 +264,7 @@ const fakeModel = (app) => app.evaluate(() => {
   check('after a restart the tabs are bound to their saved chats again', restored.entries.length >= 1 && restored.entries.every(([, c]) => beforeRestart.saved.includes(c)), JSON.stringify({ restored, wanted }));
   check('after a restart nothing is re-run', restored.runs.length === 0, JSON.stringify(restored.runs));
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), restored.entries[0][0]);
-  const shown = await waitFor(async () => (await ui.evaluate(() => document.getElementById('messages').innerText)).trim());
+  const shown = await waitFor(async () => { const t = (await ui.evaluate(() => document.getElementById('messages').innerText)).trim(); return /finished|working|chat-/.test(t) && t; });
   check('a tab shows its saved chat again', Boolean(shown) && /finished|working|chat-/.test(shown), shown);
   check('no script errors', errors.length === 0, errors.join('; '));
 

@@ -21,7 +21,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
   'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
   'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
@@ -605,7 +605,7 @@ function create(deps) {
       case 'performanceMode': deps.performance?.refresh(); break;
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'aiHandsOff', 'hideAiTabs'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
+    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'aiHandsOff', 'hideAiTabs'].includes(key)) (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
@@ -931,7 +931,7 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };

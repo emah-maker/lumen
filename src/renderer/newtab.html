@@ -112,7 +112,7 @@
        Aurora's layer is no longer filtered live: its radial gradients already fade to transparent on their own (a
        blur(30px) over them changed nothing visible and was re-run on every drift frame). The drift runs for the first
        seconds after the page shows (newtab-drift.js), then holds still, and holds while the page is hidden.
-       Performance mode's "calm" stops it, and it holds still while cards wiggle in edit mode. */
+       Performance mode's "calm" stops it. */
     body.drift-paused #backdrop::before { animation-play-state: paused; }
     body.calm #backdrop::before { animation: none; }
     body.w-editing #backdrop::before { animation-play-state: paused; }
@@ -323,20 +323,13 @@
     .w-presets { position: absolute; z-index: 3; left: 10px; bottom: 8px; gap: 3px; padding: 3px; border-radius: 10px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 4px 14px var(--shadow); }
     .w-presets button { appearance: none; margin: 0; padding: 2px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: 500 11px/16px system-ui, sans-serif; cursor: default; outline: none; }
     .w-presets button:hover { background: var(--hover); }
-    /* The wiggle rotates every card each frame: with a backdrop blur on, each rotation re-blurs what is behind it. */
+    /* Cards are flat while editing (a backdrop blur is costly and not needed to move them about). */
     html body.w-editing .w-card, html body.w-editing .w-card.tinted { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
     body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
     body.w-editing .w-card * { pointer-events: none; }
     body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets *, body.w-editing .w-card .w-stack-edit { pointer-events: auto; }
-    /* Wiggle like a home screen; a plain outline instead only when the person asked for less motion (Lumen's Reduce motion = body.still, or the system's = the media query).
-       Performance mode (body.calm, which Auto can switch on and off by itself with battery saver or CPU throttling) does not take the wiggle away: it is one cheap compositor-only rotate, and the cards' backdrop blur is already off while editing. */
-    @keyframes wiggle { from { rotate: -0.45deg; } to { rotate: 0.45deg; } }
-    @media (prefers-reduced-motion: no-preference) {
-      body.w-editing:not(.still) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
-      body.w-editing:not(.still) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
-    }
-    body.w-editing.still .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
-    @media (prefers-reduced-motion: reduce) { body.w-editing .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; } }
+    /* Edit mode keeps the cards the shape they are: a dashed outline marks them as editable, and nothing moves or tilts. */
+    body.w-editing .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
     .w-card.pressing { scale: 0.97; transition: scale 380ms ease-out, transform 260ms var(--ease); }
     body.w-dragging, body.w-dragging * { user-select: none; }
     body.w-dragging iframe { pointer-events: none; } /* a frame under the pointer would swallow the drag */

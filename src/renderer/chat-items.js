@@ -128,14 +128,14 @@
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? '' : tr('chats.clickMoves', ' · click moves it here')) : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
-      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : '');
+      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
@@ -153,6 +153,8 @@
       }
       // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
       const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
+      openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
         if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
       };
@@ -248,23 +250,30 @@
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
-      if (chat.badge === 'queued' && api.stopChat) {
-        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
-        const stopBack = () => { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); };
+      if ((chat.badge === 'queued' || chat.badge === 'running') && api.stopChat) {
+        const stopLabel = chat.badge === 'running' ? tr('chats.stop', 'Stop') : tr('chats.stopWaiting', 'Stop waiting');
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: stopLabel });
+        const stopBack = () => { stop.disabled = false; stop.textContent = stopLabel; };
         let stopsOut = 0, stoppedOnce = false; // (a second click after a timeout must not be failed by an answer about the first)
         stop.onclick = async (e) => {
           e.stopPropagation();
           stopsOut++;
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
-          const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
+          const wait = window.chatItemsStopMs || (chat.badge === 'running' ? 12000 : 4000); // (a test shortens it; a working chat can take a while to abort)
           let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
-          const lost = setTimeout(() => { if (stoppedOnce) return; timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
+          const lost = setTimeout(async () => {
+            if (stoppedOnce) return;
+            if (chat.badge === 'running') { // a slow abort is not a failure: ask the run state before saying so
+              try { const now = await api.list?.(); if (!attached() || now?.chats?.find((c) => c.id === chat.id)?.badge !== 'running') return; } catch { /* fall through */ }
+            }
+            timedOut = true; fail();
+          }, wait); // slow main: the button comes back, but a late success takes that back
           try {
             const answer = await api.stopChat(chat.id);
             stopsOut--;
-            if (answer === false) { clearTimeout(lost); if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
+            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
             stoppedOnce = true;
             clearTimeout(lost);
             if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly
@@ -272,7 +281,7 @@
             // button stays on "Stopping…" unless the chat is still waiting a while later.
             setTimeout(async () => {
               if (!attached() || !stop.disabled) return;
-              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
+              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === chat.badge) fail(); } catch { /* keep the note */ }
             }, wait);
           } catch { stopsOut--; clearTimeout(lost); fail(); }
         };
