@@ -52,17 +52,56 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   };
 
   let index = null; // { current, chats: [{ id, title, renamed, created, updated, model, usage }] }
+  // The index can be lost to a half-written file, a locked keychain or another machine's keys. Only a
+  // missing file means "no chats yet"; anything else must never become an empty index that the next
+  // write would save over the real one (that orphaned every chat file).
+  const CHAT_FILE_RE = /^[a-f0-9]{16}\.json$/;
+  function rebuildIndex() {
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => CHAT_FILE_RE.test(n)); } catch { /* no folder: nothing to rebuild */ }
+    const chats = [];
+    let unreadable = 0;
+    for (const name of names) {
+      const id = name.slice(0, -5);
+      try {
+        const snapshot = readEnc(chatFile(id));
+        if (!snapshot?.messages?.length) { unreadable++; continue; }
+        const mtime = fs.statSync(chatFile(id)).mtimeMs;
+        chats.push({ id, title: autoTitle(snapshot), renamed: false, created: mtime, updated: mtime, model: snapshot.settings?.model || null, usage: snapshot.settings?.usage || null });
+      } catch { unreadable++; }
+    }
+    return { chats, unreadable };
+  }
   function readIndex() {
     if (index) return index;
+    let data = null;
+    let raw = null;
     try {
-      const data = readEnc(indexFile);
-      index = { current: ID_RE.test(data.current) ? data.current : null, chats: Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [] };
-    } catch {
-      index = { current: null, chats: [] }; // none yet, or it can't be decrypted on this machine
+      raw = fs.readFileSync(indexFile, 'utf8');
+    } catch (err) {
+      if (err?.code !== 'ENOENT') return { current: null, chats: [], degraded: true }; // locked/unreadable right now: retry next call, never write
     }
+    if (raw !== null) {
+      try {
+        const outer = JSON.parse(raw);
+        data = outer.enc ? JSON.parse(decrypt(outer.enc)) : outer;
+      } catch {
+        // Unparseable or undecryptable: keep the file for inspection and rebuild from the chat files.
+        try { fs.renameSync(indexFile, `${indexFile}.corrupt-${Date.now()}`); } catch { return { current: null, chats: [], degraded: true }; }
+      }
+    }
+    if (data) {
+      index = { current: ID_RE.test(data.current) ? data.current : null, chats: Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [] };
+      return index;
+    }
+    // No index (never written, or just set aside as corrupt): rebuild it from the chat files.
+    const { chats, unreadable } = rebuildIndex();
+    if (!chats.length && unreadable) return { current: null, chats: [], degraded: true }; // chats exist but can't be read now: retry next call
+    index = { current: null, chats };
+    if (chats.length && available()) { try { writeAtomic(indexFile, index); } catch { /* retried on the next write */ } }
     return index;
   }
-  const writeIndex = () => { if (available()) writeAtomic(indexFile, readIndex()); };
+  const writeIndex = () => { const idx = readIndex(); if (!idx.degraded && available()) writeAtomic(indexFile, idx); };
 
   const newId = () => crypto.randomBytes(8).toString('hex');
 
@@ -81,8 +120,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!ID_RE.test(String(id))) throw new Error('bad chat id');
     if (!available()) return false;
     if (!snapshot?.messages?.length) return true; // an empty chat is not worth a list entry
-    writeAtomic(chatFile(id), snapshot);
     const idx = readIndex();
+    if (idx.degraded) return false; // the index can't be read right now: leave everything on disk as it is
+    writeAtomic(chatFile(id), snapshot);
     let entry = idx.chats.find((c) => c.id === id);
     if (!entry) {
       entry = { id, title: '', renamed: false, created: now() };

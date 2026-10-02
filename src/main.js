@@ -1232,7 +1232,9 @@ function loadHistory() {
     try {
       await new Promise((r) => setImmediate(r));
       // Older builds recorded sign-in and token URLs; drop them on load.
-      const saved = JSON.parse(await fs.promises.readFile(HISTORY_FILE(), 'utf8')).filter((h) => importer.isWorthImporting(h.url));
+      // (loadJsonAsync restores the .bak, or sets an unparseable file aside as .corrupt-<time>: a bad file is never overwritten)
+      const loaded = await settingsFile.loadJsonAsync(HISTORY_FILE());
+      const saved = (Array.isArray(loaded) ? loaded : []).filter((h) => importer.isWorthImporting(h?.url));
       for (const h of saved) {
         const now = history.get(h.url);
         if (!now) history.set(h.url, h);
@@ -1246,14 +1248,16 @@ function loadHistory() {
 }
 
 let historyDirty = false; // a visit is recorded that the file doesn't have yet
-const historyJson = () => JSON.stringify([...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000));
+const historyList = () => [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000);
+let historyGen = 0; // bumped by every write: an async write that is no longer the latest (the quit-time sync one is newer) doesn't land
 function saveHistorySoon() {
   historyDirty = true;
   clearTimeout(historySaveTimer);
   historySaveTimer = setTimeout(() => {
     if (!historyLoaded) { saveHistorySoon(); return; } // (never overwrite the file with a list that is still missing its past)
     historyDirty = false;
-    fs.writeFile(HISTORY_FILE(), historyJson(), () => {});
+    const gen = ++historyGen;
+    settingsFile.writeJsonAtomicAsync(HISTORY_FILE(), historyList(), () => gen === historyGen, 0).catch(() => {}); // (tmp + rename + .bak, queued behind any write in flight)
   }, 2000);
 }
 
@@ -3175,7 +3179,10 @@ function historyMenu() {
         if (response !== 1) return;
         await historyReady;
         history.clear();
-        fs.rm(HISTORY_FILE(), { force: true }, () => {});
+        historyGen++; // (a write in flight must not bring the cleared list back)
+        clearTimeout(historySaveTimer);
+        historyDirty = false;
+        for (const f of [HISTORY_FILE(), `${HISTORY_FILE()}.bak`]) fs.rm(f, { force: true }, () => {}); // (the .bak too, or the next start would restore it)
       },
     },
   ];
@@ -3213,33 +3220,11 @@ function frequentSitesNow(limit) {
   return out;
 }
 
-// A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
-const faviconFiles = new Map(); // data URL hash -> file URL
+// A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images); written in the background and pruned when idle (browser/favicon-store.js).
+const faviconFiles = require('./browser/favicon-store').createFaviconFiles({ dir: path.join(app.getPath('userData'), 'favicon-cache') });
 const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
-const faviconFileOf = new Map(); // data: address -> its file (no sha1 of 50 KB per lookup)
-function faviconFile(dataUrl) {
-  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
-  if (faviconFileOf.has(dataUrl)) return faviconFileOf.get(dataUrl);
-  const out = faviconFileNow(dataUrl);
-  if (faviconFileOf.size > 500) faviconFileOf.clear();
-  faviconFileOf.set(dataUrl, out);
-  return out;
-}
-function faviconFileNow(dataUrl) {
-  const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
-  if (faviconFiles.has(key)) return faviconFiles.get(key);
-  const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
-  if (!m) return dataUrl; // (not base64: passed as it is)
-  const dir = path.join(app.getPath('userData'), 'favicon-cache');
-  const ext = { 'x-icon': 'ico', 'vnd.microsoft.icon': 'ico', 'svg+xml': 'svg', jpeg: 'jpg' }[m[1].toLowerCase()] || m[1].toLowerCase().replace(/[^a-z0-9]/g, '');
-  const file = path.join(dir, `${key}.${ext}`);
-  try {
-    if (!fs.existsSync(file)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, Buffer.from(m[2], 'base64')); }
-  } catch { return dataUrl; }
-  const url = pathToFileURL(file).href;
-  faviconFiles.set(key, url);
-  return url;
-}
+const faviconFile = (dataUrl) => faviconFiles.fileFor(dataUrl);
+setTimeout(() => faviconFiles.prune().catch(() => {}), 90 * 1000).unref?.(); // once the start-up work is over
 function newTabUrl() {
   const withIcon = (b) => { const icon = faviconFile(faviconStore.get(hostOf(b.url))); return icon ? { ...b, icon } : b; };
   const data = {
@@ -5714,7 +5699,8 @@ app.on('before-quit', () => {
   if (historyDirty && historyLoaded) { // (visits from the last two seconds land now, once the past is merged in)
     clearTimeout(historySaveTimer);
     historyDirty = false;
-    try { fs.writeFileSync(HISTORY_FILE(), historyJson()); } catch { /* disk full or locked: the older file stays */ }
+    historyGen++; // (an async write still queued or in flight now skips its rename)
+    try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
   quitting = true;
 });

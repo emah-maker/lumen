@@ -20,6 +20,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
 const KEEP_DAYS = 35;
 const PLAN_TTL = 60 * 1000; // /usage is re-run at most once a minute
@@ -176,7 +177,7 @@ function createUsage(deps) {
 
   function load() {
     try {
-      const saved = JSON.parse(fs.readFileSync(file(), 'utf8'));
+      const saved = settingsFile.loadJson(file()); // (an unparseable file is restored from .bak or set aside, never overwritten)
       if (Array.isArray(saved.records)) records = saved.records.filter((r) => r && Number.isFinite(r.at));
       if (saved.meter && Number.isFinite(saved.meter.percent)) meter = saved.meter;
       if (saved.grokLimit && Number.isFinite(saved.grokLimit.at)) grokLimit = { at: saved.grokLimit.at, resetsAt: Number.isFinite(saved.grokLimit.resetsAt) ? saved.grokLimit.resetsAt : null, text: String(saved.grokLimit.text || '').slice(0, 200) };
@@ -192,7 +193,7 @@ function createUsage(deps) {
     saveTimer = setTimeout(() => {
       const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
       records = records.filter((r) => r.at >= cutoff);
-      fs.promises.writeFile(file(), JSON.stringify({ records, meter, grokLimit, budget, notified })).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
+      settingsFile.writeJsonAtomicAsync(file(), { records, meter, grokLimit, budget, notified }, undefined, 0).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
     }, 500);
   }
 
