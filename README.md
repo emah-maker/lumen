@@ -65,6 +65,7 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
   - `wait_for` waits for text to appear
   - web search
 - **The page you're on goes with your message.** Whichever AI answers (Claude by key or CLI sign-in, Claude Code, OpenAI, Grok, Gemini, OpenRouter), each message includes the current tab's title, address and first ~7,000 characters of readable text (not for new-tab or internal pages), marked as untrusted page content. The chip above the message box shows **Using: <page>**; click **×** to stop sending the page (remembered), **Include** to turn it back on.
+- **Context and commands:** the ring left of Send shows how full the chat's context window is (hover for the numbers, click for the breakdown). Type `/` for the chat's commands: `/compact` (summarize the chat so far to free up room; Claude Code runs its own, an API model writes the summary; optional instructions after it), `/context`, `/clear`, `/cost`, `/usage`, `/model` and `/help`, plus your skills. Long API chats compact themselves before the oldest messages would be left out (Settings → AI and agents).
 - **ADHD mode** (on by default, toggle in Settings → AI and agents): answers lead with the next action, use short numbered steps, and end with one small next step.
 - **Other AI models:** add an OpenAI, Grok (xAI), Gemini or OpenRouter key in Settings → AI and agents. Their models appear in the model menu, work with every browser tool, and can take over a chat mid-conversation.
 - **OpenRouter:** paste a key or **Sign in with OpenRouter** (OAuth with PKCE through a one-time local address; the key it returns is stored like a pasted one). The menu shows the newest Claude, GPT, Gemini, Llama, DeepSeek and Grok models; **More models…** searches all of them (the list is cached for a day). Models that can't use tools are marked **(chat only)**: they read the page with you but can't click or type in your tabs.
@@ -298,6 +299,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 
 ## Layout
@@ -308,7 +310,7 @@ Everything that ships in the app is under `src/`; the repository root holds only
 src/                    the app (package.json "main": src/main.js)
 ├── main.js             windows, tabs (WebContentsView), shortcuts, menus, permissions, history, extensions, IPC
 ├── ai/                 the sidebar's agent loop (agent.js, default model claude-opus-5-5), its page tools
-│                       (snapshot.js, page-scripts.js, loop-guard.js), model adapters (providers.js) and the
+│                       (snapshot.js, page-scripts.js, frames.js, loop-guard.js), model adapters (providers.js) and the
 │                       Claude Code / Grok Build engines that run your own CLI (claude-code.js, grok-build.js, cli-*.js)
 ├── automation/         MCP server for outside agents (mcp.js, mcp-http.js) and the opt-in CDP endpoint for
 │                       Playwright (automation.js, cdp-inproc.js, launcher.js)

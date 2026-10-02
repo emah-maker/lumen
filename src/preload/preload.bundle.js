@@ -563,6 +563,7 @@ contextBridge.exposeInMainWorld('assistant', {
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     onUsage: on('chats:usage'),
+    onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
   // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
@@ -584,6 +585,8 @@ contextBridge.exposeInMainWorld('assistant', {
     enable: (id, on) => ipcRenderer.invoke('tasks:enable', id, on),
     openPage: (id) => ipcRenderer.invoke('tasks:open-page', id),
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
+    saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
+    routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),

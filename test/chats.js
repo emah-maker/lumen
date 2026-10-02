@@ -79,12 +79,17 @@ const fakeClient = (app) => app.evaluate(() => {
   await waitFor(() => ui.evaluate(() => /Reply 2\./.test(document.getElementById('messages').textContent)));
   usage = await waitFor(() => ui.evaluate(() => { const t = document.getElementById('chat-usage').textContent; return /2\.4k/.test(t) && t; }));
   check('usage adds up across replies', usage === '2.4k tokens · ~$0.02', usage);
+  // [context] The ring left of Send: the last request's input against the model's window.
+  const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
+  const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
+  check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 200\.0k tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
   check('usage is saved with the chat', saved?.input === 2000 && saved?.output === 400 && saved?.turns === 2, JSON.stringify(saved));
 
   // ---- 3. New chat keeps the old one in the list; an empty chat adds nothing.
   await ui.click('#new-chat');
   check('New chat empties the sidebar', await waitFor(() => ui.evaluate(() => !document.querySelector('.msg') && document.getElementById('chat-usage').hidden)), 'still shows messages');
+  check('New chat hides the context ring', await waitFor(async () => (await ring())?.hidden === true), JSON.stringify(await ring()));
   check('New chat starts with no approved sites', await app.evaluate(() => global.__agent.approvedHosts.size === 0), 'hosts carried over');
   await ui.click('#new-chat');
   list = await app.evaluate(() => global.__chats.store().list());
@@ -120,6 +125,7 @@ const fakeClient = (app) => app.evaluate(() => {
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
   check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === '2.4k tokens · ~$0.02', 'usage line');
+  check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 200\.0k/.test(r.title); }), JSON.stringify(await ring()));
   const hostsBack = await app.evaluate(() => [...global.__agent.approvedHosts]);
   check('approved sites come back with their chat', hostsBack.includes('approved-in-legacy.test') && !hostsBack.includes('approved-in-new.test'), JSON.stringify(hostsBack));
   check('a reopened chat counts as having read content', await app.evaluate(() => global.__agent.messages.tainted === true), 'not tainted');
@@ -169,6 +175,32 @@ const fakeClient = (app) => app.evaluate(() => {
   check('deleting the open chat empties the sidebar', cleared, 'still shows messages');
   check('…and leaves no chats', (await app.evaluate(() => global.__chats.store().list().length)) === 0 && (await app.evaluate(() => global.__agent.messages.length)) === 0, 'left over');
   check('the list says it is empty', await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('.chat-list-empty')))), 'no empty note');
+
+  // ---- 7b. [context] The chat's "/" commands: listed in the menu, /help, /context and /compact.
+  await ui.fill('#prompt', '/');
+  await ui.waitForSelector('#slash-menu:not([hidden])');
+  const names = await ui.evaluate(() => [...document.querySelectorAll('#slash-menu .slash-name')].map((e) => e.textContent));
+  check('the "/" menu lists the chat commands', ['/clear', '/compact', '/context', '/cost', '/usage', '/model', '/help'].every((n) => names.includes(n)), names.join(' '));
+  await ui.fill('#prompt', '/help');
+  await ui.press('#prompt', 'Enter');
+  const help = await waitFor(() => ui.evaluate(() => document.querySelector('.notice.slash-help')?.textContent));
+  check('/help lists every command', help && /\/compact/.test(help) && /\/context/.test(help) && /\/summarize/.test(help), help);
+  await ui.fill('#prompt', 'one more about tides');
+  await ui.press('#prompt', 'Enter');
+  await waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active') && /Reply \d+\./.test(document.getElementById('messages').textContent)));
+  await ui.fill('#prompt', 'and the moon');
+  await ui.press('#prompt', 'Enter');
+  await waitFor(async () => (await app.evaluate(() => global.__agent.messages.length)) === 4);
+  await waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active')));
+  await ui.fill('#prompt', '/context');
+  await ui.press('#prompt', 'Enter');
+  const report = await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.msg.assistant')].map((e) => e.textContent).find((t) => /Tokens:/.test(t))));
+  check('/context answers in the chat with the figure', report && /Tokens: 1\.0k \/ 200\.0k/.test(report), report);
+  await waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active')));
+  await ui.fill('#prompt', '/compact');
+  await ui.press('#prompt', 'Enter');
+  const compacted = await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.notice')].map((e) => e.textContent).find((t) => /^Compacted: about/.test(t))));
+  check('/compact summarizes the older turns and says so', Boolean(compacted) && await app.evaluate(() => global.__agent.messages.length === 2 && JSON.stringify(global.__agent.messages[0]).includes('earlier_conversation_summary')), compacted);
 
   // ---- 8. Only Lumen's own UI can use the chat channels.
   const gated = await app.evaluate(() => ['chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export'].every((c) => global.__ipcGate.uiOnly.has(c)));

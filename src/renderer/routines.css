@@ -1,0 +1,56 @@
+/* Routines (renderer/routines.js): the Tasks panel's tabs, the Routines list, the editor's schedule
+   fields, a routine's run history and "Save as routine" on a reply. Builds on tasks.css. */
+
+.task-tabs { display: flex; gap: 2px; margin: 0 16px 8px; padding: 2px; border-radius: 8px; background: var(--field); }
+.task-tab {
+  flex: 1; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default;
+  transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
+}
+.task-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--hairline); }
+.task-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.routine-bar { display: flex; justify-content: flex-end; margin: 0 16px 6px; }
+.routine-item { display: flex; align-items: center; gap: 2px; padding-left: 12px; }
+.routine-item .task-row { flex: 1; min-width: 0; padding-left: 6px; }
+.routine-toggle { flex: none; margin: 0; accent-color: var(--accent); }
+.routine-run-now { flex: none; margin-right: 8px; padding: 2px 8px; font-size: 11px; }
+.routine-offline { margin: 0 20px 6px; font-size: 11px; }
+
+.routine-templates { margin: 8px 16px 4px; }
+.routine-templates h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.routine-templates, .routine-template-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.routine-templates h3 { flex-basis: 100%; }
+.routine-template { font-size: 11.5px; }
+.routine-template-row { margin: 0 0 8px; }
+
+.routine-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; padding: 0; border: 0; }
+.routine-days legend { margin-bottom: 4px; padding: 0; font-size: 12px; color: var(--muted); }
+.routine-day { position: relative; display: inline-flex; }
+.routine-day input { position: absolute; opacity: 0; inset: 0; margin: 0; }
+.routine-day span { padding: 3px 7px; border-radius: 6px; background: var(--field); font-size: 11.5px; color: var(--muted); }
+.routine-day input:checked + span { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.routine-day input:focus-visible + span { box-shadow: var(--focus-ring); }
+.task-field input[type="time"] {
+  flex: none; padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: 6px; outline: none;
+}
+.task-field input[type="time"]:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.routine-next { margin: 4px 0 2px; }
+.task-routine-link { margin-top: 8px; font-size: 11.5px; }
+
+.routine-history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--muted); }
+.routine-run summary { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; cursor: default; list-style: none; }
+.routine-run summary::-webkit-details-marker { display: none; }
+.routine-run summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 4px; }
+.routine-run summary .task-dot { margin-top: 5px; }
+.routine-run[open] summary { color: var(--text); }
+.routine-result { margin: 4px 0 8px 16px; font-size: 12.5px; }
+
+/* "Save as routine": beside Copy (and Regenerate, on the latest reply), shown the same way. */
+.msg.assistant .reply-routine {
+  position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
+}
+.msg.assistant:has(> .reply-regen) .reply-routine { right: 46px; opacity: 0.75; }
+.msg.assistant .reply-routine svg { width: 13px; height: 13px; }
+.msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
+.msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }

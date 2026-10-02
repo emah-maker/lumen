@@ -48,9 +48,13 @@ const reads = new ReadCache();
 // ---------------------------------------------------------------- page-side functions
 
 // Runs after read_page has built window.__claudeEls (same isolated world): outline with refs.
+// opts.idBase: added to every ref (an embedded frame's ids, frames.js); opts.frame: no title line (the
+// frame's label heads its lines instead).
 function compactOutline(opts) {
   const reg = window.__claudeEls || [];
+  const base = opts.idBase || 0;
   const idOf = new Map(reg.map((e, i) => [e.el, i + 1]));
+  const ref = (id) => id + base;
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   // A password (or a field marked as one, even shown as text by a "show password" button): its value is never read out.
   const secretField = (el) => el.tagName === 'INPUT' && (String(el.type).toLowerCase() === 'password'
@@ -93,7 +97,7 @@ function compactOutline(opts) {
     emitted.add(id);
     const entry = reg[id - 1];
     const label = clean(entry.label || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '').slice(0, 70);
-    let line = `[${id}] ${kindOf(el)} "${label}"`;
+    let line = `[${ref(id)}] ${kindOf(el)} "${label}"`;
     if (el.tagName === 'SELECT') line += ` = "${clean(el.selectedOptions?.[0]?.text)}" options: ${[...el.options].slice(0, 8).map((o) => clean(o.text)).join(' | ')}`;
     else if ('value' in el && el.value && !secretField(el) && !['checkbox', 'radio', 'submit', 'button'].includes(el.type) && el.tagName !== 'BUTTON') line += ` = "${clean(el.value).slice(0, 60)}"`;
     if (el.checked) line += ' (checked)';
@@ -112,7 +116,7 @@ function compactOutline(opts) {
         if (child.nodeType === 3) out += child.nodeValue;
         else if (child.nodeType === 1 && !SKIP.has(child.tagName) && visible(child)) {
           const id = idOf.get(child);
-          if (id && ['A', 'SUMMARY'].includes(child.tagName)) { emitted.add(id); out += `[${id}]${clean(child.innerText)}`; }
+          if (id && ['A', 'SUMMARY'].includes(child.tagName)) { emitted.add(id); out += `[${ref(id)}]${clean(child.innerText)}`; }
           else if (id) out += ` ${describe(id, child)} `;
           else walk(child);
         }
@@ -130,8 +134,14 @@ function compactOutline(opts) {
     const label = clean(el.getAttribute('aria-label') || '');
     return `[${name}${label ? `: ${label.slice(0, 40)}` : ''}]`;
   };
+  // A web component's children are its open shadow root's; a slot's are the nodes assigned to it.
+  const kids = (el) => {
+    if (el.shadowRoot) return el.shadowRoot.children;
+    if (el.tagName === 'SLOT') { const assigned = el.assignedElements({ flatten: true }); if (assigned.length) return assigned; }
+    return el.children;
+  };
   const walk = (el) => {
-    for (const child of el.children) {
+    for (const child of kids(el)) {
       if (clipped) return;
       if (SKIP.has(child.tagName) || !visible(child)) continue;
       const id = idOf.get(child);
@@ -147,7 +157,7 @@ function compactOutline(opts) {
       }
       // A div/span that holds its own text (not just other blocks) is a text block too.
       const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
-      if (ownText && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
+      if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
         const text = inline(child);
         if (text.length > 1) push(text);
         continue;
@@ -155,7 +165,7 @@ function compactOutline(opts) {
       walk(child);
     }
   };
-  push(`${clean(document.title)} (${location.href.slice(0, 150)})`);
+  if (!opts.frame) push(`${clean(document.title)} (${location.href.slice(0, 150)})`);
   walk(document.body || document.documentElement);
   // Controls the tree walk can't reach (shadow DOM, same-origin iframes).
   const rest = reg.map((e, i) => i + 1).filter((id) => !emitted.has(id) && reg[id - 1].el.isConnected);
@@ -163,6 +173,7 @@ function compactOutline(opts) {
     push('[other controls]');
     for (const id of rest) push(describe(id, reg[id - 1].el));
   }
+  if (opts.frame) return { lines, title: document.title, clipped, elements: reg.length };
   const start = Math.max(0, opts.startLine || 0);
   const shown = lines.slice(start);
   return { lines: shown, startLine: start, totalLines: lines.length, clipped, elements: reg.length };
@@ -172,7 +183,8 @@ function compactOutline(opts) {
 // text nodes, so it stays fast on very long pages.
 function findMatches(opts) {
   const reg = window.__claudeEls || [];
-  const idOf = new Map(reg.map((e, i) => [e.el, i + 1]));
+  const base = opts.idBase || 0; // an embedded frame's ids (frames.js)
+  const idOf = new Map(reg.map((e, i) => [e.el, i + 1 + base]));
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const q = clean(opts.query).toLowerCase();
@@ -184,14 +196,24 @@ function findMatches(opts) {
   const controls = [];
   reg.forEach((entry, i) => {
     const label = clean(entry.label);
-    if (label && entry.el.isConnected && hit(label)) controls.push(`[${i + 1}] ${entry.el.tagName.toLowerCase()}${entry.el.type && entry.el.type !== entry.el.tagName.toLowerCase() ? `:${entry.el.type}` : ''} "${label.slice(0, 80)}"`);
+    if (label && entry.el.isConnected && hit(label)) controls.push(`[${i + 1 + base}] ${entry.el.tagName.toLowerCase()}${entry.el.type && entry.el.type !== entry.el.tagName.toLowerCase() ? `:${entry.el.type}` : ''} "${label.slice(0, 80)}"`);
   });
   const BLOCK = 'p,li,td,th,dd,dt,h1,h2,h3,h4,h5,h6,blockquote,figcaption,caption,label,pre,div,section,article';
   const texts = [];
   const used = new Set();
-  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+  // The document's text, then each open shadow root's (web components).
+  const roots = [document.body || document.documentElement];
+  const addShadows = (root) => { for (const el of root.querySelectorAll('*')) if (el.shadowRoot) { roots.push(el.shadowRoot); addShadows(el.shadowRoot); } };
+  addShadows(document);
+  const nodes = function* () {
+    for (const root of roots) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) yield node;
+    }
+  };
   const first = res[0] || phrase;
-  for (let node = walker.nextNode(); node && texts.length < opts.max; node = walker.nextNode()) {
+  for (const node of nodes()) {
+    if (texts.length >= opts.max) break;
     if (!first.test(node.nodeValue)) continue;
     const parent = node.parentElement;
     if (!parent || parent.closest('script,style,noscript,template') || !parent.getClientRects().length) continue;
@@ -345,36 +367,41 @@ const ACTING = ['batch'];
 // ---------------------------------------------------------------- execution
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
+const frames = require('./frames');
 
 // read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
 // match what click / type_text resolve), without the page's full innerText and the element list it
 // returns. Cut from page-scripts.js readPage at the line that stores the registry; if that line
 // ever moves, the full read runs instead. Cached per readPage source.
 const REGISTRY_MARK = 'window.__claudeEls = registry;';
-let registryCache = { src: null, script: null };
-function registryScript(scripts) {
-  const src = scripts.readPage(0, 0);
-  if (registryCache.src === src) return registryCache.script;
+const registryCache = new Map(); // readPage options -> { src, script }
+// opts: readPage's ({ frames: false } in a page whose embedded frames frames.js reads, and in each frame).
+function registryScript(scripts, opts = {}) {
+  const src = scripts.readPage(0, 0, opts);
+  const key = JSON.stringify(opts);
+  if (registryCache.get(key)?.src === src) return registryCache.get(key).script;
   const at = src.indexOf(REGISTRY_MARK);
   const script = at < 0 || !src.includes('accessibleName') ? src
     : `${src.slice(0, at)}${REGISTRY_MARK}
     registry.forEach((entry) => { entry.label = accessibleName(entry.el).slice(0, 80); });
     return { totalElements: registry.length };
   })()`;
-  registryCache = { src, script };
+  registryCache.set(key, { src, script });
   return script;
 }
 
 // dedupe: a read the model asked for itself (read_page), in the sidebar's own chat (h.dedupe): an
 // identical read soon after the last one gets the short "unchanged" line (ReadCache).
 async function compact(agent, wc, input, h, { dedupe = false } = {}) {
-  await h.runScript(wc, registryScript(h.scripts)); // builds the element registry the refs point into
+  const inFrames = frames.available(wc); // embedded frames are outlined each in its own frame (below)
+  await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // builds the element registry the refs point into
   const result = await h.runScript(wc, serialize(compactOutline, {
     maxChars: Math.min(Math.max(Number(input.max_chars) || 6000, 1000), 20000),
     blockChars: 280,
     startLine: input.start_line || 0,
     hrefs: Boolean(input.hrefs),
   }), 15000);
+  if (inFrames && !input.start_line) result.lines.push(...await frameOutlines(agent, wc, input, h));
   const url = wc.getURL();
   const previous = lastSnapshot.get(wc.id);
   lastSnapshot.set(wc.id, { url, lines: result.lines, seq: reads.seq, acted: reads.acted });
@@ -397,6 +424,31 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
     if (same) body = same;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
+}
+
+// The embedded frames' outlines, each headed by its label, refs naming the frame (frames.js).
+const FRAME_OUTLINE_CHARS = 3000;
+const FRAMES_OUTLINE_CHARS = 8000;
+async function frameOutlines(agent, wc, input, h) {
+  const allow = (url) => !agent.browser.aiOff?.(url);
+  const { frames: list, aiOff } = await frames.list(wc, { allow });
+  const registry = registryScript(h.scripts, { frames: false });
+  const read = await frames.each(wc, list, (frame) => `(() => { ${registry}; return ${serialize(compactOutline, {
+    maxChars: FRAME_OUTLINE_CHARS, blockChars: 280, hrefs: Boolean(input.hrefs), frame: true, idBase: frames.encodeId(frame.n, 0),
+  })}; })()`, 5000);
+  const lines = [];
+  let room = FRAMES_OUTLINE_CHARS;
+  for (const { frame, value } of read) {
+    if (!value?.lines?.length || room <= 0) continue;
+    lines.push(frames.labelOf(frame, value.title));
+    for (const line of value.lines) {
+      if (room - line.length < 0) { lines.push('… (frame outline clipped; use find)'); break; }
+      lines.push(frames.defang(line));
+      room -= line.length + 1;
+    }
+  }
+  if (aiOff) lines.push(`(${aiOff} embedded frame${aiOff === 1 ? '' : 's'} on a site where the user turned AI off: not read)`);
+  return lines;
 }
 
 // The page's outline after a navigation (navigate / open_tab read:true), or '' when it can't be shown.
@@ -513,8 +565,18 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
-    await h.runScript(wc, registryScript(h.scripts)); // the refs it returns point into this registry
-    const r = await h.runScript(wc, serialize(findMatches, { query: String(input.query || ''), max: Math.min(Math.max(Number(input.max) || 8, 1), 20) }));
+    const inFrames = frames.available(wc);
+    const max = Math.min(Math.max(Number(input.max) || 8, 1), 20);
+    await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // the refs it returns point into this registry
+    const r = await h.runScript(wc, serialize(findMatches, { query: String(input.query || ''), max }));
+    if (inFrames && r.matches.length < max) { // and in the embedded frames, each in its own registry
+      const { frames: list } = await frames.list(wc, { allow: (url) => !agent.browser.aiOff?.(url) });
+      const registry = registryScript(h.scripts, { frames: false });
+      const read = await frames.each(wc, list, (frame) => `(() => { ${registry}; return ${serialize(findMatches, { query: String(input.query || ''), max, idBase: frames.encodeId(frame.n, 0) })}; })()`, 5000);
+      for (const { frame, value } of read) {
+        for (const m of value?.matches || []) if (r.matches.length < max) r.matches.push(`${frames.defang(m)} (in ${frames.labelOf(frame, value.title)})`);
+      }
+    }
     if (!r.matches.length) return `No matches for "${input.query}" on ${r.url}.`;
     return `<untrusted_page_content>\n${r.matches.join('\n')}\n</untrusted_page_content>`;
   }

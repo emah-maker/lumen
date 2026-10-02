@@ -574,6 +574,11 @@ class ClaudeCodeEngine {
     let result = null;
     let newSession = sessionId;
     let rateLimit = null; // the plan's limits as of this turn (rate_limit_event), for the Usage panel
+    // [context] The usage of the turn's last model call (its whole input is the context in use), and a
+    // compaction the CLI ran during the turn (/compact, or its own near the limit): { trigger, pre, post }.
+    let lastCall = null;
+    let compacted = null;
+    let compacting = false;
     let settle;
     const ended = new Promise((resolve) => { settle = resolve; });
     let sent = false; // the message went into stdin
@@ -595,6 +600,13 @@ class ClaudeCodeEngine {
         newSession = msg.session_id || newSession;
         const lumen = (msg.mcp_servers || []).find((s) => s.name === 'lumen');
         if (lumen && lumen.status !== 'connected') emit({ type: 'notice', text: `Claude Code could not connect to Lumen (${lumen.status}).` });
+      } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+        const meta = msg.compact_metadata || {};
+        compacted = { trigger: meta.trigger || null, pre: Number(meta.pre_tokens) || 0, post: Number(meta.post_tokens) || 0 };
+        lastCall = null; // what came before the boundary is no longer in context
+      } else if (msg.type === 'system' && msg.subtype === 'status' && (msg.status === 'compacting' || compacting)) {
+        compacting = msg.status === 'compacting';
+        emit({ type: 'status', text: compacting ? 'Compacting the conversation…' : '' });
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
         // Each text block (one per turn around a tool call) starts a new paragraph, on screen and in
@@ -606,6 +618,7 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
+        if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
           active.builtin.add(b.id);
@@ -679,16 +692,19 @@ class ClaudeCodeEngine {
     // What this message cost, not the process's running total (perTurnResult in cli-utils.js).
     const counted = result ? perTurnResult(result, proc.usage) : null;
     const usage = usageOf(counted);
+    // [context] Like Grok's (grok-build.js grokUsage): the last call's whole input, for the Usage log and the chat's meter.
+    if (usage && lastCall) usage.contextTokens = (Number(lastCall.input_tokens) || 0) + (Number(lastCall.cache_read_input_tokens) || 0) + (Number(lastCall.cache_creation_input_tokens) || 0);
+    const context = lastCall ? { tokens: usage?.contextTokens || 0, window: usage?.contextWindow || 0 } : null;
     // The turn cap is not a failure: keep the session so "continue" resumes it (agent.js shows the notice).
-    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: counted.total_cost_usd, usage, rateLimit };
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: counted.total_cost_usd, usage, rateLimit, context, compacted };
     if (!ok) {
       // A resumed session that no longer exists: forget it so the next message starts fresh.
       const expired = /no conversation found|session.*not found/i.test(`${result?.result || ''}${(result?.errors || []).join('\n')}${proc.stderr}`);
       if (expired && resume && quietExpired && !text) return { text: '', sessionId: null, failed: true, expired: true, usage, rateLimit };
       emit({ type: 'error', ...describeFailure(result?.result || (result?.errors || []).join('\n') || proc.stderr, code) });
-      return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit };
+      return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0 };
   }
 }
 
