@@ -4,8 +4,11 @@
 // latest.yml / latest-mac.yml lists for it, unpack it next to the install, then "Restart to update"
 // swaps the folders (features/zip-update.js: Windows runs a byte-identical copy of the signed
 // Lumen.exe in Node mode, so Smart App Control has no new script or binary to block; macOS uses a
-// small shell script). Builds aren't code-signed, so that hash is the only check: an update is as
-// trustworthy as the GitHub account and release it came from.
+// small shell script). Unless a release was signed with a Developer ID (docs/mac-signing.md), builds
+// aren't code-signed by an identity macOS vouches for, so that hash is the only check: an update is as
+// trustworthy as the GitHub account and release it came from. A Developer ID build (signed, notarized,
+// stapled) stays valid through the swap: the update only moves and renames whole bundles and never
+// opens one for writing, and Gatekeeper accepts the new bundle without the old one's blessing.
 //
 // One click: a found update is downloaded and staged in the background and the toolbar pill and
 // Settings both say "Restart to update". One click applies it and relaunches; a click while it is

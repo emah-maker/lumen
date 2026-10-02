@@ -382,3 +382,12 @@ input[type="date"], input[type="time"] { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Windows high contrast (forced colors): a switch is drawn with backgrounds, which the system
+   flattens, so it draws itself in system colors: a bordered track, and Highlight when on. */
+@media (forced-colors: active) {
+  input.switch { forced-color-adjust: none; background: Canvas; border: 1px solid CanvasText; }
+  input.switch::after { forced-color-adjust: none; background: CanvasText; top: 1px; left: 1px; }
+  input.switch:checked { background: Highlight; }
+  input.switch:checked::after { background: HighlightText; }
+}

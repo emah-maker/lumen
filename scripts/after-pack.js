@@ -3,7 +3,11 @@
 // Disney+, Spotify, ...) works. afterPack runs before any code signing; we don't do
 // Authenticode signing here (signAndEditExecutable: false), so there's no ordering issue
 // with castlabs' "sign VMP after Authenticode on Windows" rule. On macOS castlabs wants VMP
-// signing before the Apple codesign, which electron-builder runs after this hook. VMP signing writes a
+// signing before the Apple codesign, which electron-builder runs after this hook (and then, for a
+// Developer ID build, notarizes and staples: see scripts/signing.js and docs/mac-signing.md). Order on
+// macOS: VMP sign (here, needs EVS_ACCOUNT_NAME / EVS_PASSWD or a saved login) -> Apple codesign ->
+// notarize -> staple. The VMP .sig files are inside the bundle by then, so the Apple seal covers them.
+// VMP signing writes a
 // separate .sig file next to the exe — it does not modify the exe itself, so this runs
 // after build.js's byte-identical check for win-unpacked/Lumen.exe.
 //

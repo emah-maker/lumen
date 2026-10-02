@@ -24,7 +24,7 @@ Download the latest build from [Releases](https://github.com/emah-maker/lumen/re
 
 **Windows:** the builds aren't code-signed. SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. On PCs with Smart App Control turned on, the zip is the one that runs. Its `Lumen.exe` is the untouched Electron binary, which Windows recognises, while a freshly built installer isn't. Or build and install locally (below).
 
-**Mac:** the app is self-signed (not Developer ID), so the first launch is blocked. On **macOS 15 Sequoia and later**, open Lumen once (it is refused), then go to **System Settings → Privacy & Security**, scroll to Security and click **Open Anyway** next to Lumen, and confirm. On older macOS, right-click **Lumen** in Applications and choose **Open**, then **Open** again (Sequoia removed that shortcut for self-signed apps). If you open Lumen straight from the disk image or Downloads, it offers to move itself to Applications at launch (Settings → About Lumen → Updates keeps a **Move to Applications** button). When a new version is out, the toolbar says **Move to Applications to update**: one click installs the update into Applications (or into `~/Applications` if you aren't an administrator), opens it and you're done, with no disk image and no second step. It never overwrites a newer Lumen that is already there, and asks you to quit another running Lumen first. If Open Anyway doesn't appear, or macOS says the app "is damaged", run:
+**Mac:** from 0.4.4 the app is signed with an Apple Developer ID and notarized by Apple, so it opens with no prompt and needs no **Open Anyway** step (maintainers: [docs/mac-signing.md](docs/mac-signing.md)). If you are updating from an older version, macOS asks once on the first launch to allow Lumen access to its Keychain item. Versions before 0.4.4 are self-signed, so their first launch is blocked: on **macOS 15 Sequoia and later**, open Lumen once (it is refused), then go to **System Settings → Privacy & Security**, scroll to Security and click **Open Anyway** next to Lumen; on older macOS, right-click **Lumen** in Applications and choose **Open**. If you open Lumen straight from the disk image or Downloads, it offers to move itself to Applications at launch (Settings → About Lumen → Updates keeps a **Move to Applications** button). When a new version is out, the toolbar says **Move to Applications to update**: one click installs the update into Applications (or into `~/Applications` if you aren't an administrator), opens it and you're done, with no disk image and no second step. It never overwrites a newer Lumen that is already there, and asks you to quit another running Lumen first. If an older version won't open, or macOS says the app "is damaged", run:
 
 ```
 xattr -dr com.apple.quarantine /Applications/Lumen.app
@@ -114,7 +114,8 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 - **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. The ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work; content blockers that rely on static declarativeNetRequest rulesets are refused at install.
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search Engine).
 - **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
-- **Permissions:** sites must ask before using your camera, microphone, location, or notifications.
+- **Permissions:** sites must ask before using your camera, microphone, location, or notifications. Click the lock next to the address for the site's page info: its connection, Ask / Allow / Block for each permission, its cookies (with **Clear Cookies and Site Data…** for that site), and its remembered zoom. **Settings → Privacy and security → Site data** lists every site that keeps cookies, with **Remove** for each.
+- **Zoom** is remembered per site, across restarts; `Ctrl+0` goes back to the default from Settings.
 - **Safe Browsing (optional, off by default):** with your own Google API key (Settings → Privacy), pages listed by Google Safe Browsing as suspected phishing or malware show a warning instead of loading. Pages are checked against lists kept on your computer; Google only ever sees partial hashes. Only you can choose to visit a flagged page; the AI can't. Like any list, it can miss unsafe sites and flag safe ones by mistake.
 
 ## Keyboard shortcuts
@@ -127,22 +128,26 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
 | Ask the AI from the address bar | type, then `Alt+Enter` |
 | New tab / close tab / focus address | `Ctrl+T` / `Ctrl+W` / `Ctrl+L` |
+| New window / close window | `Ctrl+N` / `Ctrl+Shift+W` |
 | Switch tabs | `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+1`–`9` |
 | Reopen closed tab | `Ctrl+Shift+T` |
 | Open a local file (HTML, PDF, images, media) | `Ctrl+O`, drop it on the window, type or paste its path, or **Open With → Lumen** |
 | Back / forward | `Alt+←` / `Alt+→` (macOS: `Cmd+[` / `Cmd+]`) |
-| Reload | `Ctrl+R` or `F5` |
+| Reload / stop loading | `Ctrl+R` or `F5` / `Esc` |
 | Find in page | `Ctrl+F` |
 | Zoom | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Bookmark this page | `Ctrl+D` |
 | History | `Ctrl+H` (macOS: `Cmd+Y`) |
 | Settings | `Ctrl+,` |
+| Clear browsing data | `Ctrl+Shift+Delete` (macOS: `Shift+Cmd+Backspace`) |
+| Every shortcut, in a sheet | `Ctrl+Shift+/` (or ⋯ → Keyboard Shortcuts) |
 | Print | `Ctrl+P` |
 | Full screen | `F11` (Windows, Linux) |
 | Ask the AI about selected text | right-click → Ask Claude About Selection |
+| Site information (connection, permissions, cookies) | click the lock next to the address |
 | Tab devtools | `F12` |
 
-## Use Lumen from Claude Code, Codex, Gemini CLI
+## Use Lumen from Claude Code, Codex, Antigravity
 
 Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
@@ -166,7 +171,7 @@ env = { ELECTRON_RUN_AS_NODE = "1" }
 ```
 
 ```json
-// Gemini CLI (~/.gemini/settings.json), Cursor, Claude Desktop and other MCP clients
+// Antigravity (~/.gemini/config/mcp_config.json), Cursor, Claude Desktop and other MCP clients
 { "mcpServers": { "lumen": {
   "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\Lumen.exe",
   "args": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\resources\\app\\mcp.js"],
@@ -293,6 +298,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 
 ## Layout
 
@@ -322,7 +328,7 @@ docs/                   reference pages (below) and docs/media (the README's scr
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
 ```
 
-`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`).
+`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
 
 **Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 

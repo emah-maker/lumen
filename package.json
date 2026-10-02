@@ -1,9 +1,10 @@
 {
   "name": "lumen",
   "productName": "Lumen",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
   "main": "src/main.js",
+  "type": "commonjs",
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
@@ -190,7 +191,13 @@
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "identity": "-"
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Websites you allow can use your camera.",
+        "NSMicrophoneUsageDescription": "Websites you allow can use your microphone.",
+        "NSLocationUsageDescription": "Websites you allow can know your location."
+      }
     },
     "dmg": {
       "title": "Lumen",

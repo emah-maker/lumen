@@ -8,16 +8,45 @@
 </head>
 <body>
   <div id="strip">
-    <span id="badge" title="Private window: nothing is saved after you close it">Private</span>
-    <div id="tabs" role="tablist"></div>
-    <button id="new-tab" title="New private tab (Ctrl+T)" aria-label="New private tab">+</button>
+    <span id="badge" title="Private window: nothing is saved after you close it" data-i18n-title="private.badge.title">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11h18M6.5 11l1.8-5.2c.2-.5.7-.8 1.2-.6l2.5.8 2.5-.8c.5-.2 1 .1 1.2.6l1.8 5.2"/><circle cx="7.5" cy="16" r="2.7"/><circle cx="16.5" cy="16" r="2.7"/><path d="M10.2 16h3.6"/></svg>
+      <span data-i18n="private.badge">Private</span>
+    </span>
+    <div id="tabs" role="tablist" aria-label="Private tabs" data-i18n-aria-label="private.tabs"></div>
+    <button id="new-tab" title="New private tab" aria-label="New private tab" data-i18n-title="private.newTab.button" data-i18n-aria-label="private.newTab.button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+    </button>
+    <div id="drag-space"></div>
   </div>
   <div id="toolbar">
-    <button id="back" title="Back (Alt+Left)" aria-label="Back">&#8592;</button>
-    <button id="forward" title="Forward (Alt+Right)" aria-label="Forward">&#8594;</button>
-    <button id="reload" title="Reload (Ctrl+R)" aria-label="Reload">&#8635;</button>
-    <form id="address-form"><input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address (private)" aria-label="Address"></form>
+    <button id="back" title="Back" aria-label="Back" data-i18n-title="private.back" data-i18n-aria-label="private.back" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>
+    </button>
+    <button id="forward" title="Forward" aria-label="Forward" data-i18n-title="private.forward" data-i18n-aria-label="private.forward" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+    </button>
+    <button id="reload" title="Reload" aria-label="Reload" data-i18n-title="private.reload" data-i18n-aria-label="private.reload">
+      <svg class="reload-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/></svg>
+      <svg class="stop-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+    </button>
+    <form id="address-form">
+      <span id="security" class="security" role="img" aria-hidden="true"></span>
+      <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address" aria-label="Address" data-i18n-placeholder="private.address.placeholder" data-i18n-aria-label="private.address">
+      <button id="zoom" type="button" hidden title="Reset zoom" data-i18n-title="private.zoom.reset"></button>
+    </form>
+    <div id="find" hidden role="search">
+      <input id="find-text" type="text" spellcheck="false" autocomplete="off" placeholder="Find in page" aria-label="Find in page" data-i18n-placeholder="private.find" data-i18n-aria-label="private.find">
+      <span id="find-count" aria-live="polite"></span>
+      <button id="find-prev" title="Previous match" aria-label="Previous match" data-i18n-title="private.find.previous" data-i18n-aria-label="private.find.previous"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 10 4-4 4 4"/></svg></button>
+      <button id="find-next" title="Next match" aria-label="Next match" data-i18n-title="private.find.next" data-i18n-aria-label="private.find.next"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+      <button id="find-close" title="Close" aria-label="Close find bar" data-i18n-title="private.find.close" data-i18n-aria-label="private.find.close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+    </div>
+    <button id="downloads" hidden title="Downloads in this window" aria-label="Downloads in this window" data-i18n-title="private.downloads" data-i18n-aria-label="private.downloads">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
+      <span id="downloads-bar"><span id="downloads-fill"></span></span>
+    </button>
   </div>
+  <script src="i18n.js"></script>
   <script src="private.js"></script>
 </body>
 </html>

@@ -249,6 +249,10 @@ function createAdblock(deps) {
     extraSessions.add(ses);
     if (blocker) enableIn(ses);
   }
+  // A private window's session, as that window closes: no longer kept in the list.
+  function detachSession(ses) {
+    extraSessions.delete(ses);
+  }
 
   function menu() {
     const wc = deps.activeContents();
@@ -282,6 +286,7 @@ function createAdblock(deps) {
   return {
     setup,
     attachSession,
+    detachSession,
     menu,
     ready: () => blocker !== null,
     blocked: (id) => blockedCount.get(id) || 0,

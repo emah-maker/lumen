@@ -71,7 +71,19 @@ if (googleId && googleSecret) {
 }
 
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
-const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit' });
+// macOS signing (scripts/signing.js): a Developer ID certificate in CSC_LINK / CSC_KEY_PASSWORD gives a
+// hardened-runtime, Apple-signed app, notarized and stapled when APPLE_* credentials exist. Without
+// one the build is ad-hoc signed (or self-signed by scripts/after-sign.js) exactly as before.
+const signing = require('./signing');
+let builderEnv = process.env;
+if (platformFlag === '--mac') {
+  builderArgs.push(...signing.builderArgs());
+  builderEnv = signing.builderEnv();
+  const s = signing.macSigning();
+  console.log(`macOS signing: ${s.mode}${s.mode === 'developer-id' ? `, notarization: ${s.notarize || 'off (no credentials)'}` : ''}`);
+  if (s.partialNotarization) console.warn(`warning: ${s.partialNotarization} is only partly set; the app will be signed but not notarized`);
+}
+const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit', env: builderEnv });
 if (wroteGoogle) fs.rmSync(googleFile, { force: true });
 if (result.status !== 0) process.exit(result.status || 1);
 

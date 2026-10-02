@@ -4,7 +4,7 @@ const globals = require('globals');
 
 module.exports = [
   // src/preload/preload.bundle.js is generated from preload.js (scripts/bundle-preload.js); lint the source.
-  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'src/preload/preload.bundle.js', 'src/vendor/**', 'src/renderer/vendor/**', '_site/**'] },
+  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'src/preload/preload.bundle.js', 'src/renderer/ui.bundle.js', 'src/vendor/**', 'src/renderer/vendor/**', '_site/**'] },
   js.configs.recommended,
   {
     languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: { ...globals.node } },

@@ -11,6 +11,9 @@ const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 const { requestedHints, withHints } = require('../browser/chrome-identity');
+const { createSiteZoom } = require('../features/site-zoom');
+const siteData = require('../features/site-data');
+const { t } = require('../features/i18n');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -19,7 +22,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers', 'passwords'];
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -100,9 +103,11 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  maxChatRuns: 3, // [ai] sidebar chats that may work at once (one per tab); more wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
@@ -164,6 +169,7 @@ function validate(key, value) {
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
+    case 'maxChatRuns': return pick(Number(value), [1, 2, 3, 4, 6, 8], null);
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
@@ -228,8 +234,18 @@ function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
+  const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
   const httpAllowed = new Set(); // hosts the user chose to visit over http this session
+  // Another in-memory session (a private window's, the research tabs') keeps its own of both: a site zoomed
+  // or let through over http there is not remembered for normal tabs, and goes with that session.
+  const ownSets = new WeakMap(); // session -> { userZoomed, httpAllowed }
+  const setsOf = (wc) => {
+    const ses = wc?.session;
+    if (!ses || ses === session?.defaultSession || ses.isPersistent?.() !== false) return { userZoomed, httpAllowed };
+    if (!ownSets.has(ses)) ownSets.set(ses, { userZoomed: new Set(), httpAllowed: new Set() });
+    return ownSets.get(ses);
+  };
 
   function prefs() {
     const s = readSettings();
@@ -255,7 +271,9 @@ function create(deps) {
   function applyDefaultZoom(wc) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
-    if (!/^https?:/.test(wc.getURL()) || userZoomed.has(host)) return;
+    if (!/^https?:/.test(wc.getURL()) || setsOf(wc).userZoomed.has(host)) return;
+    const saved = siteZoom.levelFor(host); // zoomed by hand in an earlier run
+    if (saved !== null) { setsOf(wc).userZoomed.add(host); wc.setZoomLevel(saved); return; }
     wc.setZoomFactor(prefs().defaultZoom);
   }
   function uiPrefs() {
@@ -356,6 +374,10 @@ function create(deps) {
     applyProxy();
     setupHeaders(target);
   }
+  // A private window's session, as that window closes: proxy changes no longer go to it.
+  function unmirrorSession(target) {
+    mirrored.delete(target);
+  }
 
   // ---- request headers: the one onBeforeSendHeaders listener (the ad blocker owns the others) ----
   function isThirdParty(details) {
@@ -448,10 +470,10 @@ function create(deps) {
     if (!prefs().httpsOnly) return false;
     let u;
     try { u = new URL(url); } catch { return false; }
-    if (u.protocol !== 'http:' || isLocalHost(u.hostname) || httpAllowed.has(u.host)) return false;
+    if (u.protocol !== 'http:' || isLocalHost(u.hostname) || setsOf(wc).httpAllowed.has(u.host)) return false;
     const current = wc.getURL();
     if (current.startsWith(HTTPS_ONLY_URL) && new URL(current).searchParams.get('url') === url) {
-      httpAllowed.add(u.host); // "Continue to site" on the warning page
+      setsOf(wc).httpAllowed.add(u.host); // "Continue to site" on the warning page
       return false;
     }
     // A site whose https address sends you back to http (by redirect or script) looped forever:
@@ -499,15 +521,19 @@ function create(deps) {
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
   }
-  function noteUserZoom(wc) {
-    try { userZoomed.add(new URL(wc.getURL()).host); } catch {}
+  // `level`: the zoom level the page is being set to, remembered for its host (features/site-zoom.js).
+  function noteUserZoom(wc, level) {
+    let host;
+    try { host = new URL(wc.getURL()).host; } catch { return; }
+    setsOf(wc).userZoomed.add(host);
+    // (Never from a private window: its session isn't persistent, and nothing it does is kept on disk.)
+    if (level !== undefined && /^https?:/.test(wc.getURL()) && wc.session?.isPersistent?.() !== false) siteZoom.set(host, level);
   }
   // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
   // and the site follows that default again from now on.
   function resetZoom(wc) {
-    try { userZoomed.delete(new URL(wc.getURL()).host); } catch {}
+    try { const host = new URL(wc.getURL()).host; setsOf(wc).userZoomed.delete(host); siteZoom.forget(host); } catch {}
     if (/^https?:/.test(wc.getURL())) wc.setZoomFactor(prefs().defaultZoom);
-    else wc.setZoomLevel(0);
   }
 
   // The settings tab: nothing but the settings page may load in it.
@@ -543,8 +569,8 @@ function create(deps) {
     return [
       ...(suggestions.length
         ? suggestions.map((word) => ({ label: word, click: () => wc.replaceMisspelling(word) }))
-        : [{ label: 'No spelling suggestions', enabled: false }]),
-      { label: 'Add to Dictionary', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
+        : [{ label: t('spelling.none'), enabled: false }]),
+      { label: t('spelling.addToDictionary'), click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
       { type: 'separator' },
     ];
   }
@@ -759,7 +785,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();
@@ -827,6 +853,9 @@ function create(deps) {
       const i = key.lastIndexOf('|');
       return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
+    // Site data (features/site-data.js): the sites with cookies, and removing one of them.
+    handle('prefs:site-data', async () => siteData.groupCookies(await ses().cookies.get({}), registrableDomain));
+    handle('prefs:clear-site', async (site) => ({ removed: await siteData.clearSite(ses(), String(site || '')), list: siteData.groupCookies(await ses().cookies.get({}), registrableDomain) }));
     handle('prefs:revoke-permission', (origin, permission) => {
       const removed = deps.permissionDecisions.delete(`${origin}|${permission}`);
       savePermissions(deps.permissionDecisions);
@@ -894,8 +923,8 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, mirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }

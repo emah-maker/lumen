@@ -32,7 +32,7 @@ Lumen has no account, no servers of its own, no telemetry, no analytics and no c
 
 ## AI agents over MCP
 
-If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Gemini CLI or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default. Whatever those apps read is then sent to their own AI provider, under that app's privacy policy.
+If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Antigravity or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default. Whatever those apps read is then sent to their own AI provider, under that app's privacy policy.
 
 The same goes for **Allow automation tools (Chrome DevTools Protocol)**, also off by default: while it's on, programs on your computer can read and control your tabs without asking.
 

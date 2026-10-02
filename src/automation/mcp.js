@@ -1,4 +1,4 @@
-// Lumen as an MCP server, so CLI agents (Claude Code, Codex CLI, Gemini CLI, Cursor, any MCP
+// Lumen as an MCP server, so CLI agents (Claude Code, Codex CLI, Antigravity, Cursor, any MCP
 // client) can drive the browser.
 //
 // Two halves:
