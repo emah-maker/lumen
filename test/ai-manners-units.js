@@ -328,6 +328,39 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('close_tab: the AI path closes without the Leave-site question and says the page blocked it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page blocked it/.test(fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8')));
   }
 
+  // ---- a click that never reached the page (torn-off / hidden / minimized window) falls back to page events
+  {
+    check('front: the front tab of its own window is in front, whichever window has the focus', M.tabInFront({ activeId: 5, tabId: 5 }) && !M.tabInFront({ activeId: 6, tabId: 5 }));
+    check('front: a minimized window\'s tab is not in front; no tab id is never in front', !M.tabInFront({ activeId: 5, tabId: 5, minimized: true }) && !M.tabInFront({ activeId: null, tabId: null }) && !M.tabInFront());
+    check('landed: true at once when the page saw the click', (await M.confirmLanded(async () => true)) === true);
+    let polls = 0;
+    check('landed: waits for a click that arrives a little later', (await M.confirmLanded(async () => ++polls >= 3, { stepMs: 1, timeoutMs: 500 })) === true && polls === 3);
+    check('landed: false when no click ever arrives (the caller then falls back to page events)', (await M.confirmLanded(async () => false, { stepMs: 5, timeoutMs: 30 })) === false);
+    check('landed: a read that throws (the click navigated the page) counts as landed', (await M.confirmLanded(async () => { throw new Error('gone'); })) === true);
+
+    // The page script: arm, then read before / after a click.
+    const dom = () => {
+      const handlers = {}; const win = {
+        addEventListener: (t, h) => { (handlers[t] ||= new Set()).add(h); },
+        removeEventListener: (t, h) => { handlers[t]?.delete(h); },
+      };
+      return { win, fire: (t) => { for (const h of handlers[t] || []) h({}); }, count: () => Object.values(handlers).reduce((n, h) => n + h.size, 0) };
+    };
+    const d = dom();
+    const ctx = vm.createContext({ window: d.win, Symbol });
+    const run = (code) => vm.runInContext(code, ctx);
+    check('probe: arming listens, and reads false until a mouse event arrives', run(scripts.clickProbeArm()) === true && run(scripts.clickProbeRead(false)) === false && d.count() === 4);
+    d.fire('click');
+    check('probe: a click is seen, and the final read removes every listener', run(scripts.clickProbeRead(false)) === true && run(scripts.clickProbeRead(true)) === true && d.count() === 0);
+    check('probe: after it is gone (page navigated) a read says landed', run(scripts.clickProbeRead(true)) === true);
+
+    // Wiring: agent.js falls back when the click did not land; main.js answers "in front" per window.
+    const agentSrc = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
+    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('click: the ordinary and the background click are both verified, with the DOM click as the fallback', /else if \(!\(await this\.verifiedClick\(wc, \(\) => this\.mouseClick\(wc, x, y\)\)\)\) await this\.elementRun\(wc, id, scripts\.domClick\)/.test(agentSrc) && /return await this\.verifiedClick\(wc, \(\) => manners\.agentInputAsync/.test(agentSrc));
+    check('front: taskTabInFront asks the window the tab lives in', /this\.browser\.tabInFront\(scope\.tabId\)/.test(agentSrc) && /tabInFront: inRun\(agentTabInFront\)/.test(mainSrc) && /activeIdOf\(rec\)/.test(mainSrc.slice(mainSrc.indexOf('const agentTabInFront'))));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();

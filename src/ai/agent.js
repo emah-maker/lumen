@@ -1125,9 +1125,12 @@ class Agent {
   }
 
   // Is the task's tab the one on screen? A background tab gets DOM clicks instead of mouse events.
+  // In front means the front tab of its own window (a tab torn off to another window is in front there), not minimized.
   taskTabInFront() {
     const scope = taskScope.getStore();
-    return !scope || scope.tabId === null || this.browser.activeTab()?.id === scope.tabId;
+    if (!scope || scope.tabId === null) return true;
+    if (this.browser.tabInFront) return this.browser.tabInFront(scope.tabId);
+    return this.browser.activeTab()?.id === scope.tabId;
   }
 
   // The prepared skill of the sidebar run calling (features/skills.js), or null.
@@ -3024,7 +3027,7 @@ ${same}
           else if (!this.taskTabInFront()) { // [ai manners] behind another tab: a trusted click (no focus), else page events
             if (!(await this.backgroundClick(wc, target.x, target.y))) await this.elementRun(wc, id, scripts.domClick);
           } else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseClick(wc, target.x, target.y)).catch(() => this.elementRun(wc, id, scripts.domClick));
-          else await this.mouseClick(wc, x, y);
+          else if (!(await this.verifiedClick(wc, () => this.mouseClick(wc, x, y)))) await this.elementRun(wc, id, scripts.domClick); // never reached the page: page events
         });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
@@ -3184,9 +3187,9 @@ ${same}
         // [ai manners] A tab behind another one (the AI's own, opened in the background) gets the click as page events at that point.
         const inFront = this.taskTabInFront();
         await this.keepUserFocus(wc, async () => {
-          if (inFront) { await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)); return; }
+          if (inFront && await this.verifiedClick(wc, () => this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)))) return;
           const zoom = wc.getZoomFactor();
-          if (await this.backgroundClick(wc, input.x * ratio / zoom, input.y * ratio / zoom)) return;
+          if (!inFront && await this.backgroundClick(wc, input.x * ratio / zoom, input.y * ratio / zoom)) return;
           if (!(await runScript(wc, scripts.domClickAt(Math.round(input.x * ratio / zoom), Math.round(input.y * ratio / zoom))))) throw new Error('Nothing is at that position.');
         });
         await settleAfterAction(wc);
@@ -3332,15 +3335,29 @@ ${same}
       const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
       // marked as the AI's for as long as the commands run (and a moment after): the page view's own mouse handler must not take
       // this click for the user's, which would hand the AI's tab over to them
-      await manners.agentInputAsync(wc, async () => {
+      // sendCommand resolving does not mean the page got the click (a view that is not painting drops it silently), so a
+      // listener in the page confirms it; false makes the caller fall back to page events.
+      return await this.verifiedClick(wc, () => manners.agentInputAsync(wc, async () => {
         await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
         await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
         await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
-      });
-      return true;
+      }));
     } catch { return false; } finally {
       if (attached) { try { dbg.detach(); } catch {} }
     }
+  }
+
+  // Sends a click with `send` and reports whether the page received it (a one-shot listener in the page). Input sent to a view
+  // that is not painting yet (a window just torn off, minimized, hidden) can vanish without an error. If the listener cannot be
+  // set up, the click is assumed to have landed, as before.
+  async verifiedClick(wc, send) {
+    let armed = false;
+    try { armed = (await runScript(wc, scripts.clickProbeArm(), 3000)) === true; } catch {}
+    await send();
+    if (!armed) return true;
+    const landed = await manners.confirmLanded(() => runScript(wc, scripts.clickProbeRead(false), 3000));
+    try { await runScript(wc, scripts.clickProbeRead(true), 3000); } catch {}
+    return landed;
   }
 
   async mouseClick(wc, x, y) {

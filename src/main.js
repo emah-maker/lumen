@@ -5889,6 +5889,14 @@ const agentSwitchTab = (id, opts = {}) => {
   if (fromPage) chatPageRt.retarget(id);
   return true;
 };
+// Is this tab the front tab of ITS window (which may not be the focused one), and that window not minimized?
+const agentTabInFront = (id) => {
+  for (const rec of winRecs) {
+    if (!rcAlive(rec) || !tabsOf(rec).some((x) => x.id === id)) continue;
+    return manners.tabInFront({ activeId: activeIdOf(rec), tabId: id, minimized: rec.win.isMinimized() });
+  }
+  return false;
+};
 // Why there's no page to work on while one of those is in front (instead of "No tab is open").
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
@@ -6072,7 +6080,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
-  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
+  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
