@@ -254,10 +254,17 @@ function multiplexer(up) {
 // ---- [ai manners] hands-off mode for the proxy (features/ai-manners.js automationVerdict, via hooks.handsOffVerdict(method, tabId)
 // -> { ok } | { noop } | { error }). Pure over its inputs, so test/ai-manners-units.js drives it with fakes.
 // The Lumen tab a new session belongs to: a tab's own session, or (a frame / worker) its parent's.
+// A target that is one of the user's tabs is judged as THAT tab, whichever session it was attached from: a session in the AI's own tab
+// that attaches to a user's tab (Target.attachToTarget) must not inherit the AI tab's right to act. Only what is not a tab (an iframe,
+// a worker) takes its parent session's tab.
 async function sessionTabFor({ parentSession, sessionTab, targetInfo, userTargets }) {
-  if (parentSession) return sessionTab.get(parentSession);
-  return (await userTargets()).get(targetInfo.targetId);
+  const own = (await userTargets()).get(targetInfo.targetId);
+  if (own !== undefined) return own;
+  return parentSession ? sessionTab.get(parentSession) : undefined;
 }
+// Commands that are never available, on any endpoint or session.
+const UNAVAILABLE = new Set(['Browser.crash', 'Browser.crashGpuProcess', 'Target.attachToBrowserTarget', 'Target.exposeDevToolsProtocol', 'Target.sendMessageToTarget']);
+const unavailable = (method) => UNAVAILABLE.has(method);
 // What an init-time command answered without being run gets as its result.
 const noopResult = (method) => (method === 'Page.addScriptToEvaluateOnNewDocument' ? { identifier: '0' } : {});
 // Should this client command run? `sessionId` null: it names no session (a browser-level command). A Target.* command carrying a
@@ -286,11 +293,11 @@ function inprocBackend(hooks) {
 //          onSession({ active, remaining }) }
 // pipeFd: the launcher's pipe; file: DevToolsActivePort, where there is none (see the top);
 // inproc: no Chromium connection at all, cdp-inproc.js answers from the tabs' own debuggers (macOS).
-function start({ port, pipeFd, file, inproc, token, hooks }) {
+function start({ port, pipeFd, file, inproc, token, hooks, chromium: injected }) { // (injected: a stand-in for the multiplexer, for tests)
   const targetIds = new WeakMap(); // webContents -> targetId
   const clients = new Set();
-  const upstream = inproc ? inprocBackend(hooks) : pipeFd !== undefined ? pipeUpstream(pipeFd) : portUpstream(file);
-  const chromium = multiplexer(upstream);
+  const upstream = injected ? null : inproc ? inprocBackend(hooks) : pipeFd !== undefined ? pipeUpstream(pipeFd) : portUpstream(file);
+  const chromium = injected || multiplexer(upstream);
   // Our own command on the browser; throws Chromium's error.
   const command = async (method, params) => {
     const reply = await chromium.call(method, params);
@@ -426,6 +433,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
     const upstream = chromium.open(targetId);
     let client;
     const entry = { close: () => client.close() };
+    let noopWarned = false;
     upstream.onMessage = (text) => client.send(text);
     upstream.onClose = () => client.close();
     upgrade(req, socket);
@@ -434,7 +442,9 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
         // [ai manners] hands-off mode: an act on a tab the AI did not open is answered with an error instead of reaching the page
         let msg = null;
         try { msg = JSON.parse(text); } catch {}
+        if (msg && typeof msg.method === 'string' && unavailable(msg.method)) { client.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: `${msg.method} is not available in Lumen.` } })); return; }
         const verdict = msg && typeof msg.method === 'string' ? hooks.handsOffVerdict?.(msg.method, tabId) : null;
+        if (verdict?.noop && !noopWarned) { noopWarned = true; client.send(JSON.stringify({ method: 'Log.entryAdded', params: { entry: { source: 'other', level: 'warning', timestamp: Date.now(), text: `Lumen hands-off mode: ${msg.method} was skipped on this tab (script injection and emulation are not applied to tabs the AI did not open). Reading the page still works.` } } })); }
         if (verdict?.error) { client.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: verdict.error } })); return; }
         if (verdict?.noop) { client.send(JSON.stringify({ id: msg.id, result: noopResult(msg.method) })); return; }
         upstream.send(text);
@@ -523,33 +533,47 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       client.send(text);
     }
 
+    // Target.createTarget: a real Lumen tab (marked as the AI's, behind the user's tab unless the client says otherwise). Also when a
+    // client sends it on a session, so that path cannot skip this.
+    async function createTarget(id, sessionId, params) {
+      const tab = hooks.openTab(params.url || 'about:blank', { background: params.background === undefined ? true : Boolean(params.background) });
+      const targetId = await targetIdOf(tab.webContents);
+      if (!targetId) return reply(id, sessionId, null, 'Could not open a tab.');
+      chromium.sync(); // the in-process backend learns of the tab now, not at its next look
+      // Like Chrome, answer only after the client has been told about (auto-attached to) the tab.
+      if (autoAttaching && !knownTargets.has(targetId)) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 5000);
+          attachWaiters.set(targetId, () => { clearTimeout(timer); attachWaiters.delete(targetId); resolve(); });
+        });
+      }
+      return reply(id, sessionId, { targetId });
+    }
+    let noopWarned = false;
+    // A command answered without being run (hands-off mode, init-time only): said once on the console, so a script that expected it to
+    // work can find out why.
+    function noopNote(sessionId, method) {
+      if (noopWarned) return;
+      noopWarned = true;
+      client.send(JSON.stringify({ method: 'Log.entryAdded', ...(sessionId ? { sessionId } : {}), params: { entry: { source: 'other', level: 'warning', timestamp: Date.now(), text: `Lumen hands-off mode: ${method} was skipped on this tab (script injection and emulation are not applied to tabs the AI did not open). Reading the page still works.` } } }));
+    }
+
     async function fromClient(text) {
       let msg;
       try { msg = JSON.parse(text); } catch { return; }
       const { id, method, params = {}, sessionId } = msg;
       if (typeof id !== 'number' || id >= OWN_ID_BASE) return reply(id, sessionId, null, 'Invalid message id.');
       if (sessionId && !allowedSessions.has(sessionId)) return reply(id, sessionId, null, 'No such session.');
+      if (unavailable(method)) return reply(id, sessionId, null, `${method} is not available in Lumen.`); // on a session too
+      if (method === 'Target.createTarget') return createTarget(id, sessionId || null, params);
       if (sessionId) { // commands to a user tab go straight through (unless hands-off mode holds back an act on a tab the AI did not open)
         const gate = await gateCommand({ method, params, sessionId, sessionTab, userTargets, hooks });
         if (gate.error) return reply(id, sessionId, null, gate.error);
-        if (gate.noop) return reply(id, sessionId, noopResult(method));
+        if (gate.noop) { noopNote(sessionId, method); return reply(id, sessionId, noopResult(method)); }
         return toUpstream(msg);
       }
       switch (method) {
-        case 'Target.createTarget': {
-          const tab = hooks.openTab(params.url || 'about:blank', { background: params.background === undefined ? true : Boolean(params.background) }); // behind the user's tab unless the client says otherwise
-          const targetId = await targetIdOf(tab.webContents);
-          if (!targetId) return reply(id, null, null, 'Could not open a tab.');
-          chromium.sync(); // the in-process backend learns of the tab now, not at its next look
-          // Like Chrome, answer only after the client has been told about (auto-attached to) the tab.
-          if (autoAttaching && !knownTargets.has(targetId)) {
-            await new Promise((resolve) => {
-              const timer = setTimeout(resolve, 5000);
-              attachWaiters.set(targetId, () => { clearTimeout(timer); attachWaiters.delete(targetId); resolve(); });
-            });
-          }
-          return reply(id, null, { targetId });
-        }
+        case 'Target.createTarget': return createTarget(id, null, params);
         case 'Target.closeTarget': {
           const tabId = (await userTargets()).get(params.targetId);
           if (!tabId) return reply(id, null, null, 'No target with given id found');
@@ -615,8 +639,8 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
     state,
     disconnectAll: () => { for (const c of [...clients]) c.close(); },
     clients: () => clients.size,
-    close: () => { for (const c of [...clients]) c.close(); server.close(); upstream.close?.(); },
+    close: () => { for (const c of [...clients]) c.close(); server.close(); upstream?.close?.(); },
   };
 }
 
-module.exports = { start, gateCommand, sessionTabFor, noopResult };
+module.exports = { start, gateCommand, sessionTabFor, noopResult, unavailable };
