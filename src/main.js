@@ -97,8 +97,25 @@ const pageTools = require('./features/page-tools').createPageTools({
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
 });
-// Page translation (features/translate.js): user-initiated, with the user's own connected AI.
+// On-device translation (features/translate-local.js): Mozilla's Bergamot in its own process, with language
+// packs downloaded from Mozilla into <userData>/translation-models. Built on first use; the process starts
+// on the first translation and stops after a few idle minutes, so nothing here costs anything at startup.
+let translateLocalInstance = null;
+function translateLocal() {
+  if (!translateLocalInstance) {
+    const local = require('./features/translate-local');
+    const store = require('./features/translate-models').createModelStore({
+      dir: path.join(app.getPath('userData'), 'translation-models'),
+      fetch: (url, options) => (TEST && global.__translateNetHook ? global.__translateNetHook(url, options) : net.fetch(url, { ...options, headers: { ...options?.headers, 'user-agent': `Lumen/${app.getVersion()}` } })), // (Mozilla's CDN answers 406 to a browser user agent)
+    });
+    translateLocalInstance = local.createLocal({ store, fork: local.electronFork(require('electron').utilityProcess) });
+    app.once('before-quit', () => translateLocalInstance.stop());
+  }
+  return translateLocalInstance;
+}
+// Page translation (features/translate.js): user-initiated; on this device by default, else the user's own connected AI.
 const translate = require('./features/translate').createTranslate({
+  get local() { return translateLocal(); },
   readSettings: () => readSettings(),
   writeSettings: (s) => writeSettings(s),
   t: (...a) => t(...a),
@@ -6318,6 +6335,7 @@ const settingsBackend = settingsPage.create({
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   performance: perfMode,
+  translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
@@ -6534,6 +6552,7 @@ function toggleReaderActive() {
 }
 ipcMain.on('page:reader', () => { toggleReaderActive(); });
 ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
+if (TEST) global.__translateLocal = () => translateLocal();
 if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => { userTookOver(tabs.find((t) => t.id === activeId)); goBack(activeTab()?.webContents); });

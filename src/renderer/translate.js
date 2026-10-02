@@ -28,6 +28,12 @@
     private: ['translate.error.private', 'Pages in private windows aren’t translated.'],
     unsupported: ['translate.error.unsupported', 'Only web pages can be translated.'],
     'no-engine': ['translate.error.noEngine', 'No AI is connected for translation. Connect one in Settings, or use Google Translate from the menu.'],
+    'unsupported-pair': ['translate.error.unsupportedPair', 'There is no on-device language pack for this pair yet.'],
+    'unknown-language': ['translate.error.unknownLanguage', 'Couldn’t tell what language this page is in.'],
+    'same-language': ['translate.error.sameLanguage', 'This page is already in that language.'],
+    'download-failed': ['translate.error.downloadFailed', 'Couldn’t download the language pack. Check your connection and try again.'],
+    'pack-removed': ['translate.error.packRemoved', 'The language pack was deleted while it was downloading. Try again to download it.'],
+    'registry-failed': ['translate.error.registryFailed', 'Couldn’t reach Mozilla’s list of language packs. Check your connection and try again.'],
   };
   let shown = '';
 
@@ -39,13 +45,13 @@
     btn.title = label;
     btn.setAttribute('aria-label', label);
     let key = '';
-    if (tab && !tab.dismissed) key = `${tab.phase}|${tab.provider}|${tab.error}|${tab.lang}|${tab.target}|${tab.progress}`;
+    if (tab && !tab.dismissed) key = `${tab.phase}|${tab.provider}|${tab.error}|${tab.lang}|${tab.target}|${tab.progress}|${tab.via}|${tab.size}|${tab.pair}|${tab.detail}`;
     if (key === shown) return;
     shown = key;
     if (!key) { bar.hidden = true; bar.replaceChildren(); return; }
     const parts = [];
     const text = el('span', 'infobar-text');
-    const vars = { language: tab.langName || tab.lang, target: tab.targetName, provider: tab.provider };
+    const vars = { language: tab.langName || tab.lang, target: tab.targetName, provider: tab.provider, pair: tab.pair, size: tab.size, percent: tab.progress };
     let close = 'dismiss';
     switch (tab.phase) {
       case 'offer':
@@ -65,7 +71,25 @@
         close = 'cancel';
         break;
       }
+      case 'download-consent':
+        text.textContent = tr('translate.download.ask', 'Download the {pair} language pack ({size}) to translate on this device? It comes from Mozilla once; your pages never leave this computer.', vars);
+        parts.push(button(tr('translate.download.yes', 'Download and translate'), () => act('download'), 'primary'),
+          button(tr('translate.download.always', 'Always download'), () => act('download-always')),
+          button(tr('translate.cancel', 'Cancel'), () => act('cancel')));
+        close = 'cancel';
+        break;
+      case 'download': {
+        close = 'original'; // the download and the translation go on after a plain dismiss, so × cancels like the button
+        text.textContent = tr('translate.downloading', 'Downloading {pair} ({size})… {percent}%', vars);
+        const meter = el('progress');
+        meter.max = 100;
+        meter.value = tab.progress;
+        meter.setAttribute('aria-label', text.textContent);
+        parts.push(meter, button(tr('translate.cancel', 'Cancel'), () => act('original')));
+        break;
+      }
       case 'working': {
+        close = 'original';
         text.textContent = tr('translate.working', 'Translating… {percent}%', { percent: tab.progress });
         const meter = el('progress');
         meter.max = 100;
@@ -75,14 +99,22 @@
         break;
       }
       case 'done':
-        text.textContent = tr('translate.done', 'Translated to {target}.', vars);
+        text.textContent = tab.via === 'local' ? tr('translate.done.local', 'Translated to {target} on this device.', vars) : tr('translate.done', 'Translated to {target}.', vars);
         if (tab.error === 'capped') text.append(' ', el('span', 'infobar-note', tr('translate.capped', 'A long page: some of it was left as written.')));
         parts.push(button(tr('translate.showOriginal', 'Show original'), () => act('original'), 'primary'),
           button(tr('translate.again', 'Translate again'), () => act('again')));
         break;
       case 'error': {
         const known = ERRORS[tab.error];
-        text.textContent = known ? tr(known[0], known[1]) : tr('translate.error', 'Couldn’t translate this page: {error}', { error: tab.error });
+        const network = tab.error === 'download-failed' || tab.error === 'registry-failed';
+        const offline = network && (navigator.onLine === false || /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|network|no data for|timed out/i.test(tab.detail || ''));
+        const noSpace = tab.error === 'download-failed' && /ENOSPC|free disk space|no space/i.test(tab.detail || '');
+        if (noSpace) text.textContent = tr('translate.error.noSpace', 'Not enough free disk space for the language pack.');
+        else if (offline) text.textContent = tab.error === 'registry-failed'
+          ? tr('translate.error.registryOffline', 'You appear to be offline, so Lumen can’t get Mozilla’s list of language packs. Connect and try again.')
+          : tr('translate.error.downloadOffline', 'You appear to be offline, so the language pack couldn’t download. Connect and try again.');
+        else text.textContent = known ? tr(known[0], known[1]) : tr('translate.error', 'Couldn’t translate this page: {error}', { error: tab.error });
+        if (tab.detail && network && !offline && !noSpace) text.append(' ', el('span', 'infobar-note', tab.detail));
         parts.push(button(tr('translate.tryAgain', 'Try again'), () => act('translate', tab.target)));
         break;
       }
@@ -94,7 +126,7 @@
     x.addEventListener('click', () => act(close));
     bar.replaceChildren(text, ...parts, x);
     bar.hidden = false;
-    if (tab.phase === 'working') bar.setAttribute('aria-busy', 'true'); else bar.removeAttribute('aria-busy');
+    if (tab.phase === 'working' || tab.phase === 'download') bar.setAttribute('aria-busy', 'true'); else bar.removeAttribute('aria-busy');
   }
 
   window.browser.onTabs((state) => {
