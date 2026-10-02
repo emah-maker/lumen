@@ -4,6 +4,7 @@
 const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
 const { FiltersEngine } = require('@ghostery/adblocker');
+const lists = require('./adblock-lists');
 
 async function writeAtomic(file, data) {
   const tmp = `${file}.tmp-worker`;
@@ -12,12 +13,14 @@ async function writeAtomic(file, data) {
 }
 
 (async () => {
-  const { base, patched, exceptions, patch, refresh } = workerData;
+  const { base, patched, exceptions, patch, refresh, sourceFile } = workerData;
   let engine;
   if (refresh) {
-    // New lists: the prebuilt engine, downloaded (no cache: the kept one is what is being replaced).
-    engine = await FiltersEngine.fromPrebuiltFull(fetch);
+    // New lists, downloaded (no cache: the kept engine is what is being replaced).
+    // (Not the snapshot fallback: if the lists can't be reached, the engine already kept is better than a stale one.)
+    engine = await lists.buildEngine(FiltersEngine, fetch);
     await writeAtomic(base, engine.serialize());
+    if (sourceFile) await writeAtomic(sourceFile, lists.SOURCE);
   } else {
     engine = FiltersEngine.deserialize(new Uint8Array(await fs.promises.readFile(base)));
   }

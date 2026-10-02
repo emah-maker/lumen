@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Ad blocker, YouTube: the filter lists are now fetched from Ghostery's live list service instead of a snapshot that had not been updated since mid-August, and now include uBlock's 2025 and 2026 rule files, which the old set left out (it ended at 2024), so YouTube's current ad-field scriptlets are in place. Lists saved by an older Lumen are replaced on the next launch rather than after a day. YouTube also gets extra hiding rules for ad and sponsored cards (feed, search, Shorts, the banner over the video) and the "ad blockers violate YouTube's Terms of Service" dialog, and a safety net that, only while the player is actually showing an ad, presses Skip or runs the ad to its end.
+
 ## 0.5.3 (2026-10-02)
 
 - Translate pages on this device: Settings → General → Translation → Translate with now defaults to On this device, which runs Mozilla's open-source Bergamot engine (the one in Firefox Translations) on your computer, so a page's text never leaves it. Each language direction needs a pack (about 20 to 55 MB, downloaded once from Mozilla and checked against its published SHA-256); Lumen asks first, or you can turn on Always download. It translates whole sentences, so a link or bold word keeps its context, and it checks numbers, prices and dates so a translation can't quietly change them. With no pack for a pair, or if you prefer, it uses your connected AI as before. In a private window it only translates when you click.
