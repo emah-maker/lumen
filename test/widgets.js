@@ -584,11 +584,11 @@ function server(opts) {
   check('holding for about 400 ms enters edit mode', await page("document.body.classList.contains('w-editing') && document.querySelector('.w-edit-btn').textContent === 'Done' && document.querySelector('.w-edit-btn').getAttribute('aria-pressed') === 'true'"), '');
   await page("window.__t.fire(document, 'pointerup', 0, 0)");
   const wig = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const s = getComputedStyle(c); return { anim: s.animationName, outline: s.outlineStyle, rm: matchMedia('(prefers-reduced-motion: reduce)').matches, still: document.body.classList.contains('still'), remove: getComputedStyle(c.querySelector('.w-remove')).display, handles: [...c.querySelectorAll('.w-h')].filter((h) => getComputedStyle(h).display !== 'none').length + (getComputedStyle(c.querySelector('.w-resize')).display !== 'none' ? 1 : 0), gear: getComputedStyle(c.querySelector('.w-gear')).display, ptr: getComputedStyle(c.querySelector('.wx-now')).pointerEvents }; })()`);
-  check('edit mode: cards wiggle (not with Reduce motion), a remove badge, a gear and a handle on every corner and edge', (wig.anim === 'wiggle' || wig.rm || wig.still) && wig.remove === 'grid' && wig.gear === 'grid' && wig.handles === 8 && wig.ptr === 'none', JSON.stringify(wig));
+  check('edit mode: cards keep their shape (a dashed outline, no wiggle), a remove badge, a gear and a handle on every corner and edge', wig.anim === 'none' && wig.outline === 'dashed' && wig.remove === 'grid' && wig.gear === 'grid' && wig.handles === 8 && wig.ptr === 'none', JSON.stringify(wig));
   const wasCalm = await page("document.body.classList.contains('calm') && document.body.classList.contains('still')");
   await page("document.body.classList.add('calm', 'still')");
   const calm = await page(`(() => { const s = getComputedStyle(window.__t.card(${JSON.stringify(ID.weather)})); const g = document.createElement('div'); g.className = 'w-ghost'; document.getElementById('widgets').append(g); const gs = getComputedStyle(g); const out = { anim: s.animationName, outline: s.outlineStyle, ghost: gs.transitionDuration }; g.remove(); return out; })()`);
-  check('with Reduce motion: no wiggle, a static outline instead, and previews without animation', calm.anim === 'none' && calm.outline === 'dashed' && calm.ghost === '0s', JSON.stringify(calm));
+  check('with Reduce motion: still no wiggle, the static outline, and previews without animation', calm.anim === 'none' && calm.outline === 'dashed' && calm.ghost === '0s', JSON.stringify(calm));
   if (!wasCalm) await page("document.body.classList.remove('calm', 'still')");
   // Drag from anywhere on a card, resize from an edge.
   const w0 = (await W('list')).find((x) => x.id === paris.id);

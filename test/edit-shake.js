@@ -1,6 +1,6 @@
-// New-tab "Edit layout": every card must shake (the wiggle keyframes) whenever edit mode is on, and
-// stop when it ends. Checks the computed style of EVERY visible card (animation name, play state,
-// duration) and that it truly moves (the computed rotate changes over ~300 ms), in several situations:
+// New-tab "Edit layout": no card may wiggle, tilt or change shape in edit mode; each shows a dashed outline
+// instead, and none moves. Checks the computed style of EVERY visible card (animation name, outline) and that
+// it does not move (the computed rotate/transform stays the same over ~300 ms), in several situations:
 // a fresh page, after adding / moving / resizing a card, with a stack, over repeated enter/leave
 // cycles, after a drag-drop, and under the OS "reduce motion" preference (which deliberately swaps
 // the shake for a dashed outline: checked to be consistent for every card, and to resume afterwards).
@@ -51,12 +51,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const shaking = async (label, { reduced = false } = {}) => {
     const p = await page('window.__s.probe()');
-    const bad = p.cards.filter((k) => (reduced ? !(k.name === 'none' && k.outline === 'dashed' && !k.moves) : !(k.name === 'wiggle' && k.play === 'running' && k.dur > 0 && k.iter === 'infinite' && k.moves)));
-    check(`${label}: ${p.cards.length} card(s) ${reduced ? 'show the dashed outline, no motion' : 'shake (wiggle, running, duration > 0, rotation changes)'}`, p.editing && p.cards.length > 0 && bad.length === 0, JSON.stringify({ calm: p.calm, reduced: p.reduced, bad }));
+    const bad = p.cards.filter((k) => !(k.name === 'none' && k.outline === 'dashed' && !k.moves));
+    check(`${label}: ${p.cards.length} card(s) show the dashed outline, no motion`, p.editing && p.cards.length > 0 && bad.length === 0, JSON.stringify({ calm: p.calm, reduced: p.reduced, bad }));
   };
   const still = async (label) => {
     const p = await page('window.__s.probe()');
-    check(`${label}: no card shakes once edit mode is off`, !p.editing && p.cards.every((k) => k.name === 'none' && !k.moves), JSON.stringify(p.cards.filter((k) => k.name !== 'none' || k.moves)));
+    check(`${label}: no card has an outline or motion once edit mode is off`, !p.editing && p.cards.every((k) => k.name === 'none' && !k.moves), JSON.stringify(p.cards.filter((k) => k.name !== 'none' || k.moves)));
   };
 
   // 1. a fresh page
@@ -92,7 +92,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     window.__s.fire(document, 'pointerup', s.x + 40, s.y - 120); await window.__s.frame();
     return { lifted, after: getComputedStyle(card).animationName, cls: card.className };
   })()`);
-  check('while a card is held up it stops shaking (lifted), and shakes again as soon as it is dropped', drag.lifted === 'none' && drag.after === 'wiggle' && !/lifted|resizing/.test(drag.cls), JSON.stringify(drag));
+  check('a card held up and dropped never wiggles (lifted, then dropped)', drag.lifted === 'none' && drag.after === 'none' && !/lifted|resizing/.test(drag.cls), JSON.stringify(drag));
   await sleep(600); await shaking('after a drag and drop');
 
   // 4. with a stack
