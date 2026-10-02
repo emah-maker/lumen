@@ -159,23 +159,26 @@ function prioritize(items) {
 // ---- sentences made of several text nodes (on-device engine) ----
 // `A <b>quick</b> brown <a>fox</a> jumps.` is four text nodes. Sent one by one the engine sees four
 // fragments with no context, so the nodes of one block (items with the same `g` from the page's collect) are
-// joined into one segment, a private-use pair marking each seam, and the reply is cut at the seams again.
-// A reply whose seams don't add up is not trusted: that segment goes back to one request per node.
-const SEAM = '\uE000\uE001';
-const SEAM_SPLIT = /\s*\uE000\s*\uE001\s*/;
+// joined into one segment, a numbered marker ` ⟦1⟧ ` standing at each seam, and the reply is cut at the markers
+// again. Measured against the real engine (test/translate-seam-real.js): numbered ⟦n⟧ came back intact in
+// 8 of 8 sentences; a private-use pair only 5 of 8, and it garbled the words beside it. A reply whose
+// markers don't add up is not trusted: that segment goes back to one request per node, and after
+// SEAM_FAILS segments in a row do that the run (and the language pair, for the session) stops grouping.
 const SEGMENT_CHARS = 1200;
+const SEAM_FAILS = 3;
+const seamOf = (n) => ` ⟦${n}⟧ `;
+const SEAM_RE = /\s*⟦(\d+)⟧\s*/;
+const SEAM_CHARS = /[⟦⟧]/;
+const UNSPACED = /[฀-๿぀-ヿ㐀-鿿가-힯＀-￯]/; // scripts written without spaces between words
 function groupItems(items) {
   const out = [];
   let cur = null;
   const flush = () => {
     if (!cur) return;
-    if (cur.list.length === 1) { out.push(cur.list[0]); cur = null; return; }
+    // one node, or a marker already in the page's own text (it could not be told from ours): no grouping here
+    if (cur.list.length === 1 || cur.list.some((i) => SEAM_CHARS.test(i.text))) { out.push(...cur.list); cur = null; return; }
     let text = '';
-    cur.list.forEach((item, i) => {
-      text += item.text;
-      const next = cur.list[i + 1];
-      if (next) text += ((item.t || next.l) ? ' ' : '') + SEAM; // the space the page had between them stays outside the seam
-    });
+    cur.list.forEach((item, i) => { text += item.text + (i < cur.list.length - 1 ? seamOf(i + 1) : ''); });
     out.push({ id: cur.list[0].id, text, v: cur.list.some((i) => i.v), nodes: cur.list.map((i) => ({ id: i.id, text: i.text, v: i.v, l: i.l, t: i.t })) });
     cur = null;
   };
@@ -189,16 +192,29 @@ function groupItems(items) {
   flush();
   return out;
 }
-// A segment's translation -> [[nodeId, text]] or null when the seams were dropped, moved or invented.
+// A segment's translation -> [[nodeId, text, segmentId]] or null when the markers were dropped, moved, repeated or garbled.
 function splitSegment(segment, text) {
   if (typeof text !== 'string') return null;
-  const parts = text.split(SEAM_SPLIT);
-  if (parts.length !== segment.nodes.length) return null;
+  const k = segment.nodes.length;
+  const pieces = text.split(new RegExp(SEAM_RE.source, 'g')); // [part, n, part, n, part ...]
+  if (pieces.length !== 2 * k - 1) return null;
+  const parts = [];
+  for (let i = 0; i < pieces.length; i++) {
+    if (i % 2) { if (Number(pieces[i]) !== (i + 1) / 2) return null; continue; }
+    if (SEAM_CHARS.test(pieces[i])) return null;
+    parts.push(pieces[i]);
+  }
   const pairs = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (/[\uE000\uE001]/.test(parts[i])) return null;
-    if (segment.nodes[i].text.trim() && !parts[i].trim()) return null;
-    pairs.push([segment.nodes[i].id, parts[i]]);
+  for (let i = 0; i < k; i++) {
+    const node = segment.nodes[i];
+    // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧")
+    let out = parts[i];
+    // Written without spaces (Chinese, Japanese, Thai) into a language with them: nothing in the page separated
+    // these two nodes, so the words would be glued ("Ilike"). Put the space back.
+    const next = segment.nodes[i + 1];
+    if (next && !node.t && !next.l && (UNSPACED.test(node.text.slice(-1)) || UNSPACED.test(next.text.charAt(0)))
+      && /[\p{L}\p{N}]$/u.test(out) && /^[\p{L}\p{N}]/u.test(parts[i + 1]) && !UNSPACED.test(out.slice(-1)) && !UNSPACED.test(parts[i + 1].charAt(0))) out += ' ';
+    pairs.push([node.id, out, segment.id]);
   }
   return pairs;
 }
@@ -305,6 +321,15 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
     let gid = 0;
     let lastBlock = null;
     let seam = true; // something that is not translated sits between this node and the last one
+    let space = false; // a whitespace-only text node sits between this node and the last one
+    const brBefore = (node, block) => { // a <br> right before this text (inside its block)
+      for (let x = node; x && x !== block && x !== document.body; x = x.parentElement) {
+        let p = x.previousSibling;
+        while (p && p.nodeType === 3 && !/\\S/.test(p.data)) p = p.previousSibling;
+        if (p) return Boolean(p.tagName && String(p.tagName).toUpperCase() === 'BR');
+      }
+      return false;
+    };
     const onScreen = (el) => {
       if (!el) return false;
       let v = seen.get(el);
@@ -317,7 +342,12 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
     };
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (known.has(n) && !(mine.has(n) && n.data !== mine.get(n))) { seam = true; continue; }
-      if (!translatableText(n.data, n.parentElement)) { known.add(n); if (/\\S/.test(n.data)) seam = true; continue; }
+      if (!translatableText(n.data, n.parentElement)) {
+        known.add(n);
+        if (/\\S/.test(n.data)) seam = true;
+        else if (!seam) { space = true; if (out.length) out[out.length - 1].t = true; } // "<a>Home</a> <a>About</a>": the space belongs to the neighbours
+        continue;
+      }
       const [lead, core, trail] = split(n.data);
       if (chars + core.length > limit) { capped = true; break; }
       known.add(n);
@@ -325,8 +355,10 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
       byId.set(id, { node: n, orig: n.data, lead, trail });
       chars += core.length;
       const bk = blockOf(n.parentElement);
-      if (seam || bk !== lastBlock) { gid++; lastBlock = bk; seam = false; }
-      out.push({ id, text: core, v: onScreen(n.parentElement), g: gid, l: Boolean(lead), t: Boolean(trail) });
+      if (brBefore(n, bk)) seam = true; // a line break ends the sentence as far as grouping goes
+      if (seam || bk !== lastBlock) { gid++; lastBlock = bk; seam = false; space = false; }
+      out.push({ id, text: core, v: onScreen(n.parentElement), g: gid, l: Boolean(lead) || space, t: Boolean(trail) });
+      space = false;
     }
     return { items: out, chars, capped };
   }
@@ -345,12 +377,20 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
     sample: () => ({ lang: document.documentElement.lang || '', title: document.title || '', text: (document.body ? document.body.innerText : '').slice(0, 3000) }),
     collect,
     watch,
-    apply(pairs) {
+    apply(pairs) { // [id, text, segmentId?]: a segment's pieces are applied together or not at all
       let n = 0;
-      for (const [id, text] of pairs) {
+      const valid = (rec) => Boolean(rec) && rec.node.isConnected && (rec.node.data === rec.orig || rec.node.data === mine.get(rec.node));
+      // A node the page changed since it was collected goes back to be collected again, not lost.
+      const requeue = (id) => { const rec = byId.get(id); if (rec && rec.node.isConnected) { known.delete(rec.node); byId.delete(id); dirty = Date.now(); } };
+      const segments = new Map();
+      for (const [id, , seg] of pairs) if (seg !== undefined) { if (!segments.has(seg)) segments.set(seg, []); segments.get(seg).push(id); }
+      const held = new Set();
+      for (const [seg, ids] of segments) if (!ids.every((id) => valid(byId.get(id)))) { held.add(seg); ids.forEach(requeue); }
+      for (const [id, text, seg] of pairs) {
         if (id === 0) { if (title === null) title = document.title; document.title = text; continue; }
+        if (seg !== undefined && held.has(seg)) continue;
         const rec = byId.get(id);
-        if (!rec || !rec.node.isConnected || rec.node.data !== rec.orig && rec.node.data !== mine.get(rec.node)) continue;
+        if (!valid(rec)) { requeue(id); continue; }
         const value = rec.lead + text + rec.trail;
         mine.set(rec.node, value);
         rec.node.data = value;
@@ -387,6 +427,7 @@ function createTranslate(deps) {
   const runs = new WeakMap(); // tab -> { token, timer, busy, url, via, abort, runner }
   const cache = new Map(); // `${url}|${target}|${engine}` -> Map(source text -> translation)
   const timings = new WeakMap(); // tab -> how long the last run took (measured, never sent anywhere)
+  const seamsBroken = new Set(); // language pairs whose engine mangles the segment markers (this session)
   let testEngine = null;
   let testLocal = null;
   let sendTimer = null;
@@ -526,19 +567,27 @@ function createTranslate(deps) {
     let done = 0;
     for (const chunk of chunks) {
       if (ctx.token !== runs.get(tab)?.token) return false;
-      let pending = chunk;
-      const attempts = pending.some((item) => item.nodes) ? 3 : 2; // a segment that fails gets one more round, node by node
-      for (let attempt = 0; attempt < attempts && pending.length; attempt++) {
-        const reply = await ctx.runner(pending, ctx.abort.signal);
+      // Each item has its own budget: 2 requests. A segment whose markers fail hands its nodes a fresh budget.
+      let pending = (ctx.noSeams ? chunk.flatMap((i) => i.nodes || [i]) : chunk).map((item) => ({ item, left: 2 }));
+      for (let round = 0; round < 3 && pending.length; round++) {
+        const sent = pending.map((p) => p.item);
+        const reply = await ctx.runner(sent, ctx.abort.signal);
         if (ctx.token !== runs.get(tab)?.token || !live(tab)) return false;
-        const { ok } = validateReply(pending, reply);
+        const { ok } = validateReply(sent, reply);
         const good = [];
         const retry = [];
-        for (const item of pending) {
-          if (!ok.has(item.id)) { retry.push(...(item.nodes || [item])); continue; }
+        for (const p of pending) {
+          const { item } = p;
+          const again = (list, left) => { for (const x of list) retry.push({ item: x, left }); };
+          if (!ok.has(item.id)) { if (item.nodes) again(item.nodes, 2); else if (p.left > 1) again([item], p.left - 1); continue; }
           if (item.nodes) {
             const cut = splitSegment(item, ok.get(item.id));
-            if (!cut) { retry.push(...item.nodes); continue; }
+            if (!cut) {
+              again(item.nodes, 2);
+              noteSeamFailure(ctx);
+              continue;
+            }
+            ctx.seamStreak = 0;
             good.push(...cut);
             map.set(item.text, ok.get(item.id));
           } else {
@@ -547,7 +596,7 @@ function createTranslate(deps) {
           }
         }
         if (good.length) { await script(tab, 'apply', good); ctx.firstAt ||= performance.now(); }
-        pending = retry;
+        pending = retry.map((r) => (ctx.noSeams && r.item.nodes ? null : r)).filter(Boolean);
       }
       done += chunk.length;
       onProgress?.(done / Math.max(1, fresh.length));
@@ -555,7 +604,14 @@ function createTranslate(deps) {
     return true;
   }
 
-  const grouped = (items, ctx) => (ctx.via === 'local' ? groupItems(items) : items); // the on-device engine gets whole sentences
+  // Segments whose markers keep failing cost a second request each and gain nothing: after SEAM_FAILS in a row
+  // the run goes node by node, and the language pair is remembered for the session.
+  function noteSeamFailure(ctx) {
+    ctx.seamStreak = (ctx.seamStreak || 0) + 1;
+    if (ctx.seamStreak >= SEAM_FAILS) { ctx.noSeams = true; if (ctx.pair) seamsBroken.add(ctx.pair); }
+  }
+
+  const grouped = (items, ctx) => (ctx.via === 'local' && !ctx.noSeams && !seamsBroken.has(ctx.pair) ? groupItems(items) : items); // the on-device engine gets whole sentences
 
   const failure = (code) => Object.assign(new Error(code), { code });
 
@@ -584,6 +640,7 @@ function createTranslate(deps) {
     if (!mine()) return false;
     if (!plan) throw failure('unsupported-pair');
     ctx.route = plan.route;
+    ctx.pair = plan.route.map((step) => step.join('>')).join(',');
     const pair = `${langName(lang)} → ${langName(target)}`;
     if (plan.missing > 0) {
       const size = MODELS.formatBytes(plan.missing);
@@ -805,6 +862,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, groupItems, splitSegment, SEAM, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };

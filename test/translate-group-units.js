@@ -1,23 +1,24 @@
 // On-device translation sends whole sentences, not one request per text node: the nodes of a block are
-// joined with private-use seams, and the reply is cut at the seams again (features/translate.js).
+// joined with numbered markers (" ⟦1⟧ "), and the reply is cut at the markers again (features/translate.js).
 // Plain Node: the page script (PAGE_SRC) runs against a small fake DOM through a fake tab.
 const vm = require('vm');
 const T = require('../src/features/translate');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
-const S = T.SEAM;
+const M = (n) => T.seamOf(n); // " ⟦n⟧ "
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const MARK = / ⟦\d+⟧ /g;
 
 // ---- a tiny DOM ----
-const INLINE = new Set(['B', 'A', 'I', 'EM', 'STRONG', 'SPAN', 'CODE', 'U', 'SMALL']);
+const INLINE = new Set(['B', 'A', 'I', 'EM', 'STRONG', 'SPAN', 'CODE', 'U', 'SMALL', 'BR', 'WBR']);
 function el(tag, children = [], attrs = {}) {
-  const node = { tagName: tag.toUpperCase(), children, parentElement: null, attrs, isContentEditable: false, classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
+  const node = { tagName: tag.toUpperCase(), nodeType: 1, children, parentElement: null, previousSibling: null, attrs, isContentEditable: false, classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
     getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => (attrs.offscreen || (node.parentElement && node.parentElement.attrs.offscreen) ? { width: 10, height: 10, top: 5000, bottom: 5010, left: 0, right: 10 } : { width: 10, height: 10, top: 10, bottom: 20, left: 0, right: 10 }) };
-  for (const c of children) c.parentElement = node;
+  children.forEach((c, i) => { c.parentElement = node; c.previousSibling = children[i - 1] || null; });
   return node;
 }
-const text = (data) => ({ nodeType: 3, data, parentElement: null, isConnected: true });
+const text = (data) => ({ nodeType: 3, data, parentElement: null, previousSibling: null, isConnected: true });
 function makeDom(blocks) {
   const body = el('body', blocks);
   const nodes = [];
@@ -41,9 +42,10 @@ function fakeTab(dom) {
   return { view: { webContents: wc } };
 }
 
-// A fake on-device engine. mode: 'keep' (upper-case each part, seams intact), 'drop' (seams lost), 'extra' (an invented seam),
-// 'swap' (parts reversed but seams intact: a legitimate reorder), 'lose-one' (one seam lost)
-function fakeLocal(mode, log) {
+// A fake on-device engine. mode: 'keep' (upper-case each part, markers intact), 'drop' (markers lost), 'extra' (an invented
+// marker), 'swap' (parts reversed, markers in order: a legitimate reorder), 'lose-one' (one marker lost), 'garble' (markers
+// turned into private-use junk), or a function (text) -> reply for full control.
+function fakeLocal(mode, log, hooks = {}) {
   return {
     supports: () => true,
     plan: async () => ({ route: [['fr', 'en']], missing: 0, total: 0 }),
@@ -51,31 +53,40 @@ function fakeLocal(mode, log) {
     ensure: async () => {},
     translate: async (_route, texts) => {
       log.push([...texts]);
+      hooks.onRequest?.(texts);
       return texts.map((t) => {
-        if (!t.includes(S)) return t.toUpperCase();
-        const parts = t.split(S);
-        if (mode === 'drop') return parts.map((p) => p.toUpperCase()).join('');
-        if (mode === 'extra') return parts.map((p) => p.toUpperCase()).join(S) + S;
-        if (mode === 'lose-one') return parts.map((p) => p.toUpperCase()).join(S).replace(S, '');
-        if (mode === 'swap') return parts.map((p) => p.trim().toUpperCase()).reverse().join(` ${S}`);
-        return parts.map((p) => p.toUpperCase()).join(S);
+        if (typeof mode === 'function') return mode(t);
+        const marks = t.match(MARK);
+        if (!marks) return t.toUpperCase();
+        const parts = t.split(MARK).map((p) => p.toUpperCase());
+        const joinWith = (list) => parts.reduce((out, p, i) => out + (i ? list[i - 1] : '') + p, '');
+        if (mode === 'drop') return parts.join(' ');
+        if (mode === 'extra') return `${joinWith(marks)} ⟦9⟧ `;
+        if (mode === 'lose-one') return [parts[0] + ' ' + parts[1], ...parts.slice(2)].reduce((out, p, i) => out + (i ? marks[i] : '') + p, '');
+        if (mode === 'garble') return parts.join('');
+        if (mode === 'swap') return [...parts].reverse().reduce((out, p, i) => out + (i ? marks[i - 1] : '') + p, '');
+        return joinWith(marks);
       });
     },
   };
 }
+const newTr = (local, settings = {}) => T.createTranslate({ readSettings: () => settings, writeSettings() {}, t: (k) => k, uiLocale: () => 'en', engine: () => null, aiAllowed: () => true, sendTabs() {}, popupMenu() {}, openUrl() {}, local });
 
-async function run(blocks, mode, { local = null, settings = {} } = {}) {
+async function run(blocks, mode, { local = null, settings = {}, tr = null, hooks = {}, after = null } = {}) {
   const dom = makeDom(blocks);
   const tab = fakeTab(dom);
   const log = [];
-  const tr = T.createTranslate({ readSettings: () => settings, writeSettings() {}, t: (k) => k, uiLocale: () => 'en', engine: () => null, aiAllowed: () => true, sendTabs() {}, popupMenu() {}, openUrl() {}, local: local ? local(fakeLocal(mode, log)) : fakeLocal(mode, log) });
-  tr.start(tab, { want: 'local' });
-  for (let i = 0; i < 100 && !tr.isTranslated(tab) && tr.stateOf(tab)?.phase !== 'error'; i++) await sleep(20);
-  const state = tr.stateOf(tab);
+  const engine = fakeLocal(mode, log, hooks);
+  const api = tr || newTr(local ? local(engine) : engine, settings);
+  api.start(tab, { want: 'local' });
+  for (let i = 0; i < 150 && !api.isTranslated(tab) && api.stateOf(tab)?.phase !== 'error'; i++) await sleep(20);
+  const state = api.stateOf(tab);
   const snap = dom.nodes.map((n) => n.data); // what the page showed when the run finished
-  tr.act(tab, 'original');
-  return { dom, log, state, snap, flat: log.flat() };
+  const extra = after ? await after(tab.view.webContents, dom) : null;
+  api.act(tab, 'original');
+  return { dom, log, state, snap, flat: log.flat(), extra, api };
 }
+const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
 
 (async () => {
   // ---- pure helpers ----
@@ -85,28 +96,44 @@ async function run(blocks, mode, { local = null, settings = {} } = {}) {
   ];
   const grouped = T.groupItems(items);
   check('group: nodes of one block become one segment, other blocks and the title stay alone', grouped.length === 3 && grouped[0].nodes.length === 3 && grouped[0].id === 1 && grouped[1].id === 4 && grouped[2].id === 0, JSON.stringify(grouped));
-  check('group: the seam sits after the space the page had, and the segment is visible if any node is', grouped[0].text === `A ${S}quick ${S}brown` && grouped[0].v === true, JSON.stringify(grouped[0].text));
+  check('group: numbered markers stand between the nodes, and the segment is visible if any node is', grouped[0].text === `A${M(1)}quick${M(2)}brown` && grouped[0].v === true, JSON.stringify(grouped[0].text));
   check('group: a lone node is passed through untouched', grouped[1] === items[3], '');
   check('group: a very long block is cut into several segments', T.groupItems(Array.from({ length: 10 }, (_v, i) => ({ id: i + 1, text: 'x'.repeat(300), g: 1 }))).length > 1, '');
+  const withOwn = T.groupItems([{ id: 1, text: 'Use ⟦1⟧ for', g: 1 }, { id: 2, text: 'quotes', g: 1 }, { id: 3, text: 'fine', g: 2 }, { id: 4, text: 'also', g: 2 }]);
+  check('group: a block whose own text holds a marker is not grouped (no doomed double request); other blocks still are', withOwn.length === 3 && !withOwn[0].nodes && !withOwn[1].nodes && withOwn[2].nodes?.length === 2, JSON.stringify(withOwn));
   const seg = grouped[0];
-  check('split: a reply with the same seams is cut back into nodes', JSON.stringify(T.splitSegment(seg, `UN ${S}RAPIDE ${S}BRUN`)) === '[[1,"UN"],[2,"RAPIDE"],[3,"BRUN"]]', JSON.stringify(T.splitSegment(seg, `UN ${S}RAPIDE ${S}BRUN`)));
-  check('split: dropped, extra or half-lost seams are refused', T.splitSegment(seg, 'UN RAPIDE BRUN') === null && T.splitSegment(seg, `UN ${S}RAPIDE ${S}BRUN ${S}`) === null && T.splitSegment(seg, `UN RAPIDE ${S}BRUN`) === null && T.splitSegment(seg, `UN ${S}${S}BRUN`) === null && T.splitSegment(seg, `UN  RAPIDE ${S}BRUN`) === null, '');
-  check('split: an empty part for a node with text is refused', T.splitSegment(seg, `UN ${S} ${S}BRUN`) === null, '');
+  const cut = T.splitSegment(seg, `UN${M(1)}RAPIDE${M(2)}BRUN`);
+  check('split: a reply with the same markers is cut back into nodes (tagged with the segment)', JSON.stringify(cut) === '[[1,"UN",1],[2,"RAPIDE",1],[3,"BRUN",1]]', JSON.stringify(cut));
+  check('split: tolerant of the engine\'s spacing around a marker', T.splitSegment(seg, 'UN⟦1⟧RAPIDE   ⟦2⟧ BRUN')?.length === 3 && T.splitSegment(seg, 'UN  ⟦1⟧  RAPIDE ⟦2⟧BRUN')?.length === 3, '');
+  check('split: dropped, extra, repeated, reordered, renumbered or garbled markers are refused',
+    T.splitSegment(seg, 'UN RAPIDE BRUN') === null && T.splitSegment(seg, `UN${M(1)}RAPIDE${M(2)}BRUN${M(3)}`) === null && T.splitSegment(seg, `UN RAPIDE${M(2)}BRUN`) === null
+    && T.splitSegment(seg, `UN${M(2)}RAPIDE${M(1)}BRUN`) === null && T.splitSegment(seg, `UN${M(1)}${M(1)}BRUN`) === null && T.splitSegment(seg, `UN ⟦1 RAPIDE ⟦2⟧ BRUN`) === null && T.splitSegment(seg, 'UNRAPIDEBRUN') === null, '');
+  check('split: an empty part is accepted (the engine moved that node words into a neighbour) as long as the markers are all there', T.splitSegment(seg, `UN RAPIDE${M(1)}${M(2)}BRUN`)?.length === 3, '');
+  // CJK -> spaced language: the page had nothing between the nodes, so the words must not be glued
+  const cjk = T.groupItems([{ id: 1, text: '私は', g: 1, l: false, t: false }, { id: 2, text: '猫', g: 1, l: false, t: false }, { id: 3, text: 'が好きです', g: 1, l: false, t: false }])[0];
+  const glued = T.splitSegment(cjk, `I${M(1)}like${M(2)}cats`);
+  check('CJK source: words that the page did not separate get a space in a spaced target', glued.map((p) => p[1]).join('') === 'I like cats', JSON.stringify(glued));
+  const latin = T.groupItems([{ id: 1, text: 'un', g: 1, l: false, t: false }, { id: 2, text: 'able', g: 1, l: false, t: false }])[0];
+  check('Latin source mid-word: no space is invented', T.splitSegment(latin, `un${M(1)}able`).map((p) => p[1]).join('') === 'unable', '');
+  const spaced = T.groupItems([{ id: 1, text: '私は', g: 1, l: false, t: true }, { id: 2, text: '猫', g: 1, l: false, t: false }])[0];
+  check('CJK source: where the page had a space, nothing extra is added', T.splitSegment(spaced, `I${M(1)}cats`).map((p) => p[1]).join('') === 'Icats', '');
+  const zhToJa = T.groupItems([{ id: 1, text: '我', g: 1, l: false, t: false }, { id: 2, text: '猫', g: 1, l: false, t: false }])[0];
+  check('CJK to CJK: no space is added', T.splitSegment(zhToJa, `私${M(1)}猫`).map((p) => p[1]).join('') === '私猫', '');
 
   // ---- through the page script and the run ----
   {
-    const { snap, log, state, flat } = await run([
+    const { dom, log, state, flat, snap } = await run([
       el('p', [text('A '), el('b', [text('quick')]), text(' brown '), el('a', [text('fox')]), text(' jumps.')]),
     ], 'keep');
-    check('inline markup: A <b>quick</b> brown <a>fox</a> jumps. goes as one sentence in one request', state.phase === 'done' && log.length === 1 && flat.length === 1 && flat.some((t) => t === `A ${S}quick ${S}brown ${S}fox ${S}jumps.`), JSON.stringify(log));
-    check('inline markup: each node gets its own part back, its spaces kept', snap.join('') === 'A QUICK BROWN FOX JUMPS.', snap.join('|'));
+    check('inline markup: A <b>quick</b> brown <a>fox</a> jumps. goes as one sentence in one request', state.phase === 'done' && log.length === 1 && flat.length === 1 && flat[0] === `A${M(1)}quick${M(2)}brown${M(3)}fox${M(4)}jumps.`, JSON.stringify(log));
+    check('inline markup: each node gets its own part back, its spaces kept', snap.join('') === 'A QUICK BROWN FOX JUMPS.' && dom.nodes.length === 5, snap.join('|'));
   }
   {
     const { snap, flat } = await run([
       el('p', [text('Hello '), el('b', [text('world')])]),
       el('ul', [el('li', [text('First '), el('i', [text('item')])]), el('li', [text('Second')])]),
     ], 'keep');
-    check('blocks: each p / li is its own sentence', flat.filter((t) => t.includes(S)).length === 2 && flat.includes('Second'), JSON.stringify(flat));
+    check('blocks: each p / li is its own sentence', flat.filter((t) => /⟦/.test(t)).length === 2 && flat.includes('Second'), JSON.stringify(flat));
     check('blocks: text of other blocks never mixes', snap.join('') === 'HELLO WORLDFIRST ITEMSECOND', snap.join('|'));
   }
   {
@@ -118,29 +145,84 @@ async function run(blocks, mode, { local = null, settings = {} } = {}) {
     const area = dom.nodes.find((n) => n.data === 'draft text');
     const skip = dom.nodes.find((n) => n.data === 'skip me');
     check('excluded: code, textarea and translate=no text are never sent and never changed', code && area && skip && !flat.some((t) => /npm install|draft text|skip me/.test(t)), JSON.stringify(flat));
-    check('excluded: they also break the sentence (no seam stands in for them)', flat.includes('Use') && flat.includes('now') && flat.includes('Name') && !flat.some((t) => /Use .*now/.test(t)), JSON.stringify(flat));
+    check('excluded: they also break the sentence (no marker stands in for them)', flat.includes('Use') && flat.includes('now') && flat.includes('Name') && !flat.some((t) => /Use .*now/.test(t)), JSON.stringify(flat));
   }
-  for (const mode of ['drop', 'extra', 'lose-one']) {
-    const { snap, log, state } = await run([el('p', [text('A '), el('b', [text('quick')]), text(' brown')])], mode);
-    const segmentSent = log[0]?.some((t) => t.includes(S));
+  {
+    const { flat, snap } = await run([el('p', [el('a', [text('Home')]), text(' '), el('a', [text('About')]), text(' '), el('a', [text('Contact')])])], 'keep');
+    check('whitespace-only node between inline elements: the links are one segment', flat.length === 1 && flat[0] === `Home${M(1)}About${M(2)}Contact`, JSON.stringify(flat));
+    check('whitespace-only node: the space stays where the page had it', snap.join('|') === 'HOME| |ABOUT| |CONTACT', snap.join('|'));
+  }
+  {
+    const { flat } = await run([el('p', [text('Line one '), el('br', []), text('Line two '), el('b', [text('bold')])])], 'keep');
+    check('<br> ends a group: text on either side of a line break is not one sentence', flat.includes('Line one') && flat.some((t) => t === `Line two${M(1)}bold`) && !flat.some((t) => /Line one.*⟦/.test(t)), JSON.stringify(flat));
+    const wbr = await run([el('p', [text('super'), el('wbr', []), text('califragilistic'), el('b', [text(' word')])])], 'keep');
+    check('<wbr> is only a break opportunity: it does not split a word\'s pieces apart', wbr.flat.length === 1 && /⟦1⟧/.test(wbr.flat[0]), JSON.stringify(wbr.flat));
+  }
+  for (const mode of ['drop', 'extra', 'lose-one', 'garble']) {
+    const { log, state, snap } = await run([el('p', [text('A '), el('b', [text('quick')]), text(' brown')])], mode);
     const perNode = log.slice(1).flat();
-    check(`fallback (${mode}): a reply with the wrong number of seams is not used; the nodes are translated one by one instead`, state.phase === 'done' && segmentSent && ['A', 'quick', 'brown'].every((w) => perNode.includes(w)) && snap.map((d) => d.trim()).join('|') === 'A|QUICK|BROWN', `${JSON.stringify(log)} ${snap}`);
+    check(`fallback (${mode}): a reply with broken markers is not used; the nodes are translated one by one instead`, state.phase === 'done' && /⟦/.test(log[0]?.[0] || '') && ['A', 'quick', 'brown'].every((w) => perNode.includes(w)) && snap.map((d) => d.trim()).join('|') === 'A|QUICK|BROWN', `${JSON.stringify(log)} ${snap}`);
   }
   {
     const { snap, state } = await run([el('p', [text('one '), el('b', [text('two')])])], 'swap');
-    check('reorder: a reply that moves the words but keeps every seam is applied', state.phase === 'done' && snap.map((d) => d.trim()).join('|') === 'TWO|ONE', snap);
+    check('reorder: a reply that moves the words but keeps every marker in order is applied', state.phase === 'done' && snap.map((d) => d.trim()).join('|') === 'TWO|ONE', snap);
   }
   {
     const { log } = await run([
       el('p', [text('far below '), el('b', [text('the fold')])], { offscreen: true }),
       el('p', [text('on '), el('b', [text('screen')])]),
     ], 'keep');
-    check('order: what is on screen is sent first, whole sentences', log[0] && log[0][0].startsWith(`on ${S}screen`.slice(0, 3)) && log[0][0].includes('screen'), JSON.stringify(log));
+    check('order: what is on screen is sent first, whole sentences', log[0] && log[0][0].startsWith('on ') && log[0][0].includes('screen'), JSON.stringify(log));
   }
   {
     const { log } = await run([el('p', [text('Alpha '), el('b', [text('beta')])]), el('p', [text('Gamma')])], 'keep');
     const first = log[0] || [];
-    check('first chunk: the small first request still holds whole segments', first.length >= 1 && first.every((t) => !t.endsWith(S) && !t.startsWith(S)), JSON.stringify(log));
+    check('first chunk: the small first request still holds whole segments', first.length >= 1 && first.every((t) => !/⟦\d+⟧\s*$/.test(t) && !/^\s*⟦/.test(t)), JSON.stringify(log));
+  }
+
+  // ---- a page that changes under us: a segment is applied whole or not at all ----
+  {
+    const dom = makeDom([el('p', [text('A '), el('b', [text('quick')]), text(' brown')])]);
+    const tab = fakeTab(dom);
+    const log = [];
+    const engine = fakeLocal('keep', log, { onRequest: () => { dom.nodes[1].data = 'quick (edited by the page)'; } });
+    const api = newTr(engine);
+    api.start(tab, { want: 'local' });
+    for (let i = 0; i < 150 && !api.isTranslated(tab) && api.stateOf(tab)?.phase !== 'error'; i++) await sleep(20);
+    const data = dom.nodes.map((n) => n.data);
+    check('changed mid-run: when one node of a segment changed, none of its pieces is applied (no half-translated sentence)', data[0] === 'A ' && data[1] === 'quick (edited by the page)' && data[2] === ' brown', data.join('|'));
+    const again = await tab.view.webContents.executeJavaScriptInIsolatedWorld(1010, [{ code: `${T.PAGE_SRC}\n;__lumenTr.collect(250000)` }]);
+    check('changed mid-run: the skipped nodes are collected again for the next pass, not lost', again.items.length === 3, JSON.stringify(again.items));
+    api.act(tab, 'original');
+  }
+
+  // ---- budgets and the kill switch ----
+  {
+    // one chunk: a segment whose markers always fail, and a plain node the engine always answers with nothing
+    const { log } = await run([el('p', [text('A '), el('b', [text('quick')]), text(' brown')]), el('p', [text('Alpha')])], (t) => (t === 'Alpha' ? '' : t.replace(MARK, ' ').toUpperCase()));
+    const alphaRequests = log.flat().filter((t) => t === 'Alpha').length;
+    check('budget: a plain node gets its own 2 requests, even when a segment in its chunk needs a third round', alphaRequests === 2, `${alphaRequests} ${JSON.stringify(log)}`);
+  }
+  {
+    // many blocks, the engine always drops the markers: after SEAM_FAILS bad segments in a row the rest goes node by node
+    const blocks = Array.from({ length: 10 }, (_v, i) => el('p', [text(`Sentence number ${i} is long enough ${'x'.repeat(380)} `), el('b', [text(`bold ${i}`)])]));
+    const r1 = await run(blocks, 'drop');
+    const grouped1 = withSeams(r1.log).length;
+    check(`kill switch: after ${T.SEAM_FAILS} failed segments in a row the run stops grouping (${grouped1} of 10 segments were ever tried)`, grouped1 >= T.SEAM_FAILS && grouped1 < 10 && r1.state.phase === 'done', `${grouped1} ${r1.state.phase}`);
+    const requests1 = r1.log.length;
+    check('kill switch: every node still ends up translated', r1.snap.every((d) => d === d.toUpperCase() || d.trim() === ''), r1.snap.slice(0, 3));
+    // the same pair in a later run of the same session: grouping is off from the start
+    const r2 = await run(blocks, 'drop', { tr: r1.api });
+    check('kill switch: the language pair is remembered for the session (no markers sent at all next time)', withSeams(r2.log).length === 0 && r2.state.phase === 'done', `${withSeams(r2.log).length}`);
+    check('kill switch: a bad engine costs a bounded number of requests', requests1 <= 2 + Math.ceil(10 / 2) + 2 && r2.log.length <= requests1, `${requests1} ${r2.log.length}`);
+  }
+  {
+    // one good segment between failures resets the streak
+    const blocks = [0, 1, 2, 3, 4, 5].map((i) => el('p', [text(`Sentence ${i} ${'y'.repeat(700)} `), el('b', [text(`bold ${i}`)])]));
+    let n = 0;
+    const flaky = (t) => { if (!/⟦/.test(t)) return t.toUpperCase(); n++; return n % 3 === 0 ? t.toUpperCase() : t.replace(MARK, ' ').toUpperCase(); };
+    const r = await run(blocks, flaky);
+    check('kill switch: a segment that works resets the count (a mostly fine engine keeps grouping)', withSeams(r.log).length >= 6, `${withSeams(r.log).length}`);
   }
 
   // ---- a download that is stopped from elsewhere ----

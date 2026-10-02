@@ -2060,11 +2060,23 @@ function buildTranslatePacks(card) {
   const note = status('translate-offline-status');
   let busy = false;
   let downloadingCode = '';
+  // Delete asks twice (a second click within 4 seconds): a pack is 20 to 55 MB of download.
+  const confirmDelete = (label, confirmLabel, action, cls = 'danger', id) => {
+    const b = h('button', { class: cls, text: label, ...(id ? { id } : {}) });
+    let timer = 0;
+    const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); };
+    b.addEventListener('click', () => {
+      if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; timer = setTimeout(reset, 4000); return; }
+      reset();
+      action();
+    });
+    return b;
+  };
   const arrow = (a, b) => `${a === 'en' ? langName('en') : langName(a)} → ${b === 'en' ? langName('en') : langName(b)}`;
   const render = (data) => {
     list.replaceChildren(...(data.installed.length ? data.installed.map((p) => h('div', { class: 'item' },
       h('span', { class: 'grow', text: `${arrow(p.from, p.to)} · ${bytes(p.bytes)}` }),
-      h('button', { class: 'danger', text: tr('settings.translate.packs.delete', 'Delete'), onclick: async () => render(await S.translatePacks.remove(p.from, p.to)) })))
+      confirmDelete(tr('settings.translate.packs.delete', 'Delete'), tr('settings.translate.packs.deleteSure', 'Delete? Click again'), async () => render(await S.translatePacks.remove(p.from, p.to)))))
       : [h('span', { class: 'note', text: tr('settings.translate.packs.none', 'None yet. A pack downloads the first time you translate to or from a language.') })]));
     total.textContent = data.installed.length ? tr('settings.translate.packs.total', 'Using {size} in total.', { size: bytes(data.used) }) : '';
     sizes = new Map(data.languages.map((l) => [l.code, l.missing || l.bytes]));
@@ -2105,7 +2117,7 @@ function buildTranslatePacks(card) {
   S.translatePacks.list().then(render).catch(() => {});
   card.append(
     stackRow(tr('settings.translate.packs', 'Language packs on this device'), tr('settings.translate.packsDesc', 'Downloaded from Mozilla, stored in Lumen’s data folder, and used only by on-device translation.'), list,
-      h('div', { class: 'controls' }, total, h('button', { class: 'danger', id: 'translate-packs-delete-all', text: tr('settings.translate.packs.deleteAll', 'Delete all'), onclick: async () => render(await S.translatePacks.removeAll()) }))),
+      h('div', { class: 'controls' }, total, confirmDelete(tr('settings.translate.packs.deleteAll', 'Delete all'), tr('settings.translate.packs.deleteAllSure', 'Delete all packs? Click again'), async () => render(await S.translatePacks.removeAll()), 'danger', 'translate-packs-delete-all'))),
     stackRow(tr('settings.translate.offline', 'Download for offline'), tr('settings.translate.offlineDesc', 'Get a language’s packs (to and from English) now, so translating works with no connection. Two languages without a pack between them go through English.'),
       h('div', { class: 'controls start' }, pickLang, go, stop, note)),
   );
