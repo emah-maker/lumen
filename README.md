@@ -298,6 +298,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 
 ## Layout

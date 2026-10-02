@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Routines: save a request as a task the AI repeats on a schedule, like Comet's scheduled tasks: once, every day, weekdays, chosen days, every few hours or a cron schedule, in local time. Make one in Tasks → Routines (with templates for a morning news brief, checking a page for changes and a weekly site summary), with `/routine every weekday at 8am: …`, or with Save as routine on a reply. A run sends a notification and keeps its result in the routine's history (the last 20). Routines run while Lumen is open; a time missed while it was closed or asleep runs once when it is back, never two copies at once, and offline they wait for the connection. A scheduled run asks for the same approvals as any background task. See [Routines](docs/routines.md).
+
 ## 0.5.0 (2026-10-01)
 
 - Private windows have the protections of a normal window: Safe Browsing, the ad blocker, HTTPS-only, error and certificate pages, and the permission defaults from Settings. Zoom, permissions and "Continue" choices made in a private window stay in that window and are never saved. Private windows also get downloads (kept in memory only), find in page, more shortcuts, a fuller right-click menu, a redesigned tab strip and a new-tab page that says what is and isn't kept.
