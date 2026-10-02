@@ -235,7 +235,7 @@ const J = (v) => JSON.stringify(v);
     check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
     check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
   }
-  check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
+  check('marks: the tab mark and the list badge are the same size (12px)', /\.tab-chat-mark \{[^}]*width: 12px; height: 12px/.test(css) && /\.chat-badge \{[^}]*width: 12px; height: 12px/.test(css));
 }
 
 // ---- tool target

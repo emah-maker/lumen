@@ -279,9 +279,9 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
    one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
    Self-contained: everything it needs is under .tab-chat-mark. */
-.tab-chat-mark { display: none; flex: none; width: 14px; height: 14px; margin-left: -2px; pointer-events: none; color: var(--accent); }
+.tab-chat-mark { display: none; flex: none; width: 12px; height: 12px; margin-left: -2px; pointer-events: none; color: var(--accent); }
 .tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
-.tab-chat-mark svg { display: block; width: 14px; height: 14px; overflow: visible; }
+.tab-chat-mark svg { display: block; width: 12px; height: 12px; overflow: visible; }
 .tab-chat-mark .cm-spin { animation: spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .tab-chat-mark .cm-still { display: none; }
 .tab-chat-mark.waiting { color: var(--muted); }
@@ -1458,8 +1458,8 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
-.chat-badge { display: inline-block; width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; color: var(--accent); }
-.chat-badge svg { display: block; width: 14px; height: 14px; overflow: visible; }
+.chat-badge { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; color: var(--accent); }
+.chat-badge svg { display: block; width: 12px; height: 12px; overflow: visible; }
 .chat-badge .cm-spin { animation: chat-spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .chat-badge .cm-still { display: none; }
 .chat-badge.queued { color: var(--muted); }
