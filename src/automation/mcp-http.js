@@ -85,14 +85,19 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
 
   // Antigravity's hooks (antigravity.js hooksFor, agy's hooks.md): PreToolUse posts { toolCall: { name, args } } and reads
   // { decision: allow | deny, reason }, before agy's own permission layer; PreInvocation posts no toolCall and only marks the run as
-  // seen. Lumen's own MCP tools (any name with "lumen" in it) go through; a shell, file or browser tool of agy's own is denied: an
-  // Antigravity run has Lumen's tools only. Tool names are agy's, lowercased step types (run_command, write_to_file, view_file...).
-  const AGY_ACTING = /(command|terminal|shell|bash|exec|run_|write|edit|replace|delete|remove|create|move|rename|file|url|browser)/i;
+  // seen. Fail closed, like gateDecision for Grok: only a qualified Lumen MCP tool (AGY_LUMEN_PREFIX + one of Lumen's tool names)
+  // or one of agy's read-only built-ins (AGY_READS) is allowed; every other name (generate_image, invoke_subagent, anything
+  // unknown, a "lumen" that is only part of another server's name) is denied. An Antigravity run has Lumen's tools only.
+  // UNVERIFIED: agy's real qualified MCP tool names have not been captured from a signed-in run. Run one signed-in `agy` turn
+  // with LUMEN_AGY_DEBUG set; if Lumen's tools are denied, add the real prefix form to AGY_LUMEN_PREFIX. AGY_READS is the same
+  // kind of list: extend it if a harmless built-in is refused.
+  const AGY_LUMEN_PREFIX = /^(?:mcp[_-]{1,2})?lumen(?:__|_|\/|\.|:)([\w-]+)$/i; // mcp_lumen_click, mcp__lumen__click, lumen__click, lumen/click
   const AGY_READS = /^(view_file|view_file_outline|view_code_item|view_content_chunk|list_dir|grep_search|find_by_name|command_status|read_terminal|list_resources|read_resource)$/i;
   function agyDecision(run, msg) {
     if (!msg?.toolCall) { run.armed = true; return {}; }
     const name = String(msg.toolCall.name || '');
-    if (/lumen/i.test(name) || AGY_READS.test(name) || !AGY_ACTING.test(name)) return { decision: 'allow' };
+    const m = AGY_LUMEN_PREFIX.exec(name);
+    if ((m && toolNames().includes(m[1])) || AGY_READS.test(name)) return { decision: 'allow' };
     return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
@@ -125,6 +130,16 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     req.setEncoding('utf8');
     req.on('data', (c) => { size += c.length; if (size > MAX_BODY) { req.destroy(); return; } body += c; });
     req.on('end', async () => {
+      try {
+        await handleBody();
+      } catch (err) {
+        // A rejected handler must not leave the request hanging (or reach the global unhandledRejection logger).
+        if (!res.headersSent) json(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } });
+        else res.end();
+        console.error('MCP http:', err?.message || err);
+      }
+    });
+    async function handleBody() {
       let msg = null;
       try { msg = JSON.parse(body); } catch {}
       if (hookToken) {
@@ -152,7 +167,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       await session.handle(msg);
       const out = await Promise.race([answer, new Promise((r) => setTimeout(() => r(null), 10))]) || (session.pending.delete(msg.id), { jsonrpc: '2.0', id: msg.id, result: {} });
       return json(200, out);
-    });
+    }
   });
   server.on('clientError', (_err, socket) => socket.destroy());
   return new Promise((resolve, reject) => {
