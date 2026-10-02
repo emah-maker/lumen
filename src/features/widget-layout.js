@@ -53,12 +53,13 @@ const LIMITS = {
   notes: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   countdown: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   timer: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  aistatus: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   custom: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   embed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   muse: { minW: 3, minH: 3, maxW: 12, maxH: 20 },
 };
 const FALLBACK_LIMITS = { minW: 2, minH: 2, maxW: 12, maxH: 20 };
-const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, tradingview: { w: 6, h: 6 }, notes: { w: 3, h: 4 }, countdown: { w: 3, h: 3 }, timer: { w: 3, h: 3 }, custom: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
+const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, tradingview: { w: 6, h: 6 }, notes: { w: 3, h: 4 }, countdown: { w: 3, h: 3 }, timer: { w: 3, h: 3 }, aistatus: { w: 3, h: 3 }, custom: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
 // A new card's width is capped to the free side area beside the centre column (3 columns of 12 with a 6-column
 // centre), so it lands beside the search bar instead of below it. A web page (embed) and a TradingView chart keep their wide defaults.
 const SIDE_DEFAULT = 3;

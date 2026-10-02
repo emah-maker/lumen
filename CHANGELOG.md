@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New home-page widget, AI status: which of your AIs are ready, signed out or at a limit (Claude, OpenAI, Grok, Gemini, OpenRouter, and your own Claude Code, Grok Build and Antigravity), the model in use, a limit with its reset time and Claude Code's 5-hour reading when Lumen knows them, and a live strip of chats working and waiting, tabs the AI opened and Hands-off. It shrinks to a summary line ("3 ready · 1 working") and a dot per AI on a small card, and shows more as it grows. It updates by itself and only uses what Lumen already knows on this computer: no new network calls, and no keys or sign-ins are shown.
+
 ## 0.5.2 (2026-10-02)
 
 - AI tab manners: tabs the AI opens are marked in the tab strip (with an "Opened by AI" note on hover) and open in the background. Close them again in one step, with Undo, from under the reply, the tab menu or the chat menu; Settings → AI → close tabs the AI opened is Off, Ask or Always, and it never closes a tab you used, a pinned tab or the tab a chat lives in. A button on the tab strip hides the tabs the AI opened (they stay open; the tab in front stays shown).

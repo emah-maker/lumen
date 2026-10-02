@@ -10,9 +10,9 @@
 (function () {
 'use strict';
 
-const KINDS = ['notes', 'countdown', 'timer', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
+const KINDS = ['notes', 'countdown', 'timer', 'aistatus', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
 const EDIT_ONLY = ['crypto']; // edited here, added in Settings (the optional key lives there)
-const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
+const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
 const CLOCKS = [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 // features/feed.js PRESETS (test/widget-config-units.js keeps the two lists the same).
 const FEEDS = [['bloomberg-markets', 'Bloomberg Markets'], ['bloomberg-technology', 'Bloomberg Technology'], ['bloomberg-politics', 'Bloomberg Politics'], ['hn', 'Hacker News'], ['hn-frontpage', 'Hacker News (hnrss.org)'], ['npr', 'NPR News']];
@@ -80,6 +80,7 @@ const bool = (v) => v === 'on';
 // Each kind: its fields (from what is saved, if anything) and read() -> the input main.js checks.
 const FORMS = {
   notes: () => ({ nodes: [el('p', 'ws-note', 'Type straight on the card. It saves as you go and stays on this computer.')], read: () => ({}) }),
+  aistatus: () => ({ nodes: [el('p', 'ws-note', 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer.')], read: () => ({}) }),
   countdown(s) {
     const cd = s.cd || {};
     const label = input('text', cd.label, { maxlength: '60', placeholder: 'Vacation' });
