@@ -50,7 +50,9 @@
 // addition: if agy does not load or honour them, the permission rules above still decline those tools.
 //
 // UNVERIFIED (needs a live headless run; check before relying on them):
-//   1. The tool name agy gives an MCP tool (offToolOf and agyDecision accept any name containing "lumen").
+//   1. The tool name agy gives an MCP tool (agyDecision allows only mcp_lumen_<tool>, mcp__lumen__<tool>, lumen__<tool> and similar qualified forms of Lumen's own
+//      tool names and denies everything else; offToolOf is looser and accepts any name containing "lumen". One signed-in agy
+//      run with LUMEN_AGY_DEBUG set confirms the real form; if Lumen's tools are denied, extend AGY_LUMEN_PREFIX in mcp-http.js).
 //   2. That serverUrl takes http://127.0.0.1 with an Authorization header and plain JSON answers (mcp_servers.md calls
 //      serverUrl "SSE"; the public docs say "Streamable HTTP or SSE"). LUMEN_AGY_MCP=stdio switches to the stdio bridge.
 //   3. That the OS keyring sign-in survives the HOME move (the docs say credentials live in the keyring) and what a signed-out run says.

@@ -86,7 +86,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   check('antigravity one-shot run: the answer, in Lumen\'s own home with no MCP config and a minimal environment', ans.ok === 1 && ran[0].env.HOME === path.join(tmp, 'antigravity-oneshot') && !fs.existsSync(path.join(tmp, 'antigravity-oneshot', '.gemini', 'config', 'mcp_config.json')) && !('ANTHROPIC_API_KEY' in ran[0].env), JSON.stringify(ran[0].env.HOME));
 
   // ---------- Lumen's gate for agy's hooks (mcp-http.js) ----------
-  const gate = await require('../src/automation/mcp-http').startHttp({ tools: [{ name: 'ping', description: 'p', input_schema: { type: 'object' } }], callTool: async () => ({ content: [], isError: false }) });
+  const gate = await require('../src/automation/mcp-http').startHttp({ tools: ['ping', 'click', 'read_page'].map((name) => ({ name, description: 'p', input_schema: { type: 'object' } })), callTool: async () => ({ content: [], isError: false }) });
   const post = (url, body) => new Promise((resolve) => {
     const u = new URL(url);
     const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve(b ? JSON.parse(b) : {})); });
@@ -95,7 +95,9 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   const hook = (run, name, args = { CommandLine: 'rm -rf x' }) => post(run.hookUrl, name === null ? { conversationId: 'c' } : { toolCall: { name, args }, stepIdx: 1 }).then((r) => r.decision || 'none');
   const run = gate.open('a-1', 'c-1', { agy: true });
   check('agy gate: a shell, file or browser tool of agy\'s own is denied with a reason', await hook(run, 'run_command') === 'deny' && await hook(run, 'write_to_file') === 'deny' && await hook(run, 'replace_file_content') === 'deny' && await hook(run, 'read_url_content') === 'deny' && (await post(run.hookUrl, { toolCall: { name: 'run_command', args: {} } })).reason.includes('Only Lumen'), '');
-  check('agy gate: Lumen\'s tools (any name with "lumen") and plain reads go through', await hook(run, 'mcp_lumen_click', {}) === 'allow' && await hook(run, 'lumen__read_page', {}) === 'allow' && await hook(run, 'list_dir', {}) === 'allow' && await hook(run, 'view_file', {}) === 'allow', '');
+  check('agy gate: Lumen\'s qualified MCP tools and plain reads go through', await hook(run, 'mcp_lumen_click', {}) === 'allow' && await hook(run, 'lumen__read_page', {}) === 'allow' && await hook(run, 'mcp__lumen__ping', {}) === 'allow' && await hook(run, 'list_dir', {}) === 'allow' && await hook(run, 'view_file', {}) === 'allow', '');
+  check('agy gate fails closed: agy\'s other tools (generate_image, invoke_subagent, unknown names) are denied', await hook(run, 'generate_image', {}) === 'deny' && await hook(run, 'invoke_subagent', {}) === 'deny' && await hook(run, 'some_new_tool', {}) === 'deny' && await hook(run, '', {}) === 'deny', '');
+  check('agy gate fails closed: "lumen" inside another server or tool name, or a tool Lumen lacks, is denied', await hook(run, 'mcp_evil_lumen_click', {}) === 'deny' && await hook(run, 'mcp_notlumen_click', {}) === 'deny' && await hook(run, 'lumen_helper', {}) === 'deny' && await hook(run, 'mcp_lumen_delete_everything', {}) === 'deny' && await hook(run, 'lumenclick', {}) === 'deny', '');
   check('agy gate: the PreInvocation ping marks the run as seen', !gate.armed('a-1') && await hook(run, null) === 'none' && gate.armed('a-1'), '');
   gate.close('a-1');
   check('agy gate: after the run its hook URL denies in agy\'s format too', await hook(run, 'run_command') === 'deny', '');
