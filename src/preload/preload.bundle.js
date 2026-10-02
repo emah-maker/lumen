@@ -578,6 +578,7 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
   sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
+  setSidebarOpen: (tabId, open) => ipcRenderer.invoke('sidebar:set', tabId ?? null, Boolean(open)), // [sidebar per tab] the sidebar is open or closed on this tab
   onAttention: on('agent:attention'), // { state: 'approval' | 'unread' | null, approvals, unread }
   onOpenChat: on('agent:open-chat'), // { id }: show the sidebar on that chat
   // Background tasks (renderer/tasks.js, features/background-runner.js)

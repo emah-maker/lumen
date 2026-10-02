@@ -63,6 +63,7 @@ const organizeAi = require('./features/organize-ai'); // Organize with AI: local
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
+const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -203,7 +204,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
-  'chat:sidebar-state',
+  'chat:sidebar-state', 'sidebar:set',
   'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -1501,6 +1502,7 @@ function tabState() {
       };
     }),
     activeId,
+    sidebar: tabSidebarOpen(tabs.find((t) => t.id === activeId)), // [sidebar per tab] whether the sidebar is open on the tab in front
     canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
@@ -2314,6 +2316,7 @@ function switchTab(id, { wake = true } = {}) {
   if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
+  openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
   if (!agent.currentScope()) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat (a tool's own tab change moves the run, not the sidebar)
   sendTabs();
   return true;
@@ -3955,6 +3958,27 @@ const runSlots = tabChatsLib.createRunSlots({
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
+// ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
+// Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
+// agent feature opening the sidebar for the tab in front) and applies the front tab's answer from every tabs state.
+const sidebarTabs = sidebarTabsLib.create();
+const sidebarSharers = (tabId) => { const c = chatBind.chatOf(tabId); return c ? chatBind.tabsOf(c).filter((t) => t !== tabId) : []; };
+const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
+function setTabSidebar(tabId, open) {
+  const hit = tabAnywhere(tabId);
+  if (!hit) return false;
+  const written = sidebarTabs.set(tabId, open, sidebarSharers(tabId));
+  for (const rec of winRecs) { // the strips' state carries it: every window with one of these tabs
+    if (rcAlive(rec) && tabsOf(rec).some((t) => written.includes(t.id))) withWindow(rec, sendTabs);
+  }
+  return true;
+}
+// A tab whose chat waits for the user's OK shows its sidebar when it comes to the front (the card is there to answer).
+function openForApproval(tab) {
+  const cid = tab && chatBind.chatOf(tab.id);
+  if (cid && chatRuns.get(cid)?.pending.size && !tabSidebarOpen(tab)) sidebarTabs.set(tab.id, true, sidebarSharers(tab.id));
+}
+ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
 const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
@@ -4055,6 +4079,7 @@ function bindOpenChatHere(sender) {
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
   chatBind.unbindTab(id);
+  sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
     if (r.queued && r.homeTab === id) r.homeTab = null;
@@ -4095,7 +4120,7 @@ function bindRunChatTo(tabId) {
   const id = s?.chat ? [...chatRuns.values()].find((r) => r.messages === s.chat)?.chatId : null;
   if (id) chatBind.bind(tabId, id);
 }
-if (TEST) global.__tabChats = { bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
+if (TEST) global.__tabChats = { setSidebar: (id, open) => setTabSidebar(id, open), sidebar: (id) => { const hit = tabAnywhere(id); return hit ? tabSidebarOpen(hit.t) : null; }, viewBounds: (id) => tabAnywhere(id)?.t.view?.getBounds?.() || null, bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
 
 // ---------- [ai manners] close the tabs the AI opened (features/ai-manners.js)
 // A tab the AI opened (agentOpenTab, a research tab, a tab Lumen opened for a chat) is marked `openedBy` the run and chat, shown
@@ -4289,6 +4314,7 @@ function sessionEntry() {
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
     chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart)
+    sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
     groups: tabGroups.snapshot(),
   };
 }
@@ -4339,6 +4365,7 @@ function restoreTabsFrom(saved) {
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid)); // [chat per tab]
+    sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
   });
   tabGroups.cleanup();
   tabGroups.arrange();

@@ -70,7 +70,8 @@ const fakeModel = (app) => app.evaluate(() => {
   ui.on('pageerror', (e) => errors.push(e.message));
   await fakeModel(app);
 
-  const openTab = (url) => app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, url);
+  // (The sidebar is open or closed tab by tab, and a new tab starts closed: these tabs are used through their sidebar, so they open it.)
+  const openTab = (url) => app.evaluate((_e, u) => { const id = global.__agent.browser.openTab(u).id; global.__tabChats.setSidebar(id, true); return id; }, url);
   const showTab = (id) => app.evaluate((_e, i) => global.__agent.browser.switchTab(i), id);
   const active = () => app.evaluate(() => global.__windows.list().find((w) => w.current)?.activeId ?? global.__windows.list()[0].activeId);
   const tc = (fn, arg) => app.evaluate(fn, arg);
