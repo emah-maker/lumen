@@ -459,6 +459,12 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
 }
 body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy) var(--spring-snappy); }
+/* [agent window] the badge in an outside agent's own window */
+.agent-window-chip {
+  display: flex; align-items: center; height: 22px; padding: 0 10px; margin-right: 6px; border-radius: 11px;
+  font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--accent); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent);
+}
+.agent-window-chip[hidden] { display: none; }
 @keyframes pill-in { from { opacity: 0; transform: translateX(8px); } }
 .agent-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .agent-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1px solid var(--accent); animation: ping 1.6s var(--ease-out) infinite; }

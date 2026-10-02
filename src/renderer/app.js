@@ -2540,6 +2540,15 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+// [agent window] This window is an outside agent's own (Claude Code, Codex…): a badge in the toolbar says whose it is.
+window.browser.onAgentWindow?.((info) => {
+  const chip = $('agent-window-chip');
+  document.body.classList.toggle('agent-window', Boolean(info));
+  if (!chip) return;
+  chip.hidden = !info;
+  chip.textContent = info ? t('agentWindow.badge', { client: info.label }) : '';
+  chip.title = info ? t('agentWindow.title', { client: info.label }) : '';
+});
 
 // ---------- the chat's hooks into the sidebar (chat-core.js) ----------
 
@@ -2671,7 +2680,8 @@ window.assistant.onMcpEvent?.((event) => {
       break;
     }
     case 'approval': {
-      if (document.body.classList.contains('sidebar-hidden')) showSidebar(true);
+      // (An outside agent's card is quiet: with the sidebar closed the AI button carries a badge instead, and the card waits for the user.)
+      if (document.body.classList.contains('sidebar-hidden') && !event.quiet) showSidebar(true);
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');

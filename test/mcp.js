@@ -117,6 +117,10 @@ const os = require('os');
   // Approval: with auto-approve off, a click shows the card; denying returns isError.
   await app.evaluate(() => { global.__agent.browser.autoApprove = () => false; });
   const clickPromise = call('click', { text: 'More information' });
+  await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});
+  // An outside agent's card is quiet: it never opens the sidebar by itself (the AI button gets its badge); the user opens it to answer.
+  check('an agent approval card does not open the sidebar', await ui.evaluate(() => document.body.classList.contains('sidebar-hidden') && document.getElementById('toggle-sidebar').classList.contains('approval-pending')), 'sidebar opened or no badge');
+  await ui.evaluate(() => window.showSidebar(true));
   await ui.waitForSelector('.approval:not(.resolved)', { timeout: 10000 }).catch(() => {});
   const cardTitle = await ui.$eval('.approval:not(.resolved) .approval-title', (e) => e.textContent).catch(() => '');
   check('approval card names the external agent', cardTitle === 'An external agent (Claude Code) wants to interact with example.com', cardTitle);
