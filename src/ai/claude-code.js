@@ -561,6 +561,7 @@ class ClaudeCodeEngine {
     // pre-started one that no message takes must not wipe the chat's reads.
     if (proc.fresh) { const f = proc.fresh; proc.fresh = null; try { this.onFresh?.(f); } catch {} }
     const reused = proc.turns > 0;
+    this.runDirs = new Set(); // folders this message's shell commands were pointed at (freshRoots)
     if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
     const { tag } = proc;
@@ -623,6 +624,7 @@ class ClaudeCodeEngine {
         for (const b of msg.message?.content || []) {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
           active.builtin.add(b.id);
+          if (b.name === 'Bash') for (const d of dirsInCommand(b.input?.command)) this.runDirs.add(d); // (freshRoots)
           active.inflight++;
           emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
         }
@@ -711,4 +713,24 @@ class ClaudeCodeEngine {
 
 ClaudeCodeEngine.prototype.imageRoots = function imageRoots() { return [...(this.workDirs || [])]; };
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };
+// [full access] Where a picture the CLI made with its own tools may lie (agent.js enginePictures, which also requires the file
+// to be written during the run): the home folder it runs in, and the folders its shell commands named with --cwd / --add-dir
+// (a CLI told to write elsewhere, e.g. a temp folder outside home). Never a drive or filesystem root.
+ClaudeCodeEngine.prototype.freshRoots = function freshRoots() {
+  const home = os.homedir();
+  const ok = (d) => { try { return path.isAbsolute(d) && path.parse(d).root !== path.resolve(d) && fs.statSync(d).isDirectory(); } catch { return false; } };
+  return [home, ...[...(this.runDirs || [])].filter(ok)];
+};
+
+// Absolute folders named by `--cwd <dir>`, `--cwd=<dir>` or `--add-dir <dir>` in a shell command (quoted or not).
+function dirsInCommand(command) {
+  const out = [];
+  const re = /--(?:cwd|add-dir)(?:=|\s+)(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"']+))/g;
+  for (const m of String(command || '').matchAll(re)) {
+    const d = m[1] || m[2] || m[3];
+    if (d && out.length < 8) out.push(d);
+  }
+  return out;
+}
+
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
