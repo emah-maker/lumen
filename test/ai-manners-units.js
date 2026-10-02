@@ -237,6 +237,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     const agentTab = /const agentOpenTab = [\s\S]*?const noTabReason/.exec(main)?.[0] || '';
     check('main: only the AI\'s own call is held back; a plain openTab (no ai, no show) still activates', /const governed = ai \|\| \(opts && 'show' in opts\);/.test(agentTab) && /governed \? manners\.showsTab\(.*\) : !rest\.background/.test(agentTab));
+    check('main: a plain switchTab (no show option) still switches', /opts && 'show' in opts \? manners\.showsTab\(.*\) : true/.test(agentTab));
     check('main: the agent\'s open_tab / switch_tab never call focus()', agentTab.length > 100 && !/\.focus\(\)/.test(agentTab.replace(/\/\/.*$/gm, '')), agentTab.length);
   }
 

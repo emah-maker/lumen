@@ -5836,7 +5836,7 @@ const agentOpenTab = (url, opts = {}) => {
 };
 const agentSwitchTab = (id, opts = {}) => {
   const fromPage = chatPageRt?.runTarget() != null;
-  if (!fromPage && manners.showsTab({ show: opts?.show === true, runTabId: runOwnTabId(), activeId })) {
+  if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true, runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const ok = switchTab(id);
     if (ok) bindRunChatTo(id);
     return ok;
