@@ -174,6 +174,11 @@ const J = (v) => JSON.stringify(v);
     }
     check('marks: the meta line and "Stop waiting" are AA (4.5:1) in both themes', /\.chat-meta \{[^}]*color-mix\(in srgb, var\(--muted\) 55%, var\(--text\)\)/.test(css) && /\.chat-stop-wait \{[^}]*color-mix\(in srgb, var\(--accent\) 60%, var\(--text\)\)/.test(css) && worst.meta >= 4.5 && worst.stop >= 4.5, J(worst));
   }
+  {
+    const sty = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+    check('marks: with reduced motion the spinner arc is hidden (the still ring shows alone), on tabs and list rows', /reduced-motion: reduce\) \{ \.tab-chat-mark \.cm-spin \{[^}]*display: none/.test(sty) && /pref-reduce-motion \.tab-chat-mark \.cm-spin \{[^}]*display: none/.test(sty) && /reduced-motion: reduce\) \{ \.chat-badge \.cm-spin \{[^}]*display: none/.test(css) && /pref-reduce-motion \.chat-badge \.cm-spin \{[^}]*display: none/.test(css));
+    check('list: a working chat gets "Stop" and a waiting one "Stop waiting"', /badge === 'queued' \|\| chat\.badge === 'running'/.test(fs.readFileSync(path.join(dir, 'chat-items.js'), 'utf8')));
+  }
   const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
   check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
   check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: min\(var\(--actions-w/.test(css));

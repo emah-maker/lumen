@@ -287,8 +287,8 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-chat-mark.needs-ok { color: var(--warning); } /* (not .approval: that is the approval card) */
 .tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
 .tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-@media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
-:root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; }
+@media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; display: none; } .tab-chat-mark .cm-still { display: block; } }
+:root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; display: none; }
 :root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
 @container tab (max-width: 72px) { .tab-chat-mark { margin-left: 0; } }
 @media (forced-colors: active) {

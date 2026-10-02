@@ -29,7 +29,7 @@
 .chat-list-empty { margin: 8px 20px; font-size: 12px; color: var(--muted); }
 
 .chat-item { position: relative; display: flex; align-items: center; gap: 2px; border-radius: var(--radius); }
-.chat-item:hover, .chat-item:focus-within { background: var(--hover); }
+.chat-item:hover, .chat-item:focus-within { background: color-mix(in srgb, var(--accent) 6%, var(--hover)); }
 .chat-item.current { background: var(--accent-soft); }
 
 .chat-open {
@@ -82,16 +82,22 @@
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 .chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: normal; overflow-wrap: anywhere; } /* AA for small text on the row and the selected row */
 .chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
-.chat-open:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* softer than the global ring: the row is already tinted */
+.chat-open:focus-visible { outline: none; }
+.chat-item:has(.chat-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; } /* on the whole row (Stop included), not just the title button */ /* softer than the global ring: the row is already tinted */
 /* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
-.chat-item.has-queued { display: grid; grid-template-columns: 1fr; }
-.chat-item.has-queued .chat-open { grid-column: 1; grid-row: 1; }
-.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: -2px 0 6px 12px; padding: 1px 2px; border: 0; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
-.chat-stop-wait:hover { color: var(--text); }
-@media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; } .chat-badge .cm-still { display: block; } }
-:root.pref-reduce-motion .chat-badge .cm-spin { animation: none; }
+.chat-item:is(.has-queued, .has-running) { display: grid; grid-template-columns: 1fr; }
+.chat-item:is(.has-queued, .has-running) .chat-open { grid-column: 1; grid-row: 1; }
+.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: 0 0 8px 12px; padding: 4px 10px; min-height: 28px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; cursor: default; }
+.chat-stop-wait:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, var(--hover)); }
+.chat-stop-wait:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.chat-stop-wait:disabled { opacity: 0.7; }
+@media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; display: none; } .chat-badge .cm-still { display: block; } }
+:root.pref-reduce-motion .chat-badge .cm-spin { animation: none; display: none; }
 :root.pref-reduce-motion .chat-badge .cm-still { display: block; }
 .chat-state { font-weight: 600; color: var(--text); }
+.chat-item.has-running .chat-state { color: var(--accent); }
+.chat-item.has-approval .chat-state { color: color-mix(in srgb, var(--warning) 70%, var(--text)); }
+.chat-item.has-unread .chat-state { color: color-mix(in srgb, var(--success) 70%, var(--text)); }
 .chat-item:is(.has-running, .has-queued, .has-approval) .chat-place:not(.here)::after { content: " \203A"; } /* a chat working in another tab: clicking it goes there (an idle one is moved here instead) */
 /* The Chats button: another chat needs an OK or has a reply not seen yet. */
 #chat-history[data-attention] { position: relative; }
@@ -116,5 +122,5 @@
   .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
   .chat-actions { background: Canvas; border: 1px solid CanvasText; }
   .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
-  .chat-stop-wait { color: LinkText; forced-color-adjust: none; }
+  .chat-stop-wait { color: LinkText; border-color: LinkText; forced-color-adjust: none; }
 }
