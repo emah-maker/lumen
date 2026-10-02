@@ -11,7 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MARK = / ⟦\d+⟧ /g;
 
 // ---- a tiny DOM ----
-const INLINE = new Set(['B', 'A', 'I', 'EM', 'STRONG', 'SPAN', 'CODE', 'U', 'SMALL', 'BR', 'WBR']);
+const INLINE = new Set(['B', 'A', 'I', 'EM', 'STRONG', 'SPAN', 'CODE', 'U', 'SMALL', 'TIME', 'BR', 'WBR']);
 function el(tag, children = [], attrs = {}) {
   const node = { tagName: tag.toUpperCase(), nodeType: 1, children, parentElement: null, previousSibling: null, attrs, isContentEditable: false, classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
     getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => (attrs.offscreen || (node.parentElement && node.parentElement.attrs.offscreen) ? { width: 10, height: 10, top: 5000, bottom: 5010, left: 0, right: 10 } : { width: 10, height: 10, top: 10, bottom: 20, left: 0, right: 10 }) };
@@ -70,21 +70,21 @@ function fakeLocal(mode, log, hooks = {}) {
     },
   };
 }
-const newTr = (local, settings = {}) => T.createTranslate({ readSettings: () => settings, writeSettings() {}, t: (k) => k, uiLocale: () => 'en', engine: () => null, aiAllowed: () => true, sendTabs() {}, popupMenu() {}, openUrl() {}, local });
+const newTr = (local, settings = {}, extra = {}) => T.createTranslate({ readSettings: () => settings, writeSettings() {}, t: (k) => k, uiLocale: () => 'en', engine: () => null, aiAllowed: () => true, sendTabs() {}, popupMenu() {}, openUrl() {}, local, ...extra });
 
-async function run(blocks, mode, { local = null, settings = {}, tr = null, hooks = {}, after = null } = {}) {
+async function run(blocks, mode, { local = null, settings = {}, tr = null, hooks = {}, after = null, via = 'local', extra = {} } = {}) {
   const dom = makeDom(blocks);
   const tab = fakeTab(dom);
   const log = [];
   const engine = fakeLocal(mode, log, hooks);
-  const api = tr || newTr(local ? local(engine) : engine, settings);
-  api.start(tab, { want: 'local' });
+  const api = tr || newTr(local ? local(engine) : engine, settings, extra);
+  api.start(tab, { want: via });
   for (let i = 0; i < 150 && !api.isTranslated(tab) && api.stateOf(tab)?.phase !== 'error'; i++) await sleep(20);
   const state = api.stateOf(tab);
   const snap = dom.nodes.map((n) => n.data); // what the page showed when the run finished
-  const extra = after ? await after(tab.view.webContents, dom) : null;
+  const afterResult = after ? await after(tab.view.webContents, dom) : null;
   api.act(tab, 'original');
-  return { dom, log, state, snap, flat: log.flat(), extra, api };
+  return { dom, log, state, snap, flat: log.flat(), extra: afterResult, api };
 }
 const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
 
@@ -223,6 +223,84 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     const flaky = (t) => { if (!/⟦/.test(t)) return t.toUpperCase(); n++; return n % 3 === 0 ? t.toUpperCase() : t.replace(MARK, ' ').toUpperCase(); };
     const r = await run(blocks, flaky);
     check('kill switch: a segment that works resets the count (a mostly fine engine keeps grouping)', withSeams(r.log).length >= 6, `${withSeams(r.log).length}`);
+  }
+
+  // ---- numbers, prices, dates and percentages inside a sentence ----
+  {
+    const r = await run([
+      el('p', [text('Showing '), el('b', [text('10')]), text(' of '), el('b', [text('200')]), text(' results')]),
+      el('p', [text('Posted '), el('span', [text('5')]), text(' days ago')]),
+      el('p', [text('Total: '), el('b', [text('$5.99')]), text(' with tax')]),
+      el('p', [text('Updated '), el('time', [text('2024-05-01')]), text(' by Ann')]),
+      el('p', [el('b', [text('45%')]), text(' off today')]),
+    ], 'keep');
+    check('numbers: "Showing 10 of 200 results" is one sentence with its numbers inside', r.flat.includes(`Showing${M(1)}10${M(2)}of${M(3)}200${M(4)}results`), JSON.stringify(r.flat));
+    check('numbers: counts, prices, dates and percentages all travel with their sentence', r.flat.includes(`Posted${M(1)}5${M(2)}days ago`) && r.flat.includes(`Total:${M(1)}$5.99${M(2)}with tax`) && r.flat.includes(`Updated${M(1)}2024-05-01${M(2)}by Ann`) && r.flat.includes(`45%${M(1)}off today`), JSON.stringify(r.flat));
+    check('numbers: the translated page keeps every number where it was, in one request', r.snap.join('') === 'SHOWING 10 OF 200 RESULTSPOSTED 5 DAYS AGOTOTAL: $5.99 WITH TAXUPDATED 2024-05-01 BY ANN45% OFF TODAY' && r.log.length === 1, r.snap.join('|'));
+    const bare = await run([el('table', [el('tr', [el('td', [text('10')]), el('td', [text('$4.50')])])])], 'keep');
+    check('numbers: a number or price on its own is not sent at all', bare.log.length === 0 && bare.state.phase === 'done', JSON.stringify(bare.log));
+    const kept = T.groupItems([{ id: 1, text: 'Posted', g: 1, l: false, t: true }, { id: 2, text: '5', g: 1, n: true, l: false, t: true }, { id: 3, text: 'days ago', g: 1, l: false, t: false }])[0];
+    const cutN = T.splitSegment(kept, `Il y a${M(1)}${M(2)}5 jours`);
+    check('numbers: a bare number whose part comes back empty is left as written', cutN && cutN.length === 2 && !cutN.some(([id]) => id === 2), JSON.stringify(cutN));
+    const sent = [];
+    const ai = { id: 'x', label: 'X', run: async (_sys, user) => { const list = JSON.parse(user).items; sent.push(...list.map((i) => i.text)); return { items: list.map((i) => ({ id: i.id, text: i.text.toUpperCase() })) }; } };
+    const aiRun = await run([el('p', [text('Showing '), el('b', [text('10')]), text(' results')])], 'keep', { via: 'ai', settings: { translateConsent: ['x'] }, extra: { engine: () => ai } });
+    check('numbers: with the AI engine the bare number is not sent (as before)', sent.length > 0 && !sent.includes('10') && sent.includes('Showing'), JSON.stringify([sent, aiRun.state]));
+  }
+
+  // ---- the marker's number in other digits ----
+  {
+    const two = T.groupItems([{ id: 1, text: 'a', g: 1 }, { id: 2, text: 'b', g: 1 }, { id: 3, text: 'c', g: 1 }])[0];
+    check('digits: Arabic-Indic, Extended, Devanagari and full-width numbers in a marker are read as 1, 2', ['٠١٢٣٤٥٦٧٨٩', '۰۱۲۳۴۵۶۷۸۹', '०१२३४५६७८९', '０１２３４５６７８９'].every((d) => T.splitSegment(two, `x ⟦${d[1]}⟧ y ⟦${d[2]}⟧ z`)?.length === 3), '');
+    check('digits: but in the wrong order they are still refused', T.splitSegment(two, 'x ⟦٢⟧ y ⟦١⟧ z') === null && T.splitSegment(two, 'x ⟦١٢⟧ y ⟦٢⟧ z') === null, '');
+  }
+
+  // ---- bounds, and words landing next to the wrong element ----
+  {
+    const many = T.groupItems(Array.from({ length: 30 }, (_v, i) => ({ id: i + 1, text: `w${i}`, g: 1, l: true, t: true })));
+    check(`cap: a block with 30 nodes is cut into segments of at most ${T.MAX_NODES} nodes`, many.length >= 3 && many.every((x) => !x.nodes || x.nodes.length <= T.MAX_NODES) && many.reduce((n, x) => n + (x.nodes ? x.nodes.length : 1), 0) === 30, JSON.stringify(many.map((x) => x.nodes?.length)));
+    const sw = await run([el('p', [text('one '), el('b', [text('two')]), text(' three')])], 'swap');
+    check('limit: when the engine moves words across a marker the text is still complete (the styling may sit on a neighbouring word)', sw.state.phase === 'done' && sw.snap.join(' ').split(/\s+/).filter(Boolean).sort().join() === 'ONE,THREE,TWO', sw.snap.join('|'));
+  }
+
+  // ---- the kill switch lets go again ----
+  {
+    let clock = 1000;
+    const mode = { current: 'drop' };
+    const log = [];
+    const engine = fakeLocal((t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => p.toUpperCase());
+      return mode.current === 'drop' ? parts.join(' ') : parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    }, log);
+    const api = newTr(engine, {}, { now: () => clock });
+    const blocks = () => [0, 1, 2, 3, 4].map((i) => el('p', [text(`Sentence ${i} ${'z'.repeat(60)} `), el('b', [text(`bold ${i}`)])]));
+    const count = () => withSeams(log).length;
+    await run(blocks(), 'x', { tr: api });
+    const first = count();
+    check('decay: three bad segments in a row pause grouping for the pair', first >= T.SEAM_FAILS, first);
+    log.length = 0;
+    clock += 60 * 1000;
+    await run(blocks(), 'x', { tr: api });
+    check('decay: during the pause no markers are sent', count() === 0, count());
+    log.length = 0;
+    clock += T.SEAM_PAUSE_MS;
+    await run(blocks(), 'x', { tr: api });
+    check('decay: after the pause the next run probes with grouping again, and one failure pauses the pair again', count() >= 1 && count() <= first, `${count()} ${first}`);
+    log.length = 0;
+    clock += T.SEAM_PAUSE_MS + 1000; // the second pause is twice as long
+    await run(blocks(), 'x', { tr: api });
+    check('decay: the second pause lasts longer than the first', count() === 0, count());
+    log.length = 0;
+    clock += T.SEAM_PAUSE_MS * 2;
+    mode.current = 'keep';
+    await run(blocks(), 'x', { tr: api });
+    const good = count();
+    log.length = 0;
+    api.clearCache(); // otherwise the second run is answered from the first run's translations
+    await run(blocks(), 'x', { tr: api });
+    check('decay: when the probe works the pair is grouped again, and stays so', good > 0 && count() > 0, `${good} ${count()}`);
   }
 
   // ---- a download that is stopped from elsewhere ----

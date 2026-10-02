@@ -2064,12 +2064,13 @@ function buildTranslatePacks(card) {
   let busy = false;
   let downloadingCode = '';
   // Delete asks twice (a second click within 4 seconds): a pack is 20 to 55 MB of download.
+  const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' }); // screen readers hear "Click again"
   const confirmDelete = (label, confirmLabel, action, cls = 'danger', id) => {
     const b = h('button', { class: cls, text: label, ...(id ? { id } : {}) });
     let timer = 0;
-    const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); };
+    const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); announce.textContent = ''; };
     b.addEventListener('click', () => {
-      if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; timer = setTimeout(reset, 4000); return; }
+      if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; announce.textContent = confirmLabel; timer = setTimeout(reset, 4000); return; }
       reset();
       action();
     });
@@ -2120,7 +2121,7 @@ function buildTranslatePacks(card) {
   S.translatePacks.list().then(render).catch(() => {});
   card.append(
     stackRow(tr('settings.translate.packs', 'Language packs on this device'), tr('settings.translate.packsDesc', 'Downloaded from Mozilla, stored in Lumen’s data folder, and used only by on-device translation.'), list,
-      h('div', { class: 'controls' }, total, confirmDelete(tr('settings.translate.packs.deleteAll', 'Delete all'), tr('settings.translate.packs.deleteAllSure', 'Delete all packs? Click again'), async () => render(await S.translatePacks.removeAll()), 'danger', 'translate-packs-delete-all'))),
+      h('div', { class: 'controls' }, total, announce, confirmDelete(tr('settings.translate.packs.deleteAll', 'Delete all'), tr('settings.translate.packs.deleteAllSure', 'Delete all packs? Click again'), async () => render(await S.translatePacks.removeAll()), 'danger', 'translate-packs-delete-all'))),
     stackRow(tr('settings.translate.offline', 'Download for offline'), tr('settings.translate.offlineDesc', 'Get a language’s packs (to and from English) now, so translating works with no connection. Two languages without a pack between them go through English.'),
       h('div', { class: 'controls start' }, pickLang, go, stop, note)),
   );

@@ -165,26 +165,45 @@ function prioritize(items) {
 // markers don't add up is not trusted: that segment goes back to one request per node, and after
 // SEAM_FAILS segments in a row do that the run (and the language pair, for the session) stops grouping.
 const SEGMENT_CHARS = 1200;
+const MAX_NODES = 12; // nodes in one segment: a failed segment costs a request per node, so it stays small
 const SEAM_FAILS = 3;
+const SEAM_PAUSE_MS = 10 * 60 * 1000; // a pair whose markers failed is not grouped for this long, then probed again
 const seamOf = (n) => ` ⟦${n}⟧ `;
-const SEAM_RE = /\s*⟦(\d+)⟧\s*/;
+const SEAM_RE = /\s*⟦\s*(\p{Nd}+)\s*⟧\s*/u;
 const SEAM_CHARS = /[⟦⟧]/;
 const UNSPACED = /[฀-๿぀-ヿ㐀-鿿가-힯＀-￯]/; // scripts written without spaces between words
+// The engine may write the marker's number in the target language's digits (Arabic-Indic, Devanagari ...).
+const DIGIT_ZEROS = [0x30, 0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xe50, 0xed0, 0xf20, 0x1040, 0xff10];
+function asciiDigits(str) {
+  let out = '';
+  for (const ch of str) {
+    const cp = ch.codePointAt(0);
+    const zero = DIGIT_ZEROS.find((z) => cp >= z && cp < z + 10);
+    if (zero === undefined) return null;
+    out += String(cp - zero);
+  }
+  return out;
+}
+// Items from the page: { id, text, v, g (block), l, t (space before / after), n (no letters: a number, price, symbol) }.
+// A letterless node is only worth sending as part of a sentence ("Showing <b>10</b> of <b>200</b> results");
+// alone it is left as written.
 function groupItems(items) {
   const out = [];
   let cur = null;
   const flush = () => {
     if (!cur) return;
-    // one node, or a marker already in the page's own text (it could not be told from ours): no grouping here
-    if (cur.list.length === 1 || cur.list.some((i) => SEAM_CHARS.test(i.text))) { out.push(...cur.list); cur = null; return; }
-    let text = '';
-    cur.list.forEach((item, i) => { text += item.text + (i < cur.list.length - 1 ? seamOf(i + 1) : ''); });
-    out.push({ id: cur.list[0].id, text, v: cur.list.some((i) => i.v), nodes: cur.list.map((i) => ({ id: i.id, text: i.text, v: i.v, l: i.l, t: i.t })) });
+    const letters = cur.list.filter((i) => !i.n);
+    if (cur.list.length === 1 || cur.list.some((i) => SEAM_CHARS.test(i.text))) out.push(...letters); // lone nodes, or a marker in the page's own text (it could not be told from ours)
+    else if (letters.length) {
+      let text = '';
+      cur.list.forEach((item, i) => { text += item.text + (i < cur.list.length - 1 ? seamOf(i + 1) : ''); });
+      out.push({ id: cur.list[0].id, text, v: cur.list.some((i) => i.v), nodes: cur.list.map((i) => ({ id: i.id, text: i.text, v: i.v, l: i.l, t: i.t, ...(i.n ? { n: true } : {}) })) });
+    }
     cur = null;
   };
   for (const item of items) {
     if (item.id === 0 || item.g === undefined) { flush(); out.push(item); continue; }
-    if (cur && (cur.g !== item.g || cur.chars + item.text.length > SEGMENT_CHARS)) flush();
+    if (cur && (cur.g !== item.g || cur.chars + item.text.length > SEGMENT_CHARS || cur.list.length >= MAX_NODES)) flush();
     if (!cur) cur = { g: item.g, list: [], chars: 0 };
     cur.list.push(item);
     cur.chars += item.text.length;
@@ -192,22 +211,26 @@ function groupItems(items) {
   flush();
   return out;
 }
+// The nodes of a segment that are worth a request of their own (not bare numbers and symbols).
+const sendable = (nodes) => nodes.filter((x) => !x.n);
 // A segment's translation -> [[nodeId, text, segmentId]] or null when the markers were dropped, moved, repeated or garbled.
 function splitSegment(segment, text) {
   if (typeof text !== 'string') return null;
   const k = segment.nodes.length;
-  const pieces = text.split(new RegExp(SEAM_RE.source, 'g')); // [part, n, part, n, part ...]
+  const pieces = text.split(new RegExp(SEAM_RE.source, 'gu')); // [part, n, part, n, part ...]
   if (pieces.length !== 2 * k - 1) return null;
   const parts = [];
   for (let i = 0; i < pieces.length; i++) {
-    if (i % 2) { if (Number(pieces[i]) !== (i + 1) / 2) return null; continue; }
+    if (i % 2) { if (asciiDigits(pieces[i]) !== String((i + 1) / 2)) return null; continue; }
     if (SEAM_CHARS.test(pieces[i])) return null;
     parts.push(pieces[i]);
   }
   const pairs = [];
   for (let i = 0; i < k; i++) {
     const node = segment.nodes[i];
-    // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧")
+    // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧").
+    // A bare number or symbol that comes back empty is left as written.
+    if (node.n && !parts[i].trim()) continue;
     let out = parts[i];
     // Written without spaces (Chinese, Japanese, Thai) into a language with them: nothing in the page separated
     // these two nodes, so the words would be glued ("Ilike"). Put the space back.
@@ -342,7 +365,9 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
     };
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (known.has(n) && !(mine.has(n) && n.data !== mine.get(n))) { seam = true; continue; }
-      if (!translatableText(n.data, n.parentElement)) {
+      // a number, price or symbol inside a sentence ("Showing <b>10</b> of <b>200</b> results") is a member of its group
+      const loose = /\\S/.test(n.data) && !/\\p{L}/u.test(n.data) && !excludedElement(n.parentElement);
+      if (!loose && !translatableText(n.data, n.parentElement)) {
         known.add(n);
         if (/\\S/.test(n.data)) seam = true;
         else if (!seam) { space = true; if (out.length) out[out.length - 1].t = true; } // "<a>Home</a> <a>About</a>": the space belongs to the neighbours
@@ -357,7 +382,7 @@ globalThis.__lumenTr = globalThis.__lumenTr || (() => {
       const bk = blockOf(n.parentElement);
       if (brBefore(n, bk)) seam = true; // a line break ends the sentence as far as grouping goes
       if (seam || bk !== lastBlock) { gid++; lastBlock = bk; seam = false; space = false; }
-      out.push({ id, text: core, v: onScreen(n.parentElement), g: gid, l: Boolean(lead) || space, t: Boolean(trail) });
+      out.push({ id, text: core, v: onScreen(n.parentElement), g: gid, l: Boolean(lead) || space, t: Boolean(trail), ...(loose ? { n: true } : {}) });
       space = false;
     }
     return { items: out, chars, capped };
@@ -427,7 +452,9 @@ function createTranslate(deps) {
   const runs = new WeakMap(); // tab -> { token, timer, busy, url, via, abort, runner }
   const cache = new Map(); // `${url}|${target}|${engine}` -> Map(source text -> translation)
   const timings = new WeakMap(); // tab -> how long the last run took (measured, never sent anywhere)
-  const seamsBroken = new Set(); // language pairs whose engine mangles the segment markers (this session)
+  const seamsBroken = new Map(); // language pair -> { until, ms }: the engine mangled the segment markers; not grouped until then
+  const seamProbation = new Set(); // pairs that were paused: their next grouped run is a probe
+  const nowMs = () => (deps.now ? deps.now() : Date.now());
   let testEngine = null;
   let testLocal = null;
   let sendTimer = null;
@@ -564,11 +591,13 @@ function createTranslate(deps) {
     if (pairs.length) { await script(tab, 'apply', pairs); ctx.firstAt ||= performance.now(); }
     if (!ctx.runner) throw new Error('no-engine');
     const chunks = ctx.via === 'local' ? chunkItems(fresh, LOCAL_CHUNK, LOCAL_FIRST) : chunkItems(fresh);
+    const weight = (item) => (item.nodes ? item.nodes.reduce((n, x) => n + x.text.length, 0) : item.text.length) + 1; // text, not request counts: a fallback to node by node does not move the bar
+    const total = fresh.reduce((n, item) => n + weight(item), 0);
     let done = 0;
     for (const chunk of chunks) {
       if (ctx.token !== runs.get(tab)?.token) return false;
       // Each item has its own budget: 2 requests. A segment whose markers fail hands its nodes a fresh budget.
-      let pending = (ctx.noSeams ? chunk.flatMap((i) => i.nodes || [i]) : chunk).map((item) => ({ item, left: 2 }));
+      let pending = (ctx.noSeams ? chunk.flatMap((i) => (i.nodes ? sendable(i.nodes) : [i])) : chunk).map((item) => ({ item, left: 2 }));
       for (let round = 0; round < 3 && pending.length; round++) {
         const sent = pending.map((p) => p.item);
         const reply = await ctx.runner(sent, ctx.abort.signal);
@@ -579,15 +608,16 @@ function createTranslate(deps) {
         for (const p of pending) {
           const { item } = p;
           const again = (list, left) => { for (const x of list) retry.push({ item: x, left }); };
-          if (!ok.has(item.id)) { if (item.nodes) again(item.nodes, 2); else if (p.left > 1) again([item], p.left - 1); continue; }
+          if (!ok.has(item.id)) { if (item.nodes) again(sendable(item.nodes), 2); else if (p.left > 1) again([item], p.left - 1); continue; }
           if (item.nodes) {
             const cut = splitSegment(item, ok.get(item.id));
             if (!cut) {
-              again(item.nodes, 2);
+              again(sendable(item.nodes), 2);
               noteSeamFailure(ctx);
               continue;
             }
             ctx.seamStreak = 0;
+            if (ctx.probing) { ctx.probing = false; seamProbation.delete(ctx.pair); } // the markers work again
             good.push(...cut);
             map.set(item.text, ok.get(item.id));
           } else {
@@ -598,20 +628,37 @@ function createTranslate(deps) {
         if (good.length) { await script(tab, 'apply', good); ctx.firstAt ||= performance.now(); }
         pending = retry.map((r) => (ctx.noSeams && r.item.nodes ? null : r)).filter(Boolean);
       }
-      done += chunk.length;
-      onProgress?.(done / Math.max(1, fresh.length));
+      done += chunk.reduce((n, item) => n + weight(item), 0);
+      onProgress?.(Math.min(1, done / Math.max(1, total)));
     }
     return true;
   }
 
   // Segments whose markers keep failing cost a second request each and gain nothing: after SEAM_FAILS in a row
-  // the run goes node by node, and the language pair is remembered for the session.
+  // the run goes node by node, and the language pair is not grouped for SEAM_PAUSE_MS. After that one grouped
+  // run probes again: a single failure pauses the pair for twice as long (up to an hour), a success clears it.
   function noteSeamFailure(ctx) {
+    if (ctx.noSeams) return; // this run already paused the pair
     ctx.seamStreak = (ctx.seamStreak || 0) + 1;
-    if (ctx.seamStreak >= SEAM_FAILS) { ctx.noSeams = true; if (ctx.pair) seamsBroken.add(ctx.pair); }
+    if (!ctx.probing && ctx.seamStreak < SEAM_FAILS) return;
+    ctx.noSeams = true;
+    if (!ctx.pair) return;
+    const was = seamsBroken.get(ctx.pair);
+    const ms = ctx.probing ? Math.min((was?.ms || SEAM_PAUSE_MS) * 2, 60 * 60 * 1000) : SEAM_PAUSE_MS;
+    seamsBroken.set(ctx.pair, { until: nowMs() + ms, ms });
+    seamProbation.add(ctx.pair);
+    ctx.probing = false;
   }
 
-  const grouped = (items, ctx) => (ctx.via === 'local' && !ctx.noSeams && !seamsBroken.has(ctx.pair) ? groupItems(items) : items); // the on-device engine gets whole sentences
+  // Group for the on-device engine unless its markers are known not to survive for this pair (for now).
+  function grouped(items, ctx) {
+    if (ctx.via !== 'local' || ctx.noSeams) return items.filter((i) => !i.n);
+    const broken = seamsBroken.get(ctx.pair);
+    if (broken && nowMs() < broken.until) return items.filter((i) => !i.n);
+    if (broken) { seamsBroken.delete(ctx.pair); } // the pause is over: this run probes
+    if (ctx.pair && seamProbation.has(ctx.pair)) ctx.probing = true;
+    return groupItems(items);
+  }
 
   const failure = (code) => Object.assign(new Error(code), { code });
 
@@ -862,6 +909,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };
