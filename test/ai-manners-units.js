@@ -104,7 +104,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     if (typeof systemFor === 'function') {
       check('prompt: hands-off adds a line to the system prompt', /Hands-off mode is on/.test(systemFor({ handsOff: true, model: 'claude-opus-5' })) && !/Hands-off mode is on/.test(systemFor({ model: 'claude-opus-5' })));
     } else {
-      const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8');
+      const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
       check('prompt: hands-off adds a line to the system prompt', /settings\.handsOff \?/.test(src) && /manners\.HANDS_OFF_PROMPT/.test(src));
     }
   }
@@ -114,6 +114,23 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const wc = {};
     check('input: a key the AI sends is the AI\'s, not the user typing', M.agentInput(wc, () => { M.userInput.key(wc, 5000); return M.isAgentInput(wc); }) === true && M.userInput.typedAt(wc) === 0 && M.userInput.inputAt(wc) === 0);
     check('input: ...and the flag is gone after, even when sending throws', (() => { try { M.agentInput(wc, () => { throw new Error('x'); }); } catch {} return !M.isAgentInput(wc); })());
+    {
+      // input sent over the debugger: marked as the AI's while the commands run and ~150 ms after, counted so overlaps are safe
+      const dw = {};
+      let during = null;
+      const p1 = M.agentInputAsync(dw, async () => { await sleep(20); during = M.isAgentInput(dw); M.userInput.click(dw, 7); }, 60);
+      const p2 = M.agentInputAsync(dw, async () => { await sleep(5); }, 60);
+      await Promise.all([p1, p2]);
+      check('input (debugger): marked while the commands run, and not counted as the user\'s', during === true && M.userInput.inputAt(dw) === 0);
+      check('input (debugger): still marked just after the commands return (a late mouse event is the AI\'s)', M.isAgentInput(dw) === true);
+      await sleep(120);
+      check('input (debugger): the window closes once both calls\' grace has passed', M.isAgentInput(dw) === false);
+      try { await M.agentInputAsync(dw, async () => { throw new Error('x'); }, 20); } catch {}
+      await sleep(50);
+      check('input (debugger): a failing command still closes its window', M.isAgentInput(dw) === false);
+      M.userInput.click(dw, 9);
+      check('input (debugger): the user\'s click after the window counts again', M.userInput.inputAt(dw) === 9);
+    }
     M.userInput.key(wc, 5000);
     check('input: a key of the user\'s is remembered (typing and activity)', M.userInput.typedAt(wc) === 5000 && M.userInput.inputAt(wc) === 5000);
     M.userInput.click(wc, 6000);
@@ -171,7 +188,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
     // closing: the guards live in main.js (checked here as source, since the main process cannot load in plain Node)
     {
-      const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
+      const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
       const close = /async function aiTabsClose[\s\S]*?\n\}\n/.exec(main)?.[0] || '';
       check('close: the unsaved-text guard runs on every path, not only the automatic one', /hasUnsavedInput\(tab\.view\.webContents\)/.test(close) && !/auto && alive\(tab\) && \(await hasUnsavedInput/.test(close));
       check('close: busy / bound / user-owned is checked again after that wait', /aiTabSelect\(\{ \.\.\.selector, auto, rec \}\)\.some\(\(x\) => x\.tab === tab\)/.test(close));
@@ -180,7 +197,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       check('close: a "Leave site?" page is kept open without the question (which would bring the tab to the front)', /tab\.aiClosing/.test(unload) && /tab\.closing = false/.test(unload) && unload.indexOf('tab.aiClosing') < unload.indexOf('unloadAsked = true'));
       check('close: Always closes through the same guarded path and reports what it kept', /aiTabsClose\(\{ runId \}, \{ auto: true \}\)\.then\(\(\{ closed, kept, token \}\)/.test(main));
       check('close: a call naming neither a run nor a chat closes nothing', /s\.runId === null && s\.chatId === null \? \{ closed: 0, kept: 0, token: 0 \}/.test(main) && /ipcMain\.handle\('agent:ai-tabs-close', \(_e, o\) => aiTabsCloseFor\(o\)\)/.test(main));
-      const ag = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8');
+      const ag = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
       check('clicks: a background tab gets a trusted click (Input.dispatchMouseEvent, no focus) before page events', /backgroundClick\(wc, target\.x, target\.y\)/.test(ag) && /Input\.dispatchMouseEvent/.test(ag) && !/\.focus\(\)/.test(/async backgroundClick[\s\S]*?\n {2}\}/.exec(ag)?.[0] || ''));
     }
 
@@ -211,19 +228,19 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
   // ---- the agent path never takes the OS focus
   {
-    const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
     check('focus: agent.js never focuses a window or a page view', !/\.focus\(\)/.test(src.replace(/\/\/.*$/gm, '').replace(/el\.focus\([^)]*\)/g, '')) && !/win\.focus|BrowserWindow/.test(src));
     const open = /case 'open_tab': \{[\s\S]*?case 'switch_tab'/.exec(src)?.[0] || '';
     check('open_tab: opens the tab as the AI\'s (marked) and in the background unless show:true', /openTab\(webUrl\(input\.url\), \{ ai: true, show: input\.show === true \}\)/.test(open));
     check('switch_tab: stays behind unless show:true', /switchTab\(input\.tab_id, \{ show: input\.show === true \}\)/.test(src));
-    const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
+    const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     const agentTab = /const agentOpenTab = [\s\S]*?const noTabReason/.exec(main)?.[0] || '';
     check('main: the agent\'s open_tab / switch_tab never call focus()', agentTab.length > 100 && !/\.focus\(\)/.test(agentTab.replace(/\/\/.*$/gm, '')), agentTab.length);
   }
 
   // ---- the sidebar toggle that hides the tabs the AI opened
   {
-    const app = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+    const app = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8').replace(/\r\n/g, '\n');
     const fn = /function aiHiddenTab\(tab, state\) \{[\s\S]*?\n\}/.exec(app)?.[0];
     check('hide toggle: app.js has the rule', Boolean(fn));
     const ctx = { window: { lumenHideAiTabs: true }, drag: null };
@@ -243,14 +260,14 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: part of the strip\'s layout signature, so a toggle redraws it', /\$\{aiHiddenTab\(x, state\) \? 1 : 0\}/.test(app));
     check('hide toggle: a group left with no visible tab shows no label', /!aiHiddenTab\(t, state\)/.test(app) && /if \(aiHiddenTab\(tab, state\)\) continue;/.test(app));
 
-    const backend = fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8');
+    const backend = fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8').replace(/\r\n/g, '\n');
     check('hide toggle: it is a saved setting (off by default) and reaches the strip through prefs:ui', /hideAiTabs: false/.test(backend) && /hideAiTabs: p\.hideAiTabs === true/.test(backend) && /'aiHandsOff', 'hideAiTabs'\]\.includes\(key\)/.test(backend));
-    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8').replace(/\r\n/g, '\n');
     const button = /<button[^>]*id="hide-ai-tabs"[^>]*>/.exec(html)?.[0] || '';
     check('hide toggle: a real button with aria-pressed and a label, on the tab strip (not the crowded sidebar head)', /aria-pressed="false"/.test(button) && /aria-label=/.test(button) && /type="button"/.test(button) && html.indexOf('id="hide-ai-tabs"') < html.indexOf('id="sidebar"') && html.indexOf('id="hide-ai-tabs"') > html.indexOf('id="tabs"') && !app.includes("hideAiButton.setAttribute('aria-label'"));
-    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8').replace(/\r\n/g, '\n'));
     check('hide toggle: its labels say the count, singular and plural', ['off', 'on'].every((k) => en[`sidebar.hideAiTabs.${k}.one`]?.includes('{count}') && en[`sidebar.hideAiTabs.${k}.other`]?.includes('{count}')));
-    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
+    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
   }
 

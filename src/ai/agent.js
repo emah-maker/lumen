@@ -3041,9 +3041,13 @@ ${same}
     try {
       if (!dbg.isAttached()) { dbg.attach('1.3'); attached = true; }
       const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+      // marked as the AI's for as long as the commands run (and a moment after): the page view's own mouse handler must not take
+      // this click for the user's, which would hand the AI's tab over to them
+      await manners.agentInputAsync(wc, async () => {
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
+        await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+      });
       return true;
     } catch { return false; } finally {
       if (attached) { try { dbg.detach(); } catch {} }

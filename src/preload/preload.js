@@ -57,7 +57,8 @@ contextBridge.exposeInMainWorld('browser', {
   organizeTabs: () => ipcRenderer.send('tabs:organize'),
   onOrganizing: on('tabs:organizing'),
   onOrganizeNote: on('tabs:organize-note'),
-  undoOrganize: () => ipcRenderer.send('tabs:undo-organize'),
+  undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
+  undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
   translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)

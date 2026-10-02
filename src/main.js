@@ -186,7 +186,7 @@ const UI_ONLY_IPC = new Set([
   'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabs:hide-ai', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
@@ -2355,7 +2355,7 @@ function requestCloseTab(id) {
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
   // the strip drops the tab now, and the next tab is shown now if this one was in front.
-  if (tab.id === activeId) {
+  if (tab.id === activeId && !tab.aiClosing) { // ([ai manners] a tab being closed for the AI stays in front until it is really gone: its page may keep it)
     const index = tabs.indexOf(tab);
     const next = [...tabs.slice(index + 1), ...tabs.slice(0, index).reverse()].find((t) => !t.closing);
     if (next) switchTab(next.id);
@@ -2875,7 +2875,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
-    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { aiTabsClose({ rec: curRec }).catch(() => {}); } }, // [ai manners]
+    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
@@ -4097,14 +4097,28 @@ function closeAiTab(rec, tab) {
     }, 50);
   });
 }
+// The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
+function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
+  const plural = (base, n) => t(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
+  const text = [closed ? plural('chat.aiTabs.closed', closed) : kept ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : ''].filter(Boolean).join(' ');
+  if (!rcAlive(rec) || !winRecs.has(rec)) return;
+  withWindow(rec, () => ui()?.send('tabs:organize-note', { text, undo: Boolean(closed && token), ttl: 9000, aiUndo: closed ? token : 0, undoLabel: t('chat.aiTabs.undo'), undoTitle: t('chat.aiTabs.undo') }));
+}
+// A tab that held back a close (typed text, or a page that asks before leaving) is the user's from now on: it shows in the strip
+// even with the "hide tabs the AI opened" toggle on, loses its mark, and is not offered for closing again.
+function keepTab(rec, tab) {
+  manners.handOver(tab);
+  withWindow(rec, () => sendTabs());
+  return { kept: true };
+}
 async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
-    if (alive(tab) && (await hasUnsavedInput(tab.view.webContents).catch(() => false))) return { kept: true };
+    if (alive(tab) && (await hasUnsavedInput(tab.view.webContents).catch(() => false))) return keepTab(rec, tab);
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
     const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
-    return (await closeAiTab(rec, tab)) ? { item } : { kept: true };
+    return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
   }));
   const items = results.filter((r) => r.item).map((r) => r.item);
   const token = items.length ? ++aiCloseSeq : 0;
@@ -4148,7 +4162,8 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
-ipcMain.handle('chats:close-tabs',(_e, id) => aiTabsClose({ chatId: String(id) }));
+ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(curRec, r); return r; });
+ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
 if (TEST) global.__manners = manners;
 if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 

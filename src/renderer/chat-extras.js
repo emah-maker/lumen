@@ -197,7 +197,11 @@
     close.addEventListener('click', async () => {
       close.disabled = true;
       const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
-      if (!result?.closed) { box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: window.t?.('chat.aiTabs.none') || 'Nothing to close.' })); return; }
+      if (!result?.closed) {
+        const keptText = result?.kept > 0 ? plural('chat.aiTabs.kept', result.kept, result.kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '';
+        box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: keptText || window.t?.('chat.aiTabs.none') || 'Nothing to close.' }));
+        return;
+      }
       undoRow(box, result.closed, result.token, result.kept);
     });
     box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));

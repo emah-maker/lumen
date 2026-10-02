@@ -118,6 +118,20 @@ function agentInput(wc, fn) {
   }
 }
 const isAgentInput = (wc) => (agentDepth.get(wc) || 0) > 0;
+// The same for input sent over the tab's debugger (Input.dispatchMouseEvent): the page view may report such an event to
+// before-mouse-event a moment after the command returns, so the window stays open `graceMs` past the awaited commands.
+// Counted, so overlapping calls never close each other's window early.
+async function agentInputAsync(wc, fn, graceMs = 150) {
+  agentDepth.set(wc, (agentDepth.get(wc) || 0) + 1);
+  try { return await fn(); } finally {
+    const release = () => {
+      const left = (agentDepth.get(wc) || 1) - 1;
+      if (left > 0) agentDepth.set(wc, left); else agentDepth.delete(wc);
+    };
+    const timer = setTimeout(release, graceMs);
+    timer.unref?.();
+  }
+}
 
 // When the user last pressed a key / clicked in each page ('typed': keys only).
 const typed = new WeakMap();
@@ -133,5 +147,5 @@ module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
   isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
-  agentInput, isAgentInput, userInput,
+  agentInput, agentInputAsync, isAgentInput, userInput,
 };
