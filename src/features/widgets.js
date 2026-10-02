@@ -650,7 +650,7 @@ const CONNECTORS = {
   // symbols are read again (x.tvLists, the user's own TradingView cookies) so edits there show up here.
   tradingview: {
     label: 'TradingView',
-    ttl: (data) => (data?.synced ? TVW.SYNC_MS : 24 * 3600e3),
+    ttl: (data) => (!data?.fit ? 0 : data.synced ? TVW.SYNC_MS : 24 * 3600e3),
     clean: (c) => {
       const tv = TVW.cleanConfig(c.tv);
       return tv ? { tv, colors: WC.cleanMode(c.colors) } : null;
@@ -682,8 +682,14 @@ const CONNECTORS = {
           note = `Couldn’t reach your TradingView account (${err.message}); showing the last symbols.`;
         }
       }
-      // Both themes' addresses, so the page can follow light and dark mode without asking again.
-      return { symbol: tv.symbol, view: tv.view, theme: tv.theme, name: tv.list?.name || '', synced, note, light: TVW.embedUrl(tv, false), dark: TVW.embedUrl(tv, true) };
+      // Both themes' addresses, so the page can follow light and dark mode without asking again, and the
+      // compact ones for a small card (features/tradingview-fit.js picks which fits). `fit` marks data that
+      // carries them: older saved data doesn't, and ttl() above refreshes it at once.
+      const sections = tv.view === 'watchlist' ? TVW.sections(tv.symbols, tv.list?.name).length : 0;
+      return {
+        symbol: tv.symbol, view: tv.view, theme: tv.theme, name: tv.list?.name || '', synced, note, fit: 1, sections, chart: tv.chart === true,
+        light: TVW.embedUrl(tv, false), dark: TVW.embedUrl(tv, true), compactLight: TVW.embedUrl(tv, false, true), compactDark: TVW.embedUrl(tv, true, true),
+      };
     },
   },
 
