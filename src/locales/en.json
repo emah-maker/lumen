@@ -11,6 +11,7 @@
   "agent.usingOther": "{name} is working in another tab",
   "agent.waiting": "Waiting for another chat to finish. It starts as soon as there is room.",
   "agent.waitingCli": "Waiting for the other chat to finish: Claude Code and Grok Build work on one chat at a time.",
+  "agent.engineStopped": "This chat stopped without finishing. Send the message again.",
   "agent.workingIn": "Working in: {name}",
   "agent.workingIn.untitled": "this tab",
   "agent.workingIn.jump": "Go to the tab the AI is working in",

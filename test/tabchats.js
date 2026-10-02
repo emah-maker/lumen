@@ -154,6 +154,41 @@ const fakeModel = (app) => app.evaluate(() => {
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
   check('everything finishes and no run is left', (await tc(() => global.__tabChats.runs().length)) === 0 && (await tc(() => global.__tabChats.slots.size())) === 0, JSON.stringify(await tc(() => global.__tabChats.runs())));
 
+  // ---- 4b. The cap is a setting: raising it starts waiting chats at once; a waiting chat can be stopped from the list.
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 1 }));
+  const tG = await openTab(`${base}/g`); await waitFor(async () => (await active()) === tG); await send('chat-G: go'); await inflight('G');
+  const tH = await openTab(`${base}/h`); await waitFor(async () => (await active()) === tH); await send('chat-H: go');
+  await waitFor(() => tc(() => global.__tabChats.runs().some((r) => r.queued)));
+  check('with the cap at one the second chat waits', (await mark(tH)) === 'waiting' && !(await tc(() => global.__inflight.has('H'))), await mark(tH));
+  check('the waiting mark has its own glyph (a ring), not just another colour', await waitFor(() => ui.evaluate((i) => { const el = document.querySelector(`#tabs .tab[data-id="${i}"] .tab-chat-mark`); return el?.classList.contains('waiting') && el.querySelector('svg circle') && !el.querySelector('.cm-spin') && el.getBoundingClientRect().width >= 12; }, tH)), 'no glyph');
+  const gMark = await ui.evaluate((i) => { const el = document.querySelector(`#tabs .tab[data-id="${i}"] .tab-chat-mark`); const r = el.getBoundingClientRect(); const fav = document.querySelector(`#tabs .tab[data-id="${i}"] .tab-favicon`).getBoundingClientRect(); return { spin: Boolean(el.querySelector('.cm-spin')), clear: r.left >= fav.right - 1 }; }, tG);
+  check('the working mark is a spinner on the title side of the icon, not over it', gMark.spin && gMark.clear, JSON.stringify(gMark));
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 }));
+  check('raising the cap in Settings starts the waiting chat right away', Boolean(await inflight('H')) && (await mark(tH)) === 'running', await mark(tH));
+  await tc(() => { global.__release('G'); global.__release('H'); });
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 1 }));
+  const tI = await openTab(`${base}/i`); await waitFor(async () => (await active()) === tI); await send('chat-I: go'); await inflight('I');
+  const tJ = await openTab(`${base}/j`); await waitFor(async () => (await active()) === tJ); await send('chat-J: go');
+  await waitFor(() => tc(() => global.__tabChats.runs().some((r) => r.queued)));
+  await showTab(tI); await waitFor(async () => (await active()) === tI);
+  const listW = await ui.evaluate(() => window.assistant.chats.list());
+  const waiting = listW.chats.find((c) => c.title.includes('chat-J'));
+  check('the list marks the waiting chat', waiting?.badge === 'queued', JSON.stringify(waiting));
+  await ui.evaluate(() => document.getElementById('chat-history').click());
+  await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('.chat-stop-wait'))));
+  const rowText = await ui.evaluate(() => [...document.querySelectorAll('.chat-item')].map((li) => li.innerText.replace(/\s+/g, ' ')));
+  check('the chat list says "This tab" for the chat of the tab in front and "In tab" for the others', rowText.some((t) => /chat-I/.test(t) && /This tab/.test(t)) && rowText.some((t) => /chat-J/.test(t) && /In tab:/.test(t)), JSON.stringify(rowText));
+  const contrast = await ui.evaluate(() => { const px = (css) => { const c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d'); g.fillStyle = css; g.fillRect(0, 0, 1, 1); return [...g.getImageData(0, 0, 1, 1).data].slice(0, 3); }; const el = document.querySelector('.chat-place:not(.here)'); let bgEl = el.closest('.chat-item'); let bg = null; while (bgEl && !bg) { const b = getComputedStyle(bgEl).backgroundColor; if (b && !/rgba\(.*, 0\)|transparent/.test(b)) bg = b; bgEl = bgEl.parentElement; } const lum = (a) => a.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((s, v, k) => s + v * [0.2126, 0.7152, 0.0722][k], 0); const l1 = lum(px(getComputedStyle(el).color)), l2 = lum(px(bg || getComputedStyle(document.body).backgroundColor)); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); });
+  check('the "In tab" text has at least AA contrast for small text on the light surface', contrast >= 4.5, contrast);
+  await ui.evaluate(() => document.querySelector('.chat-stop-wait').click());
+  await waitFor(() => tc(() => !global.__tabChats.runs().some((r) => r.queued)));
+  check('"Stop waiting" takes a waiting chat out of the line (it was not the open chat)', !(await tc(() => global.__inflight.has('J'))) && (await mark(tJ)) !== 'waiting', await mark(tJ));
+  await ui.evaluate(() => document.getElementById('chat-history').click());
+  await tc(() => global.__release('I'));
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 }));
+
   // ---- 5. The chat list knows where each chat lives.
   await showTab(tabA);
   await waitFor(async () => /A finished/.test(await messagesText()));

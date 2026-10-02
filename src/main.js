@@ -3844,9 +3844,9 @@ function pushAttention() {
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
 }
-const chatBadges = () => new Map(chats().list().map((c) => {
-  const run = chatRuns.get(c.id);
-  return [c.id, chatRunsLib.chatBadge({ running: Boolean(run && !run.queued && agent.runningFor(run.messages)), queued: Boolean(run?.queued), approvals: run?.pending.size || 0, unread: unreadChats.has(c.id) })];
+const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
+  const run = chatRuns.get(id);
+  return [id, chatRunsLib.chatBadge({ running: Boolean(run && !run.queued && agent.runningFor(run.messages)), queued: Boolean(run?.queued), approvals: run?.pending.size || 0, unread: unreadChats.has(id) })];
 }));
 // Tells the user about a run: a system notification (clicking it brings the window and that chat
 // back), and the unread mark when the reply isn't in view.
@@ -3880,7 +3880,13 @@ function tellUser(run, kind) {
 // sidebar remembers what it shows (shownChat) and is brought up to date when its tab or its focus changes,
 // and an IPC from a window first brings the open chat in line with that window's tab (syncToSender).
 const chatBind = tabChatsLib.createBindings();
-const runSlots = tabChatsLib.createRunSlots();
+// A start that throws, or a slot whose run vanished without a "done" (an engine process that exited), is finished with an
+// error and a done event so the chat never stays "running"; the slot goes to the next in line.
+const runSlots = tabChatsLib.createRunSlots({
+  onError: (id, err) => chatRuns.get(id)?.fail?.(err),
+  onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
+});
+setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
@@ -6442,6 +6448,13 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     pushAttention();
   };
   run.cancelQueued = finishQueued;
+  // The run could not start, or is gone without a done: tell the chat, and leave the line.
+  run.fail = (err) => {
+    if (chatRuns.get(runChat) !== run) return;
+    run.queued = false;
+    emit({ type: 'error', text: String(err?.message || err) });
+    emit({ type: 'done' });
+  };
   const emit = (msg) => {
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
@@ -6482,7 +6495,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
   runSlots.setMax(readSettings().maxChatRuns);
   const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel());
-  if (runSlots.request(runChat, { kind, start }) === 'queued') {
+  if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
     chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runId });
@@ -6553,7 +6566,11 @@ ipcMain.handle('chats:list', (event) => {
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
-      return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
+      const saved = chats().list();
+      // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
+      const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
+        .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
+      return [...unsaved, ...saved].map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
     })(),
   };
 });

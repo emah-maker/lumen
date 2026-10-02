@@ -67,21 +67,33 @@ function createBindings() {
 // slot kinds: 'api' (a model reached over its API) or 'cli' (Claude Code, Grok Build). The CLI engines
 // call back into Lumen's tools through one connection that finds its run through a single pin, and keep
 // one process warm, so only one of them works at a time; other chats wait (reason 'cli').
-function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1 } = {}) {
+//   onError(chatId, err)  a start() that throws: the slot is given back and the chat is told (an error and a done), so it
+//                         is never left showing "running" for ever
+//   onStale(chatId)       sweep() found a slot whose run is gone without ever saying done (an engine process that exited
+//                         without reaching "done"): the slot is released and the chat is told
+function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, onStale = null, misses = 2 } = {}) {
   let limit = clampRuns(max);
-  const running = new Map(); // chat id -> { kind }
-  const waiting = []; // { chatId, kind, start }
+  const running = new Map(); // chat id -> { kind, alive, missed }
+  const waiting = []; // { chatId, kind, start, alive }
   const cliBusy = () => [...running.values()].filter((r) => r.kind === 'cli').length;
   const fits = (kind) => running.size < limit && (kind !== 'cli' || cliBusy() < cliMax);
   const why = (kind) => (running.size >= limit ? 'limit' : kind === 'cli' && cliBusy() >= cliMax ? 'cli' : null);
+
+  const begin = (chatId, kind, alive, start) => {
+    running.set(chatId, { kind, alive, missed: 0 });
+    try { start(); return true; } catch (err) {
+      running.delete(chatId);
+      try { onError?.(chatId, err); } catch { /* the report must not break the line */ }
+      return false;
+    }
+  };
 
   function pump() {
     for (let i = 0; i < waiting.length;) {
       const w = waiting[i];
       if (!fits(w.kind)) { i++; continue; }
       waiting.splice(i, 1);
-      running.set(w.chatId, { kind: w.kind });
-      try { w.start(); } catch { running.delete(w.chatId); }
+      begin(w.chatId, w.kind, w.alive, w.start);
       i = 0; // (the line is looked at again from the front: a slot may have been taken)
     }
   }
@@ -89,18 +101,33 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1 } = {}) {
   return {
     get limit() { return limit; },
     setMax(n) { limit = clampRuns(n); pump(); },
-    // A chat wants to start. 'started' (start() already ran) or 'queued' (start() runs when a slot frees).
-    // A chat that already holds a slot keeps it (a new message there replaces its own run).
-    request(chatId, { kind = 'api', start }) {
-      if (running.has(chatId)) { running.set(chatId, { kind }); start(); return 'started'; }
+    // A chat wants to start. 'started' (start() already ran), 'queued' (start() runs when a slot frees) or 'failed'
+    // (start() threw: onError has told the chat). A chat that already holds a slot keeps it (a new message there
+    // replaces its own run). `alive()`: whether its run still exists (for sweep).
+    request(chatId, { kind = 'api', start, alive = null }) {
+      if (running.has(chatId)) return begin(chatId, kind, alive, start) ? 'started' : 'failed';
       const queuedAt = waiting.findIndex((w) => w.chatId === chatId);
       if (queuedAt >= 0) waiting.splice(queuedAt, 1); // (the newer message wins its place in line)
-      waiting.push({ chatId, kind, start });
+      let failed = false;
+      const guarded = () => { try { start(); } catch (err) { failed = true; throw err; } };
+      waiting.push({ chatId, kind, start: guarded, alive });
       pump(); // (starts at once when there is room: a chat behind others that don't fit still goes ahead of them)
+      if (failed) return 'failed';
       return running.has(chatId) ? 'started' : 'queued';
     },
     // The chat's run ended (or it was stopped): the next one in line may go.
     release(chatId) { running.delete(chatId); pump(); },
+    // The watchdog: a slot whose run has been gone for `misses` sweeps in a row is released, and onStale says which.
+    sweep() {
+      const stale = [];
+      for (const [id, r] of running) {
+        if (!r.alive || r.alive()) { r.missed = 0; continue; }
+        if (++r.missed >= misses) stale.push(id);
+      }
+      for (const id of stale) { running.delete(id); try { onStale?.(id); } catch { /* ignore */ } }
+      if (stale.length) pump();
+      return stale;
+    },
     // A queued chat that is stopped or deleted leaves the line.
     cancel(chatId) {
       const i = waiting.findIndex((w) => w.chatId === chatId);

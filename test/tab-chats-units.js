@@ -88,6 +88,47 @@ const J = (v) => JSON.stringify(v);
   s = mk(1);
   s.request('boom', { start: () => { throw new Error('x'); } });
   check('slots: a start that fails gives its place back', s.size() === 0 && s.state('boom') === null);
+
+  // a failing start tells the chat, and the line goes on
+  const errs = [];
+  s = TC.createRunSlots({ max: 1, onError: (id, e) => errs.push([id, e.message]) });
+  const order = [];
+  s.request('first', { start: () => order.push('first') });
+  s.request('bad', { start: () => { throw new Error('no engine'); } });
+  s.request('next', { start: () => order.push('next') });
+  check('slots: the line is waiting behind a running chat', s.state('bad') === 'queued' && s.state('next') === 'queued');
+  s.release('first');
+  check('slots: a start that throws is reported (an error for the chat), its slot is given back and the next in line goes', J(errs) === '[["bad","no engine"]]' && s.state('bad') === null && s.state('next') === 'running' && J(order) === '["first","next"]', J({ errs, order, st: s.state('next') }));
+  s = TC.createRunSlots({ max: 2, onError: (id, e) => errs.push([id, e.message]) });
+  errs.length = 0;
+  check('slots: a start that throws at once reports "failed" and holds no slot', s.request('x', { start: () => { throw new Error('boom'); } }) === 'failed' && s.size() === 0 && J(errs) === '[["x","boom"]]', J(errs));
+  check('slots: a chat that already holds a slot and fails to restart gives it up', (() => { s.request('y', { start() {} }); const r = s.request('y', { start: () => { throw new Error('again'); } }); return r === 'failed' && s.state('y') === null; })());
+
+  // the cap raised starts every chat that now fits, at once
+  started.length = 0;
+  s = mk(1);
+  go(s, 'a'); go(s, 'b'); go(s, 'c');
+  check('slots: with the cap at one, two chats wait', s.state('a') === 'running' && J(s.waitingIds()) === '["b","c"]');
+  s.setMax(3);
+  check('cap change: raising the cap starts the waiting chats right away', s.state('b') === 'running' && s.state('c') === 'running' && s.waitingIds().length === 0 && J(started) === '["a","b","c"]', J(started));
+
+  // the watchdog: a slot whose run is gone without a done is released after two sweeps
+  const stale = [];
+  let engineAlive = true;
+  s = TC.createRunSlots({ max: 1, cliMax: 1, onStale: (id) => stale.push(id) });
+  started.length = 0;
+  s.request('cli1', { kind: 'cli', start: () => started.push('cli1'), alive: () => engineAlive });
+  s.request('cli2', { kind: 'cli', start: () => started.push('cli2'), alive: () => true });
+  check('watchdog: nothing is released while the run lives', J(s.sweep()) === '[]' && s.state('cli2') === 'queued');
+  engineAlive = false; // the engine process exited without ever saying done
+  check('watchdog: one missed sweep is not enough (a run is just starting)', J(s.sweep()) === '[]' && s.state('cli1') === 'running');
+  check('watchdog: the slot of a run that is gone is released, the chat is told, and the next CLI chat starts', J(s.sweep()) === '["cli1"]' && J(stale) === '["cli1"]' && s.state('cli1') === null && s.state('cli2') === 'running' && J(started) === '["cli1","cli2"]', J({ stale, started }));
+  engineAlive = true;
+  s = TC.createRunSlots({ max: 1 });
+  let flaky = false;
+  s.request('f', { start() {}, alive: () => !flaky });
+  flaky = true; s.sweep(); flaky = false;
+  check('watchdog: a run that comes back resets the count', J(s.sweep()) === '[]' && s.state('f') === 'running');
 }
 
 // ---- tool target
