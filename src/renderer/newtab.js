@@ -87,7 +87,7 @@ function applyLook(look) {
   document.body.dataset.wpack = look.packed ? '1' : '0';
   document.body.dataset.wglass = look.glass;
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no sliding with Reduce motion or Performance mode
-  document.body.classList.toggle('still', look.still); // [widgets] no wiggle (a dashed outline instead) only with Reduce motion: Performance mode (Auto flips it by itself) keeps the wiggle
+  document.body.classList.toggle('still', look.still); // [widgets] no sliding or other motion with Reduce motion
   applyEffect(look);
   window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
 }
