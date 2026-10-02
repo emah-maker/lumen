@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Settings → AI: every command-line AI can now be given full access to this computer, each with its own switch (off by default): **Give Claude Code full access** (already there), **Give Grok Build full access** (`--always-approve`, its own tools, no Lumen limits) and **Give Antigravity full access** (`--dangerously-skip-permissions`, no sandbox). With one on, that CLI works in the sidebar as it does in your terminal: it can run commands and read and change any file, without asking, in your home folder. A new **Give all command-line AIs full access to this computer** switch sets or clears the three together and shows half-way when they differ. Lumen's browser tools keep their approval cards and hands-off mode; only the CLI's own tools are unrestricted. If a CLI doesn't accept the option, Lumen says so instead of running without it.
+
 ## 0.5.2 (2026-10-02)
 
 - AI tab manners: tabs the AI opens are marked in the tab strip (with an "Opened by AI" note on hover) and open in the background. Close them again in one step, with Undo, from under the reply, the tab menu or the chat menu; Settings → AI → close tabs the AI opened is Off, Ask or Always, and it never closes a tab you used, a pinned tab or the tab a chat lives in. A button on the tab strip hides the tabs the AI opened (they stay open; the tab in front stays shown).
