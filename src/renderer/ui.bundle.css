@@ -1259,11 +1259,14 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 /* Update prompt in the toolbar (renderer/updates.js): the same quiet pill as "Lumen is using this tab". */
 .update-pill {
   display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 2px 0 10px; margin-right: 6px;
+  flex: 0 1 auto; min-width: 0; /* shrinks (the text ellipsizes) instead of being clipped by the end column */
   border-radius: 14px; color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
   animation: pill-in var(--t-snappy) var(--spring-snappy);
 }
 .update-pill[hidden] { display: none; }
+#update-pill .update-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#update-action, .update-dismiss { flex: none; }
 #update-action {
   height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: var(--accent-soft); color: var(--accent);
   font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
