@@ -192,7 +192,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -6371,7 +6371,11 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null, ...(TEST ? { otherActivity: async () => false } : {}) });
+const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null,
+  // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
+  codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
+  codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
+  ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
@@ -6556,6 +6560,8 @@ function aiStatusFacts() {
     cooling,
     meter: glance.meter,
     grokLimit: glance.grokLimit,
+    codexLimit: glance.codexLimit,
+    codexMeter: glance.codexMeter,
     today: glance.today,
     fullAccess: Object.fromEntries(Object.entries(AI_FULL_ACCESS).map(([id, key]) => [id, s[key] === true ? true : s[key] === false ? false : undefined])),
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
