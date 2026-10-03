@@ -374,11 +374,17 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* One calm row: navigation left, address centered, actions right. */
 .toolbar {
   --toolbar-side-min: 150px; /* each side keeps room for its buttons, so the address never overlaps them */
-  display: grid; grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 680px) minmax(var(--toolbar-side-min), 1fr);
+  --omnibox-max: 680px;
+  /* The end column is never narrower than its content (the pills and buttons at their natural width), so the address
+     field, which can shrink to its 240px floor, gives up room first. .toolbar-end caps that content width below. */
+  display: grid; grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, var(--omnibox-max)) minmax(max-content, 1fr);
   align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px;
 }
 .toolbar-start, .toolbar-end { display: flex; align-items: center; gap: 2px; }
-.toolbar-end { justify-content: flex-end; min-width: 0; overflow: clip; overflow-clip-margin: 3px; } /* (the margin keeps the buttons' focus ring) */
+/* Nothing here clips: items share the row by shrinking (the extension list, then the update pill's words), never by
+   overflowing out of an end-aligned row, which cut off its first item from the left. The cap keeps the end column from
+   claiming the address field's floor and the nav buttons' room. */
+.toolbar-end { justify-content: flex-end; min-width: var(--toolbar-side-min); max-width: calc(100vw - var(--toolbar-side-min) - 240px - 40px); }
 
 .icon-btn {
   width: 30px; height: 30px; flex: none; display: grid; place-items: center;
@@ -454,15 +460,15 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 
 /* Visible sign that the AI is driving the current tab: a plain pill with a live dot. */
 .agent-pill {
-  display: none; position: relative; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px; margin-right: 6px;
+  display: none; position: relative; flex: none; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px; margin-right: 6px;
   border-radius: 14px; color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
 }
 body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy) var(--spring-snappy); }
 /* [agent window] the badge in an outside agent's own window */
 .agent-window-chip {
-  display: flex; align-items: center; height: 22px; padding: 0 10px; margin-right: 6px; border-radius: 11px;
-  font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--accent); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent);
+  display: flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 22px; padding: 0 10px; margin-right: 6px; border-radius: 11px;
+  font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent);
 }
 .agent-window-chip[hidden] { display: none; }
 @keyframes pill-in { from { opacity: 0; transform: translateX(8px); } }
@@ -476,18 +482,19 @@ body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy
    keeps its live dot and Stop, and the words stay for screen readers (clipped, not display:none). */
 @media (max-width: 1000px) {
   .agent-pill { gap: 6px; padding-left: 8px; }
-  #agent-pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #agent-pill-text, #update-pill .update-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #update-pill { padding-left: 2px; } /* (just the button and the x; the words are the pill's title) */
 }
 
 /* Extension icons can't push the ⋯ and AI buttons out of the window: the toolbar's end column is
    max-content, so enough icons at the 800px minimum ran it past the right edge (body clips it). The
    list gets what's left after the other buttons and a usable address field; icons past that are
    clipped, and the "..." button beside the list (app.js) lists them. */
-browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 640px)); overflow: hidden; }
+browser-action-list { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 640px)); overflow: hidden; }
 body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /* the zoom pill sits in the address field's end: the icons give it room */
 /* Wide windows: the address field stays a reasonable width and centred, with the icons at the edges. */
 @media (min-width: 1600px) {
-  .toolbar { grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 760px) minmax(var(--toolbar-side-min), 1fr); }
+  .toolbar { --omnibox-max: 760px; }
 }
 /* The page zoomed in far: the pill and the security label take the field's room, so the URL starts at the left and the label shrinks to its icon. */
 @media (max-width: 1200px) {
@@ -506,12 +513,12 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
    fewer extension icons (the list's cap drops; the overflow button lists the rest), and any remainder is clipped. */
 @media (max-width: 860px) {
   .toolbar { gap: 4px; padding: 0 6px; }
-  .toolbar-end { gap: 0; overflow: clip; overflow-clip-margin: 3px; } /* (the margin keeps the buttons' focus ring) */
+  .toolbar-end { gap: 0; }
   browser-action-list { max-width: max(56px, calc(100vw - 600px)); }
 }
 /* Very wide windows: the address field stops growing. */
 @media (min-width: 1920px) {
-  .toolbar { grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 880px) minmax(var(--toolbar-side-min), 1fr); }
+  .toolbar { --omnibox-max: 880px; }
 }
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
