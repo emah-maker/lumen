@@ -25,6 +25,7 @@
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.10",
+    "koffi": "^3.3.2",
     "openai": "^7.23.0",
     "qrcode-generator": "^2.0.4",
     "tldts-experimental": "^7.4.15"
@@ -65,7 +66,12 @@
       "!**/node_modules/**/*.map",
       "!**/node_modules/**/*.{ts,mts,cts,tsbuildinfo}",
       "!**/node_modules/{openai,@anthropic-ai/sdk}/**/*.mjs",
-      "!**/node_modules/{openai,@anthropic-ai/sdk}/src/**"
+      "!**/node_modules/{openai,@anthropic-ai/sdk}/src/**",
+      "!**/node_modules/koffi/{doc,lib,vendor}/**",
+      "!**/node_modules/koffi/src/koffi/src/**/*.{cc,hh,inc,def,S,asm}",
+      "!**/node_modules/koffi/src/koffi/CMakeLists.txt",
+      "!**/node_modules/koffi/cnoke.cjs",
+      "!**/node_modules/@koromix/koffi-*/*/*.lib"
     ],
     "electronLanguages": [
       "en-US",
@@ -190,6 +196,10 @@
         }
       ],
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "files": [
+        "!**/node_modules/koffi/**",
+        "!**/node_modules/@koromix/**"
+      ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
