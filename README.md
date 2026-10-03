@@ -12,6 +12,8 @@
 - **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, the current chat is encrypted at rest, and the start page makes no network requests.
 - **Calm to look at.** Light and dark themes that follow your system, and spring animations.
 
+**Found a bug or have an idea?** [Report an issue](https://github.com/emah-maker/lumen/issues/new/choose). In the app, use Help → Report an Issue (macOS) or Settings → About → Report a problem.
+
 ## Install
 
 Download the latest build from [Releases](https://github.com/emah-maker/lumen/releases).

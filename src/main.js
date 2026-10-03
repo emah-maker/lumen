@@ -1135,6 +1135,22 @@ async function setupExtensions() {
   setInterval(checkUpdates, 5 * 60 * 60 * 1000).unref?.();
 }
 
+// Help > Report an issue: the new-issue page with the version and OS filled in (nothing is sent until the user submits it on GitHub)
+function reportIssueUrl() {
+  const body = `**What happened**
+
+**What you expected**
+
+**Steps to reproduce**
+1.
+
+**Environment**
+- Lumen: ${app.getVersion()}
+- OS: ${process.platform} ${require('os').release()} (${process.arch})
+`;
+  return `https://github.com/emah-maker/lumen/issues/new?labels=bug&body=${encodeURIComponent(body)}`;
+}
+
 function extensionsMenu() {
   const installed = session.defaultSession.extensions.getAllExtensions()
     .filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
@@ -4562,7 +4578,7 @@ function macMenu() {
       { type: 'separator' },
       { role: 'front' },
     ] },
-    { role: 'help', submenu: [{ label: t('menu.keyboardShortcuts'), ...shown('Shift+Cmd+/'), click: () => shortcutsHelp.open() }, { label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+    { role: 'help', submenu: [{ label: t('menu.keyboardShortcuts'), ...shown('Shift+Cmd+/'), click: () => shortcutsHelp.open() }, { label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.reportIssue'), click: () => shell.openExternal(reportIssueUrl()) }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
 
