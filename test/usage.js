@@ -231,6 +231,37 @@ const USAGE_TEXT = [
   for (let i = 0; i < 20 && !(saved && saved.daily === 3); i++) { await sleep(200); saved = await app.evaluate(() => global.__usage.budget()); }
   check('Settings → Usage: the budget saved from the page is applied (3 tokens a day, as typed)', saved && saved.daily === 3 && saved.unit === 'tokens', JSON.stringify(saved));
 
+  // ---- Codex CLI: its own 5-hour / weekly windows and token totals, read from its session logs (stubbed here: the real ~/.codex is never read)
+  const inHours = (h) => Date.now() + h * 3600e3;
+  await app.evaluate((_e, t) => {
+    global.__usage.clear();
+    global.__codexScan = (now) => ({
+      sessions: 2, latestAt: now, today: { sessions: 1, tokens: 31200, input: 6000, output: 1200, cached: 24000, reasoning: 300 }, week: { sessions: 2, tokens: 90000, input: 20000, output: 4000, cached: 66000, reasoning: 900 },
+      limits: { planType: 'plus', reached: false, at: now, primary: { percent: 41.6, minutes: 300, resetsAt: t.five, expired: false }, secondary: { percent: 12, minutes: 10080, resetsAt: t.week, expired: false } },
+    });
+  }, { five: inHours(2), week: inHours(90) });
+  const cs = await summary(true);
+  check('usage summary: Codex\'s 5-hour and weekly windows and its bar', cs.codex && Math.round(cs.codex.fiveHour.percent) === 42 && Math.round(cs.codex.weekly.percent) === 12 && cs.bars.codex.kind === 'plan', JSON.stringify(cs.codex));
+  await app.evaluate(() => global.__settings.open('usage'));
+  await sleep(800);
+  await app.evaluate(async () => { const t = global.__settings.tabs().find((x) => x.settings); await global.__settings.contents(t.id).executeJavaScript("document.getElementById('usage-refresh')?.click()"); }); // (the page was already open: re-read)
+  let cp = null;
+  for (let i = 0; i < 40 && !(cp && /Codex 5-hour limit/.test(cp.text)); i++) {
+    await sleep(250);
+    cp = await app.evaluate(async () => {
+      const t = global.__settings.tabs().find((x) => x.settings);
+      const wc = t && global.__settings.contents(t.id);
+      return wc ? wc.executeJavaScript("(() => { const sec = document.getElementById('sec-usage'); return sec && !sec.hidden && { text: sec.textContent }; })()") : null;
+    });
+  }
+  check('Settings → Usage: Codex 5-hour and weekly meters with the plan, and tokens with no price', cp && /Codex 5-hour limit \(Plus plan\)/.test(cp.text) && /Codex weekly limit/.test(cp.text) && /Today: 1 session · 31k tokens/.test(cp.text) && /doesn’t report a price/.test(cp.text), cp && cp.text.slice(-900));
+  await app.evaluate((_e, t) => { global.__codexScan = (now) => ({ sessions: 1, latestAt: now, today: { sessions: 1, tokens: 5, input: 5, output: 0, cached: 0, reasoning: 0 }, week: { sessions: 1, tokens: 5, input: 5, output: 0, cached: 0, reasoning: 0 }, limits: { planType: null, reached: true, at: now, primary: { percent: 100, minutes: 300, resetsAt: t, expired: false }, secondary: null } }); global.__usage.clear(); }, inHours(1));
+  const hitSum = await summary(true);
+  check('Codex limit reached: the summary carries the reset time and the bar is the limit state', hitSum.codex.reached && hitSum.bars.codex.kind === 'limit' && hitSum.bars.codex.resetsAt > Date.now(), JSON.stringify(hitSum.bars.codex));
+  await app.evaluate(() => { global.__codexScan = (now) => ({ sessions: 1, latestAt: now, today: { sessions: 1, tokens: 5, input: 5, output: 0, cached: 0, reasoning: 0 }, week: { sessions: 1, tokens: 5, input: 5, output: 0, cached: 0, reasoning: 0 }, limits: null }); global.__usage.clear(); });
+  const apiKey = await summary(true);
+  check('Codex with no plan data (an API-key sign-in): no bar, and the summary says why', apiKey.codex && !apiKey.codex.hasLimits && apiKey.bars.codex === null && /not reported plan limits/.test(apiKey.codex.note), JSON.stringify(apiKey.codex));
+
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');

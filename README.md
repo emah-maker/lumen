@@ -164,7 +164,8 @@ claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Lum
 ```
 
 ```toml
-# Codex CLI: ~/.codex/config.toml
+# Codex CLI: ~/.codex/config.toml (or $CODEX_HOME/config.toml). The Add to Codex CLI button in Settings
+# writes this for you and finds codex however it was installed (npm, winget, the standalone .exe, Homebrew…).
 [mcp_servers.lumen]
 command = 'C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe'
 args = ['C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js']

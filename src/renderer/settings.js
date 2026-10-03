@@ -466,6 +466,7 @@ async function buildAi(card) {
         add.textContent = 'Adding…';
         const r = await S.ai.addToAgent(snip.addButton).catch((err) => ({ ok: false, text: err.message }));
         add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : addLabel;
+        if (snip.id === 'codex') refreshCodex(true);
         add.disabled = Boolean(r.ok);
         if (r.ok) mcpToggle.checked = true; // connecting an agent turns agent connections on
         if (!r.already) flash(note, r.text, r.ok ? 'ok' : 'err');
@@ -480,8 +481,39 @@ async function buildAi(card) {
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
     }
+    // Codex CLI is found however it was installed (npm, winget, the standalone .exe, Homebrew, an app…): its row says what Lumen
+    // found, whether it is signed in and whether Lumen is already in its config, and offers "Locate codex…" when it can't be found.
+    const cxState = snip.id === 'codex' ? status() : null;
+    const cxActions = snip.id === 'codex' ? h('div', { class: 'controls', id: 'codex-actions' }) : null;
+    const SIGN = { chatgpt: ' with ChatGPT', apikey: ' with an API key' };
+    const CONNECTED = { same: 'connected to Lumen', stale: 'Lumen’s entry is out of date (click Add to update it)', disabled: 'Lumen is switched off in its config', absent: 'not connected to Lumen yet' };
+    function renderCodex(s) {
+      if (!cxState) return;
+      const parts = s.installed
+        ? [`Codex ${s.version || ''}`.trim(), s.signedIn === true ? `signed in${SIGN[s.method] || ''}` : s.signedIn === false ? 'not signed in (run codex login in a terminal)' : 'sign-in unknown', CONNECTED[s.connected] || null]
+        : [s.reason || 'Codex wasn’t found'];
+      cxState.textContent = parts.filter(Boolean).join(' · ');
+      cxState.className = `note${!s.installed || s.signedIn === false ? ' err' : ''}`;
+      cxState.title = s.path || '';
+      const buttons = [];
+      if (!s.installed && s.links) {
+        buttons.push(h('button', { text: 'Download Codex', onclick: () => S.openUrl(s.links.github) }), h('button', { text: 'Install guide', onclick: () => S.openUrl(s.links.docs) }));
+      }
+      buttons.push(h('button', { id: 'codex-locate', text: 'Locate codex…', onclick: async () => {
+        const r = await S.ai.codexLocate().catch((err) => ({ rejected: err.message }));
+        if (r.rejected) flash(note, r.rejected, 'err');
+        else if (!r.canceled) flash(note, r.installed ? `Using ${r.path}` : 'That file isn’t Codex.', r.installed ? 'ok' : 'err');
+        renderCodex(r);
+      } }));
+      if (s.custom) buttons.push(h('button', { text: 'Use automatic detection', onclick: async () => renderCodex(await S.ai.codexLocate(true).catch(() => s)) }));
+      cxActions.replaceChildren(...buttons);
+    }
+    function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
+    if (cxState) refreshCodex(false);
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), ccState, add, copy),
+      cxState ? h('div', { class: 'item' }, cxState) : null,
+      cxActions,
       h('pre', { class: 'mono code', text: snip.text }),
       snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
       note);
@@ -2054,7 +2086,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', anthropic: 'Claude (API key)' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', anthropic: 'Claude (API key)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -2093,6 +2125,25 @@ function grokUsageRows(u, refresh) {
       h('button', { id: 'usage-budget-save', text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value }); refresh(); } }))));
   return rows;
 }
+// Codex CLI: what Codex itself reports (its session logs; ai/codex-usage.js): the plan's 5-hour and weekly windows and token totals.
+// It reports no price, and an API-key sign-in has no plan windows: those cases say so instead of showing made-up numbers.
+function codexUsageRows(u) {
+  const c = u.codex;
+  if (!c) return [];
+  const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const rows = [row('Codex CLI', 'Read from Codex’s own session logs on this computer (numbers only, never your prompts). Codex doesn’t report a price, so there is no dollar figure.')];
+  if (c.reached) rows.push(row('Codex limit reached', c.reached.resetsAt ? `Resets ${when(c.reached.resetsAt)}.` : 'Codex didn’t say when it resets.'));
+  const plan = c.planType ? ` (${c.planType[0].toUpperCase()}${c.planType.slice(1)} plan)` : '';
+  const win = (label, w) => (w ? (w.expired ? row(label, 'Reset since the last reading; the next Codex reply shows the new one.') : meterRow(label, w.percent, w.resetsAt ? `Resets ${when(w.resetsAt)}` : null)) : null);
+  const five = win(`Codex 5-hour limit${plan}`, c.fiveHour);
+  const week = win('Codex weekly limit', c.weekly);
+  rows.push(...[five, week].filter(Boolean));
+  if (!five && !week) rows.push(row('Codex plan limits', c.note || 'Codex hasn’t reported its plan limits yet.'));
+  else if (c.readAt) rows.push(row('', `As of ${when(c.readAt)}, the last Codex reply on this computer. Limits are shared with Codex on other devices and in the cloud.`));
+  const line = (label, w) => `${label}: ${w.sessions} session${w.sessions === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens (${tokens(w.cached)} cached, ${tokens(w.output)} output)`;
+  rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
+  return rows;
+}
 async function buildUsage(card) {
   const body = h('div', { class: 'usage' });
   const render = async (refresh) => {
@@ -2129,6 +2180,7 @@ async function buildUsage(card) {
       : [h('span', { class: 'note', text: 'Nothing yet.' })]);
     parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
     parts.push(...grokUsageRows(u, () => render(false)));
+    parts.push(...codexUsageRows(u));
     parts.push(row('', null,
       h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
@@ -2613,7 +2665,7 @@ async function init() {
   // Sub-pages that are whole builders of their own.
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
-  mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok cost');
+  mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok codex cost');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
