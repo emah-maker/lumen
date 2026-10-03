@@ -1653,8 +1653,9 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
+let spareForTest = false; // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it)
 function makeSpareNewTab() {
-  if (TEST || spareNewTab || !app.isReady()) return;
+  if ((TEST && !spareForTest) || spareNewTab || !app.isReady()) return;
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
@@ -1676,6 +1677,7 @@ function takeSpareNewTab() {
 // The next one is made right away: Ctrl+T pressed again a moment later finds
 // it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
 const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
+if (TEST) global.__spareNewTab = { enable: (on = true) => { spareForTest = on; if (on) makeSpareNewTab(); else if (spareNewTab) { try { spareNewTab.view.webContents.close(); } catch {} spareNewTab = null; } }, ready: () => Boolean(spareNewTab?.ready) };
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
 // A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
