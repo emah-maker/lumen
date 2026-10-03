@@ -536,7 +536,7 @@ async function grokRuns() {
     return child;
   };
   const killLive = (child) => { child.killed = true; setImmediate(() => child.emit('close', null)); };
-  const live1 = new gb.GrokBuildEngine({ userData: tmp, gate: async () => gate, spawn: spawnLive, kill: killLive, watchdogMs: 60 });
+  const live1 = new gb.GrokBuildEngine({ userData: tmp, gate: async () => gate, spawn: spawnLive, kill: killLive, watchdogMs: 200 }); // (200, not 60: a loaded machine can take longer than 60 ms between two steps of a test)
   live1.bin = process.execPath;
   const evs = [];
   const runLive = (signal = new AbortController().signal) => live1.run({ prompt: 'p', sessionId: 'sess', resume: true, systemPrompt: 'SYS', signal, emit: (e) => evs.push(e) });
@@ -563,7 +563,7 @@ async function grokRuns() {
   for (let i = 0; i < 100 && !live[2]; i++) await sleep(25); // (the process starts after an async setup that a loaded machine slows)
   await sleep(25);
   live1.callBegin(); // a tool call (or its approval card) is in flight
-  await sleep(160);
+  await sleep(500);
   const stillUp = !live[2].killed;
   live[2].finish('waited');
   live1.callEnd();
@@ -644,6 +644,7 @@ async function grokWarmupRuns() {
   // After the machine wakes: prepared again from scratch, but only while enabled.
   const before = w.stats.warmed;
   resume.emit('resume');
+  for (let i = 0; i < 100 && w.stats.warmed === before; i++) await sleep(25); // (a loaded machine takes longer than a fixed wait)
   await sleep(50);
   check('warm-up: re-warms after resume while enabled (still no process)', w.stats.warmed === before + 1 && spawns === 2, JSON.stringify(w.stats));
   on = false;
