@@ -624,6 +624,20 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('zip update (win): launching writes no .cmd/.bat/.ps1/.vbs and starts no script host', spawned.length === 1 && !/(cmd|powershell|wscript|cscript|pwsh)(\.exe)?$/i.test(spawned[0][0]) && !spawned[0][1].some((x) => /\.(cmd|bat|ps1|vbs)$/i.test(x)) && fs.readdirSync(swapDir).length === before.length, JSON.stringify(spawned));
   }
   fs.rmSync(swapDir, { recursive: true, force: true });
+  {
+    // A helper folder left by an earlier attempt (on Windows it can stay locked) never blocks the next one.
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-helper-unit-'));
+    const fakeExe = path.join(base, 'Lumen.exe');
+    fs.writeFileSync(fakeExe, 'MZ');
+    fs.mkdirSync(path.join(base, 'lumen-update-helper'));
+    const a = zu.prepareHelper(fakeExe, null, base);
+    const b = zu.prepareHelper(fakeExe, null, base);
+    const left = fs.readdirSync(base).filter((f) => f.startsWith('lumen-update-helper'));
+    check('zip update (win): each helper copy gets its own folder and earlier ones are cleared', a.dir !== b.dir && fs.existsSync(b.exe) && fs.existsSync(b.script) && JSON.stringify(left) === JSON.stringify([path.basename(b.dir)]), JSON.stringify({ a: a.dir, b: b.dir, left }));
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+  const swapSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'swap-helper.js'), 'utf8');
+  check('zip update (win): the relaunched Lumen doesn\'t start in the helper\'s temp folder', /spawn\(exe, args, \{[^}]*cwd: require\('os'\)\.homedir\(\)/.test(swapSrc), 'no cwd');
   const helperSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'swap-helper.js'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'zip-update.js'), 'utf8');
   check('zip update (win): the update path has no script hosts, no Unblock-File and no Zone.Identifier tricks', !/powershell|Unblock-File|Zone\.Identifier|wscript|cscript|\.cmd\b|\.bat\b|\.vbs/i.test(helperSrc.replace(/\/\/.*$/gm, '')), 'found one');
   check('zip update (win): the helper copy brings only the exe, its start-up data and the helper script', JSON.stringify(zu.HELPER_FILES) === '["icudtl.dat","snapshot_blob.bin","v8_context_snapshot.bin"]', JSON.stringify(zu.HELPER_FILES));
