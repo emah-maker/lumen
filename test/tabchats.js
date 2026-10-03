@@ -210,7 +210,9 @@ const fakeModel = (app) => app.evaluate(() => {
   check('"Move chat to this tab" binds it here and takes it from the other tab', moved.home === tabA, JSON.stringify(moved));
   await showTab(tabB);
   await waitFor(async () => (await tc(() => global.__tabChats.shown() === global.__tabChats.chatId())));
-  check('the tab it left starts a chat of its own', (await bubbles()).length === 0, await messagesText());
+  // (the sidebar redraws a moment after the main side switches chats: wait for it to settle, then check)
+  const leftEmpty = await waitFor(async () => (await bubbles()).length === 0, 4000);
+  check('the tab it left starts a chat of its own', Boolean(leftEmpty), await messagesText());
 
   // ---- 5b. One chat in two tabs ("Also show in this tab"): the chat has one home tab where its run works; both tabs
   // show the same messages and marks; a new chat in either tab only unbinds that tab; Stop works from either tab.
