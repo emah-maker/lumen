@@ -79,6 +79,12 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   const providersList = (await settings()).autoProviders.map((p) => p.key);
   check('Settings lists the providers Auto may use', providersList.includes('anthropic') && providersList.includes('openai') && !providersList.includes('auto'), JSON.stringify(providersList));
 
+  // The open menu: Auto is the very first row, with no heading above it; the providers' headings follow.
+  await ui.click('.model-picker .picker-button');
+  const rows = await ui.$$eval('.picker-menu .picker-list > *', (els) => els.map((e) => (e.classList.contains('picker-section') ? [...e.children].map((c) => (c.classList.contains('picker-group') ? `#${c.textContent}` : c.querySelector('.picker-name')?.textContent || '')).join('|') : e.className)));
+  check('the open menu starts with the Auto row, no heading over it', rows.length > 1 && /^Auto(\||$)/.test(rows[0]) && !rows[0].startsWith('#'), JSON.stringify(rows.slice(0, 3)));
+  await ui.keyboard.press('Escape');
+
   // ---- routing per message
   let u = await send('hi');
   check('"hi": a small, fast model answers', u.length === 1 && tierOf(u[0]) === 'fast', JSON.stringify(u));
@@ -156,6 +162,14 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   check('Settings picker: Auto first and selected', (await settingsRun("[...document.querySelectorAll('#ai-model option')].map((o) => o.value)[0] + '|' + document.getElementById('ai-model').value")) === 'auto|auto');
   check('Settings > AI > Auto may use: one tick per provider', Number(await settingsRun("document.querySelectorAll('#ai-auto-use input[type=checkbox]').length")) >= 2);
 
+  // The ticks write the setting (only valid ids are kept), and the list follows the connected providers.
+  await settingsRun("(() => { const box = document.querySelector('#auto-use-openai'); box.click(); return box.checked; })()");
+  await sleep(300);
+  await app.evaluate(() => global.__settingsFlush());
+  check('un-ticking a provider in Settings saves it as off for Auto', JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).autoExclude?.includes('openai'), fs.readFileSync(path.join(profile, 'settings.json'), 'utf8').slice(0, 300));
+  const cleaned = await settingsRun("window.lumenSettings.set('autoExclude', ['openai', 'bad id!!', 'claude-opus-5', 'openai']).then((st) => st.prefs.autoExclude)");
+  check('autoExclude keeps only plain ids, once each', JSON.stringify(cleaned) === JSON.stringify(['openai', 'claude-opus-5']), JSON.stringify(cleaned));
+  check('autoExclude refuses a non-list', (await settingsRun("window.lumenSettings.set('autoExclude', 'openai').then(() => 'accepted', () => 'refused')")) === 'refused');
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
   try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* temp */ }

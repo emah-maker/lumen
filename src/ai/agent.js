@@ -1313,14 +1313,15 @@ class Agent {
       if (messages.settings.fallbackFrom) { messages.settings.model = messages.settings.fallbackFrom; delete messages.settings.fallbackFrom; }
       // [auto model] Same for the model Auto chose last turn (autoFrom holds the pick, 'auto'): the pick comes back, and this message is routed afresh below.
       if (messages.settings.autoFrom) { messages.settings.model = messages.settings.autoFrom; delete messages.settings.autoFrom; }
-      // A /think, /deep or /fast in front of the message asks Auto for the strongest or quickest model for this message only; it never reaches a model.
-      const hinted = autoModel.hintOf(userText);
-      userText = hinted.text;
       // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
       // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
       if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
-      this.routeAuto(messages, { text: userText, images, tabs: extra.tabs, hint: hinted.hint, skill }, emit); // [auto model]
+      // [auto model] A /think, /deep or /fast in front of the message asks Auto for the strongest or quickest model for this
+      // message only, and never reaches a model. Only on Auto: with a model picked, the text goes as typed (Claude Code has a /fast of its own).
+      let hinted = { hint: '', text: userText };
+      if (autoModel.isAuto(messages.settings.model)) { hinted = autoModel.hintOf(userText); userText = hinted.text; }
+      this.routeAuto(messages, { text: userText, images, tabs: extra.tabs, hint: hinted.hint, skill }, emit);
       this.standInFor(messages.settings, standIn, emit, { chars: historyChars(messages) + String(userText || '').length, images: images.length > 0 || hasImages(messages) });
 
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front

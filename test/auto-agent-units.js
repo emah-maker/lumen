@@ -94,6 +94,9 @@ const notices = (log) => log.events.filter((e) => e.type === 'notice').map((e) =
     const messages = fresh('claude-opus-5-5');
     await once(agent, messages, 'hi', log);
     check('a picked model is used as picked (Auto steps aside, no autoFrom, no routing)', log.ran[0].model === 'claude-opus-5-5' && !messages.settings.autoFrom && log.routed.length === 0, J(log.ran));
+    const typed = fresh('claude-opus-5-5');
+    await once(agent, typed, '/think hello', log);
+    check('with a model picked, /think is not a hint: the text goes as typed', log.ran.pop().text === '/think hello');
     agent.messages = messages;
     messages.settings.model = 'auto';
     messages.settings.autoFrom = 'auto';
