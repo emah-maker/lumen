@@ -12,13 +12,13 @@
 'use strict';
 
 // Fixed order, so the card doesn't reshuffle: an AI with the same state keeps its place.
-const ORDER = ['anthropic', 'claudecode', 'openai', 'xai', 'grokbuild', 'gemini', 'antigravity', 'openrouter'];
-const NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', openai: 'OpenAI', xai: 'Grok', grokbuild: 'Grok Build', gemini: 'Gemini', antigravity: 'Antigravity', openrouter: 'OpenRouter' };
+const ORDER = ['anthropic', 'claudecode', 'openai', 'codex', 'xai', 'grokbuild', 'gemini', 'antigravity', 'openrouter'];
+const NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', openai: 'OpenAI', codex: 'Codex CLI', xai: 'Grok', grokbuild: 'Grok Build', gemini: 'Gemini', antigravity: 'Antigravity', openrouter: 'OpenRouter' };
 // Which logo a card draws for each (the page keeps the artwork: it is the same set the toolbar button uses, renderer/chat-core.js). Claude and Claude Code share one.
-const BRANDS = { anthropic: 'claude', claudecode: 'claude', openai: 'openai', xai: 'grok', grokbuild: 'grok', gemini: 'gemini', antigravity: 'antigravity', openrouter: 'openrouter' };
+const BRANDS = { anthropic: 'claude', claudecode: 'claude', openai: 'openai', codex: 'openai', xai: 'grok', grokbuild: 'grok', gemini: 'gemini', antigravity: 'antigravity', openrouter: 'openrouter' };
 // The word a small card puts beside the dot (the shape of the dot says it too, and the tooltip has the whole sentence).
 const SHORT = { ready: 'Ready', limited: 'Limit', down: 'Down', out: 'Sign in', off: 'Off', missing: 'Missing' };
-const ENGINES = ['claudecode', 'grokbuild', 'antigravity']; // the user's own CLIs: shown even when not installed (so "not installed" is an answer)
+const ENGINES = ['claudecode', 'grokbuild', 'antigravity', 'codex']; // the user's own CLIs: shown even when not installed (so "not installed" is an answer)
 const STATES = ['ready', 'limited', 'down', 'out', 'off', 'missing'];
 const RANK = { ready: 0, limited: 1, down: 2, out: 3, off: 4, missing: 5 }; // most usable first
 
@@ -68,7 +68,8 @@ function describe(id, raw, now) {
   let stateText = state === 'ready' ? (engine ? 'Signed in' : 'Connected') : { out: 'Signed out', off: 'Off in the sidebar', missing: 'Not installed' }[state] || '';
   const notes = [];
   let fact = ''; // the one extra thing a small card has room for: when it is back, or the 5-hour reading, or today's cost
-  const grok = id === 'grokbuild' && raw.grokLimit ? { until: Number.isFinite(raw.grokLimit.resetsAt) ? raw.grokLimit.resetsAt : null, kind: 'limit', exact: Number.isFinite(raw.grokLimit.resetsAt), scope: 'provider' } : null;
+  const own = id === 'grokbuild' ? raw.grokLimit : id === 'codex' ? raw.codexLimit : null; // a limit the CLI itself reported (Grok's message, Codex's rate_limits)
+  const grok = own ? { until: Number.isFinite(own.resetsAt) ? own.resetsAt : null, kind: 'limit', exact: Number.isFinite(own.resetsAt), scope: 'provider' } : null;
   const lim = grok || cool;
   const active = Boolean(lim) && (lim.until === null || Number(lim.until) > now);
   const whenText = lim && Number(lim.until) > now ? clockText(lim.until, now) : '';
@@ -82,7 +83,8 @@ function describe(id, raw, now) {
   } else if (state === 'ready') {
     // One model (Opus, say) being out leaves the AI usable with the others.
     if (active && lim.kind === 'limit') notes.push(`${str(lim.model, 40) || 'One model'} limit reached${whenText ? `, ${lim.exact ? 'resets' : 'paused until about'} ${whenText}` : ''}`);
-    const m = id === 'claudecode' && raw.meter && Number(raw.meter.resetsAt) > now && Number.isFinite(raw.meter.percent) ? raw.meter : null;
+    const reading = id === 'claudecode' ? raw.meter : id === 'codex' ? raw.codexMeter : null;
+    const m = reading && Number(reading.resetsAt) > now && Number.isFinite(reading.percent) ? reading : null;
     if (m) { notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
     const t = raw.today && raw.today[id];
     if (t && money(t.costUSD)) { notes.push(`${money(t.costUSD)} today`); if (!fact) fact = money(t.costUSD); }
@@ -103,7 +105,8 @@ function shape(rawIn, nowIn) {
   const raw = rawIn && typeof rawIn === 'object' ? rawIn : {};
   const now = Number.isFinite(nowIn) ? nowIn : Date.now();
   const apis = Array.isArray(raw.apis) ? raw.apis.filter((id) => ORDER.includes(id) && !ENGINES.includes(id)) : [];
-  const ids = ORDER.filter((id) => ENGINES.includes(id) || apis.includes(id));
+  const shown = (id) => (id === 'codex' ? Boolean(raw.engines && raw.engines.codex && raw.engines.codex.installed) : ENGINES.includes(id)); // Codex only once it is installed: it is no sidebar engine
+  const ids = ORDER.filter((id) => shown(id) || apis.includes(id));
   const ais = ids.map((id) => describe(id, raw, now)).sort((a, b) => RANK[a.state] - RANK[b.state] || ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
   const counts = Object.fromEntries(STATES.map((s) => [s, ais.filter((a) => a.state === s).length]));
   const working = int(raw.runs && raw.runs.working, 99);
