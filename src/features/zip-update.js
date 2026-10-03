@@ -242,7 +242,7 @@ function prepareHelper(execPath, tmp = null, base = os.tmpdir()) {
         if (f.startsWith(HELPER_PREFIX)) try { fs.rmSync(path.join(base, f), { recursive: true, force: true }); } catch {}
       }
     } catch {}
-    tmp = path.join(base, `${HELPER_PREFIX}-${process.pid}-${Date.now()}`);
+    tmp = path.join(base, `${HELPER_PREFIX}-${process.pid}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
   } else {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
