@@ -79,7 +79,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await pageEval("document.getElementById('blank').click()");
   await waitFor(async () => (await tabCount()) === before + 1);
   check('target=_blank link opens a new tab', (await tabCount()) === before + 1, await tabCount());
-  await run('switch_tab', { tab_id: 1 });
+  await run('switch_tab', { tab_id: 1, show: true });
   const activeBefore = await app.evaluate(() => global.__agent.browser.activeTab().id);
   await app.evaluate(({ BrowserWindow }) => {}); // keep window alive
   // A real Ctrl+click (synthetic page events can't open background tabs).
@@ -108,6 +108,19 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   });
   check('window.open popup is a real window with window.opener', popup.title === 'has-opener' && popup.count === windowsBefore + 1, JSON.stringify(popup));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('/popup'))?.close());
+
+  // A page opening tabs and windows in a loop gets only a handful (features/popup-guard.js).
+  const idsBefore = new Set(JSON.parse(await run('list_tabs', {})).map((t) => t.id));
+  const winsBeforeBurst = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  await pageEval("for (let i = 0; i < 60; i++) { window.open('/other'); window.open('/popup', 'w' + i, 'width=300,height=200'); }");
+  await new Promise((r) => setTimeout(r, 1500));
+  const burstTabs = JSON.parse(await run('list_tabs', {})).filter((t) => !idsBefore.has(t.id));
+  const burstWins = (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) - winsBeforeBurst;
+  check('a page opening windows in a loop gets at most a few', burstTabs.length + burstWins <= 10 && burstTabs.length + burstWins >= 1, `tabs=${burstTabs.length} windows=${burstWins}`);
+  for (const t of burstTabs) await run('close_tab', { tab_id: t.id });
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows().slice(winsBeforeBurst)) w.close(); }, null).catch(() => {});
+  await waitFor(async () => (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) <= winsBeforeBurst);
+  await run('switch_tab', { tab_id: 1, show: true });
 
   // HTML fullscreen fills the window. It takes the window into macOS fullscreen, which never
   // finishes for the invisible window of LUMEN_TEST_BACKGROUND runs, so those skip it.
@@ -160,7 +173,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   check('tabs can be reordered', state.tabs[0].id === last, JSON.stringify(state.tabs.map((t) => t.id)));
 
   // Downloads save to the Downloads folder without a dialog.
-  await run('switch_tab', { tab_id: 1 });
+  await run('switch_tab', { tab_id: 1, show: true });
   const dlDir = await app.evaluate(({ app: a }) => a.getPath('downloads'));
   const existing = new Set(fs.readdirSync(dlDir));
   await pageEval("document.getElementById('dl').click()");

@@ -13,7 +13,9 @@ const { hostOf } = require('./adblock');
 const { t } = require('./i18n');
 const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
-const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
+// Programs, installers and scripts Windows runs on open, and shortcut/settings files that launch them (a .url, .scf,
+// .inf or .diagcab file runs something when opened). Not disk images or documents: those are ordinary downloads.
+const RISKY_TYPES = /^\.(exe|msi|msp|mst|msix|msixbundle|bat|cmd|com|scr|pif|cpl|msc|ps1|ps1xml|psm1|psd1|vbs|vbe|vb|js|jse|wsf|wsh|wsc|sct|hta|jar|jnlp|dll|ocx|lnk|url|scf|inf|reg|appx|appxbundle|appinstaller|application|gadget|diagcab|settingcontent-ms)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
 
 // deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)? }
