@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Auto model.** Every model picker now starts with **Auto**: Lumen picks the model for each message, on your computer and without another model call. Quick questions go to a small, fast model, hard or long ones to a stronger one, and a model that is out of usage, turned off for Auto (Settings → AI → Auto may use) or not on your plan is skipped. It works with every connected AI: Claude Code, Grok Build, Antigravity, and the Anthropic, OpenAI, Grok, Gemini and OpenRouter keys; background tasks and routines can use it too. Each reply says which model answered and why. `/think`, `/deep` and `/fast` ask for the strongest or quickest model for one message. A model you pick yourself is always used as picked, and nothing you already chose is changed (a new install with several AIs connected starts on Auto). See [docs/auto-model.md](docs/auto-model.md).
+
 ## 0.5.6 (2026-10-03)
 
 - Updates: a failed update that is retried no longer fails again on a leftover helper folder from the first try (each attempt now uses its own folder).

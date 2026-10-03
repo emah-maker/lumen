@@ -6426,6 +6426,7 @@ const bgTasks = require('./features/background-runner').create({
   maxBackgroundTasks: () => perfMode.limits().maxBackgroundTasks, // Performance mode: one at a time
   getClient: (...args) => agent.getClient(...args), getKey: providerKey,
   effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
+  autoRoute: (a) => autoRoute({ ...a, apiOnly: true, allowEngines: false }), autoEscalate: (a) => autoEscalate({ ...a, allowEngines: false }), autoDeny: (id) => autoDenied.add(id), // [auto model] a task on Auto is routed to an API model at each run
   aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
   reportUsage: (engine, data) => agent.onUsage?.(engine, data),
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
