@@ -207,3 +207,5 @@ Lists the Chrome Web Store extensions you installed, with **Remove** (deletes th
 ## About Lumen and Internals
 
 **About Lumen** shows the version, update status and **Check for updates**. **Internals** shows versions, a task manager (every Lumen process with memory and CPU), GPU features, the proxy in use and command-line switches. Nothing there changes a setting.
+
+**Report an issue.** About has **Report a problem** (and **Copy version details**), and on macOS Help → Report an Issue does the same. Both open a new issue at [github.com/emah-maker/lumen/issues](https://github.com/emah-maker/lumen/issues/new/choose); the Help item fills in your Lumen version and OS. Nothing is sent until you submit the issue on GitHub.
