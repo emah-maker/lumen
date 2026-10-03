@@ -653,7 +653,23 @@ function createTranslate(deps) {
   const wcOf = (tab) => tab?.view?.webContents;
   const live = (tab) => { const wc = wcOf(tab); return wc && !wc.isDestroyed() ? wc : null; };
   const isPrivate = (wc) => { try { return !wc.session.isPersistent(); } catch { return true; } };
-  const langName = (code) => { try { return new Intl.DisplayNames([deps.uiLocale() || 'en'], { type: 'language' }).of(code) || code; } catch { return code; } };
+  // One Intl.DisplayNames per UI language, and each code's name remembered: stateOf runs for every translated tab on every
+  // tab-strip update (each new tab, each page event), and building a DisplayNames took ~1 ms each time.
+  const displayNames = new Map();
+  const nameMemo = new Map();
+  const langName = (code) => {
+    const loc = deps.uiLocale() || 'en';
+    const key = `${loc}|${code}`;
+    if (nameMemo.has(key)) return nameMemo.get(key);
+    let name = code;
+    try {
+      if (!displayNames.has(loc)) displayNames.set(loc, new Intl.DisplayNames([loc], { type: 'language' }));
+      name = displayNames.get(loc).of(code) || code;
+    } catch { /* an unknown code or locale: the code itself */ }
+    if (nameMemo.size > 500) nameMemo.clear();
+    nameMemo.set(key, name);
+    return name;
+  };
   const localLabel = () => deps.t('translate.provider.local');
 
   function set(tab, patch, { replace = false } = {}) {

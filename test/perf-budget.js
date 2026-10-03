@@ -66,6 +66,24 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 650, idleI
       .then(() => check('Performance mode turns off blur and motion in the UI', true), (err) => check('Performance mode turns off blur and motion in the UI', false, err.message));
     const blur = await ui.evaluate(() => getComputedStyle(document.querySelector('.composer')).backdropFilter);
     check('composer blur is off in Performance mode', blur === 'none', blur);
+
+    // A new tab (the + button, with the spare new-tab page ready) shows in the strip and takes the address bar's focus within
+    // a loose bound, and the main process's event loop isn't blocked for long meanwhile (scripts/measure-newtab.js measures it in detail: ~10-30 ms).
+    await app.evaluate(() => global.__spareNewTab.enable());
+    await new Promise((r) => setTimeout(r, 2500));
+    await app.evaluate(() => { const lags = global.__ntLag = []; let last = Date.now(); global.__ntLagTimer = setInterval(() => { const n = Date.now(); lags.push(n - last - 10); last = n; }, 10); });
+    const ms = await ui.evaluate(() => new Promise((done) => {
+      document.activeElement?.blur();
+      const t0 = performance.now();
+      const before = document.querySelectorAll('#tabs .tab').length;
+      const poll = () => (document.querySelectorAll('#tabs .tab').length > before && document.activeElement === document.getElementById('address') ? done(performance.now() - t0) : setTimeout(poll, 4));
+      document.getElementById('new-tab').click();
+      poll();
+      setTimeout(() => done(99999), 5000);
+    }));
+    const lagMax = await app.evaluate(() => { clearInterval(global.__ntLagTimer); return Math.max(0, ...global.__ntLag); });
+    check('a new tab shows and takes the address bar within 1000 ms', ms <= 1000, `${Math.round(ms)} ms`);
+    check('the main process is not blocked for over 500 ms while a new tab opens', lagMax <= 500, `${Math.round(lagMax)} ms`);
   } finally {
     await app.close().catch(() => {});
     fs.rmSync(profile, { recursive: true, force: true });

@@ -20,6 +20,12 @@ const MIN_LAYOUT_WIDTH = 400; // CSS px: below this the page is zoomed out so Sp
 const MIN_ZOOM = 0.5;
 const MIN_SIDE = 60; // px: a card slot smaller than this (or mostly scrolled away) isn't worth a live view
 const POLL_MS = 200;
+const RETRY_MS = 20e3; // a load that failed (offline, a Spotify outage) is tried again after this, while the card is on screen
+const DRM_RETRY_MS = 5e3; // the Widevine component installs in the background on a first run: ask again until it is there
+const DRM_MAX_TRIES = 30;
+// Chromium's net error numbers (net/base/net_error_list.h) for "the network isn't there": the card says to
+// check the connection. -3 (ABORTED) is only a navigation that was replaced, never a failure.
+const OFFLINE_ERRORS = new Set([-7, -21, -100, -101, -102, -105, -106, -109, -118]);
 
 // The widget's mode. An explicit 'web' | 'api' wins. Widgets saved before this mode existed have the
 // API card's fields (clientId, art) and stay 'api'; anything new is 'web'.
@@ -33,11 +39,29 @@ function cleanMode(c) {
 
 // May the view stay on this address? https on Spotify's player or sign-in host only, the default port,
 // no user:password@.
-function isAllowedUrl(url) {
+function isAllowedUrl(url, testOrigin = '') {
   let u;
   try { u = new URL(String(url)); } catch { return false; }
-  return u.protocol === 'https:' && HOSTS.has(u.hostname) && !u.port && !u.username && !u.password;
+  if (u.protocol !== 'https:' || u.username || u.password) return false;
+  if (testOrigin && u.origin === testOrigin) return true; // tests serve a stand-in for Spotify: main.js only passes this in test mode
+  return HOSTS.has(u.hostname) && !u.port;
 }
+
+// A failed main-frame load -> what the card says: 'offline' | 'failed', or null when it isn't a failure
+// (a navigation that another one replaced, or a sub-frame).
+function loadFailure(errorCode, isMainFrame = true) {
+  if (!isMainFrame || errorCode === -3 || !Number.isFinite(errorCode)) return null;
+  return OFFLINE_ERRORS.has(errorCode) ? 'offline' : 'failed';
+}
+
+// The script main runs inside Spotify's page to learn whether this build of Lumen can play protected audio
+// (Widevine). Constant; it only reads a yes or a no.
+const DRM_PROBE = `(async () => {
+  try {
+    await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{ initDataTypes: ['cenc'], audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }] }]);
+    return true;
+  } catch { return false; }
+})()`;
 
 // Permissions the view is given: only what playing protected audio needs. 'mediaKeySystem' is Electron's
 // name for EME/Widevine key-system access ('protectedMediaIdentifier' is the older one). Autoplay is not
@@ -79,7 +103,9 @@ function viewBounds(probe, bounds) {
 
 // deps: { WebContentsView, session (the user's normal one), getWindow(), getBounds() (the page view's bounds),
 //         activeNewTab() (the visible new-tab page's webContents, or null), hasWidget() (is a Web-player card
-//         configured), openTab(url), isWebUrl(url), onSignIn() }
+//         configured), openTab(url), isWebUrl(url), onSignIn(), onStatus() (the view's state changed: the card
+//         says so), testUrl() (tests only: an https stand-in for open.spotify.com, on any host), drmProbe(wc)?
+//         (tests only: replaces the Widevine check) }
 function createSpotifyWeb(deps) {
   let view = null;
   let host = null;
@@ -87,16 +113,63 @@ function createSpotifyWeb(deps) {
   let probing = false;
   let signedIn = null; // null: not known yet
   let cookiesHooked = false;
+  // What the card says about the view: 'loading' | 'ready' | 'offline' | 'failed', and whether protected audio
+  // (Widevine) can play here: 'unknown' | 'ok' | 'missing'.
+  let state = 'loading';
+  let drm = 'unknown';
+  let failedAt = 0;
+  let drmTimer = null;
+  let drmTries = 0;
   const alive = () => view && !view.webContents.isDestroyed();
+  const baseUrl = () => deps.testUrl?.() || WEB_URL;
+  const testOrigin = () => { try { return deps.testUrl?.() ? new URL(deps.testUrl()).origin : ''; } catch { return ''; } };
+  const allowed = (url) => isAllowedUrl(url, testOrigin());
+  const status = () => ({ state, drm });
+  function setStatus(next, nextDrm = drm) {
+    if (next === state && nextDrm === drm) return;
+    state = next;
+    drm = nextDrm;
+    failedAt = next === 'offline' || next === 'failed' ? Date.now() : 0;
+    try { deps.onStatus?.(); } catch { /* the card keeps what it shows */ }
+  }
+
+  // Can this Lumen play protected audio? Spotify's player needs Widevine; the component installs in the
+  // background on a first run (or never, on a build without it), so ask again for a while.
+  function checkDrm() {
+    clearTimeout(drmTimer);
+    if (!alive() || drm === 'ok') return;
+    const wc = view.webContents;
+    Promise.resolve(deps.drmProbe ? deps.drmProbe(wc) : wc.executeJavaScript(DRM_PROBE)).then((ok) => {
+      if (!alive() || view.webContents !== wc) return;
+      if (ok === true) { drmTries = 0; setStatus(state, 'ok'); return; }
+      setStatus(state, 'missing');
+      if (++drmTries < DRM_MAX_TRIES) drmTimer = setTimeout(checkDrm, DRM_RETRY_MS);
+    }, () => { /* the page went away mid-check: the next load asks again */ });
+  }
+
+  // Load (or load again) Spotify into the view.
+  function load() {
+    if (!alive()) return;
+    setStatus('loading');
+    view.webContents.loadURL(baseUrl()).catch(() => {}); // a failure arrives as did-fail-load
+  }
 
   function hookCookies() {
     if (cookiesHooked) return;
     cookiesHooked = true;
     const ses = deps.session;
-    const set = (v) => { if (signedIn !== v) { signedIn = v; try { deps.onSignIn?.(); } catch { /* the card just keeps its old button */ } } };
-    // sp_dc is the cookie Spotify's site keeps while someone is signed in.
-    ses.cookies.on('changed', (_e, cookie, _cause, removed) => {
-      if (cookie.name === 'sp_dc' && /(^|\.)spotify\.com$/.test(cookie.domain)) set(!removed);
+    const set = (v) => {
+      if (signedIn === v) return;
+      const wasOut = signedIn === false;
+      signedIn = v;
+      try { deps.onSignIn?.(); } catch { /* the card just keeps its old button */ }
+      // Signed in somewhere else (the "Open in a tab to sign in" tab): the player in the card still shows its login page.
+      if (v && wasOut && alive() && view.webContents.getURL().startsWith(testOrigin() || WEB_URL)) load();
+    };
+    // sp_dc is the cookie Spotify's site keeps while someone is signed in. A cookie that is replaced
+    // arrives as a removal (cause 'overwrite') and then the new one: that is not a sign-out.
+    ses.cookies.on('changed', (_e, cookie, cause, removed) => {
+      if (cookie.name === 'sp_dc' && /(^|\.)spotify\.com$/.test(cookie.domain) && !(removed && cause === 'overwrite')) set(!removed);
     });
     ses.cookies.get({ url: WEB_URL, name: 'sp_dc' }).then((list) => set(list.length > 0)).catch(() => {});
   }
@@ -110,17 +183,38 @@ function createSpotifyWeb(deps) {
     });
     const wc = view.webContents;
     const leave = (url) => { if (deps.isWebUrl(url)) deps.openTab(url); };
-    wc.on('will-navigate', (event) => { if (!isAllowedUrl(event.url)) { event.preventDefault(); leave(event.url); } });
-    wc.on('will-redirect', (event) => { if (!isAllowedUrl(event.url)) { event.preventDefault(); leave(event.url); } });
+    wc.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
+    wc.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
     wc.setWindowOpenHandler(({ url }) => { leave(url); return { action: 'deny' }; });
     wc.on('render-process-gone', () => destroy());
-    wc.loadURL(WEB_URL).catch(() => {});
+    // A blank frame says nothing: when the page can't load, the card says why (and tries again).
+    let failedLoad = false; // Chromium finishes loading its own error page afterwards: that is not Spotify being ready
+    wc.on('did-start-navigation', (event, url, _inPlace, isMainFrame) => {
+      const main = event?.isMainFrame ?? isMainFrame;
+      if (main && !String(event?.url ?? url).startsWith('chrome-error:')) failedLoad = false;
+    });
+    wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => {
+      const why = loadFailure(code, isMainFrame);
+      if (why) { failedLoad = true; setStatus(why); }
+    });
+    let httpCode = 200;
+    wc.on('did-navigate', (_e, _url, code) => { httpCode = Number(code) || 200; if (httpCode >= 500) setStatus('failed'); });
+    wc.on('did-finish-load', () => {
+      if (failedLoad || wc.getURL().startsWith('chrome-error:') || httpCode >= 500) return;
+      setStatus('ready');
+      if (drm !== 'ok') { drmTries = 0; checkDrm(); }
+    });
+    load();
     return view;
   }
 
   function destroy() {
     const v = view;
     view = null;
+    clearTimeout(drmTimer);
+    state = 'loading';
+    drm = 'unknown';
+    failedAt = 0;
     if (!v) return;
     try { host?.contentView.removeChildView(v); } catch { /* the window is gone */ }
     host = null;
@@ -132,7 +226,7 @@ function createSpotifyWeb(deps) {
   }
 
   function place(rect) {
-    if (!rect) { hide(); return; }
+    if (!rect || state === 'offline' || state === 'failed') { hide(); return; } // a failed load: the card's message shows, not an error page
     const win = deps.getWindow();
     if (!win || win.isDestroyed()) return;
     const v = ensure();
@@ -168,11 +262,14 @@ function createSpotifyWeb(deps) {
     const nt = deps.activeNewTab();
     if (!nt || nt.isDestroyed()) { stop(); hide(); return; }
     if (!timer) timer = setInterval(sync, POLL_MS); // the card moves when the page scrolls or the grid changes
+    if (alive() && (state === 'offline' || state === 'failed') && Date.now() - failedAt > RETRY_MS) load();
     probe(nt);
   }
 
   return {
     sync,
+    status,
+    reload() { if (alive()) load(); else sync(); },
     destroy: () => { stop(); destroy(); },
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,
     isSignedIn: () => signedIn,
@@ -180,4 +277,4 @@ function createSpotifyWeb(deps) {
   };
 }
 
-module.exports = { WEB_URL, HOSTS, MIN_LAYOUT_WIDTH, cleanMode, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, PROBE, createSpotifyWeb };
+module.exports = { WEB_URL, HOSTS, MIN_LAYOUT_WIDTH, cleanMode, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, PROBE, DRM_PROBE, createSpotifyWeb };
