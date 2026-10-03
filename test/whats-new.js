@@ -162,7 +162,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
   }
 
-  for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => {

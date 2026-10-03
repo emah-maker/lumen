@@ -126,7 +126,7 @@ module.exports = async function whatsNewUnits(check) {
     } finally { console.error = quiet; }
   } finally {
     if (saved === undefined) delete process.env.LUMEN_WHATS_NEW_TEST; else process.env.LUMEN_WHATS_NEW_TEST = saved;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   // ---- settings

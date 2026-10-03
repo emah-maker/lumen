@@ -94,7 +94,7 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     check('Settings: typing over an imported list unlinks it and keeps what was typed', saved && !saved.tv.list && saved.tv.symbols.includes('NYSE:SPY'), JSON.stringify(saved && saved.tv));
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

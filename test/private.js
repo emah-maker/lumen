@@ -265,7 +265,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   } finally {
     await app.close();
     server.close();
-    for (const dir of [profile, dlDir, localeDir]) fs.rmSync(dir, { recursive: true, force: true });
+    for (const dir of [profile, dlDir, localeDir]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

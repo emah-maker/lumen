@@ -111,7 +111,7 @@ try {
   check('the unreadable file is kept aside for recovery', aside.length === 1 && fs.readFileSync(path.join(dir, aside[0]), 'utf8') === '{broken', aside.join(','));
 } finally {
   console.error = quiet;
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Safari import (macOS): Bookmarks.plist as XML (what plutil produces) and History.db
@@ -142,7 +142,7 @@ try {
   check('Safari bookmarks are read (web only, folders kept, Reading List left out)', JSON.stringify(data.bookmarks) === JSON.stringify([{ url: 'https://swift.org/', title: 'Swift & Co' }, { url: 'https://soup.example/', title: 'Soup', folder: 'Recipes' }]), JSON.stringify(data.bookmarks));
   check('Safari history is read with its dates', data.history.length === 1 && data.history[0].url === 'https://www.apple.com/' && data.history[0].last === Date.UTC(2026, 8, 1) && data.history[0].visits === 9, JSON.stringify(data.history));
 } finally {
-  fs.rmSync(safari, { recursive: true, force: true });
+  fs.rmSync(safari, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Grok Build engine: argv, env and its own GROK_HOME (grok-build.js)
@@ -210,7 +210,7 @@ try {
   gb.linkAuth(userHome, home);
   check('Grok Build signed out: no auth.json is left in its home', !fs.existsSync(path.join(home, 'auth.json')), fs.readdirSync(home).join(','));
 } finally {
-  fs.rmSync(gbData, { recursive: true, force: true });
+  fs.rmSync(gbData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // Grok Build runs against a fake grok child: `script` is the stream it prints (one JSON object per
@@ -263,7 +263,7 @@ async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
     return { out, events, kills, spawned, spawns, data, engine, gate };
   } finally {
     if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
-    fs.rmSync(data, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 }
 const gbEv = (event) => ({ type: 'stream_event', event });
@@ -474,7 +474,7 @@ async function grokRuns() {
     } finally {
       if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
       if (savedDefault === undefined) delete process.env.GROK_DEFAULT_MODEL; else process.env.GROK_DEFAULT_MODEL = savedDefault;
-      fs.rmSync(data, { recursive: true, force: true });
+      fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
   }
   {
@@ -538,7 +538,7 @@ async function grokRuns() {
       check('fallback list: picker entries grouped under the Grok account', JSON.stringify(opts.map((o) => o.id)) === JSON.stringify(['grokbuild:default', ...gb.FALLBACK_MODELS.map((m) => `grokbuild:${m}`)]) && opts.every((o) => o.group === 'Your Grok account'), JSON.stringify(opts.map((o) => o.id)));
     } finally {
       if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
-      fs.rmSync(data, { recursive: true, force: true });
+      fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
   }
   {
@@ -623,7 +623,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     zu.launchSwap({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'x', platform: 'win32', pid: 1, spawnFn: (...a) => { spawned.push(a); return { unref() {} }; } });
     check('zip update (win): launching writes no .cmd/.bat/.ps1/.vbs and starts no script host', spawned.length === 1 && !/(cmd|powershell|wscript|cscript|pwsh)(\.exe)?$/i.test(spawned[0][0]) && !spawned[0][1].some((x) => /\.(cmd|bat|ps1|vbs)$/i.test(x)) && fs.readdirSync(swapDir).length === before.length, JSON.stringify(spawned));
   }
-  fs.rmSync(swapDir, { recursive: true, force: true });
+  fs.rmSync(swapDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   {
     // A helper folder left by an earlier attempt (on Windows it can stay locked) never blocks the next one.
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-helper-unit-'));
@@ -634,7 +634,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     const b = zu.prepareHelper(fakeExe, null, base);
     const left = fs.readdirSync(base).filter((f) => f.startsWith('lumen-update-helper'));
     check('zip update (win): each helper copy gets its own folder and earlier ones are cleared', a.dir !== b.dir && fs.existsSync(b.exe) && fs.existsSync(b.script) && JSON.stringify(left) === JSON.stringify([path.basename(b.dir)]), JSON.stringify({ a: a.dir, b: b.dir, left }));
-    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(base, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const swapSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'swap-helper.js'), 'utf8');
   check('zip update (win): the relaunched Lumen doesn\'t start in the helper\'s temp folder', /spawn\(exe, args, \{[^}]*cwd: require\('os'\)\.homedir\(\)/.test(swapSrc), 'no cwd');
@@ -648,7 +648,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     const mk = (name, head, size) => { const f = path.join(d, name); const b = Buffer.alloc(size); b.write(head, 'latin1'); fs.writeFileSync(f, b); return f; };
     check('staged exe check: a real-sized MZ file passes', checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)) === null, checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)));
     check('staged exe check: too small, no MZ header, or missing is refused', /too small/.test(checkExe(mk('small.exe', 'MZ', 1000)) || '') && /isn't a Windows executable/.test(checkExe(mk('bad.exe', 'PK', 11 * 1024 * 1024)) || '') && /missing/.test(checkExe(path.join(d, 'nope.exe')) || ''), 'checks');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   // the NSIS uninstaller travels with the update
   {
@@ -657,7 +657,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fs.writeFileSync(path.join(d, 'old', 'Uninstall Lumen.exe'), 'u'); fs.writeFileSync(path.join(d, 'old', 'other.txt'), 'o');
     zu.carryOver(path.join(d, 'old'), path.join(d, 'new'));
     check('zip update: the NSIS uninstaller is carried into the new folder, nothing else', fs.existsSync(path.join(d, 'new', 'Uninstall Lumen.exe')) && !fs.existsSync(path.join(d, 'new', 'other.txt')), fs.readdirSync(path.join(d, 'new')).join());
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   // macOS
   const mp = zu.swapPaths('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin');
@@ -689,7 +689,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('staged update: an unreadable marker is not trusted', zu.readStaged(exe, 'win32', ok) === null && zu.readMarker(exe) === null, 'garbage');
     fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: 'files/Gone' }));
     check('staged update: a missing folder is not reused', zu.readStaged(exe, 'win32', ok) === null, 'gone');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const macTree = { flat: ['__MACOSX', 'Lumen.app'], none: ['a.txt'] };
   const macLs = (d) => (macTree[d] || []).map((n) => ({ name: n, isDirectory: () => !n.endsWith('.txt') }));
@@ -709,7 +709,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fs.mkdirSync(path.join(d, 'Lumen'));
     check('install location: the real probe passes on a temp install and leaves nothing behind', zu.canReplace(path.join(d, 'Lumen', 'Lumen.exe'), 'win32') && fs.readdirSync(d).join() === 'Lumen' && fs.readdirSync(path.join(d, 'Lumen')).length === 0, fs.readdirSync(d).join());
     check('install location: a folder that does not exist can not be replaced', !zu.canReplace(path.join(d, 'gone', 'Lumen.exe'), 'win32'), 'gone');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const { disabledReason, installKind, updateMode, isNewer, stageAsset, manualAsset } = require('../src/features/updates');
   check('updates: off in a development run', disabledReason({ packaged: false, test: false }) === 'dev', disabledReason({ packaged: false }));
@@ -850,7 +850,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fixShortcutIcons(fakeApp(true), shell);
     check('icon: a shortcut naming an .ico that no longer exists is pointed at one that does', updates.length === 1 && updates[0].f === path.join(desktop, 'Lumen.lnk') && fs.existsSync(updates[0].icon), JSON.stringify(updates));
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Electron fuses: packaged macOS builds turn off NODE_OPTIONS and --inspect; Windows is untouched
@@ -1008,7 +1008,7 @@ async function fuseChecks() {
   check('fuses: the hook flips the mac binary', calls.length === 1 && on(FuseV1Options.EnableNodeOptionsEnvironmentVariable) === '0' && on(FuseV1Options.EnableNodeCliInspectArguments) === '0' && on(FuseV1Options.RunAsNode) === '1', JSON.stringify(wire));
   await afterPack.default({ appOutDir: out, electronPlatformName: 'linux', packager });
   check('fuses: the hook never flips a non-mac build', calls.length === 1, JSON.stringify(calls));
-  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(out, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- A new topic starts a new chat (renderer/chat-topic.js): only when nothing ties it to the chat so far
@@ -1137,7 +1137,7 @@ async function fuseChecks() {
   check('site activity: forget() drops cleared domains', a.get('new.example') === undefined && a.since(0).length === 1, JSON.stringify(a.since(0)));
   check('site activity: a cookie domain matches its subdomains and parents', related('example.com', 'www.example.com') && related('www.example.com', 'example.com') && related('a.b', 'a.b'), 'related');
   check('site activity: unrelated domains don\'t match', !related('example.com', 'badexample.com') && !related('ample.com', 'example.com'), 'unrelated');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- the sidebar usage bar (features/usage.js barFor, cli-utils usageOf)
@@ -1239,8 +1239,8 @@ async function fuseChecks() {
     { role: 'assistant', text: 'Here are **three**.', images: [], steps: 2 },
   ]);
   check('chats: export Markdown has the title, date, model, usage and each turn', md.startsWith('# Trip plan\n\n_2026-09-28 14:05 · Model: claude-opus-5 · Usage: 1.2k tokens · ~$0.01_') && md.includes('## You\n\n_1 image attached (not included)_\n\nFind flights') && md.includes('## Assistant\n\n_Used 2 browser actions_\n\nHere are **three**.') && !md.includes('base64'), md);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.rmSync(legacyDir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(legacyDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- [ai controls] "Turn off AI on this site" (features/ai-sites.js): one switch per registrable domain
@@ -1453,7 +1453,7 @@ async function safeBrowsingRuns() {
   make().gate({ resourceType: 'mainFrame', url: evil, webContents: null }, (r) => { passed = r; });
   check('safe browsing: the gate lets pages through when inactive', JSON.stringify(passed) === '{}', JSON.stringify(passed));
   for (const s of services) s.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- read_pdf: text extraction and the per-chat permission gate (features/pdf-text.js)
@@ -1551,7 +1551,7 @@ async function usageShareRuns() {
   mkfile('C--proj-other', 'new.jsonl', 1000);
   check('other Claude activity: a recent transcript elsewhere does', (await otherClaudeActivity(since, root)) === true, 'missed');
   check('other Claude activity: no projects folder is not activity', (await otherClaudeActivity(since, path.join(root, 'nope'))) === false, 'counted');
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   const run = async (other) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-u-'));
@@ -1561,7 +1561,7 @@ async function usageShareRuns() {
     u.record('claudecode', turn(0.16));
     await new Promise((r) => setTimeout(r, 30));
     const points = (await u.summary({ refresh: false })).lumen?.window?.limitPoints;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     return points;
   };
   const alone = await run(false);
@@ -1636,7 +1636,7 @@ async function speedRuns() {
   const before = probes;
   await u.summary({ refresh: false });
   check('usage: the after-reply refresh skips /usage while the 5-hour reading is fresh', probes === before && before === 1, `${before} ${probes}`);
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- lumen://chat (features/chat-page.js): the URL guard, who may call what, and which tab the AI works in
@@ -2021,7 +2021,7 @@ async function inprocRuns() {
     check('automation plan: LUMEN_AUTOMATION_INPROC=1 forces it on Windows', forced.inproc === true && !forced.relaunch && !switches.some((s) => /remote-debugging/.test(s)), JSON.stringify(forced));
     const win = prepareAutomation(app, on, { platform: 'win32', env: {} });
     check('automation plan: Windows and Linux still hand over to the pipe launcher', win.relaunch === true && !inProcessAutomation('linux', {}) && inProcessAutomation('darwin', {}) && inProcessAutomation('freebsd', { LUMEN_AUTOMATION_INPROC: '1' }) && !inProcessAutomation('win32', { LUMEN_AUTOMATION_INPROC: '0' }), JSON.stringify(win));
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   const fakeTab = (id, targetId, url = 'http://a.example/', title = 'A') => {
@@ -2603,7 +2603,7 @@ async function swapHelperRuns() {
   mk('Lumen.update/files/Lumen.exe', 'tiny');
   const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
   check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && /^the update looked incomplete \(.*too small.*\)\n$/.test(fs.readFileSync(path.join(d, 'err.txt'), 'utf8')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
-  fs.rmSync(d, { recursive: true, force: true });
+  fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- screenshot and QR helpers (features/screenshot.js, features/qr.js)
@@ -2997,7 +2997,7 @@ async function tabsAskRuns() {
   // a skill's message in a chat's title
   const { autoTitle } = require('../src/features/chat-store');
   check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate: French', '');
-  fs.rmSync(dirS, { recursive: true, force: true });
+  fs.rmSync(dirS, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 })();
 
 // ---- background tasks: model, allowed sites, schedules, queue, watching, state machine, store (features/background-agents.js)
@@ -3161,7 +3161,7 @@ async function bgTaskRuns() {
   const after = before.map((t) => bg.recoverAfterRestart(t, NOW2));
   check('bg restart message: only tasks this restart interrupted are counted', bg.newlyInterrupted(before, after).map((t) => t.id).join() === '0000000000000001', bg.newlyInterrupted(before, after).map((t) => t.id).join());
   check('bg unseen: counts finished tasks not looked at, not running ones', bg.unseenCount([mk({ status: 'done', unseen: true }), mk({ status: 'running', unseen: true }), mk({ status: 'done' }), mk({ status: 'failed', unseen: true })]) === 2, '');
-  fs.rmSync(dir2, { recursive: true, force: true });
+  fs.rmSync(dir2, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Grok Build's usage bar: the real result format, rolling windows, budget, limit messages
@@ -3330,7 +3330,7 @@ async function grokUsageRuns() {
   let kept2 = mk();
   for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 100)); kept2 = mk(); kept2.load(); if (JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}') break; }
   check('budget: a saved weekly token budget loads back', JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}', JSON.stringify(kept2.budget()));
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- background tasks on Claude Code / Grok Build: the parts that need no Electron
@@ -3395,8 +3395,8 @@ async function bgCliRuns() {
       check('bg cli (grok): a background run is killed at once if it reports a terminal command', kills.length === 1 && out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills, events }));
       check('bg cli (grok): it runs in its own GROK_HOME and working folder, with the deny in its argv', spawned.opts.env.GROK_HOME === home && spawned.opts.cwd === dir && spawned.opts.env.HOME === dir && fs.existsSync(path.join(home, 'config.toml')) && denied(spawned.argv).includes('run_terminal_command') && argAfter(spawned.argv, '--cwd') === dir, JSON.stringify({ env: spawned.opts.env.GROK_HOME, cwd: spawned.opts.cwd }));
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
     const sidebar = await fakeGrokRun(terminalStream);
     check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 0 && !sidebar.out.failed, JSON.stringify(sidebar.out));
@@ -3465,7 +3465,7 @@ async function bgCliRuns() {
   await new Promise((r) => setTimeout(r, 200));
   const saved = JSON.parse(fs.readFileSync(usageFile, 'utf8')).records;
   check('bg usage: only the background records carry the tag on disk', saved.filter((r) => r.background).length === 2 && saved.filter((r) => !r.background).length === 2, JSON.stringify(saved.map((r) => r.background)));
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // The AI sidebar over the new-tab page: the view narrows, the page keeps its full-width layout (pure logic, no window).

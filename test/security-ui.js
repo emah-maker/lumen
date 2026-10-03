@@ -145,7 +145,7 @@ const path = require('path');
 
   await app.close();
   for (const s of [plain, bad, bad2]) s.close();
-  fs.rmSync(certDir, { recursive: true, force: true });
+  fs.rmSync(certDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -259,7 +259,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
   await flip.antigravityTurn(t1.messages, 'more', [], new AbortController().signal, () => {});
   check('agent: with the setting unchanged the conversation is continued', calls3[0].sessionId === 'conv-2', JSON.stringify(calls3[0]?.sessionId));
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

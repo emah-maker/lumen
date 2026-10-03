@@ -175,7 +175,7 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
   check('no errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  for (const dir of [profile, out]) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of [profile, out]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

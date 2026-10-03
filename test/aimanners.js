@@ -320,7 +320,7 @@ const launch = (profile) => electron.launch({
   check('1000px, 7 tabs: the tab in front is at least 100px wide', seven.act >= 100, JSON.stringify(seven));
   check('1000px: Organize (when shown) is just its icon', !seven.orgShown || (seven.orgText === 'none' && seven.orgW <= 30), JSON.stringify(seven));
   await app2.close();
-  fs.rmSync(profile2, { recursive: true, force: true });
+  fs.rmSync(profile2, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   // ---- 12. "Hide AI tabs" is on and a new session opens tabs: none appears in the strip (but the one in front, or one playing sound), and the
   // button and its words always match what the strip shows: a tab shown because it is in front is not counted as hidden. Two windows; off and on.
@@ -407,10 +407,10 @@ const launch = (profile) => electron.launch({
     const mm = await matches(w2page, idx2);
     check('...and the second window\'s chip still matches its strip', mm.ok, JSON.stringify(mm));
     await app3.close();
-    fs.rmSync(profile3, { recursive: true, force: true });
+    fs.rmSync(profile3, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

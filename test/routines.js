@@ -14,7 +14,7 @@ const os = require('os');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-routines-'));
 const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-routines-cli-'));
-const cleanup = () => { for (const dir of [profile, cliDir]) fs.rmSync(dir, { recursive: true, force: true }); };
+const cleanup = () => { for (const dir of [profile, cliDir]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); };
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(80); } return v; };
 
 (async () => {

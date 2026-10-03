@@ -291,6 +291,6 @@ const path = require('path');
   server.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {}
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -238,7 +238,7 @@ process.stdin.on('end', () => setTimeout(() => process.exit(0), 20));
   } finally {
     engine.dispose?.();
     delete process.env.LUMEN_CLAUDE_BIN;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   // ---- skills: the new commands' names are taken, and a skill saved under one is kept, renamed
@@ -252,7 +252,7 @@ process.stdin.on('end', () => setTimeout(() => process.exit(0), 20));
     const store = skills.createStore({ file });
     const kept = store.list().find((s) => s.id === 'u1');
     check('skills: one saved as /context before is kept as /context-skill', kept?.name === 'context-skill' && kept.title === 'My context', J(store.list().map((s) => s.name)));
-    fs.rmSync(sdir, { recursive: true, force: true });
+    fs.rmSync(sdir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

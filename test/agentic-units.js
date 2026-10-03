@@ -397,7 +397,7 @@ async function engineRuns() {
   const feed = cc.lineReader((l) => got.push(l));
   feed('{"a":1}\n{"b"'); feed(':2}\n\n');
   check('lineReader: lines split across chunks come out whole', JSON.stringify(got) === '["{\\"a\\":1}","{\\"b\\":2}"]', JSON.stringify(got));
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 async function snapshotRuns() {
@@ -587,7 +587,7 @@ async function grokRuns() {
   check('grok: a first message silent past the allowance is still ended', silentFirst.failed === true && live[live.length - 1].killed === true, JSON.stringify(silentFirst));
 
   if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // Grok Build warm-up (features/grok-warmup.js): only when enabled, only after the first tab (afterLook), never a
@@ -925,7 +925,7 @@ async function toolCallRuns() {
   check('prewarm: the warm is marked speculative (released after ~3 min unused)', flagged?.speculative === true, JSON.stringify(flagged));
   check('prewarm: the IPC channel is registered and never throws', typeof sameChannel === 'function' && (() => { try { sameChannel({}); return true; } catch { return false; } })(), '');
   eng.active = null;
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 

@@ -36,7 +36,7 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 700, idleI
   check('Code Cache under its cap is kept', perf.trimCodeCache(dir, 10000, { every: 0 }) === 'kept' && fs.existsSync(path.join(dir, 'Code Cache')), '');
   check('Code Cache over its cap is removed', perf.trimCodeCache(dir, 1000, { every: 0 }) === 'trimmed' && !fs.existsSync(path.join(dir, 'Code Cache')), '');
   check('a check made this week is not repeated', perf.trimCodeCache(dir, 1000) === 'skipped', '');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   // Startup of the real app.
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-perfbudget-'));
@@ -87,7 +87,7 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 700, idleI
     check('the main process is not blocked for over 500 ms while a new tab opens', lagMax <= 500, `${Math.round(lagMax)} ms`);
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `${failures} failed` : 'all passed');
   process.exit(failures ? 1 : 0);

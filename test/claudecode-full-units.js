@@ -83,7 +83,7 @@ process.stdin.on('data', (d) => {
   const hung = await runOnce({ fullAccess: false, silenceMs: WATCHDOG * 3, watchdogMs: WATCHDOG }).catch((e) => ({ err: e }));
   check('off: the watchdog still ends a CLI that goes quiet', hung.err || hung.out?.failed || hung.events?.some((e) => e.type === 'error') || hung.out?.text !== 'Done.', JSON.stringify(hung.out));
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

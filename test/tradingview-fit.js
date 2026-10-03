@@ -69,7 +69,7 @@ const widgets = [
     check('shrinking again swaps back to the compact views', chartAgain && chartAgain.path === '/embed-widget/mini-symbol-overview/' && listAgain && listAgain.tabs === 1 && listAgain.chart === false, JSON.stringify([chartAgain, listAgain]));
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

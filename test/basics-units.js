@@ -73,7 +73,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
     const fourth = cr();
     check('recovery: with startup set to restore, a crash offers nothing (the tabs come back anyway)', !fourth.begin({ mode: 'restore' }).offer && fourth.crashed(), '');
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   // ---- page info
