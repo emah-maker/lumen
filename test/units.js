@@ -3275,7 +3275,8 @@ async function grokUsageRuns() {
   us.record('grokbuild', { usage: null, limit: { text: 'Usage limit reached. Resets at noon', resetsAt: T + 2 * H } });
   sm = await us.summary();
   check('state: a limit message turns the bar red with its reset time', sm.bars.grokbuild.kind === 'limit' && sm.bars.grokbuild.resetsAt === T + 2 * H && sm.grok.limit.text.startsWith('Usage limit reached'), JSON.stringify(sm.bars.grokbuild));
-  await new Promise((r) => setTimeout(r, 700)); // usage.json is saved half a second after a change
+  for (let i = 0; i < 100 && !fs.existsSync(path.join(dir, 'usage.json')); i++) await new Promise((r) => setTimeout(r, 100)); // usage.json is saved half a second after a change (then fsynced: slow on some disks)
+  await new Promise((r) => setTimeout(r, 300));
   const again = mk({ grokSession: () => session });
   again.load();
   check('state: the limit is kept across a restart', (await again.summary()).bars.grokbuild.kind === 'limit', '');
@@ -3320,14 +3321,14 @@ async function grokUsageRuns() {
   check('budget bar: the new day starts from its own use (90%, amber) and resets at the next midnight', bm.level === 'warn' && Math.round(bm.percent) === 90 && bm.resetsAt === new Date(2026, 9, 2).getTime(), JSON.stringify(bm));
   bu.setBudget({ unit: 'usd', daily: 0, weekly: 0 });
   check('budget: cleared, the bar is the context fill again', (await bu.summary()).bars.grokbuild.kind === 'context', '');
-  await new Promise((res) => setTimeout(res, 700));
-  const kept = mk();
-  kept.load();
+  // (saved half a second after the change, then fsynced: poll, a slow disk takes longer than a fixed wait)
+  let kept = mk();
+  for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 100)); kept = mk(); kept.load(); if (JSON.stringify(kept.budget()) === '{"unit":"usd","daily":0,"weekly":0}') break; }
   check('budget: the settings survive a restart', JSON.stringify(kept.budget()) === '{"unit":"usd","daily":0,"weekly":0}', JSON.stringify(kept.budget()));
   bu.setBudget({ unit: 'tokens', daily: 0, weekly: 5000 });
-  await new Promise((res) => setTimeout(res, 700));
-  const kept2 = mk();
-  kept2.load();
+  // (saved half a second after the change, then fsynced: poll, a slow disk takes longer than a fixed wait)
+  let kept2 = mk();
+  for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 100)); kept2 = mk(); kept2.load(); if (JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}') break; }
   check('budget: a saved weekly token budget loads back', JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}', JSON.stringify(kept2.budget()));
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -3458,7 +3459,11 @@ async function bgCliRuns() {
   const sum = await u.summary({ refresh: false });
   check('bg usage: the sidebar\'s "last turn" context is its own turn\'s, not the background run\'s', sum.engines.claudecode.last.contextTokens === 5000 && sum.engines.grokbuild.last.contextTokens === 700, JSON.stringify(sum.engines));
   check('bg usage: background tokens count toward Lumen\'s totals and are counted apart; the 5-hour share keeps chaining', sum.engines.claudecode.today.turns === 2 && sum.engines.claudecode.background.turns === 1 && sum.engines.grokbuild.background.turns === 1 && sum.lumen.window.background === 1 && Math.abs(sum.lumen.window.limitPoints - 4) < 0.01, JSON.stringify({ e: sum.engines, w: sum.lumen.window }));
-  const saved = await new Promise((r) => setTimeout(() => r(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')).records), 700));
+  // (the log is saved 500 ms after the last record, then fsynced: on a slow disk that is well over 700 ms, so wait for the file)
+  const usageFile = path.join(dir, 'usage.json');
+  for (let i = 0; i < 100 && !fs.existsSync(usageFile); i++) await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 200));
+  const saved = JSON.parse(fs.readFileSync(usageFile, 'utf8')).records;
   check('bg usage: only the background records carry the tag on disk', saved.filter((r) => r.background).length === 2 && saved.filter((r) => !r.background).length === 2, JSON.stringify(saved.map((r) => r.background)));
   fs.rmSync(dir, { recursive: true, force: true });
 }

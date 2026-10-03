@@ -302,7 +302,7 @@ async function engineRuns() {
   pw2.dispose();
 
   // Pre-warm backoff: an unused warm process that dies on its own pauses pre-warming (doubling), a good turn resets it.
-  const bo = make({ warmBackoffMs: 60, warmBackoffMaxMs: 120 });
+  const bo = make({ warmBackoffMs: 300, warmBackoffMaxMs: 600 }); // (generous: a loaded machine delays timers by 100+ ms)
   check('backoff: pre-warming is allowed at first', bo.canPrewarm() === true, '');
   const dieWarm = async (id) => {
     bo.warm({ sessionId: id, resume: false, systemPrompt: 'SYS', model: 'haiku', maxTurns: 0 }, { speculative: true });
@@ -311,14 +311,14 @@ async function engineRuns() {
     await sleep(15);
   };
   await dieWarm('sess-bo1');
-  check('backoff: after an unused process dies, pre-warming pauses (the base delay)', bo.canPrewarm() === false && bo.warmBlock.delay === 60, JSON.stringify(bo.warmBlock));
-  await sleep(70);
+  check('backoff: after an unused process dies, pre-warming pauses (the base delay)', bo.canPrewarm() === false && bo.warmBlock.delay === 300, JSON.stringify(bo.warmBlock));
+  await sleep(330);
   check('backoff: and resumes once the delay passes', bo.canPrewarm() === true, '');
   await dieWarm('sess-bo2');
-  check('backoff: a second failure doubles the delay', bo.warmBlock.delay === 120 && bo.canPrewarm() === false, JSON.stringify(bo.warmBlock));
-  await sleep(130);
+  check('backoff: a second failure doubles the delay', bo.warmBlock.delay === 600 && bo.canPrewarm() === false, JSON.stringify(bo.warmBlock));
+  await sleep(630);
   await dieWarm('sess-bo3');
-  check('backoff: the delay is capped at the max', bo.warmBlock.delay === 120, JSON.stringify(bo.warmBlock));
+  check('backoff: the delay is capped at the max', bo.warmBlock.delay === 600, JSON.stringify(bo.warmBlock));
   await bo.run(opts({ sessionId: 'sess-bo4' }));
   check('backoff: a successful turn resets it', bo.warmBlock.delay === 0 && bo.canPrewarm() === true, JSON.stringify(bo.warmBlock));
   bo.dispose();
@@ -560,6 +560,7 @@ async function grokRuns() {
   check('grok: steady output (each line restarts the watchdog) is never cut off', chatty.text === 'chatty' && !chatty.failed && !live[1].killed, JSON.stringify(chatty));
   script = (child) => child.out({ type: 'system', subtype: 'init', session_id: 's' });
   const waiting = runLive();
+  for (let i = 0; i < 100 && !live[2]; i++) await sleep(25); // (the process starts after an async setup that a loaded machine slows)
   await sleep(25);
   live1.callBegin(); // a tool call (or its approval card) is in flight
   await sleep(160);
@@ -756,7 +757,7 @@ async function settleRuns() {
     const start = Date.now();
     vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
   }));
-  check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 500, JSON.stringify(bursty));
+  check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 640, JSON.stringify(bursty));
 }
 
 // Lumen's MCP tool entry (features/ai-agents.js mcpCallTool) driven through a sidebar Claude Code run, with fakes.

@@ -197,7 +197,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   const eng = new ag.AntigravityEngine({ userData: tmp, gate: async () => ({}), exec: (file, args, o, cb) => { calls.push({ file, args }); cb(null, 'installed\n', ''); } });
   check('antigravity install(): nothing runs until it is called; then exactly the official command, no shell string from input', calls.length === 0 && (await eng.install()).ok === true && calls.length === 1 && calls[0].args.includes(ag.installCommand()), JSON.stringify(calls));
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* Windows may still hold the folder for a moment; the OS temp cleanup takes it */ }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
