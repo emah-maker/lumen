@@ -84,6 +84,7 @@ const DEFAULTS = {
   sendDoNotTrack: false,
   sendGpc: false,
   httpsOnly: false,
+  passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
   adblock: true,
   adblockAllow: [],
@@ -622,6 +623,7 @@ function create(deps) {
     return {
       prefs: p,
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
+      passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
       accent: accentOf(p.accentColor), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,

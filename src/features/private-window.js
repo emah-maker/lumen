@@ -715,6 +715,13 @@ function createPrivateWindows(deps) {
     command: (name) => { const rec = focusedRec(); if (!rec) return false; command(rec, name); return true; },
     // One of this module's tabs (Safe Browsing and certificate warnings treat it as a tab).
     ownsTab: (wc) => Boolean(wc && tabOwner(wc)),
+    // [passkeys] Is this one of our tabs, the one in front of its window? (features/passkeys.js owns the dialog to that window.)
+    tabWindow: (wc) => {
+      const rec = wc ? tabOwner(wc) : null;
+      if (!rec || !alive(rec)) return null;
+      const tab = activeTab(rec);
+      return { win: rec.win, active: Boolean(tab && tab.view.webContents === wc) };
+    },
     refresh: (wc) => { const rec = tabOwner(wc); if (rec) sendStateSoon(rec); },
     // Test hooks read these; nothing in the app itself needs them.
     list: () => [...windows].filter(alive).map((rec) => ({

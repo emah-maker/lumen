@@ -1756,6 +1756,7 @@ async function buildPrivacy(card) {
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
   await buildPasswords(card);
+  buildPasskeys(card);
 
   // Safe Browsing (features/safe-browsing.js)
   const sbNote = status('safe-browsing-status');
@@ -1847,6 +1848,23 @@ async function buildPrivacy(card) {
 // [passwords] Privacy and security → Passwords: the Save passwords switch, and a sub-page listing saved
 // logins (site and username; Show and Copy ask for Touch ID or a confirmation first), with Edit, Delete,
 // Import from a CSV export and Delete all. Passwords stay in the main process except the one being shown.
+// [passkeys] Passkeys, Windows Hello and security keys (features/passkeys.js): Windows draws the prompt and keeps the
+// credentials. On where Windows' WebAuthn is there; off (or anywhere else), sites see no passkey API and offer a
+// password or a code instead.
+function buildPasskeys(card) {
+  const info = st.passkeys || {};
+  const label = tr('settings.passkeys.label', 'Use passkeys and security keys (Windows Hello)');
+  const desc = tr('settings.passkeys.desc', 'Sites can ask you to sign in or register with a passkey: Windows Security asks for your face, fingerprint or PIN, a security key, or your phone. Windows keeps the passkeys; Lumen stores nothing, and the AI can’t start or approve a passkey prompt. Off: sites offer a password or a code instead.');
+  let note = '';
+  if (info.platform && info.platform !== 'win32') note = tr('settings.passkeys.otherPlatform', 'Not available in Lumen on this system yet. Sites offer a password or a code instead.');
+  else if (info.available === false) note = tr('settings.passkeys.unavailable', 'Not available on this computer (needs Windows 10 version 1903 or later). Sites offer a password or a code instead.');
+  else if (info.available && !info.uvpaa) note = tr('settings.passkeys.noHello', 'Windows Hello isn’t set up here: security keys and passkeys on your phone still work. Set up Windows Hello in Windows Settings to keep passkeys on this computer.');
+  const r = toggle('passkeys', label, desc);
+  if (note) r.querySelector('.text').append(h('span', { class: 'note', id: 'passkeys-status', text: note }));
+  if (info.platform && info.platform !== 'win32') r.querySelector('input').disabled = true;
+  card.group(tr('settings.passkeys.group', 'Passkeys')).append(r);
+}
+
 async function buildPasswords(card) {
   const P = S.passwords;
   let pw = await P.state();

@@ -773,7 +773,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
-  session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys can't work in Electron: hide the API (browser/webauthn-gate.js)
+  session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
   // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
@@ -992,7 +992,7 @@ const privateWindows = createPrivateWindows({
   prepareSession: (ses) => {
     ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
-    ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys can't work in Electron: hide the API (browser/webauthn-gate.js)
+    ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
   },
@@ -1644,7 +1644,7 @@ function researchSession() {
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
-  ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys can't work in Electron: hide the API (browser/webauthn-gate.js)
+  ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // pages the AI opened: always the hidden API (features/passkeys.js candidate)
   settingsBackend.mirrorSession(ses); // the profile's proxy, Do Not Track / Global Privacy Control, languages
   adblock.attachSession(ses); // the same filters as normal tabs (waits for the engine if it is still loading)
   researchSes = ses;
@@ -6641,7 +6641,46 @@ const spotifyWeb = SW.createSpotifyWeb({
 if (TEST) global.__spotifyWeb = spotifyWeb;
 app.on('before-quit', () => spotifyWeb.destroy());
 
+// ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
+// Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,
+// never one the AI is working in or opened (agent windows, research tabs, a tab a run is using, an AI-opened tab,
+// a signed-in-site tab the AI reads), so no AI tool can start or finish a ceremony.
+function passkeyContext(wc) {
+  if (!wc || wc.isDestroyed() || agentContents.has(wc)) return { ok: false, reason: 'ai' };
+  const front = (w, active) => Boolean(active && w && !w.isDestroyed() && w.isFocused() && w.isVisible() && !w.isMinimized());
+  for (const rec of winRecs) {
+    if (!rcAlive(rec) || isSpare(rec)) continue;
+    const t = tabsOf(rec).find((x) => alive(x) && x.view.webContents === wc);
+    if (!t) continue;
+    if (rec.agent || t.isolated || t.aiLock || manners.isAiTab(t) || agent.usingTab(t.id)) return { ok: false, reason: 'ai' };
+    const w = rec === curRec ? win : rec.win;
+    return front(w, activeIdOf(rec) === t.id) ? { ok: true, win: w, inPrivate: false } : { ok: false, reason: 'not-front' };
+  }
+  const p = privateWindows.tabWindow(wc);
+  if (p) return front(p.win, p.active) ? { ok: true, win: p.win, inPrivate: true } : { ok: false, reason: 'not-front' };
+  return { ok: false, reason: 'not-a-tab' };
+}
+const passkeys = require('./features/passkeys').createPasskeys({
+  ipcMain,
+  enabled: () => readSettings().passkeys !== false,
+  context: passkeyContext,
+  // The API at all: hidden (as before) in the AI's own pages; a page Lumen can't place yet keeps it, and the
+  // request itself is checked against passkeyContext.
+  candidate: (wc) => {
+    if (agentContents.has(wc) || (researchSes && wc.session === researchSes)) return false;
+    for (const rec of winRecs) {
+      const t = rcAlive(rec) ? tabsOf(rec).find((x) => alive(x) && x.view.webContents === wc) : null;
+      if (t) return !(rec.agent || t.isolated || manners.isAiTab(t));
+    }
+    return true;
+  },
+});
+passkeys.attach();
+if (process.platform === 'win32') app.whenReady().then(() => setTimeout(() => passkeys.warm(), 1500));
+if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkeys.busy(), context: (id) => { const wc = require('electron').webContents.fromId(id); return wc ? passkeyContext(wc) : null; }, openBackground: (url) => openTab(url, { background: true })?.webContents?.id ?? null };
+
 const settingsBackend = settingsPage.create({
+  passkeys, // [passkeys] Settings → Privacy
   usage, // [usage] You and AI → Usage
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
