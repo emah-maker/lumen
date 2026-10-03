@@ -63,6 +63,7 @@ const organizeAi = require('./features/organize-ai'); // Organize with AI: local
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
+const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -203,7 +204,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
-  'chat:sidebar-state',
+  'chat:sidebar-state', 'sidebar:set',
   'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -258,6 +259,9 @@ for (const method of ['handle', 'on']) {
   const inSenderWindow = (event, run) => {
     const rec = winRecs.size > 1 ? recOfSender(event?.sender) : null;
     if (isSpare(rec)) return withWindow(rec, run);
+    // [agent window] A page of an agent's window (or its UI settling) speaking is not the user arriving there: it must not become
+    // the window that links from other apps, the taskbar and the shortcuts act on. Once the user has the window focused, it is theirs.
+    if (rec?.agent && !rec.win.isFocused()) return withWindow(rec, run);
     enterWindow(rec);
     return run();
   };
@@ -690,6 +694,7 @@ if (TEST) global.__safeBrowsing = safeBrowsing;
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
 app.on('login', (event, webContents, details, authInfo, callback) => {
   event.preventDefault();
+  if (agentContents.has(webContents)) { callback(); return; } // [agent window] no sign-in sheet for a page nobody is watching
   const insecure = !authInfo.isProxy && !/^https:/i.test(details.url) ? t('dialog.signIn.insecure') : '';
   dialogs.ask({
     message: t('dialog.signIn'),
@@ -731,6 +736,7 @@ ipcMain.on('page-dialog', (event, req) => {
   const wc = event.sender;
   const silence = () => { event.returnValue = req.kind === 'confirm' ? false : req.kind === 'prompt' ? null : undefined; };
   if (dialogs.isOwnView(wc)) return silence(); // ignore requests from the overlay itself
+  if (agentContents.has(wc)) return silence(); // [agent window] alert is dismissed, confirm says no, prompt cancels: nothing waits for a person who is not there
   const entry = pageDialogEntry(wc);
   if (entry.muted) return silence();
   entry.count += 1;
@@ -793,6 +799,8 @@ function setupPermissions() {
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
+    // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
+    if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
@@ -1501,6 +1509,7 @@ function tabState() {
       };
     }),
     activeId,
+    sidebar: tabSidebarOpen(tabs.find((t) => t.id === activeId)), // [sidebar per tab] whether the sidebar is open on the tab in front
     canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
@@ -1779,6 +1788,15 @@ function goBack(wc) {
 const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
 if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
 
+// [agent window] The pages of an outside agent's own window (below, features/agent-windows.js). Nothing they do may reach the
+// user: no sound, no dialog, no prompt, no popup window, no fullscreen, and they keep painting (and so keep
+// screenshotting) while the window is behind another or minimized.
+const agentContents = new WeakSet();
+function prepareAgentTab(wc) {
+  agentContents.add(wc);
+  try { wc.setBackgroundThrottling(false); } catch {}
+  try { wc.setAudioMuted(true); } catch {}
+}
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null, openedBy = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
@@ -1803,11 +1821,13 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
-  if (openedBy) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened
+  if (openedBy && !curRec?.agent) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened (an agent's own window is not marked: nothing there is the user's, so nothing is hidden or closed for them)
+  if (curRec?.agent) tab.muted = true; // [agent window] no sound from the agent's window unless the user unmutes a tab
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
+  if (curRec?.agent) prepareAgentTab(wc); // [agent window]
   // The spare page gets this tab's data in place (no reload, no extra history entry): hidden until it has drawn it (a
   // frame of the old data would flash otherwise). Usually it already shows the same data (its address says so) and is
   // shown at once: a hidden page's renderer runs at background priority, and even a no-op script there took ~45 ms.
@@ -1832,7 +1852,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     sendTabs();
   } else {
     switchTab(id);
-    guardFirstLoadFocus(tab, url);
+    if (!curRec?.agent) guardFirstLoadFocus(tab, url); // (an agent window never takes the keyboard)
   }
   return { id, webContents: wc };
 }
@@ -1852,6 +1872,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   const fromAiTab = () => (manners.isAiTab(tab) ? { openedBy: { chatId: tab.openedBy.chatId, runId: tab.openedBy.runId } } : {});
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
+    if (agentContents.has(wc) && disposition === 'new-window') return { action: 'deny' }; // [agent window] a popup window would come up in front of the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
     // extension page it liked (and whatever that page does with its privileges).
@@ -2208,11 +2229,12 @@ async function hasUnsavedInput(wc) {
 // Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
 // away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
 // typed form input. On any doubt this returns false and the tab is left alone.
+// (An agent's own window keeps its tabs loaded: agentUsing covers them.)
 async function canSleep(tab) {
   const wc = alive(tab) ? tab.view.webContents : null;
   if (tabSleep.keepReason({
     alive: Boolean(wc), sleeping: tab?.sleeping, active: tab?.id === activeId, settings: tab?.settings, closing: tab?.closing, unloadAsked: tab?.unloadAsked,
-    openPopups: tab?.openPopups, agentUsing: wc ? agent.usingTab(tab.id) : false, aiLock: tab?.aiLock, webPage: wc ? isWebUrl(realUrl(wc)) : false,
+    openPopups: tab?.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab?.aiLock, webPage: wc ? isWebUrl(realUrl(wc)) : false,
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab?.fullscreen, devTools: wc?.isDevToolsOpened(),
   })) return false;
   return !(await hasUnsavedInput(wc));
@@ -2262,7 +2284,9 @@ let addressTouchedAt = 0;
 // Chromium doesn't always move native focus between sibling views, so after using the page a click
 // in the address bar or sidebar could leave keys going to the page, and the new-tab search box
 // kept its blinking caret while you typed somewhere else.
-ipcMain.on('address:touched', () => {
+ipcMain.on('address:touched', (event) => {
+  const touched = recOfSender(event?.sender);
+  if (touched?.agent) touched.agent.used = true; // [agent window] the user is using the agent's window: it is theirs to keep
   addressTouchedAt = ++uiEventSeq;
   // (Typing is coming: ready before the first key's list. Not while the first tab is still loading at start-up: the
   // new-tab page's address-bar focus lands here then, and the dropdown's renderer is made once that tab has loaded.)
@@ -2316,6 +2340,7 @@ function switchTab(id, { wake = true } = {}) {
   if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
+  openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
   if (!agent.currentScope()) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat (a tool's own tab change moves the run, not the sidebar)
   sendTabs();
   return true;
@@ -2336,6 +2361,7 @@ function onTabGone(id, fn) {
 // [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
 // and "close the tabs the AI opened" leaves it alone.
 function userTookOver(tab) {
+  if (tab?.rec?.agent) tab.rec.agent.used = true; // [agent window] the user clicked or typed in the agent's window: it is theirs to keep
   if (!manners.handOver(tab)) return;
   const rec = tab.rec;
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
@@ -3958,6 +3984,27 @@ const runSlots = tabChatsLib.createRunSlots({
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
+// ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
+// Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
+// agent feature opening the sidebar for the tab in front) and applies the front tab's answer from every tabs state.
+const sidebarTabs = sidebarTabsLib.create();
+const sidebarSharers = (tabId) => { const c = chatBind.chatOf(tabId); return c ? chatBind.tabsOf(c).filter((t) => t !== tabId) : []; };
+const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
+function setTabSidebar(tabId, open) {
+  const hit = tabAnywhere(tabId);
+  if (!hit) return false;
+  const written = sidebarTabs.set(tabId, open, sidebarSharers(tabId));
+  for (const rec of winRecs) { // the strips' state carries it: every window with one of these tabs
+    if (rcAlive(rec) && tabsOf(rec).some((t) => written.includes(t.id))) withWindow(rec, sendTabs);
+  }
+  return true;
+}
+// A tab whose chat waits for the user's OK shows its sidebar when it comes to the front (the card is there to answer).
+function openForApproval(tab) {
+  const cid = tab && chatBind.chatOf(tab.id);
+  if (cid && chatRuns.get(cid)?.pending.size && !tabSidebarOpen(tab)) sidebarTabs.set(tab.id, true, sidebarSharers(tab.id));
+}
+ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
 const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
@@ -4009,7 +4056,7 @@ function pushChatView(wc) {
 // The sidebar of the window just entered shows the chat of its front tab.
 // `push`: tell the sidebar (false when the sender already shows it).
 function followTabChat(tab, { push = true } = {}) {
-  if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings) return; // the chat page and Settings keep whatever chat is open
+  if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings || tab.rec?.agent) return; // the chat page and Settings keep whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
   const own = chatBind.chatOf(tab.id) || pinnedChat(tab.id);
   const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId) });
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
@@ -4068,6 +4115,7 @@ function bindOpenChatHere(sender) {
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
   chatBind.unbindTab(id);
+  sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
     if (r.queued && r.homeTab === id) r.homeTab = null;
@@ -4108,7 +4156,7 @@ function bindRunChatTo(tabId) {
   const id = s?.chat ? [...chatRuns.values()].find((r) => r.messages === s.chat)?.chatId : null;
   if (id) chatBind.bind(tabId, id);
 }
-if (TEST) global.__tabChats = { bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
+if (TEST) global.__tabChats = { setSidebar: (id, open) => setTabSidebar(id, open), sidebar: (id) => { const hit = tabAnywhere(id); return hit ? tabSidebarOpen(hit.t) : null; }, viewBounds: (id) => tabAnywhere(id)?.t.view?.getBounds?.() || null, bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
 
 // ---------- [ai manners] close the tabs the AI opened (features/ai-manners.js)
 // A tab the AI opened (agentOpenTab, a research tab, a tab Lumen opened for a chat) is marked `openedBy` the run and chat, shown
@@ -4303,6 +4351,7 @@ function sessionEntry() {
     pinned: saved.map((t) => Boolean(t.pinned)),
     chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart); a chat shown in several tabs is in each
     chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
+    sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
     groups: tabGroups.snapshot(),
   };
 }
@@ -4310,7 +4359,7 @@ function sessionEntry() {
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
 function saveSession({ excluding = null, background = false } = {}) {
-  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r) && !r.mergedAway); // (a window merged into another is closing: its tabs are saved there)
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r) && !r.mergedAway && !r.agent); // [agent window] an agent's window is never restored. (a window merged into another is closing: its tabs are saved there)
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
@@ -4353,6 +4402,7 @@ function restoreTabsFrom(saved) {
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
+    sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
   });
   tabGroups.cleanup();
   tabGroups.arrange();
@@ -4509,8 +4559,9 @@ function bindContext(emitter, getRec) {
     if (winRecs.size < 2) return emit(...args);
     const rec = getRec();
     if (!rec || rec === curRec || !winRecs.has(rec)) return emit(...args);
-    if (args[0] === 'focus') enterWindow(rec);
-    return args[0] === 'focus' ? emit(...args) : withWindow(rec, () => emit(...args));
+    // (A page's own focus in an agent window is not the user arriving there: only the window's, a real OS focus, is.)
+    if (args[0] === 'focus' && !(rec.agent && emitter !== rec.win)) enterWindow(rec);
+    return args[0] === 'focus' && curRec === rec ? emit(...args) : withWindow(rec, () => emit(...args));
   };
 }
 // Which normal window a message came from: its UI, one of its tabs, or its dropdown/panel views.
@@ -4735,7 +4786,7 @@ const MERGE_ACCELERATOR = 'CmdOrCtrl+Shift+M'; // handled in handleShortcut (so 
 // Each normal window as plain data, for the planner. Tabs whose page is neither running nor asleep (restored but
 // not loaded yet) go along when they have an address (windowMerge.describeTab).
 function describeWindows() {
-  return [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).map((rec) => withWindow(rec, () => ({
+  return [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).map((rec) => withWindow(rec, () => ({ // (an agent's window never takes part in a merge)
     id: rec.win.id,
     busy: Boolean(rec.pendingRestore), // its saved tabs are still coming back
     activeId,
@@ -5536,6 +5587,9 @@ if (TEST) {
       tabs: tabsOf(rec).filter((t) => alive(t) || t.sleeping).map((t) => ({ id: t.id, contentsId: alive(t) ? t.view.webContents.id : null, url: alive(t) ? t.view.webContents.getURL() : t.sleepUrl, pinned: Boolean(t.pinned), groupId: t.groupId || null })),
       activeId: activeIdOf(rec),
       current: rec === curRec,
+      agent: rec.agent ? rec.agent.label : null,
+      focused: rec.win.isFocused(),
+      title: rec.win.getTitle(),
     })),
     moveTo: (srcWindowId, tabId, windowId, index) => moveTabToWindowId([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, windowId, index),
     setCursor: (point) => { global.__testCursor = point; }, // null: the real cursor
@@ -5576,17 +5630,19 @@ firstTabLoaded.then(() => { firstTabDone = true; });
 let openTabsGate = () => {};
 const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab's page goes before the UI has said (content-bounds)
 const tabsGate = new Promise((resolve) => { openTabsGate = resolve; });
-function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
+// `agent` ({ label }): the window of an outside agent's session (openAgentWindow below): shown without taking focus, one blank tab,
+// never saved with the session.
+function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null, agent: agentOf = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
   const w = new BrowserWindow({
-    ...(TEST_BACKGROUND || hidden ? { show: false } : {}), // hidden: the caller shows it (a window being dragged)
+    ...(TEST_BACKGROUND || hidden || agentOf ? { show: false } : {}), // hidden: the caller shows it (a window being dragged)
     width: size?.width || 1440,
     height: size?.height || 920,
     ...(position || {}),
     minWidth: 800,
     minHeight: 500,
-    title: 'Lumen',
+    title: agentOf ? agentWindowTitle(agentOf.label) : 'Lumen',
     icon: WINDOW_ICON,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
@@ -5601,7 +5657,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     },
   });
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
-  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
+  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore), agent: agentOf ? { label: agentOf.label, used: false } : null };
   winRecs.add(rec);
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);
@@ -5610,6 +5666,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // Invisible and click-through, but shown (so it paints and screenshots work); macOS keeps part of
   // any window on screen, so moving it away is not enough.
   if (TEST_BACKGROUND) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); }
+  else if (agentOf) showBehind(w); // [agent window] on screen (so it paints) but never in front of what the user is doing
+  if (agentOf) w.on('page-title-updated', (e) => e.preventDefault()); // (its title says whose window it is)
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
   if (process.platform === 'win32' && app.isPackaged) {
     // Set again once the UI has loaded: the taskbar can read the window's properties before the first
@@ -5635,7 +5693,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   });
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
-  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).length > 1 ? rec : null }); });
+  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1 ? rec : null }); });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
@@ -5646,8 +5704,10 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     winRecs.delete(rec);
     if (rec === spareRec) spareRec = null;
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
-    const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
+    const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
+    // [agent window] The user's last window closed: an agent's window does not keep Lumen running on its own.
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r)) r.win.close();
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
@@ -5670,6 +5730,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('responsive', () => { uiHungAsked = false; });
   w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
+    if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label });
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     followFront({ push: false }); // [chat per tab] this window's tab's chat
     const items = agent.transcript();
@@ -5696,6 +5757,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.once('did-finish-load', () => {
     uiLoaded = true;
     rec.uiLoaded = true;
+    if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label }); // the badge that says whose window this is
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
@@ -5721,7 +5783,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
         contentBounds = { x: 0, y: GUESS_TOOLBAR_HEIGHT, width, height: Math.max(0, height - GUESS_TOOLBAR_HEIGHT) };
       }
     }
-    restoreSession(restore);
+    if (rec.agent) openTab('about:blank'); else restoreSession(restore); // [agent window] one blank tab; the agent opens the rest
     rec.pendingRestore = false;
     refreshWindowMenu(); // its tabs are back: it may take part in a merge now
     if (uiLoaded) finishSettle();
@@ -5776,6 +5838,63 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   }
   return rec;
 }
+// ---------- agent windows: an outside agent (MCP) gets a window of its own (features/agent-windows.js) ----------
+// Made on a session's first call that needs a tab, shown without taking focus or coming in front of the window the user is in,
+// and the only place that session's tools act: they never see the user's tabs or the tabs the sidebar's AI works in. It is
+// never saved with the session, never merged, and its tabs are not "AI tabs" (nothing in it is the user's to hide or close).
+// It closes a little after the session ends, unless the user used it or pinned a tab in it: then it is theirs, an ordinary window.
+const { createAgentWindows } = require('./features/agent-windows');
+const agentWindowTitle = (label) => `${label} · Lumen`;
+function showBehind(w) {
+  const front = BrowserWindow.getFocusedWindow();
+  w.showInactive();
+  try {
+    // The user is in a Lumen window: it stays above this one (stacking only, focus is untouched). Otherwise they are in
+    // another app, and this window waits in the taskbar instead of covering it.
+    if (front && front !== w && !front.isDestroyed() && !front.isMinimized()) front.moveAbove(w.getMediaSourceId());
+    else w.minimize();
+  } catch {}
+}
+const agentRecReady = (rec) => rcAlive(rec) && rec.uiLoaded && !rec.holdViews && tabsOf(rec).some((x) => alive(x) || x.sleeping);
+async function openAgentWindow(label) {
+  const previous = curRec;
+  const src = [focusedRec(), previous].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r) && !r.agent) || null;
+  const opts = { agent: { label } };
+  if (src) {
+    const b = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+    const area = screen.getDisplayMatching(b).workArea;
+    const fit = tabDragMath.fitToDisplay({ width: b.width, height: b.height }, area);
+    const at = tabDragMath.placeOnWorkArea({ ...cascadedWindowPoint(src.win), width: fit.width, height: fit.height }, area);
+    Object.assign(opts, { size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, boundsFrom: src });
+  }
+  const rec = createWindow(opts);
+  if (previous && previous !== rec && winRecs.has(previous)) enterWindow(previous); // creating a window makes it current: the user's stays
+  const until = Date.now() + 20000;
+  while (!agentRecReady(rec)) {
+    if (!rcAlive(rec) || Date.now() > until) { try { rec.win.close(); } catch {} throw new Error('Lumen could not open a window for this agent.'); }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  return rec;
+}
+// The user kept an agent's window (they used it, or pinned a tab in it): from now on it is an ordinary window.
+function keepAgentWindow(rec) {
+  if (!rec.agent) return;
+  rec.agent = null;
+  if (!rcAlive(rec)) return;
+  rec.win.setTitle('Lumen');
+  rec.win.webContents.send('agent-window', null);
+  for (const x of tabsOf(rec)) if (alive(x)) agentContents.delete(x.view.webContents); // its pages may ask the user things now
+}
+const agentWindows = createAgentWindows({
+  open: (label) => openAgentWindow(label),
+  alive: (rec) => rcAlive(rec) && winRecs.has(rec),
+  close: (rec) => { if (rcAlive(rec)) rec.win.close(); },
+  keep: keepAgentWindow,
+  userUsed: (rec) => Boolean(rec.agent?.used),
+  hasPinned: (rec) => tabsOf(rec).some((x) => x.pinned),
+  ...(TEST && Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) > 0 ? { graceMs: Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) } : {}),
+});
+if (TEST) global.__agentWindows = { windows: agentWindows, recOf: (id) => [...winRecs].find((r) => r.win.id === id), count: () => [...winRecs].filter((r) => r.agent && rcAlive(r)).length };
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
@@ -5879,8 +5998,11 @@ function ungroupTabsFor(ids) {
 // nor the Bookmarks or Downloads page (their page API can edit bookmarks and open downloaded files).
 const agentOffLimits = (t) => Boolean(t && (t.settings || (alive(t) && managerPageOf(t.view.webContents.getURL()))));
 // A run started from the chat page works in the tab the user last looked at, not in the chat tab in front.
+// [agent window] An outside agent's calls (agent.inTask meta `mcp`) run in that agent's own window (ai-agents.js mcpCallTool): a chat page's
+// run, the sidebar's chat and the user's tabs are none of their business.
+const mcpCall = () => Boolean(agent.currentScope()?.mcp);
 const agentActiveTab = () => {
-  const pinned = chatPageRt?.runTarget();
+  const pinned = mcpCall() ? null : chatPageRt?.runTarget();
   if (pinned != null) return agentTabById(pinned);
   const t = activeTab();
   return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t;
@@ -5895,17 +6017,20 @@ const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.
 const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
 const agentOpenTab = (url, opts = {}) => {
   const { ai = false, show: wantShow = false, ...rest } = opts || {};
-  const fromPage = chatPageRt?.runTarget() != null;
+  const mcp = mcpCall();
+  const fromPage = !mcp && chatPageRt?.runTarget() != null;
   // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
-  const show = !fromPage && (governed ? manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId }) : !rest.background);
-  const tab = openTab(url, { ...rest, background: !show, ...(ai ? { openedBy: runOf() } : {}) });
+  // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
+  const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId }) : !rest.background));
+  const tab = openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: runOf() } : {}) });
   if (fromPage) chatPageRt.retarget(tab.id);
-  else if (show) bindRunChatTo(tab.id);
+  else if (show && !mcp) bindRunChatTo(tab.id);
   return tab;
 };
 const agentSwitchTab = (id, opts = {}) => {
+  if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
   const fromPage = chatPageRt?.runTarget() != null;
   if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true, runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const ok = switchTab(id);
@@ -5937,11 +6062,13 @@ const noTabReason = () => {
 // is woken, since the agent is about to use it.
 const agentTabById = (id) => {
   // A tab moved to another window while a task works in it is still that task's tab, not a closed one.
+  // [agent window] ...but never across the line around an outside agent's window: its calls reach only its own tabs, and nothing
+  // else's reach into it (the sidebar's AI, another agent), whatever tab id they name.
   let owner = curRec;
   let t = tabs.find((x) => x.id === id);
-  if (!t) {
+  if (!t && !mcpCall()) {
     for (const rec of winRecs) {
-      if (rec === curRec || !rcAlive(rec)) continue;
+      if (rec === curRec || !rcAlive(rec) || rec.agent) continue;
       t = tabsOf(rec).find((x) => x.id === id);
       if (t) { owner = rec; break; }
     }
@@ -5975,7 +6102,8 @@ app.on('will-quit', () => mcpClient.stopAll());
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
 const runRecNow = () => {
-  const rec = agent.currentScope()?.rec || chatRuns.get(chatId)?.rec || null;
+  const scope = agent.currentScope();
+  const rec = scope?.mcp ? scope.rec || null : scope?.rec || chatRuns.get(chatId)?.rec || null; // [agent window] an outside agent's calls are in its own window, never the open chat's
   return rec && winRecs.has(rec) ? rec : null;
 };
 const inRun = (fn) => (...args) => { const rec = runRecNow(); return rec ? withWindow(rec, () => fn(...args)) : fn(...args); };
@@ -5986,7 +6114,7 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   enabled: () => readSettings().researchTabs !== false,
   isAiOff: (url) => aiSites.isOff(url),
   searchUrl: (query) => searchUrlFor(readSettings().searchEngine, query),
-  openTab: inRun((url, opts) => openTab(url, { background: true, openedBy: runOf(), ...opts }).id), // [ai manners] research tabs are the AI's too
+  openTab: inRun((url, opts) => openTab(url, { background: true, ...(mcpCall() ? {} : { openedBy: runOf() }), ...opts }).id), // [ai manners] research tabs are the AI's too
   navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
   tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
   createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
@@ -6113,7 +6241,7 @@ const agent = new Agent({
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
-  handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), typingText: () => t('agent.waitTyping'), // [ai manners]
+  handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
@@ -6376,6 +6504,8 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  spotifyWebStatus: () => spotifyWeb.status(),
+  spotifyWebReload: () => spotifyWeb.reload(),
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
@@ -6433,7 +6563,11 @@ const spotifyWeb = SW.createSpotifyWeb({
   hasWidget: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'),
   openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
   onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  onStatus: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); }, // loading, offline, no Widevine: the card says which
+  testUrl: () => (TEST && global.__spotifyWebUrl) || '', // tests serve a stand-in for open.spotify.com; nothing else can
+  drmProbe: (wc) => (TEST && global.__spotifyDrmProbe ? global.__spotifyDrmProbe(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
+if (TEST) global.__spotifyWeb = spotifyWeb;
 app.on('before-quit', () => spotifyWeb.destroy());
 
 const settingsBackend = settingsPage.create({
@@ -7398,6 +7532,12 @@ const aiAgents = setupAiAgents({
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
+  // [agent window] each outside MCP session's own window (features/agent-windows.js); its steps and approval cards go to the user's window.
+  agentWindows: { windows: agentWindows, activeTabId: (rec) => activeIdOf(rec) },
+  userUi: () => {
+    const user = [focusedRec(), curRec].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || null;
+    return user ? user.win.webContents : ui();
+  },
 });
 
 // ---------- updates from GitHub Releases (features/updates.js) ----------

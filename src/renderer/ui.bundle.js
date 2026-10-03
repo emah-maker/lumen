@@ -6042,6 +6042,16 @@ address.addEventListener('mouseup', () => {
   if (selectOnMouseUp && address.selectionStart === address.selectionEnd) address.select();
   selectOnMouseUp = false;
 });
+// A click anywhere in the field (the padding around the text, the security label, the gaps by the buttons) opens the
+// address, not only a click on the text itself (the input is only as wide as its text while it isn't focused).
+$('omnibox').addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target === address || e.target.closest('button, a, [role="button"]')) return;
+  e.preventDefault(); // the click would otherwise land on nothing and leave the page holding focus
+  const wasFocused = document.activeElement === address && document.hasFocus();
+  address.focus();
+  if (!wasFocused) address.select();
+  else address.setSelectionRange(address.value.length, address.value.length);
+});
 address.addEventListener('blur', () => {
   // When the page (another view) takes focus, activeElement stays on the address bar, so check
   // hasFocus too: otherwise the suggestion view stayed up over the page and swallowed clicks.
@@ -6320,11 +6330,25 @@ function thawPage() {
 
 const SPRING_OPEN_RESPONSE = 0.34, SPRING_CLOSE_RESPONSE = 0.28; // seconds: closing is a little quicker
 
-async function showSidebar(visible) {
+// [sidebar per tab] Whether the sidebar is open belongs to the tab (main.js sidebar:set, features/sidebar-tabs.js): a toggle,
+// Ctrl+J, or an agent feature opening it asks for the tab in front; a tab switch (or a tabs state naming the sidebar of the tab in
+// front) only shows that tab's answer (`fromTab`) and tells main nothing. Its width stays one setting for the window.
+let sidebarPending = 0; // answers asked of main and not yet confirmed: a tabs state sent before them must not undo them
+function reportTabSidebar(open, tabId = null) { // (no tab named: main's front tab, which is what the user acted on even if this window's strip is a moment behind)
+  if (!window.assistant.setSidebarOpen) return;
+  sidebarPending++;
+  Promise.resolve(window.assistant.setSidebarOpen(tabId, open)).catch(() => {}).finally(() => { sidebarPending--; });
+}
+
+// visible: the wish. fromTab: following the tab in front (no report to main, the prompt keeps the focus it has).
+// instant: no spring (the first state of a window, a full-page chat docking back to a closed tab).
+async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
   const body = document.body;
+  const still = instant || motionReduced(); // (no motion: the single reportBounds() in finish() sends the final size)
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
   window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
+  if (!fromTab) reportTabSidebar(visible);
   const wasEarly = Boolean(earlyFreeze);
   if (earlyFreeze) {
     const pending = earlyFreeze;
@@ -6333,7 +6357,7 @@ async function showSidebar(visible) {
   }
   // No head start (a keyboard shortcut): the spring doesn't wait for the capture. The page area stays its
   // background colour or the live page until the snapshot lands, and swaps in then (at the end of this function).
-  const lateFreeze = !wasEarly && !revealAnim && !motionReduced() && !snapshot;
+  const lateFreeze = !wasEarly && !revealAnim && !still && !snapshot;
   const velocity = revealAnim?.velocity || 0;
   const interrupted = Boolean(revealAnim);
   revealAnim?.stop();
@@ -6349,7 +6373,7 @@ async function showSidebar(visible) {
     heldRect = viewport.getBoundingClientRect();
   }
   if (visible && wasHidden) setReveal(0);
-  if (!motionReduced()) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
+  if (!still) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
   reportBounds();
   const finish = () => {
     revealAnim = null;
@@ -6363,14 +6387,14 @@ async function showSidebar(visible) {
   };
   // Reduced motion: no spring, so heldRect is set above only to be cleared by finish() in the same tick;
   // the single reportBounds() inside finish() then sends the final size and nothing animates.
-  if (motionReduced()) finish();
+  if (still) finish();
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
     revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
   }
   if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
-  if (visible) $('prompt').focus({ preventScroll: true });
+  if (visible && !fromTab) $('prompt').focus({ preventScroll: true });
 }
 $('toggle-sidebar').onclick = () => {
   if (chatFull) { exitFull(); return; } // the toggle docks a full chat back rather than closing it
@@ -6496,6 +6520,7 @@ function enterFull() {
   reveal = 1;
   $('toggle-sidebar').setAttribute('aria-pressed', 'true');
   window.assistant.sidebarState?.(true);
+  reportTabSidebar(true, fullChatTabId); // [sidebar per tab] a full-page chat is the sidebar open, for its tab
   $('prompt').focus({ preventScroll: true });
 }
 
@@ -6519,9 +6544,27 @@ function watchFullChatTab(state) {
   const tab = state.tabs.find((t) => t.id === fullChatTabId);
   if (!tab || !isNewTabPage(tab)) { fullChatTabId = null; exitFull(); return; } // navigated away, or closed
   if (state.activeId === fullChatTabId) enterFull(); // switched back while still on the new-tab page
-  else exitFull(false); // a different tab is active: dock back, but keep remembering this one
+  else { // a different tab is active: dock back, but keep remembering this one
+    if (!state.sidebar) showSidebar(false, { fromTab: true, instant: true }); // [sidebar per tab] that tab's sidebar is closed: no docked flash
+    exitFull(false);
+  }
 }
 window.browser.onTabs(watchFullChatTab);
+
+// [sidebar per tab] Every tabs state names whether the sidebar is open on the tab in front. A tab switch (or the first state of a window,
+// a tab moved here) shows that tab's answer; a state for the same tab only follows a change made elsewhere (a window showing a tab that
+// shares its chat), and not while this window's own answer is on its way to main.
+let sidebarTabShown = null;
+function followTabSidebar(state) {
+  const switched = state.activeId !== sidebarTabShown;
+  const first = sidebarTabShown === null;
+  sidebarTabShown = state.activeId;
+  if (chatFull) return; // a full-page chat is the sidebar open (watchFullChatTab docks it back when its tab is left)
+  if (sidebarPending > 0 && (!switched || first)) return; // (a state sent before this window's own answer, which it already carries: the welcome, a click before the first state)
+  const want = Boolean(state.sidebar);
+  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first });
+}
+window.browser.onTabs(followTabSidebar);
 
 $('dock-to-side').onclick = () => exitFull();
 // Escape anywhere in the chat docks a full-page chat back, except inside the model picker's own
@@ -6624,6 +6667,15 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+// [agent window] This window is an outside agent's own (Claude Code, Codex…): a badge in the toolbar says whose it is.
+window.browser.onAgentWindow?.((info) => {
+  const chip = $('agent-window-chip');
+  document.body.classList.toggle('agent-window', Boolean(info));
+  if (!chip) return;
+  chip.hidden = !info;
+  chip.textContent = info ? t('agentWindow.badge', { client: info.label }) : '';
+  chip.title = info ? t('agentWindow.title', { client: info.label }) : '';
+});
 
 // ---------- the chat's hooks into the sidebar (chat-core.js) ----------
 
@@ -6755,7 +6807,8 @@ window.assistant.onMcpEvent?.((event) => {
       break;
     }
     case 'approval': {
-      if (document.body.classList.contains('sidebar-hidden')) showSidebar(true);
+      // (An outside agent's card is quiet: with the sidebar closed the AI button carries a badge instead, and the card waits for the user.)
+      if (document.body.classList.contains('sidebar-hidden') && !event.quiet) showSidebar(true);
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
