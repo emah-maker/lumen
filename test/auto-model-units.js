@@ -117,6 +117,10 @@ check('failureOf: anything else is null', A.failureOf(new Error('boom')) === nul
 // ---- denied memory
 check('denied memory forgets after its time', (() => { const d = A.createDenied(1000); d.add('x', 0); return d.set(500).has('x') && !d.set(2000).has('x'); })());
 
+// ---- an engine added later (Codex): its own tier and plan gating are honoured through the shared option list
+const codexish = [{ id: 'codex:gpt-5-codex-mini', label: 'Codex mini', tier: 'fast', signedIn: true }, { id: 'codex:gpt-5-codex', label: 'Codex', tier: 'strong', signedIn: true }, { id: 'codex:gated', label: 'Codex gated', tier: 'strong', gated: true, signedIn: true }];
+check('a later engine with explicit tiers routes by them, gated models never', A.route({ options: codexish, request: { prompt: 'hi' } }).id === 'codex:gpt-5-codex-mini' && A.route({ options: codexish, request: { prompt: heavyBrief } }).id === 'codex:gpt-5-codex');
+
 // ---- per-message hints
 check('hintOf: /think, /deep, /fast', A.hintOf('/think why is the sky blue').hint === 'think' && A.hintOf('/deep compare these').hint === 'deep' && A.hintOf('/fast hi').hint === 'fast');
 check('hintOf: the command is taken off the text', A.hintOf('/think why is the sky blue').text === 'why is the sky blue' && A.hintOf('/think').text === '');
