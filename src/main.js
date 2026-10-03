@@ -150,7 +150,7 @@ app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.p
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
 app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
-if (TEST) app.commandLine.appendSwitch('mute-audio');
+if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/tabui.js)
 
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
