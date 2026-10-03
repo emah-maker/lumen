@@ -38,7 +38,7 @@ function toneWav() {
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabui-'));
   const shots = process.env.TABUI_SHOTS;
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ...(process.env.NTUI_AUDIO === '1' ? { LUMEN_TEST_ALLOW_AUDIO: '1' } : {}) } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -67,6 +67,10 @@ function toneWav() {
   for (let i = 0; i < 4; i++) pages.push(await open(`${base}/p${i}`));
 
   // ---- 1. the speaker: shown while a tab plays sound, after the title; a click mutes the tab ----
+  // Test runs are silent (--mute-audio), and Chromium then never reports a tab as playing sound, so there is no speaker to
+  // test: this section runs only with sound, as NTUI_AUDIO=1 node test/tabui.js.
+  if (process.env.NTUI_AUDIO !== '1') console.log('SKIP  the speaker on a tab playing sound (needs sound: run with NTUI_AUDIO=1)');
+  else {
   const soundId = await open(`${base}/audio`);
   check('a tab playing sound shows the speaker', await waitFor(() => ui.evaluate((sel) => Boolean(document.querySelector(`${sel} .tab-audio:not(.muted)`)), tabSel(soundId)), 10000), 'no speaker');
   const order = await ui.evaluate((sel) => [...document.querySelector(`${sel} .tab-inner`).children].map((c) => c.classList[0]), tabSel(soundId));
@@ -114,6 +118,7 @@ function toneWav() {
     await ui.emulateMedia({ colorScheme: 'light' });
   }
   await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find((w) => w.getURL() === url)?.setAudioMuted(true), `${base}/audio`); // quiet for the rest
+  }
 
   // ---- 2. middle-click closes a tab; on the strip's empty space it does nothing ----
   const extra = await open(`${base}/extra`);
