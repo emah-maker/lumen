@@ -54,7 +54,7 @@ module.exports = [
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
-    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js'],
+    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],
     languageOptions: { globals: { ...globals.browser } },
     rules: { 'require-yield': 'off' },
   },
