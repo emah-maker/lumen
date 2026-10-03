@@ -117,11 +117,16 @@ check('failureOf: anything else is null', A.failureOf(new Error('boom')) === nul
 // ---- denied memory
 check('denied memory forgets after its time', (() => { const d = A.createDenied(1000); d.add('x', 0); return d.set(500).has('x') && !d.set(2000).has('x'); })());
 
+// ---- per-message hints
+check('hintOf: /think, /deep, /fast', A.hintOf('/think why is the sky blue').hint === 'think' && A.hintOf('/deep compare these').hint === 'deep' && A.hintOf('/fast hi').hint === 'fast');
+check('hintOf: the command is taken off the text', A.hintOf('/think why is the sky blue').text === 'why is the sky blue' && A.hintOf('/think').text === '');
+check('hintOf: other text is untouched', A.hintOf('please /think about it').hint === '' && A.hintOf('/thinking fast').hint === '' && A.hintOf('hello').text === 'hello' && A.hintOf(null).text === '');
+
 // ---- the picker's row
 check('the picker row: Auto first-class, a label that follows the last choice', (() => {
   const base = A.pickerEntry({});
   const used = A.pickerEntry({ last: { label: 'Auto · Haiku', reason: 'Auto: Haiku for a quick lookup' } });
-  return base.id === 'auto' && base.name === 'Auto' && base.group === 'Auto' && used.name === 'Auto · Haiku' && /quick lookup/.test(used.detail);
+  return base.id === 'auto' && base.name === 'Auto' && base.group === '' && used.name === 'Auto · Haiku' && /quick lookup/.test(used.detail);
 })());
 
 if (failures) { console.log(`\n${failures} auto-model check(s) failed`); process.exit(1); }

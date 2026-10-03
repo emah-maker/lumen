@@ -305,7 +305,7 @@ async function loadModels() {
     modelPicker.button.title = hint;
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
-  prompt.placeholder = !current ? t('composer.setup') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
+  prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
   setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
@@ -348,7 +348,7 @@ $('model').addEventListener('change', async (e) => {
   select.title = select.selectedOptions[0].title;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
+  prompt.placeholder = select.value === 'auto' ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
@@ -1051,6 +1051,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (!turn || event.runId !== runId) return;
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
+  if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
   switch (event.type) {
@@ -1211,7 +1212,7 @@ window.assistant.onEvent((event) => {
         turn.working.before(row);
       }
       if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
-      labelReply(turn.text, event.model);
+      labelReply(turn.text, event.model, event.auto || turn.auto);
       scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
@@ -1240,7 +1241,7 @@ function settledMarkdown(source) {
 }
 
 // Which model wrote a reply: a quiet label, since a chat can move between models.
-function labelReply(bubble, modelId) {
+function labelReply(bubble, modelId, auto = null) {
   flushStreaming(bubble);
   if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
   const option = [...$('model').options].find((o) => o.value === modelId);
@@ -1251,7 +1252,10 @@ function labelReply(bubble, modelId) {
     : group === 'Claude' ? `Claude ${option.textContent}`
     : !group || /^Your .* account$/.test(group) ? option.textContent
     : `${group} · ${option.textContent}`;
-  bubble.append(Object.assign(document.createElement('span'), { className: 'reply-model', textContent: name }));
+  // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 4.5"), and why in its tooltip.
+  const span = Object.assign(document.createElement('span'), { className: 'reply-model', textContent: auto ? t('models.auto.reply', { name }) : name });
+  if (auto?.reason) { span.title = auto.reason; span.dataset.auto = '1'; }
+  bubble.append(span);
 }
 
 // Screen readers: the messages list itself is quiet (streamed text would be read out piece by piece), so the

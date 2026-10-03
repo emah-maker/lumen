@@ -42,7 +42,6 @@ const KINDS = ['chat', 'agentic', ...Object.keys(KIND_TIER)];
 // ---------- what a model is ----------
 
 const bareOf = (id) => String(id || '').replace(/^[a-z][a-z0-9]*:/, '').split('/').pop().toLowerCase();
-const word = (re, s) => re.test(s);
 
 // The tier of an option. An engine or provider that knows its own tiers sets `tier` on the option; otherwise it
 // is read from the model's name, the way the vendors name their lines (Haiku/Sonnet/Opus, mini/base/pro, Flash/Pro).
@@ -103,6 +102,8 @@ function needFor(request = {}) {
     why = t.tier === 'light' ? (tools ? 'a quick task' : 'a quick question') : t.tier === 'heavy' ? (/```|debug|refactor|fix|code|implement/i.test(request.prompt || '') ? 'a coding task' : 'a demanding task') : 'a typical request';
     if (t.followUp && prev && tier === { light: 'fast', standard: 'balanced', heavy: 'strong' }[prev]) why = 'a follow-up';
   }
+  // A CLI session already running (its prompt cache is warm) is not handed to a smaller model mid-way.
+  if (TIERS.includes(request.floorTier) && TIERS.indexOf(request.floorTier) > TIERS.indexOf(tier) && !(hint === 'fast')) { tier = request.floorTier; why = 'a follow-up in this session'; }
   // The user's own hint wins over the guess: /think and deep research ask for the strongest model, "fast" for the quickest.
   if (hint === 'think' || hint === 'deep' || hint === 'strong') { tier = 'strong'; why = hint === 'deep' ? 'deep research' : 'extra thinking'; }
   else if (hint === 'fast' && kind !== 'reasoning') { tier = 'fast'; why = 'a quick answer'; }
@@ -159,9 +160,10 @@ const shortName = (option) => String(option?.name || option?.label || bareOf(opt
 const tierCost = (have, want) => { const d = TIERS.indexOf(have) - TIERS.indexOf(want); return d === 0 ? 0 : d > 0 ? 6 * d : 10 * -d; };
 
 // route({ options, request, ... }) -> { id, tier, need, why, label, reason, option, candidates } | { id: null, reason }
-// options: the picker's list. prefer: provider keys to stay with, best first (the chat's last Auto provider, then the
+// last: the model the chat's previous Auto turn used: kept when it is still as good as any, so the answer doesn't flip
+// between two models of one tier (and a CLI's session isn't restarted for nothing). options: the picker's list. prefer: provider keys to stay with, best first (the chat's last Auto provider, then the
 // one the user was on before). previous: { id, tier } of the chat's last Auto turn.
-function route({ options = [], request = {}, prefer = [], exclude = [], denied = null, cooldowns = null, at = Date.now(), allowEngines = true, scope = null, need = null } = {}) {
+function route({ options = [], request = {}, prefer = [], last = null, exclude = [], denied = null, cooldowns = null, at = Date.now(), allowEngines = true, scope = null, need = null } = {}) {
   need = need || needFor(request);
   const list = candidatesOf(options, need, { exclude, denied, cooldowns, at, allowEngines, scope });
   if (!list.length) return { id: null, tier: need.tier, need, why: need.why, label: 'Auto', reason: 'Auto: no model is available right now', candidates: [] };
@@ -170,7 +172,7 @@ function route({ options = [], request = {}, prefer = [], exclude = [], denied =
     const p = providerOf(o.id);
     const at0 = home.indexOf(p);
     const stay = at0 === 0 ? 0 : at0 > 0 ? 2 : home.length ? 4 : 0;
-    return tierCost(tierOf(o), need.tier) + stay + Math.min(0.9, Math.log10(1 + costOf(o)) / 10) + index / 10000;
+    return tierCost(tierOf(o), need.tier) + stay + (o.id === last ? -1.5 : 0) + Math.min(0.9, Math.log10(1 + costOf(o)) / 10) + index / 10000;
   };
   const ranked = list.map((o, i) => ({ o, s: score(o, i) })).sort((a, b) => a.s - b.s).map((x) => x.o);
   const best = ranked[0];
@@ -237,14 +239,25 @@ function createDenied(ttlMs = 6 * 3600e3) {
   };
 }
 
+// A message that starts with /think, /deep or /fast asks Auto for the strongest or the quickest model for that
+// message only. -> { hint, text } with the command taken off the text ('' hint when there is none). The command is
+// removed whatever model is picked, so it never reaches a model as words.
+const HINTS = { think: 'think', deep: 'deep', fast: 'fast' };
+function hintOf(text) {
+  const raw = String(text ?? '');
+  const m = /^\s*\/(think|deep|fast)(?:\s+([\s\S]*))?$/i.exec(raw);
+  if (!m) return { hint: '', text: raw };
+  return { hint: HINTS[m[1].toLowerCase()], text: (m[2] || '').trim() };
+}
+
 // The id the picker's own "Auto" row carries, and what it says. `last` is the chat's latest decision ({ label, reason }).
 function pickerEntry({ last = null, describe = '' } = {}) {
   return {
     id: AUTO,
     label: last?.label || 'Auto',
     name: last?.label || 'Auto',
-    provider: 'Auto',
-    group: 'Auto',
+    provider: '',
+    group: '', // no heading: the row sits first, above every provider's group
     auto: true,
     detail: last?.reason || describe || 'Lumen picks the model for each message',
     title: last?.reason || describe || 'Lumen picks the model for each message',
@@ -254,4 +267,4 @@ function pickerEntry({ last = null, describe = '' } = {}) {
 // The provider keys Auto may stay with, from the chat's last Auto choice and the pick the user made before Auto.
 const preferFrom = ({ lastId = null, home = null } = {}) => [lastId ? providerOf(lastId) : null, home ? providerOf(home) : null].filter(Boolean);
 
-module.exports = { AUTO, TIERS, KINDS, KIND_TIER, isAuto, tierOf, costOf, needFor, candidatesOf, route, escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };
+module.exports = { hintOf, HINTS, AUTO, TIERS, KINDS, KIND_TIER, isAuto, tierOf, costOf, needFor, candidatesOf, route, escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };

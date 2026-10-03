@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const modelRoute = require('../features/model-route'); // [model route]
+const autoModel = require('./auto-model'); // [auto model] the picker's "Auto": which model answers each message (docs/auto-model.md)
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
@@ -1225,7 +1226,7 @@ class Agent {
       return true;
     }
     this.nextModel = null;
-    if (this.messages.settings) { this.messages.settings.model = model; delete this.messages.settings.fallbackFrom; } // a pick of the user's own ends any stand-in
+    if (this.messages.settings) { this.messages.settings.model = model; delete this.messages.settings.fallbackFrom; this.forgetAuto(this.messages.settings); } // a pick of the user's own ends any stand-in
     return false;
   }
 
@@ -1304,16 +1305,22 @@ class Agent {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
       if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
-      if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.nextModel = null; }
+      if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.forgetAuto(messages.settings); this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
       // first: whether it is still cooling down is decided again below, so the chat returns on its own when it isn't.
       this.settleStandIn(messages.settings);
       const standIn = messages.settings.fallbackFrom ? messages.settings.model : null;
       if (messages.settings.fallbackFrom) { messages.settings.model = messages.settings.fallbackFrom; delete messages.settings.fallbackFrom; }
+      // [auto model] Same for the model Auto chose last turn (autoFrom holds the pick, 'auto'): the pick comes back, and this message is routed afresh below.
+      if (messages.settings.autoFrom) { messages.settings.model = messages.settings.autoFrom; delete messages.settings.autoFrom; }
+      // A /think, /deep or /fast in front of the message asks Auto for the strongest or quickest model for this message only; it never reaches a model.
+      const hinted = autoModel.hintOf(userText);
+      userText = hinted.text;
       // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
       // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
       if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
+      this.routeAuto(messages, { text: userText, images, tabs: extra.tabs, hint: hinted.hint, skill }, emit); // [auto model]
       this.standInFor(messages.settings, standIn, emit, { chars: historyChars(messages) + String(userText || '').length, images: images.length > 0 || hasImages(messages) });
 
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
@@ -1327,10 +1334,73 @@ class Agent {
     } finally {
       if (this.controller === controller) this.controller = null;
       const undo = this.undoSummary(log);
-      emit({ type: 'done', model: messages.settings?.model, ...(undo ? { undo } : {}) });
-      if (modelBefore && messages.settings) { messages.settings.model = modelBefore; delete messages.settings.fallbackFrom; }
+      emit({ type: 'done', model: messages.settings?.model, ...(messages.settings?.autoFrom && messages.settings.autoLast ? { auto: { label: messages.settings.autoLast.label, reason: messages.settings.autoLast.reason } } : {}), ...(undo ? { undo } : {}) });
+      if (modelBefore && messages.settings) { messages.settings.model = modelBefore; delete messages.settings.fallbackFrom; delete messages.settings.autoFrom; }
     }
   }
+
+  // ---- [auto model] The picker's "Auto" (ai/auto-model.js; docs/auto-model.md). The chat's pick stays 'auto' (autoFrom,
+  // restored at the start of every turn); settings.model holds the concrete model that answers this message, so every
+  // engine, the usage log and the context bar see a real model, never "auto". All local: the request is scored from the
+  // message's wording and size, nothing about a page is read, sent or logged.
+  forgetAuto(settings) {
+    if (!settings) return;
+    delete settings.autoFrom; delete settings.autoLast; delete settings.autoTier;
+  }
+
+  // What Auto is told about this message (a pure description, see auto-model.needFor).
+  autoRequest(messages, { text = '', images = [], tabs = [], hint = '', skill = null, kind = 'chat' } = {}) {
+    const settings = messages.settings || {};
+    const live = Boolean(settings.ccSession || settings.gbSession || settings.agySession); // a CLI session with a warm cache
+    return {
+      prompt: String(text || ''), kind, imageCount: images.length || 0, tabCount: Array.isArray(tabs) ? tabs.length : 0,
+      historyChars: historyChars(messages), turns: Math.ceil(messages.length / 2), hint,
+      previousTier: settings.autoTier, floorTier: live ? settings.autoTier : undefined,
+      tools: skill?.mode === 'no-tools' ? false : undefined,
+    };
+  }
+
+  // The start of a turn on 'auto': ask main for the model (it knows the connected providers, cooldowns, the user's
+  // exclusions) and put it in settings.model for this turn. Nothing to choose from: the turn fails with a plain message.
+  routeAuto(messages, input, emit) {
+    const settings = messages.settings;
+    if (!settings || !autoModel.isAuto(settings.model)) return;
+    const others = [...this.runs.keys()].filter((m) => m !== messages).length; // CLI engines take turns: not while another chat runs
+    const request = this.autoRequest(messages, input);
+    const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: others === 0 && !this.engineRunScope }) || null;
+    if (!decision?.id) throw new Error(decision?.reason ? `${decision.reason}. Pick a model in the model menu, or wait for a limit to reset.` : 'Auto has no model to use. Connect an AI in Settings > AI, or pick a model.');
+    settings.autoFrom = autoModel.AUTO;
+    settings.autoTier = decision.tier;
+    settings.autoLast = { id: decision.id, label: decision.label, reason: decision.reason };
+    settings.model = decision.id;
+    this.browser.onAuto?.(decision); // the picker's row says "Auto · Haiku" (main refreshes every picker)
+    emit({ type: 'auto', model: decision.id, label: decision.label, reason: decision.reason });
+  }
+
+  // A turn on an Auto-chosen model failed in a way a stronger or larger model may not (too long for it, no tools, not
+  // on this account's plan): once per kind of failure, the same turn goes on the next model Auto would choose. Returns
+  // the new model id or null (then the usual fallback and the error take over).
+  escalateFor(messages, err, emit, { tried, allowEngines = true, failure: given = null } = {}) {
+    const settings = messages.settings;
+    if (!settings?.autoFrom || !this.browser.autoEscalate) return null;
+    const failure = given || autoModel.failureOf(err);
+    if (!failure || tried.has(`auto:${failure.kind}`) || tried.size >= fallback.MAX_HOPS) return null;
+    const current = settings.model;
+    const request = this.autoRequest(messages, {});
+    const next = this.browser.autoEscalate({ current, failure: { ...failure, chars: historyChars(messages) }, request, tried: [...tried].filter((t) => !String(t).startsWith('auto:')), allowEngines });
+    if (failure.kind === 'denied') this.browser.autoDeny?.(current); // (remembered even when nothing else is left)
+    if (!next?.id) return null;
+    tried.add(`auto:${failure.kind}`);
+    tried.add(current);
+    settings.model = next.id;
+    settings.autoTier = next.tier;
+    settings.autoLast = { id: next.id, label: next.label, reason: next.reason };
+    emit({ type: 'notice', text: `${next.reason}.`, auto: { from: current, to: next.id } });
+    emit({ type: 'auto', model: next.id, label: next.label, reason: next.reason });
+    this.browser.onAuto?.(next);
+    return next.id;
+  }
+  // ---- [/auto model]
 
   // ---- [model fallback] (the rules: ai/fallback.js)
   // On: the setting (Settings > AI: Switch models automatically when one is unavailable), and a picker list to choose from.
@@ -1527,7 +1597,7 @@ class Agent {
       plan = null; // (a later attempt plans for its own model)
       if (!held.error) return;
       const quiet = !held.shown && callsNow() === fb.calls0 && !controller.signal.aborted;
-      const next = quiet ? this.failoverFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true }) : null;
+      const next = quiet ? (this.escalateFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true }) || this.failoverFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true })) : null;
       if (!next) { emit(held.error); return; }
       if (toClaudeCode && !next.startsWith('claudecode:')) this.engines.claudecode.release?.();
     }
@@ -2137,6 +2207,17 @@ class Agent {
           });
         jsonRetries = 0;
       } catch (err) {
+        // [auto model] Too long for the model Auto chose, no tools, or not on this plan: once, the next model Auto would pick (the history is whole).
+        if (!signal.aborted) {
+          const calls = taskScope.getStore()?.toolCalls || 0;
+          const up = this.escalateFor(messages, err, emit, { tried: fb.tried, allowEngines: step === 0 && calls === fb.calls0 });
+          if (up) {
+            emit({ type: 'retry' });
+            if (fallback.isEngine(up)) throw REDISPATCH;
+            step--;
+            continue;
+          }
+        }
         if (!signal.aborted && isContextError(err) && budgetScale === 1) {
           budgetScale = 0.5;
           emit({ type: 'retry' });
@@ -2176,6 +2257,9 @@ class Agent {
       }
 
       if (message.stop_reason === 'refusal') {
+        // [auto model] A refusal from a model Auto chose cheaply: one more try on a stronger one.
+        const up = this.escalateFor(messages, null, emit, { tried: fb.tried, allowEngines: false, failure: { kind: 'refused' } });
+        if (up) { emit({ type: 'retry' }); repairHistory(messages); step--; continue; }
         emit({ type: 'notice', text: onClaude ? 'Claude declined this request.' : 'The model declined this request.' });
         repairHistory(messages);
         return;
