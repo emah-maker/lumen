@@ -28,6 +28,10 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
       res.setHeader('Content-Type', 'text/html');
       return res.end(`<title>cookie</title><body>cookie=[${req.headers.cookie || ''}]</body>`);
     }
+    if (req.url === '/echo-headers') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify(req.headers));
+    }
     if (req.url === '/popup') {
       res.setHeader('Content-Type', 'text/html');
       return res.end('<title>Popup</title><script>window.opener && window.opener.postMessage("from-popup", "*"); document.title = window.opener ? "has-opener" : "no-opener";</script>');
@@ -243,6 +247,17 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await run('navigate', { url: base + '/' });
   const brands = await pageEval('navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand).join(",") : "none"');
   check('navigator.userAgentData says Google Chrome', brands.includes('Google Chrome'), brands);
+  // The identity is in the page at document start (this app runs with Chromium's debugging port, where a script added
+  // without enabling the Page domain was skipped and window.chrome stayed Electron's empty {}), and the language list
+  // the page reports is the one the request header carries.
+  const chromeKeys = await pageEval('Object.getOwnPropertyNames(window.chrome || {}).join()');
+  check('window.chrome has loadTimes, csi and app at document start', chromeKeys === 'loadTimes,csi,app', chromeKeys);
+  check('navigator.webdriver is false', (await pageEval('navigator.webdriver')) === false, 'webdriver');
+  const sentHeaders = JSON.parse(await pageEval("fetch('/echo-headers').then((r) => r.text())"));
+  const pageLanguages = await pageEval('navigator.languages.join()');
+  const headerLanguages = String(sentHeaders['accept-language'] || '').split(',').map((l) => l.split(';')[0]).join();
+  check('Accept-Language is the q-weighted list and equals navigator.languages', /;q=0\.9/.test(sentHeaders['accept-language'] || '') && headerLanguages === pageLanguages, `${sentHeaders['accept-language']} vs ${pageLanguages}`);
+  check('Sec-CH-UA and the User-Agent name one Chrome major', (() => { const m = /Chrome\/(\d+)\./.exec(sentHeaders['user-agent'] || ''); return m && String(sentHeaders['sec-ch-ua']).includes(`"Google Chrome";v="${m[1]}"`); })(), `${sentHeaders['user-agent']} | ${sentHeaders['sec-ch-ua']}`);
   const devtools = await app.evaluate(async () => {
     const wc = global.__agent.browser.activeTab().webContents;
     wc.openDevTools({ mode: 'detach' });

@@ -3514,6 +3514,13 @@ const UA_METADATA = CHROME_IDENTITY.uaMetadata({
 // secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
 // Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
 const UA_HINT_HEADERS = CHROME_IDENTITY.lowEntropyHeaders(UA_METADATA);
+// The languages a Chrome on this machine reports: Settings → Languages if set, else the system's (Electron's own
+// default gave navigator.languages ["en-US","en-001"] and an Accept-Language of just "en-US"). One list feeds the
+// Accept-Language header (settings-backend.js) and navigator.languages (applyChromeIdentity), so they cannot disagree.
+const chromeLanguages = {
+  list: () => CHROME_IDENTITY.languageList((settingsCache || readSettings()).languages?.length ? (settingsCache || readSettings()).languages : app.getPreferredSystemLanguages()),
+  header: () => CHROME_IDENTITY.acceptLanguageHeader(chromeLanguages.list()),
+};
 // Sec-CH-UA-Arch, -Platform-Version, -Full-Version-List… for an origin whose response asked for them (settings-backend.js).
 const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_METADATA, hints);
 // The override only covers the tab's own frame. Cross-origin iframes and workers are separate
@@ -3625,24 +3632,27 @@ function applyChromeIdentity(wc) {
   }
   identified.add(wc);
   aiFrames.track(wc); // before the auto-attach below: every out-of-process frame's session is recorded
-  const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
-  const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
-  const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
+  const lang = () => chromeLanguages.list().join(','); // navigator.languages (DevTools takes the plain list, no q-weights); the request header is the same list, q-weighted
+  const override = () => ({ userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA, acceptLanguage: lang() });
+  const firefox = () => ({ userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform, acceptLanguage: lang() }); // no userAgentMetadata: Firefox has no client hints
+  const basic = () => ({ ...override(), userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }); // (if this DevTools rejects the newest metadata fields, the brands still apply)
   const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
   // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
   const identify = (sessionId, asFirefox = false) => (asFirefox
-    ? send('Emulation.setUserAgentOverride', firefox, sessionId).catch(() => send('Network.setUserAgentOverride', firefox, sessionId)).catch(() => {})
-    : send('Emulation.setUserAgentOverride', override, sessionId)
-      .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
-      .catch(() => send('Network.setUserAgentOverride', override, sessionId))
-      .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {}));
+    ? send('Emulation.setUserAgentOverride', firefox(), sessionId).catch(() => send('Network.setUserAgentOverride', firefox(), sessionId)).catch(() => {})
+    : send('Emulation.setUserAgentOverride', override(), sessionId)
+      .catch(() => send('Emulation.setUserAgentOverride', basic(), sessionId))
+      .catch(() => send('Network.setUserAgentOverride', override(), sessionId))
+      .catch(() => send('Network.setUserAgentOverride', basic(), sessionId)).catch(() => {}));
   // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
   // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
-  const script = (sessionId) => Promise.all([
+  // The Page domain is switched on first: with Chromium's debugging port open (automation, test drivers) a script added
+  // to a session that never enabled Page is not run at document start, and window.chrome stayed Electron's empty {}.
+  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() => Promise.all([
     send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
     send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
-  ]);
+  ]));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
@@ -3655,10 +3665,12 @@ function applyChromeIdentity(wc) {
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
   // settings-backend.js and the navigator by the script above, so neither waits on this.)
   let asFirefox = false;
+  let languages = lang(); // navigator.languages follows the Languages setting: re-applied at the next navigation after it changes
   const follow = (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
     const want = GOOGLE_AUTH.isAuthUrl(details.url);
-    if (want !== asFirefox) { asFirefox = want; identify(undefined, want); }
+    const now = lang();
+    if (want !== asFirefox || now !== languages) { asFirefox = want; languages = now; identify(undefined, want); }
   };
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
@@ -6637,6 +6649,7 @@ const settingsBackend = settingsPage.create({
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
+  systemLanguages: () => chromeLanguages.list(), // [identity] Accept-Language when Settings → Languages is empty: the system's, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   broadcastUi: (channel, payload) => { // [ai manners] every window's browser UI and the chat page, not just the one in front
     const to = new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents), ...(chatPageRt?.surfaces() || [])]);

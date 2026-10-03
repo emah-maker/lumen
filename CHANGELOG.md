@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Google sign-in: pages now always get the Chrome identity (window.chrome with loadTimes, csi and app) at document start; before, it was skipped whenever Chromium's debugging port was open (automation). Accept-Language is Chrome's q-weighted list ("en-US,en;q=0.9") even with no Languages setting, and navigator.languages is that same list (it said "en-001"). Google's own sign-in pages are no longer ad-filtered.
+
 ## 0.5.5 (2026-10-02)
 
 - New tab keeps the text cursor in the address bar: widgets on the new-tab page that focus themselves as they load no longer take it, and a tab opened behind the one you're using (a link opened in a new tab, a tab the AI opened) no longer takes the keyboard, so typing goes where you were typing.

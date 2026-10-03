@@ -58,6 +58,26 @@ function uaMetadata({ chromeVersion, platform, arch, release = '', systemVersion
   };
 }
 
+// ---------------------------------------------------------------- languages
+
+// Chrome's accept-languages: the user's languages in order, each one's base language after it unless the list has
+// it already (en-US -> en-US,en; fr-CA,en-US -> fr-CA,fr,en-US,en). navigator.languages is this list, and the
+// Accept-Language header is the same list with q-weights; Electron's default gave "en-US" in the header and
+// ["en-US","en-001"] in the page.
+function languageList(langs) {
+  // ("en-001", English for the world, is how Windows can name it; Chrome has only "en" for that.)
+  const given = (Array.isArray(langs) ? langs : []).map((l) => String(l).trim().replace(/_/g, '-').replace(/-001$/, '')).filter((l) => /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l));
+  const out = [];
+  for (const l of given) {
+    if (!out.includes(l)) out.push(l);
+    const base = l.split('-')[0];
+    if (base !== l && !given.includes(base) && !out.includes(base)) out.push(base);
+  }
+  return out.length ? out : ['en-US', 'en'];
+}
+// "en-US,en;q=0.9": the q-weighted form Chrome sends.
+const acceptLanguageHeader = (langs) => languageList(langs).map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
+
 // ---------------------------------------------------------------- request headers
 
 const brandList = (brands) => brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', ');
@@ -128,28 +148,7 @@ function identityPatch(skipHostSource) {
     if (!window.chrome) Object.defineProperty(window, 'chrome', { value: {}, writable: true, enumerable: true, configurable: false });
     const chrome = window.chrome;
     if (chrome && typeof chrome === 'object') {
-      if (!chrome.app) {
-        define(chrome, 'app', {
-          isInstalled: false,
-          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-          ...{
-            getDetails() { return null; },
-            getIsInstalled() { return false; },
-            installState(callback) { if (typeof callback === 'function') setTimeout(() => callback('not_installed'), 0); },
-            runningState() { return 'cannot_run'; },
-          },
-        });
-        for (const key of ['getDetails', 'getIsInstalled', 'installState', 'runningState']) native(chrome.app[key]);
-      }
-      if (!chrome.csi) {
-        define(chrome, 'csi', native({
-          csi() {
-            const t = performance.timing;
-            return { startE: t.navigationStart, onloadT: t.domContentLoadedEventEnd, pageT: Date.now() - t.navigationStart, tran: 15 };
-          },
-        }.csi));
-      }
+      // (in the order Chrome has them: loadTimes, csi, app)
       if (!chrome.loadTimes) {
         define(chrome, 'loadTimes', native({
           loadTimes() {
@@ -168,6 +167,28 @@ function identityPatch(skipHostSource) {
           },
         }.loadTimes));
       }
+      if (!chrome.csi) {
+        define(chrome, 'csi', native({
+          csi() {
+            const t = performance.timing;
+            return { startE: t.navigationStart, onloadT: t.domContentLoadedEventEnd, pageT: Date.now() - t.navigationStart, tran: 15 };
+          },
+        }.csi));
+      }
+      if (!chrome.app) {
+        define(chrome, 'app', {
+          isInstalled: false,
+          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+          ...{
+            getDetails() { return null; },
+            getIsInstalled() { return false; },
+            installState(callback) { if (typeof callback === 'function') setTimeout(() => callback('not_installed'), 0); },
+            runningState() { return 'cannot_run'; },
+          },
+        });
+        for (const key of ['getDetails', 'getIsInstalled', 'installState', 'runningState']) native(chrome.app[key]);
+      }
     }
   } catch {
     // A page that locked something down: it keeps what it has.
@@ -176,7 +197,7 @@ function identityPatch(skipHostSource) {
 const IDENTITY_SCRIPT = `(${identityPatch})(${JSON.stringify(require('./google-auth-identity').HOST_SOURCE)});`;
 
 module.exports = {
-  chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
+  languageList, acceptLanguageHeader, chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
   lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, HIGH_ENTROPY,
   IDENTITY_SCRIPT,
 };

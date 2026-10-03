@@ -57,6 +57,48 @@ const brandName = (b) => b.brand;
   check('windows platformVersion thresholds', id.windowsPlatformVersion('10.0.26100') === '19.0.0' && id.windowsPlatformVersion('10.0.22621') === '15.0.0' && id.windowsPlatformVersion('10.0.22000') === '14.0.0' && id.windowsPlatformVersion('10.0.19045') === '10.0.0' && id.windowsPlatformVersion('') === '10.0.0', 'versions');
 }
 
+// ---- the same three-way agreement for any Chromium Electron might ship, and against a real Chrome
+{
+  const fs = require('fs');
+  // Captured from Chrome 154.0.8037.97 on Windows 11 24H2 (the request headers it sent and navigator.userAgentData it reported).
+  const real = id.uaMetadata({ chromeVersion: '154.0.8037.97', platform: 'win32', arch: 'x64', release: '10.0.26200' });
+  const sent = id.highEntropyHeaders(real, Object.keys(id.HIGH_ENTROPY));
+  check('real Chrome 154: User-Agent', id.userAgent('win32', '154.0.8037.97') === 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36', id.userAgent('win32', '154.0.8037.97'));
+  check('real Chrome 154: Sec-CH-UA', id.lowEntropyHeaders(real)['Sec-CH-UA'] === '"Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"', id.lowEntropyHeaders(real)['Sec-CH-UA']);
+  check('real Chrome 154: Sec-CH-UA-Full-Version-List', sent['Sec-CH-UA-Full-Version-List'] === '"Chromium";v="154.0.8037.97", "Google Chrome";v="154.0.8037.97", "Not A(Brand";v="99.0.0.0"', sent['Sec-CH-UA-Full-Version-List']);
+  check('real Chrome 154: arch, bitness, model, platform version, wow64, form factors', sent['Sec-CH-UA-Arch'] === '"x86"' && sent['Sec-CH-UA-Bitness'] === '"64"' && sent['Sec-CH-UA-Model'] === '""' && sent['Sec-CH-UA-Platform-Version'] === '"19.0.0"' && sent['Sec-CH-UA-WoW64'] === '?0' && sent['Sec-CH-UA-Form-Factors'] === '"Desktop"', JSON.stringify(sent));
+  // UA, Sec-CH-UA, Sec-CH-UA-Full-Version(-List) and navigator.userAgentData must name one version, whatever it is.
+  let bad = '';
+  for (let major = 120; major <= 200 && !bad; major++) {
+    const full = `${major}.0.${5000 + major}.${major % 100}`;
+    const ua = id.userAgent('win32', full);
+    const meta = id.uaMetadata({ chromeVersion: full, platform: 'win32', arch: 'x64', release: '10.0.26200' });
+    const low = id.lowEntropyHeaders(meta)['Sec-CH-UA'];
+    const high = id.highEntropyHeaders(meta, ['sec-ch-ua-full-version-list', 'sec-ch-ua-full-version']);
+    const chromeIn = (header) => [...String(header).matchAll(/"Google Chrome";v="([^"]+)"/g)].map((m) => m[1]);
+    const uaMajor = /Chrome\/(\d+)\./.exec(ua)[1];
+    if (chromeIn(low)[0] !== uaMajor || chromeIn(high['Sec-CH-UA-Full-Version-List'])[0] !== full || high['Sec-CH-UA-Full-Version'] !== `"${full}"` || meta.brands.find((b) => b.brand === 'Google Chrome').version !== uaMajor || meta.fullVersionList.find((b) => b.brand === 'Chromium').version !== full) bad = `${full}`;
+  }
+  check('UA, Sec-CH-UA, Sec-CH-UA-Full-Version(-List) and userAgentData agree for Chrome 120-200', !bad, bad);
+  // main.js derives all of it from the running Chromium: no hard-coded version anywhere in the identity
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  check('main.js: the User-Agent and the client hints both come from process.versions.chrome', /userAgentFallback = require\('\.\/browser\/chrome-identity'\)\.userAgent\(process\.platform, process\.versions\.chrome\)/.test(main) && /uaMetadata\(\{\s*chromeVersion: process\.versions\.chrome/.test(main), 'wiring');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'browser', 'chrome-identity.js'), 'utf8');
+  check('chrome-identity.js: no hard-coded Chrome version', !/Chrome\/\d{2,3}\b|v="\d{3}"/.test(source.replace(/\/\/.*$/gm, '')), 'literal version');
+}
+
+// ---- languages: Chrome's list, the one source of the header and of navigator.languages
+{
+  check('languages: en-US is en-US,en like Chrome', id.languageList(['en-US']).join() === 'en-US,en' && id.acceptLanguageHeader(['en-US']) === 'en-US,en;q=0.9', id.acceptLanguageHeader(['en-US']));
+  check('languages: base language after each, q falls by 0.1', id.acceptLanguageHeader(['fr-CA', 'en-US']) === 'fr-CA,fr;q=0.9,en-US;q=0.8,en;q=0.7', id.acceptLanguageHeader(['fr-CA', 'en-US']));
+  check('languages: a base already in the list is not repeated', id.languageList(['en-US', 'en', 'de-DE']).join() === 'en-US,en,de-DE,de', id.languageList(['en-US', 'en', 'de-DE']).join());
+  check('languages: a lone language stays alone, underscores and junk are cleaned', id.languageList(['de', 'fr_FR', '<x>', '']).join() === 'de,fr-FR,fr', id.languageList(['de', 'fr_FR', '<x>', '']).join());
+  check('languages: en-001 (how Windows names world English) is plain en', id.languageList(['en-US', 'en-001']).join() === 'en-US,en', id.languageList(['en-US', 'en-001']).join());
+  check('languages: empty or invalid falls back to en-US,en (never an empty header)', id.languageList([]).join() === 'en-US,en' && id.languageList(null).join() === 'en-US,en', id.languageList([]).join());
+  check('languages: the list has no more than the q range allows (q never below 0.1)', id.acceptLanguageHeader(Array.from({ length: 15 }, (_, i) => `a${String.fromCharCode(97 + i)}-XX`)).split(',').every((p) => !p.includes('q=') || Number(p.split('q=')[1]) >= 0.1), 'q');
+  check('languages: settings-backend builds Accept-Language from the same function', require('../src/settings/settings-backend').acceptLanguage(['fr-CA', 'en-US']) === id.acceptLanguageHeader(['fr-CA', 'en-US']), 'diverged');
+}
+
 // ---- high-entropy hints follow Accept-CH, as Chrome's do
 {
   const meta = id.uaMetadata({ chromeVersion: '144.0.7559.60', platform: 'win32', arch: 'x64', release: '10.0.26200' });
@@ -102,6 +144,7 @@ const brandName = (b) => b.brand;
   run(ctx);
   const get = (code) => vm.runInContext(code, ctx);
   check('patch: navigator.webdriver is false (getter on Navigator.prototype, not an own property)', get('navigator.webdriver') === false && get('Object.getOwnPropertyNames(navigator).length') === 0 && get('Object.getOwnPropertyDescriptor(Navigator.prototype, "webdriver").enumerable') === true, 'webdriver');
+  check('patch: window.chrome keys are in the order Chrome has them (loadTimes, csi, app)', get('Object.getOwnPropertyNames(chrome).join()') === 'loadTimes,csi,app', get('Object.getOwnPropertyNames(chrome).join()'));
   check('patch: window.chrome exists with app, csi and loadTimes', get('typeof chrome') === 'object' && get('chrome.app.isInstalled') === false && get('chrome.app.getIsInstalled()') === false && get('chrome.app.InstallState.INSTALLED') === 'installed' && get('typeof chrome.csi') === 'function' && get('typeof chrome.loadTimes') === 'function', 'chrome');
   check('patch: chrome.runtime is not invented (a page without an extension has none)', get('chrome.runtime') === undefined, 'runtime');
   check('patch: chrome.csi() and loadTimes() answer like Chrome\'s', get('chrome.csi().tran') === 15 && get('chrome.csi().startE') === 1000 && get('chrome.loadTimes().connectionInfo') === 'h2' && get('chrome.loadTimes().wasFetchedViaSpdy') === true && get('chrome.loadTimes().requestTime') === 1.05 && get('chrome.loadTimes().firstPaintTime') === 1.2, JSON.stringify(get('chrome.loadTimes()')));

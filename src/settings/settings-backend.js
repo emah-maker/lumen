@@ -215,15 +215,7 @@ function validate(key, value) {
 }
 
 // q-weighted Accept-Language: en-US,en;q=0.9,fr;q=0.8
-function acceptLanguage(langs) {
-  const out = [];
-  for (const l of langs) {
-    if (!out.includes(l)) out.push(l);
-    const base = l.split('-')[0];
-    if (base !== l && !langs.includes(base) && !out.includes(base)) out.push(base);
-  }
-  return out.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
-}
+const acceptLanguage = (langs) => require('../browser/chrome-identity').acceptLanguageHeader(langs); // (the one list navigator.languages uses too)
 
 const isLocalHost = (host) => host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]'
   || /^(10|192\.168)\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || !host.includes('.');
@@ -445,7 +437,9 @@ function create(deps) {
       }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
+      // Chrome always sends the q-weighted list of the browser's languages (Electron's default is the bare "en-US").
       if (p.languages.length) headers['Accept-Language'] = acceptLanguage(p.languages);
+      else if (deps.systemLanguages) headers['Accept-Language'] = acceptLanguage(deps.systemLanguages());
       // Electron has no client-hints store, so Chromium never sends this hint itself; Google (which
       // renders its theme on the server) and sites that asked for it get it from here.
       if (wantsColorHint(details.url)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
