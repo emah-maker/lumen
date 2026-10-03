@@ -42,6 +42,7 @@ const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
+const { createBurstLimit } = require('./features/popup-guard'); // caps windows/tabs one page opens in a burst
 const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
@@ -1872,7 +1873,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   // [ai manners] a page the AI opened that opens another (target=_blank, window.open) opens it behind and as the AI's own: it can be closed again and, in hands-off mode, worked in
   const fromAiTab = () => (manners.isAiTab(tab) ? { openedBy: { chatId: tab.openedBy.chatId, runId: tab.openedBy.runId } } : {});
+  const popupLimit = createBurstLimit(); // a page opening windows or tabs in a loop (features/popup-guard.js)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (!popupLimit.allow()) return { action: 'deny' };
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (agentContents.has(wc) && disposition === 'new-window') return { action: 'deny' }; // [agent window] a popup window would come up in front of the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
@@ -3596,7 +3599,9 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
     if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
   });
   if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
+  const popupLimit = createBurstLimit();
   wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (!popupLimit.allow()) return { action: 'deny' };
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
     if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
     const byAi = manners.isAiTab(openerTab); // [ai manners] a link from a window an AI tab's page opened is the AI's too: behind the user's tab, and kept out of the strip when hiding is on
