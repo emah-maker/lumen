@@ -4,6 +4,14 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.6 (2026-10-03)
+
+- Updates: a failed update that is retried no longer fails again on a leftover helper folder from the first try (each attempt now uses its own folder).
+- Toolbar: the update and other pills are never cut off; when the window is narrow the address field gives up space first.
+- Sign-in with a passkey or Windows Hello: Electron cannot show that prompt, so pages that asked for it (Microsoft, for example) just hung. Lumen now hides passkey support from pages, so they offer your password or a code instead.
+- TradingView mini chart on the home page stays dark in dark theme.
+- Safer popups and downloads: one page can no longer open a burst of windows or tabs, more Windows program and launcher file types are held for your approval before a download is kept, and a page can no longer reach the chat-sharing channel meant only for Lumen's own screens.
+- Tests are more reliable on slow machines (development only).
 - Google sign-in: pages now always get the Chrome identity (window.chrome with loadTimes, csi and app) at document start; before, it was skipped whenever Chromium's debugging port was open (automation). Accept-Language is Chrome's q-weighted list ("en-US,en;q=0.9") even with no Languages setting, and navigator.languages is that same list (it said "en-001"). Google's own sign-in pages are no longer ad-filtered.
 
 ## 0.5.5 (2026-10-02)

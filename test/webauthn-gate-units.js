@@ -48,7 +48,7 @@ const settle = (p) => Promise.race([p.then((v) => ['ok', v], (e) => ['err', e]),
   // The preload carries its own copy of the function (a sandboxed preload can only require 'electron'): same body.
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
   const pre = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'webauthn-preload.js'), 'utf8');
-  const m = pre.match(/function hideWebAuthn\(\) \{[\s\S]*?\n\}\n/);
+  const m = pre.match(/function hideWebAuthn\(\) \{[\s\S]*?\r?\n\}\r?\n/);
   check('preload/webauthn-preload.js has the same hideWebAuthn as browser/webauthn-gate.js', m && norm(m[0]) === norm(hideWebAuthn.toString()), 'copies differ');
 
   // main.js registers it for tabs, private windows and the AI reader session.
