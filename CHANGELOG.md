@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Codex CLI: **Add to Codex CLI** (Settings → AI and agents) now works however Codex was installed, not only with npm: a standalone `codex.exe`, WinGet, scoop, the Microsoft Store, the Codex app, the VS Code or Cursor extension's copy, Homebrew, cargo and more are found (also when Lumen was started from the Start menu or Finder and has no shell PATH). The row shows the version, whether Codex is signed in and whether Lumen is connected; if Codex can't be found it says how to install it and offers **Locate codex…**. Lumen's entry in `~/.codex/config.toml` is added or updated without touching the rest of the file (a backup is kept), and clicking again says Already connected.
+- Usage: Settings → Usage shows Codex's own 5-hour and weekly plan limits and token totals (read from Codex's session logs on this computer, numbers only; Codex reports no price), and the AI status card shows Codex's limit when it is reached.
+
 ## 0.5.6 (2026-10-03)
 
 - Updates: a failed update that is retried no longer fails again on a leftover helper folder from the first try (each attempt now uses its own folder).
