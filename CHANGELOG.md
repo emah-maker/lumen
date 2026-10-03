@@ -4,6 +4,11 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.5 (2026-10-02)
+
+- New tab keeps the text cursor in the address bar: widgets on the new-tab page that focus themselves as they load no longer take it, and a tab opened behind the one you're using (a link opened in a new tab, a tab the AI opened) no longer takes the keyboard, so typing goes where you were typing.
+- Test runs are silent now (no sound from test pages); this only affects development runs.
+
 ## 0.5.4 (2026-10-02)
 
 - The AI sidebar's open state is per tab: opening it in one tab no longer opens it in the others, each tab keeps its own, and tabs that show the same chat share it. It is saved with your session.
