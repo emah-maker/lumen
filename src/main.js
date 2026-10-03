@@ -1644,8 +1644,9 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
+let spareForTest = false; // tests: the spare page is off unless a test asks for it (test/newtab-focus.js)
 function makeSpareNewTab() {
-  if (TEST || spareNewTab || !app.isReady()) return;
+  if ((TEST && !spareForTest) || spareNewTab || !app.isReady()) return;
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
@@ -1666,6 +1667,7 @@ function takeSpareNewTab() {
 }
 // The next one is made right away: Ctrl+T pressed again a moment later finds
 // it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
+if (TEST) global.__spareNewTab = { enable: (on = true) => { spareForTest = on; if (on) makeSpareNewTab(); else if (spareNewTab) { try { spareNewTab.view.webContents.close(); } catch {} spareNewTab = null; } }, ready: () => Boolean(spareNewTab?.ready) };
 const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
@@ -1825,6 +1827,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   else if (groupId) tabGroups.add(id, groupId);
 
   if (background) {
+    // Adding or first loading the view may hand it the keyboard without an event we can see: look again as it settles.
+    for (const ms of [0, 60, 300, 1000, 2500]) setTimeout(() => { if (tab.id !== activeId && alive(tab) && tab.view.webContents.isFocused()) tab.keepKeyboard?.(); }, ms).unref?.();
     const current = activeTab();
     if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
     sendTabs();
@@ -2010,6 +2014,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
+  tab.keepKeyboard = keepKeyboardFromBackgroundTab(tab);
   // A real click in the page is the user choosing it: the guard above must not take focus back.
   wc.on('before-mouse-event', (_e, mouse) => {
     if (mouse.type !== 'mouseDown') return;
@@ -2270,24 +2275,70 @@ ipcMain.on('address:touched', () => {
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
 });
 
+// A tab behind the one in front must never hold the keyboard. Chromium hands a new view focus when it is added or
+// first loads (even hidden), so typing in the address bar or a page went to a tab nobody could see: a link opened in a
+// new tab, an AI tab. Whoever had the keyboard in this window (the UI or the tab in front, as last seen) gets it back.
+// A tab comes to the front first, then takes focus, so this never fights the user's own tab switch.
+function keepKeyboardFromBackgroundTab(tab) {
+  const wc = tab.view.webContents;
+  const take = () => {
+    const rec = tab.rec;
+    if (!rec || !rec.win || rec.win.isDestroyed() || wc.isDestroyed()) return;
+    if (tab.id === activeId) { rec.keyboardOwner = wc; return; }
+    if (tab.view.webContents !== wc) return; // (the view was swapped: leaveNewTabFor)
+    const ui = rec.win.webContents;
+    const back = rec.keyboardOwner;
+    // (the owner counts only while it is the UI or the tab in front: a tab left behind is not where the keyboard is)
+    const target = back && !back.isDestroyed() && back !== wc && (back === ui || tabByContents(back)?.id === activeId) ? back : ui;
+    target.focus();
+  };
+  wc.on('focus', take);
+  // A page loading behind (autofocus, a script's focus()) can take it silently as it finishes.
+  const check = () => { if (!wc.isDestroyed() && tab.id !== activeId && wc.isFocused()) take(); };
+  wc.on('did-stop-loading', () => { check(); setTimeout(check, 200).unref?.(); });
+  return take;
+}
+
 function guardFirstLoadFocus(tab, url) {
   const openedAt = ++uiEventSeq;
   const wc = tab.view.webContents;
   const blank = isNewTab(url);
   let pageClicked = false;
-  const onMouse = (_e, mouse) => { if (mouse.type === 'mouseDown') pageClicked = true; };
-  const keepAddress = () => !pageClicked && (blank || addressTouchedAt > openedAt);
-  const giveBack = () => { if (keepAddress() && tab.id === activeId) ui()?.focus(); };
+  let ended = false;
+  const onMouse = (_e, mouse) => { if (mouse.type === 'mouseDown') { pageClicked = true; end(); } };
+  const keepAddress = () => !ended && !pageClicked && (blank || addressTouchedAt > openedAt);
+  const mine = () => !wc.isDestroyed() && alive(tab) && tab.id === activeId && keepAddress();
+  const giveBack = () => {
+    if (!mine()) return;
+    ui()?.focus();
+    // Chromium can finish handing the page the keyboard just after its focus event: look again a moment later.
+    setTimeout(() => { if (mine() && wc.isFocused()) ui()?.focus(); }, 60).unref?.();
+  };
+  const onNavigate = (_e, to) => { if (!isNewTab(to || '')) end(); }; // the page was left for a real page: Chromium's own focus rules apply
+  function end() {
+    if (ended) return;
+    ended = true;
+    tab.endFocusGuard = null;
+    if (wc.isDestroyed()) return;
+    wc.off('focus', giveBack);
+    wc.off('before-mouse-event', onMouse);
+    wc.off('did-navigate', onNavigate);
+  }
   wc.on('focus', giveBack);
   wc.on('before-mouse-event', onMouse);
-  if (blank) focusAddress();
+  tab.endFocusGuard = end;
+  if (blank) {
+    // A new-tab page keeps the cursor in the address bar for as long as it is in front and has not been clicked: its
+    // widgets load later (a framed calendar focuses itself as it loads, seconds after the page), and the page being
+    // loaded says nothing about whether the user has chosen to use it. Leaving the tab or the page ends it.
+    wc.on('did-navigate', onNavigate);
+    wc.once('destroyed', end);
+    focusAddress();
+    return;
+  }
   wc.once('did-finish-load', () => {
     if (alive(tab) && tab.id === activeId && keepAddress() && !ui()?.isFocused()) ui()?.focus();
-    setTimeout(() => {
-      if (wc.isDestroyed()) return;
-      wc.off('focus', giveBack);
-      wc.off('before-mouse-event', onMouse);
-    }, 1000);
+    setTimeout(end, 1000).unref?.();
   });
 }
 
@@ -2298,6 +2349,7 @@ function switchTab(id, { wake = true } = {}) {
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
+    leaving?.endFocusGuard?.(); // a new tab left before it was used no longer holds the cursor in the address bar
   }
   // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
   // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
@@ -5674,6 +5726,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (ui()) shownChat.set(ui(), chatId);
     if (items.length) ui()?.send('agent:history', { items });
   });
+  w.webContents.on('focus', () => { rec.keyboardOwner = w.webContents; }); // (see keepKeyboardFromBackgroundTab)
   w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) followFront(); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
