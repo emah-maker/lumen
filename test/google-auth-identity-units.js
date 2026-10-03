@@ -112,5 +112,15 @@ for (const url of ['https://www.google.com/', 'https://mail.google.com/', 'https
   check('auth hosts: the dots are literal (a look-alike host is not an auth host)', g.isAuthHost('accounts.google.com') && g.isAuthHost('accounts.google.co.uk') && !g.isAuthHost('accountsxgoogle.com') && !g.isAuthHost('accounts-google.com') && !g.isAuthHost('gdsxgoogle.com') && !new RegExp(g.HOST_SOURCE, 'i').test('accountsXyoutube.com'), g.HOST_SOURCE);
 }
 
+// ---- wiring: what makes the identity reach the page, and what the ad blocker leaves alone
+{
+  const fs = require('fs');
+  const main = fs.readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const adblock = fs.readFileSync(require('path').join(__dirname, '..', 'src', 'features', 'adblock.js'), 'utf8');
+  check('wiring: Page is enabled before the document-start scripts are added (without it they are skipped when the debugging port is open)', /send\('Page\.enable', \{\}, sessionId\)[^\n]*\.then\(\(\) => Promise\.all\(\[\s*send\('Page\.addScriptToEvaluateOnNewDocument'/.test(main), 'order');
+  check('wiring: the Firefox override carries the same language list as the Chrome one', /firefox = \(\) => \(\{[^\n]*acceptLanguage: lang\(\)/.test(main) && /override = \(\) => \(\{[^\n]*acceptLanguage: lang\(\)/.test(main), 'acceptLanguage');
+  check('wiring: the ad blocker lets a Google sign-in page load everything it asks for', /isAuthUrl\(page\)\) return callback\(\{\}\)/.test(adblock), 'adblock');
+}
+
 assert.strictEqual(failures, 0, `${failures} google-auth-identity check(s) failed`);
 console.log('google-auth-identity units: all passed');
