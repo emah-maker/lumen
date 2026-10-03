@@ -156,7 +156,7 @@ const brandName = (b) => b.brand;
       const switches = [];
       const app = { getPath: () => dir, commandLine: { appendSwitch: (k, v) => switches.push(v === undefined ? k : k + '=' + v) } };
       const plan = prepareAutomation(app, { automationEnabled: true, automationPort: 9339 }, { platform: 'win32', env: {} });
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
       process.stdout.write(JSON.stringify({ plan: { relaunch: plan.relaunch, pipeFd: plan.pipeFd }, switches }));`;
     const env = { ...process.env };
     delete env.CLAUDE_BROWSER_TEST; delete env.LUMEN_TEST_LAUNCHER; delete env.LUMEN_AUTOMATION_INPROC;

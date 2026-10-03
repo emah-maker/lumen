@@ -76,7 +76,7 @@ const MEASURE = `(() => {
     }
   } finally {
     await app.close().catch(() => {});
-    try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} // (Electron may still hold the folder briefly)
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {} // (Electron may still hold the folder briefly)
   }
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);

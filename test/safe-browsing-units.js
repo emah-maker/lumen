@@ -106,7 +106,7 @@ module.exports = async function safeBrowsingUnits(check) {
     check('sb save: a failing save is swallowed and the lists stay usable in memory', !saveThrew && s4.status().entries === 4, saveThrew?.stack || JSON.stringify(s4.status()));
   } finally {
     for (const s of services) s.stop();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 };
 

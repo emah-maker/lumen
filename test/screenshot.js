@@ -218,8 +218,8 @@ html, body { margin: 0; }
 
   await app.close().catch(() => {});
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
-  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(out, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

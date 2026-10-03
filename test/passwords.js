@@ -195,7 +195,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

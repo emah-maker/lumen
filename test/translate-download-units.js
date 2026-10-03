@@ -292,7 +292,7 @@ const keepAlive = setInterval(() => {}, 1000); // the store's timers are unref'd
     off2();
   }
 
-  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   check('no unhandled errors', unhandled.length === 0, unhandled.join('; '));
   clearInterval(keepAlive);
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

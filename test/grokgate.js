@@ -72,7 +72,7 @@ const MODEL = process.env.GROK_TEST_MODEL || 'grok-4.7-build-fast';
     check('unreachable gate: nothing ran (no file) and the message failed', !fs.existsSync(sentinel) && three.out.failed === true, JSON.stringify({ exists: fs.existsSync(sentinel), out: three.out, events: three.events }));
   } finally {
     gate.stop();
-    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     console.log(failures ? `\n${failures} FAILED` : '\nall passed');
     process.exitCode = failures ? 1 : 0;
   }

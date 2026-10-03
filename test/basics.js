@@ -192,6 +192,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const again = await openIn(app, `${base}/zoomed-again`);
     const level = await waitFor(() => app.evaluate((_e, id) => { const wc = global.__settings.contents(id); return wc && wc.getZoomLevel() === 0.5 ? 0.5 : null; }, again));
     check('after a restart the site opens at that zoom', level === 0.5, String(level));
+    await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), again); // (Actual Size acts on the tab in front, as in the first half)
     await app.evaluate(() => global.__pageTools.handleShortcut({ control: process.platform !== 'darwin', meta: process.platform === 'darwin', key: '0' }));
     await sleep(500);
     check('Actual Size forgets it', !(host in (settingsOf(profile).siteZoom || {})), JSON.stringify(settingsOf(profile).siteZoom));
@@ -230,7 +231,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } finally {
     for (const res of held) res.destroy();
     server.close();
-    for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true });
+    for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall basics passed');
   process.exit(failures ? 1 : 0);

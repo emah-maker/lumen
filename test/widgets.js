@@ -187,7 +187,7 @@ function server(opts) {
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
   } catch (err) {
     console.log(`SKIP  the browser checks: openssl isn't available (${err.message})`);
-    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     console.log(failures ? `\n${failures} failed` : '\nall passed');
     process.exit(failures ? 1 : 0);
   }
@@ -758,8 +758,8 @@ function server(opts) {
 
   await app.close();
   fake.srv.close();
-  fs.rmSync(scratch, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

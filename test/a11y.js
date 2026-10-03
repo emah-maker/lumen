@@ -198,7 +198,7 @@ const AUDIT = `(() => {
   check('locale: no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);

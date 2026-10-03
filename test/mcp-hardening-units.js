@@ -144,7 +144,7 @@ const challenge = async (c) => { await until(() => c.lines.some((l) => l.lumenCh
   check('http: a JSON null body is a 400, not a hang', nul.status === 400, JSON.stringify(nul));
   ok.stop();
 
-  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(userData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nAll mcp-hardening checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

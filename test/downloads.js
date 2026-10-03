@@ -156,8 +156,8 @@ const os = require('os');
 
   await app.close();
   server.close();
-  fs.rmSync(dlDir, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(dlDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

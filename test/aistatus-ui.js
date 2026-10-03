@@ -216,7 +216,7 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     await inTab("document.body.classList.remove('on-media')");
   } finally {
     await app.close().catch(() => {});
-    try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* the temp profile may linger */ }
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* the temp profile may linger */ }
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

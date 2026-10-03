@@ -108,7 +108,7 @@ const os = require('os');
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {}
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
