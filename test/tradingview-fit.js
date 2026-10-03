@@ -16,10 +16,12 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
 const CHART = 'wtvchart01';
 const MINI = 'wtvmini001';
 const LIST = 'wtvlist001';
+const AUTO = 'wtvauto001';
 const widgets = [
   { id: CHART, type: 'tradingview', tv: { symbol: 'NASDAQ:AAPL', interval: 'D', view: 'chart', theme: 'light' }, x: 0, y: 0, w: 2, h: 2 },
   { id: MINI, type: 'tradingview', tv: { symbol: 'NASDAQ:AAPL', interval: 'D', view: 'mini', theme: 'light' }, x: 3, y: 0, w: 2, h: 2 },
   { id: LIST, type: 'tradingview', tv: { view: 'watchlist', theme: 'light', chart: true, symbols: ['###Tech', 'NASDAQ:AAPL', 'NASDAQ:TSLA', '###Crypto', 'BINANCE:BTCUSDT', '###Index', 'SPX'] }, x: 6, y: 0, w: 2, h: 2 },
+  { id: AUTO, type: 'tradingview', tv: { symbol: 'NASDAQ:AAPL', interval: 'D', view: 'mini', theme: 'auto' }, x: 9, y: 0, w: 4, h: 3 },
 ];
 
 (async () => {
@@ -67,6 +69,26 @@ const widgets = [
     const chartAgain = await until(CHART, (g) => g.path === '/embed-widget/mini-symbol-overview/');
     const listAgain = await until(LIST, (g) => g.tabs === 1);
     check('shrinking again swaps back to the compact views', chartAgain && chartAgain.path === '/embed-widget/mini-symbol-overview/' && listAgain && listAgain.tabs === 1 && listAgain.chart === false, JSON.stringify([chartAgain, listAgain]));
+
+    // ---- theme: the mini view is see-through, and follows the page's light/dark switch ----
+    const clear = (id) => page(`(() => { const f = document.querySelector('.w-card[data-id="${id}"] iframe'); return f && { cls: f.className, bg: getComputedStyle(f).backgroundColor, theme: f.getAttribute('src') ? (() => { try { return JSON.parse(decodeURIComponent(new URL(f.getAttribute('src')).hash.slice(1))).colorTheme; } catch { return null; } })() : null, src: f.getAttribute('src') }; })()`);
+    await place([{ id: CHART, x: 0, y: 0, w: 6, h: 6 }]);
+    let bigChart = null;
+    for (let i = 0; i < 40; i++) { bigChart = await clear(CHART); if (bigChart && /widgetembed/.test(bigChart.src)) break; await sleep(150); }
+    check('theme: the full chart paints its own background (opaque white behind it until it loads)', bigChart && !/tv-clear/.test(bigChart.cls) && bigChart.bg === 'rgb(255, 255, 255)', JSON.stringify(bigChart));
+    const miniNow = await clear(MINI);
+    check('theme: the mini price view is see-through, so a dark card shows through instead of a white box', miniNow && /tv-clear/.test(miniNow.cls) && miniNow.bg === 'rgba(0, 0, 0, 0)', JSON.stringify(miniNow));
+    const scheme = (v) => app.evaluate(async (_e, val) => { await global.__wtab.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: val }] }); }, v);
+    await scheme('light');
+    await sleep(500);
+    check('theme: auto in light mode asks TradingView for the light theme', (await clear(AUTO)).theme === 'light', JSON.stringify(await clear(AUTO)));
+    await scheme('dark');
+    let dk = null;
+    for (let i = 0; i < 40; i++) { dk = await clear(AUTO); if (dk && dk.theme === 'dark') break; await sleep(150); }
+    check('theme: switching the page to dark loads the dark address (and keeps the see-through frame)', dk && dk.theme === 'dark' && /tv-clear/.test(dk.cls) && dk.bg === 'rgba(0, 0, 0, 0)', JSON.stringify(dk));
+    await sleep(1500);
+    const reloaded = await page(`(() => { const f = document.querySelector('.w-card[data-id="${AUTO}"] iframe'); return f.getAttribute('src') !== 'about:blank' && f.src.includes('%22colorTheme%22%3A%22dark%22'); })()`);
+    check('theme: the frame ends on the dark address (a hash-only change is routed through a blank page so the widget restarts)', reloaded === true, String(reloaded));
   } finally {
     await app.close().catch(() => {});
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });

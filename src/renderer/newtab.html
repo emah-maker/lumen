@@ -912,7 +912,7 @@
     /* TradingView's frame sits in a box that clips it: a small card shrinks the frame to fit (transform) instead of clipping it (tradingview-fit.js). */
     .tv-fit { position: relative; flex: 1 1 0; min-height: 0; width: 100%; overflow: hidden; border-radius: 10px; }
     .tv-fit .w-frame { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; }
-    .w-card.tv-watchlist .w-frame { background: transparent; } /* TradingView draws it see-through (isTransparent), so it sits on the card like a home-screen widget */
+    .w-frame.tv-clear, .w-card.tv-watchlist .w-frame { background: transparent; } /* TradingView draws it see-through (isTransparent), so it sits on the card like a home-screen widget */
     .tv-note { margin: 0 0 6px; font-size: 11.5px; opacity: .75; }
     .tv-interval { flex: none; height: 20px; padding: 0 4px; border: 0; border-radius: 6px; background: rgb(255 255 255 / .12); color: inherit; font: inherit; font-size: 11px; cursor: pointer; }
     .tv-interval:hover { background: rgb(255 255 255 / .2); }
