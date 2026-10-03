@@ -3393,8 +3393,9 @@ function homeAssistant() {
   const options = modelOptions();
   if (!options.length) return { name: 'AI', agentUsable: false, model: null }; // nothing connected: no provider to privilege
   const modelId = shownModel(options, { forChat: false }).model; // what the sidebar's picker shows right now (a stand-in during a usage limit included)
-  const label = options.find((o) => o.id === modelId)?.name || String(modelId);
+  const label = autoModel.isAuto(modelId) ? 'Auto' : options.find((o) => o.id === modelId)?.name || String(modelId);
   const named = (name) => ({ name, agentUsable: true, model: modelId, label });
+  if (autoModel.isAuto(modelId)) return named('AI'); // [auto model] the model is chosen per message
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
@@ -7380,13 +7381,13 @@ function effectiveModel(preferred = readSettings().model) {
   preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
   // [auto model] Auto, picked: it stays the pick (settings.json keeps 'auto'); the model that answers is chosen per message.
-  // No pick saved at all (a fresh install, or a profile that never chose): Auto too, once there is more than one model to choose
-  // from. A saved pick, whatever it is, is never replaced.
-  if (autoModel.isAuto(preferred)) { if (options.length) return autoModel.AUTO; }
-  else if ((preferred == null || preferred === '') && options.filter((o) => o.signedIn !== false && !(o.badges || []).includes('sign in')).length > 1) return autoModel.AUTO;
+  if (autoModel.isAuto(preferred) && options.length) return autoModel.AUTO;
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
   if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
+  // [auto model] Nothing picked yet (a fresh install, or a profile that never chose): Auto, once there is more than one model to
+  // choose from. A saved pick is never replaced: not by Auto, and when it is gone (its key was removed) it falls back as before.
+  if ((preferred == null || preferred === '') && options.filter((o) => o.signedIn !== false && !(o.badges || []).includes('sign in')).length > 1) return autoModel.AUTO;
   // Nothing picked yet (or it's gone): the default model when it's connected, else the first one.
   return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
@@ -7399,7 +7400,7 @@ function effectiveModel(preferred = readSettings().model) {
 // page's Ask AI, starts on the saved default (forChat: false).
 function chatModelPick() {
   const s = agent.messages?.settings;
-  return agent.nextModel || (s ? s.fallbackFrom || s.model : null) || undefined;
+  return agent.nextModel || (s ? s.autoFrom || s.fallbackFrom || s.model : null) || undefined; // (autoFrom: the chat's pick is Auto, whichever model answered last)
 }
 function shownModel(options = modelOptions(), { forChat = true } = {}) {
   const model = effectiveModel(forChat ? chatModelPick() : undefined);
