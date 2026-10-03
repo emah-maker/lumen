@@ -9031,7 +9031,7 @@ const tabSearch = (() => {
     // The short reason: on hover (title) and for keyboard, touch and screen-reader users (aria-description). A failed
     // swap reads as the same sentence Settings shows.
     const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
-    pill.title = why;
+    pill.title = why || text.textContent; // (the words are only the title in a narrow window)
     if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued; // queued: nothing left to click
     action.disabled = applying || Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
