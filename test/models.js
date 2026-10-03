@@ -41,8 +41,8 @@ const path = require('path');
   const options = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   // Claude API models, connected via ANTHROPIC_API_KEY above; 'claudecode:default' is added
   // separately when the Claude Code CLI is installed (test/claudecode.js).
-  check('picker lists 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 5, JSON.stringify(options));
-  check('Opus 5.5 is the default', (await ui.inputValue('#model')) === 'claude-opus-5-5', await ui.inputValue('#model'));
+  check('picker lists Auto and 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 6 && options[0] === 'auto', JSON.stringify(options));
+  check('Auto is the default on a fresh profile (more than one model is connected)', (await ui.inputValue('#model')) === 'auto', await ui.inputValue('#model'));
 
   // The rest starts from Opus 5 and switches away and back, so pick it first.
   await ui.selectOption('#model', 'claude-opus-5');

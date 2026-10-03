@@ -59,10 +59,12 @@ const isCliModel = (model) => engineOfModel(model) !== 'api';
 // The models a task may use, from the picker's options: every connected API model (chat-only ones can't
 // act, so no) and each CLI model. A CLI model of a CLI that is not signed in is listed but not available.
 function taskModels(options) {
-  return (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/chat only/i.test(o.label || '')).map((o) => {
+  const list = (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/chat only/i.test(o.label || '')).map((o) => {
     const engine = engineOfModel(o.id);
     return { id: o.id, label: o.label || o.id, group: o.group || '', engine, available: engine === 'api' || o.signedIn !== false };
   });
+  // [auto model] "Auto" first: each run of the task is routed to one of the connected API models (a task's tools differ per engine, so a CLI is picked by hand).
+  return list.some((o) => o.engine === 'api') ? [{ id: 'auto', label: 'Auto', group: '', engine: 'api', available: true }, ...list] : list;
 }
 
 // Why a CLI model can't run a task right now, or null. cli: aiAgents.cliStatus(). The key is a locale

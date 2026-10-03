@@ -3349,8 +3349,9 @@ async function bgCliRuns() {
     { id: 'grokbuild:default', label: 'Grok Build (experimental)', signedIn: 'unknown' },
   ];
   const list = bg.taskModels(options);
-  check('bg models: API and CLI models are offered, "more" and chat-only are not', list.map((m) => m.id).join() === 'claude-opus-5,claudecode:sonnet,claudecode:default,grokbuild:default', list.map((m) => m.id).join());
-  check('bg models: a signed-out CLI is unavailable; signed in and unknown are available; API models always are', JSON.stringify(list.map((m) => m.available)) === '[true,true,false,true]' && list.map((m) => m.engine).join() === 'api,claudecode,claudecode,grokbuild', JSON.stringify(list));
+  check('bg models: Auto first, then the API and CLI models; "more" and chat-only are not offered', list.map((m) => m.id).join() === 'auto,claude-opus-5,claudecode:sonnet,claudecode:default,grokbuild:default', list.map((m) => m.id).join());
+  check('bg models: a signed-out CLI is unavailable; signed in and unknown are available; API models (and Auto, which uses them) always are', JSON.stringify(list.map((m) => m.available)) === '[true,true,true,false,true]' && list.map((m) => m.engine).join() === 'api,api,claudecode,claudecode,grokbuild', JSON.stringify(list));
+  check('bg models: Auto is offered only when an API model is connected, and is an API task', bg.taskModels([{ id: 'claudecode:sonnet', label: 'Claude Code · Sonnet', signedIn: true }]).every((m) => m.id !== 'auto') && bg.engineOfModel('auto') === 'api' && bg.makeTask({ prompt: 'x', model: 'auto', now: NOW }).engine === 'api', '');
   check('bg models: the engine of a model id', bg.engineOfModel('claudecode:opus') === 'claudecode' && bg.engineOfModel('grokbuild:grok-4.7') === 'grokbuild' && bg.engineOfModel('claude-opus-5') === 'api' && bg.engineOfModel('openrouter:a/b') === 'api' && bg.isCliModel('grokbuild:default') && !bg.isCliModel(undefined), '');
   const ready = { claudecode: { installed: true, signedIn: true }, grokbuild: { installed: true, signedIn: 'unknown', enabled: true } };
   check('bg models: a CLI that is set up and signed in (or not known to be signed out) has no problem; API models never have one', bg.cliProblem('claudecode:sonnet', ready) === null && bg.cliProblem('grokbuild:default', ready) === null && bg.cliProblem('claude-opus-5', {}) === null, '');

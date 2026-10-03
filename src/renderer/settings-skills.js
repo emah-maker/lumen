@@ -66,7 +66,7 @@ async function buildSkills(card) {
     mode.value = draft.mode;
     const model = h('select', { id: 'skill-model' }, h('option', { value: '', text: say('modelDefault', 'The model you are chatting with') }));
     window.lumenSettings.ai.get().then((ai) => {
-      for (const m of ai.models.filter((x) => !x.id.endsWith(':__more'))) model.append(h('option', { value: m.id, text: `${m.group} · ${m.label}` }));
+      for (const m of ai.models.filter((x) => !x.id.endsWith(':__more'))) model.append(h('option', { value: m.id, text: m.group ? `${m.group} · ${m.label}` : m.label }));
       model.value = draft.model;
       if (model.value !== draft.model && draft.model) { model.append(h('option', { value: draft.model, text: draft.model })); model.value = draft.model; }
     }).catch(() => {});

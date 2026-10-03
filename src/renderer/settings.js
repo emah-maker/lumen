@@ -251,8 +251,10 @@ async function buildAi(card) {
   const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: tr('settings.ai.noModels', 'No AI connected yet. Add a key or sign in under Accounts and keys below.') });
   modelPicker.parentElement.append(noModels);
   const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
+  let autoUseRender = () => {};
   const refreshModels = async () => {
     ai = await S.ai.get();
+    autoUseRender();
     showEmpty();
     modelPicker.replaceChildren(...modelOptions());
     if (ai.model) modelPicker.value = ai.model;
@@ -269,10 +271,27 @@ async function buildAi(card) {
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
   const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone. On by default.', idleOrganize);
+  // [auto model] Which connected providers Auto may choose from (the model picker's first row; docs/auto-model.md).
+  const autoUseBox = h('div', { class: 'auto-use', id: 'ai-auto-use', role: 'group', 'aria-label': tr('settings.ai.autoUse', 'Auto may use') });
+  const renderAutoUse = () => {
+    const off = new Set(st.prefs.autoExclude || []);
+    autoUseBox.replaceChildren(...(ai.autoProviders || []).map((p) => {
+      const input = h('input', { type: 'checkbox', id: `auto-use-${p.key}`, checked: !off.has(p.key) });
+      input.addEventListener('change', async () => {
+        const next = new Set(st.prefs.autoExclude || []);
+        if (input.checked) next.delete(p.key); else next.add(p.key);
+        await save('autoExclude', [...next]);
+      });
+      return h('label', { class: 'auto-use-item' }, input, h('span', { text: p.label }));
+    }));
+  };
+  renderAutoUse();
+  autoUseRender = renderAutoUse;
   const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
+    stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Choose Auto at the top of the model menu and Lumen picks the model for each message on this computer. Only the providers ticked here are used.'), autoUseBox),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
   );

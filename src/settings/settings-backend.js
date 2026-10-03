@@ -108,6 +108,7 @@ const DEFAULTS = {
   maxChatRuns: 3, // [ai] sidebar chats that may work at once (one per tab); more wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
+  autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
@@ -177,6 +178,7 @@ function validate(key, value) {
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'maxChatRuns': return pick(Number(value), [1, 2, 3, 4, 6, 8], null);
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);

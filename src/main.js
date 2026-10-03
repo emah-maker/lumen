@@ -444,6 +444,26 @@ const modelNames = require('./features/model-names');
 // [model fallback] ai/fallback.js: a model out of usage or unreachable is left alone for a while and another connected one answers.
 const aiFallback = require('./ai/fallback');
 const fallbackOn = () => readSettings().autoFallback !== false; // Settings > AI: Switch models automatically when one is unavailable
+// [auto model] The picker's "Auto" (ai/auto-model.js, docs/auto-model.md): which connected model answers a request. The router
+// is pure; this is its settings: the models turned off for Auto (autoExclude), the provider the user was on before choosing Auto
+// (autoHome), the models this account was refused (in memory) and the cooldowns fallback.js keeps. Nothing leaves this computer.
+const autoModel = require('./ai/auto-model');
+const autoDenied = autoModel.createDenied();
+const autoExcluded = () => (Array.isArray(readSettings().autoExclude) ? readSettings().autoExclude : []);
+function autoRoute({ request, last = null, allowEngines = true, apiOnly = false, scope = null } = {}) {
+  const options = modelOptions().filter((o) => !apiOnly || !aiFallback.isEngine(o.id));
+  return autoModel.route({ options, request, last, prefer: autoModel.preferFrom({ lastId: last, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines, scope });
+}
+function autoEscalate({ current, failure, request, tried = [], allowEngines = true }) {
+  return autoModel.escalate({ options: modelOptions(), current, failure, request, tried, prefer: autoModel.preferFrom({ lastId: current, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines });
+}
+// A model for a one-shot job outside the chat (topic naming, Organize, translation, a skill's proposal): the open chat's
+// pick when it is a model, else Auto's cheapest fit for `kind`. apiOnly: no CLI engine (translation runs one request per chunk).
+function autoConcrete(id, kind = 'quick', { apiOnly = false } = {}) {
+  if (!autoModel.isAuto(id)) return id;
+  const d = autoRoute({ request: { kind, prompt: '' }, last: agent.messages?.settings?.autoLast?.id || null, apiOnly });
+  return d.id || null;
+}
 function modelOptions() {
   const groups = [];
   if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).sort(([a], [b]) => (b === DEFAULT_MODEL) - (a === DEFAULT_MODEL)).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) }); // the default first
@@ -479,6 +499,24 @@ function modelOptions() {
   const options = groups.flatMap((g) => g.entries.map((e) => ({ ...e, group: g.label })));
   options.push(...aiAgents.modelOptions()); // local engine(s) last: the user's own Claude Code CLI, when installed
   return options;
+}
+
+// Settings > AI > "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
+function autoProviderList(options = modelOptions()) {
+  const seen = new Map();
+  for (const o of options) {
+    if (o.more || String(o.id).endsWith(':__more') || autoModel.isAuto(o.id)) continue;
+    const key = aiFallback.providerOf(o.id);
+    if (!seen.has(key)) seen.set(key, { key, label: aiFallback.providerName(o.id, options), on: !autoExcluded().includes(key) });
+  }
+  return [...seen.values()];
+}
+// What every picker lists: Auto first (no heading), then the connected models. modelOptions() stays the real models only: the
+// fallback and the router must never see "auto" as one. The row says what Auto chose last in the open chat ("Auto · Haiku").
+function pickerOptions(options = modelOptions()) {
+  if (!options.some((o) => !o.more)) return options;
+  const last = agent.messages?.settings?.autoLast || null;
+  return [autoModel.pickerEntry({ last, describe: t('models.auto.detail') }), ...options];
 }
 
 let client = null;
@@ -2818,7 +2856,8 @@ function cheapTopicModel() {
   return standInOf(cheapTopicModelFor());
 }
 function cheapTopicModelFor() {
-  const chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
+  let chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
+  if (autoModel.isAuto(chosen)) chosen = agent.messages.settings?.autoFrom ? agent.messages.settings.model : (autoConcrete(chosen, 'classification') || DEFAULT_MODEL); // [auto model] the cheapest fit
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
   if (provider === 'anthropic') return 'claude-haiku-4-5';
@@ -3354,8 +3393,9 @@ function homeAssistant() {
   const options = modelOptions();
   if (!options.length) return { name: 'AI', agentUsable: false, model: null }; // nothing connected: no provider to privilege
   const modelId = shownModel(options, { forChat: false }).model; // what the sidebar's picker shows right now (a stand-in during a usage limit included)
-  const label = options.find((o) => o.id === modelId)?.name || String(modelId);
+  const label = autoModel.isAuto(modelId) ? 'Auto' : options.find((o) => o.id === modelId)?.name || String(modelId);
   const named = (name) => ({ name, agentUsable: true, model: modelId, label });
+  if (autoModel.isAuto(modelId)) return named('AI'); // [auto model] the model is chosen per message
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
@@ -6321,6 +6361,7 @@ const agent = new Agent({
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
+  autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -6389,6 +6430,7 @@ const bgTasks = require('./features/background-runner').create({
   maxBackgroundTasks: () => perfMode.limits().maxBackgroundTasks, // Performance mode: one at a time
   getClient: (...args) => agent.getClient(...args), getKey: providerKey,
   effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
+  autoRoute: (a) => autoRoute({ ...a, apiOnly: true, allowEngines: false }), autoEscalate: (a) => autoEscalate({ ...a, allowEngines: false }), autoDeny: (id) => autoDenied.add(id), // [auto model] a task on Auto is routed to an API model at each run
   aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
   reportUsage: (engine, data) => agent.onUsage?.(engine, data),
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
@@ -6547,7 +6589,8 @@ function aiStatusFacts() {
   if (anthropicUsable()) apis.push('anthropic');
   for (const p of Object.keys(providers.PROVIDERS)) if (providerKey(p)) apis.push(p);
   const cli = aiAgents.cliStatus();
-  const model = effectiveModel();
+  let model = effectiveModel();
+  if (autoModel.isAuto(model)) model = agent.messages?.settings?.autoLast?.id || null; // [auto model] the status card names the model that last answered; before any, no row is marked
   const provider = model ? aiFallback.providerOf(model) : null;
   const bare = model ? String(model).replace(/^[a-z][a-z0-9]*:/, '') : '';
   const cooling = {};
@@ -7068,7 +7111,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
   // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
   runSlots.setMax(readSettings().maxChatRuns);
-  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel());
+  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat: Auto leaves a CLI engine out while another chat is running, see agent.routeAuto)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
@@ -7344,9 +7387,14 @@ function migrateGeminiCli(model) {
 function effectiveModel(preferred = readSettings().model) {
   preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
+  // [auto model] Auto, picked: it stays the pick (settings.json keeps 'auto'); the model that answers is chosen per message.
+  if (autoModel.isAuto(preferred) && options.length) return autoModel.AUTO;
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
   if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
+  // [auto model] Nothing picked yet (a fresh install, or a profile that never chose): Auto, once there is more than one model to
+  // choose from. A saved pick is never replaced: not by Auto, and when it is gone (its key was removed) it falls back as before.
+  if ((preferred == null || preferred === '') && options.filter((o) => o.signedIn !== false && !(o.badges || []).includes('sign in')).length > 1) return autoModel.AUTO;
   // Nothing picked yet (or it's gone): the default model when it's connected, else the first one.
   return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
@@ -7359,11 +7407,11 @@ function effectiveModel(preferred = readSettings().model) {
 // page's Ask AI, starts on the saved default (forChat: false).
 function chatModelPick() {
   const s = agent.messages?.settings;
-  return agent.nextModel || (s ? s.fallbackFrom || s.model : null) || undefined;
+  return agent.nextModel || (s ? s.autoFrom || s.fallbackFrom || s.model : null) || undefined; // (autoFrom: the chat's pick is Auto, whichever model answered last)
 }
 function shownModel(options = modelOptions(), { forChat = true } = {}) {
   const model = effectiveModel(forChat ? chatModelPick() : undefined);
-  const standIn = fallbackOn() ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
+  const standIn = fallbackOn() && !autoModel.isAuto(model) ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
   return { pick: model, model: standIn.from ? standIn.model : model, standIn };
 }
 ipcMain.handle('settings:get', () => {
@@ -7389,7 +7437,8 @@ ipcMain.handle('settings:get', () => {
     model: standIn.from ? standIn.model : model,
     fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
     autoFallback: fallbackOn(),
-    models: options,
+    models: pickerOptions(options),
+    autoProviders: autoProviderList(options), // Settings > AI: which providers Auto may use
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
@@ -7602,12 +7651,14 @@ ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
-  if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
+  if (id === 'openrouter:__more' || (!pickedFromMore && !(autoModel.isAuto(id) && modelOptions().length) && !modelOptions().some((o) => o.id === id))) return false;
   const s = readSettings();
   // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
   const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
   const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
-  writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  // [auto model] The provider the user was on before choosing Auto is the one Auto prefers when two would do.
+  const autoHome = autoModel.isAuto(id) && s.model && !autoModel.isAuto(s.model) ? s.model : s.autoHome;
+  writeSettings({ ...s, model: id, ...(autoHome ? { autoHome } : {}), ...(recentOpenRouter ? { recentOpenRouter } : {}) });
   aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.

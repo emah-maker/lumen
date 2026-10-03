@@ -3,6 +3,7 @@
 // from the prompt text and what is attached, bucketed into light / standard / heavy, then looked up
 // in TABLE. A model the user picked (anything but 'default') is never touched, and neither is an
 // engine with no row in TABLE (Grok Build: its model ids come from `grok models`, so no fixed tiers).
+// The picker's own "Auto" (ai/auto-model.js, docs/auto-model.md) reuses this scoring (tierFor) for every engine and provider.
 // Agent.claudeCodePlan calls route(); the previous tier is kept in the chat's settings (ccAutoTier),
 // and is pinned (never lowered) while the chat's CLI session lasts.
 
