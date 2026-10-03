@@ -373,7 +373,7 @@ function setupAiAgents(deps) {
         // On Windows these use the .cmd shim (not the .ps1 one): PowerShell's claude.ps1 swallows
         // `--`, but claude.cmd and quoted paths work in both PowerShell and cmd.exe.
         { id: 'claude', label: 'Claude Code', hint: 'One click, or run this in a terminal', text: `${win ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'claude' },
-        { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'codex.cmd' : 'codex'} mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.' },
+        { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `codex mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: `Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.${win ? ' (If Codex was installed with npm and PowerShell swallows the --, run codex.cmd instead of codex.)' : ''}` },
         { id: 'grok', label: 'Grok Build', hint: 'One click, or run this in a terminal (needs SuperGrok or X Premium+)', text: `grok mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'grok', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.grok/config.toml.' },
         // Antigravity (agy) keeps its MCP servers in ~/.gemini/config/mcp_config.json; the one click runs `agy mcp add`, which writes that file.
         { id: 'antigravity', label: 'Antigravity', hint: 'One click, or run this in a terminal (replaces Gemini CLI)', text: `agy mcp add -e ELECTRON_RUN_AS_NODE=1 lumen -- ${quoted}`, addButton: 'antigravity', secondary: 'Or add the JSON of Other MCP clients (below) under mcpServers in ~/.gemini/config/mcp_config.json.' },
@@ -441,19 +441,7 @@ function setupAiAgents(deps) {
       check: (run) => run(['mcp', 'get', 'lumen']),
       add: (run, argv) => run(['mcp', 'add', 'lumen', '--scope', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
     },
-    codex: {
-      label: 'Codex CLI',
-      find: () => findCli('codex', '@openai/codex'),
-      installHint: () => "Codex CLI isn't installed. Install it with: npm install -g @openai/codex",
-      // `codex mcp get` may not exist on older builds; `codex mcp list` is the reliable fallback.
-      check: async (run) => {
-        const got = await run(['mcp', 'get', 'lumen']);
-        if (got.ok) return { ok: true };
-        const list = await run(['mcp', 'list']);
-        return { ok: list.ok && list.out.includes('lumen') };
-      },
-      add: (run, argv) => run(['mcp', 'add', 'lumen', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
-    },
+    // Codex CLI has its own flow (codex-connect.js): found however it was installed, config.toml entry merged.
     // Google Antigravity's CLI (`agy`), which replaces Gemini CLI: `agy mcp add [flags] <name> <commandOrUrl> [args...]` (flags before the name;
     // checked against agy 1.2.14's own --help). On Windows agy is installed to %LOCALAPPDATA%\agy\bin, which is not on PATH: findAgy looks there.
     antigravity: {
@@ -484,6 +472,7 @@ function setupAiAgents(deps) {
     if (id === 'grok') refreshGrokBuildStatus(true).catch(() => {});
   }
   async function addToAgent(id) {
+    if (id === 'codex') return codexConnect.add();
     const key = AGENTS[id] ? id : 'claude';
     const agent = AGENTS[key];
     const found = await agent.find();
@@ -497,6 +486,7 @@ function setupAiAgents(deps) {
       ? { ok: true, text: `Added. Start a new ${agent.label} session to use Lumen.` }
       : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || `${agent.label} could not add Lumen.` };
   }
+  const codexConnect = require('./codex-connect').createCodexConnect({ ipcMain, readSettings, writeSettings, mcpCommand, connected, isSettingsSender: deps.isSettingsSender, pickFile: deps.pickCodexFile, seams: require('../test-mode').isTest() ? global.__codexSeams : undefined });
   ipcMain.handle('mcp:add-to-agent', (_e, id) => addToAgent(id));
 
   // ---------- automation tools over CDP: Playwright / CDP clients see only the user's tabs ----------
@@ -624,7 +614,7 @@ function setupAiAgents(deps) {
       // has loaded, not while it does.
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
-        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false)])
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false)])
           .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); });
         grokWarmup.watchResume();
       };
@@ -652,6 +642,7 @@ function setupAiAgents(deps) {
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
       grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
       antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() }, // (sidebar chats only: not offered to background tasks)
+      codex: codexConnect.state(), // (no sidebar engine: Settings shows it, and Codex drives Lumen over MCP)
     }),
     // A fresh engine for one background run: { engine, release }. It shares nothing live with the
     // sidebar's engine (its own child, MCP tag and `active` run; Grok also its own GROK_HOME and folder,

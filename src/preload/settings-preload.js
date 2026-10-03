@@ -135,6 +135,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cliLogout: call('cli:logout'),
       cliCancel: call('cli:cancel'),
       claudeCodeStatus: call('claudecode:status'),
+      codexStatus: call('codex:status'), // Settings → AI → Connect: Codex CLI found? signed in? connected?
+      codexLocate: call('codex:locate'), // "Locate codex…" (a file picker; true forgets the saved path)
       antigravityStatus: call('antigravity:status'), // Settings → AI → CLI agents: found? the install command
       antigravityInstall: call('antigravity:install'), // runs Google's installer, only from the click that follows seeing it
       useAntigravity: call('settings:use-antigravity'),
