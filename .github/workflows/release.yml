@@ -148,9 +148,39 @@ jobs:
           echo "path=$kc" >> "$GITHUB_OUTPUT"
           security find-identity -v -p codesigning "$kc" | grep -E 'Developer ID Application|valid identit'
 
+      # Windows signing is opt-in by secret (docs/windows-signing.md): Azure Artifact Signing through
+      # electron-builder. It needs the three AZURE_* secrets and the four AZURE_SIGNING_* variables;
+      # without them (or with only some, which is warned about) the build is unsigned as before.
+      # scripts/signing.js only tests that values are present; nothing is printed.
+      - name: Detect Windows signing
+        id: winsign
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          set -e
+          node scripts/signing.js --win --github-output >> "$GITHUB_OUTPUT"
+          node scripts/signing.js --win
+
       - name: Build
         shell: bash
         env:
+          # Windows Azure Artifact Signing (windows job only, and only when every value is present).
+          # electron-builder's TrustedSigning module reads the AZURE_TENANT_ID / CLIENT_ID / CLIENT_SECRET trio itself.
+          AZURE_TENANT_ID: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_SIGNING_ENDPOINT: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && vars.AZURE_SIGNING_ENDPOINT || '' }}
+          AZURE_SIGNING_ACCOUNT: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && vars.AZURE_SIGNING_ACCOUNT || '' }}
+          AZURE_SIGNING_PROFILE: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && vars.AZURE_SIGNING_PROFILE || '' }}
+          AZURE_SIGNING_PUBLISHER: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && vars.AZURE_SIGNING_PUBLISHER || '' }}
           EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
           EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
           # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
@@ -221,6 +251,39 @@ jobs:
             for app in "$tmp"/*.app; do verify "$app"; done
             rm -rf "$tmp"
           done
+
+      # Signed Windows builds only: fail the release if Lumen.exe (the folder, and the copy inside the
+      # release zip that in-app updates swap in) or the Setup exe is not validly signed
+      # and timestamped by the expected publisher. The zip's exe must also be the very file that was
+      # signed. Skipped (nothing to verify) for the unsigned build. Signature details are public.
+      - name: Verify Windows signature
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          function Test-Signed([string]$file) {
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '(none)' }
+            Write-Host "$file : $($sig.Status) / $subject / timestamp: $([bool]$sig.TimeStamperCertificate)"
+            $ok = $sig.Status -eq 'Valid' -and $sig.TimeStamperCertificate -and $subject.Contains($env:PUBLISHER)
+            if (-not $ok) { Write-Host "::error::$file is not validly signed by '$env:PUBLISHER' with a timestamp"; $script:failed = $true }
+          }
+          $exe = 'dist/win-unpacked/Lumen.exe'
+          Test-Signed $exe
+          Get-ChildItem dist -Filter '*.exe' | ForEach-Object { Test-Signed $_.FullName }
+          foreach ($zip in Get-ChildItem dist -Filter '*-win-*.zip') {
+            $tmp = Join-Path $env:RUNNER_TEMP ('zipcheck-' + [guid]::NewGuid())
+            Expand-Archive -Path $zip.FullName -DestinationPath $tmp
+            $inner = Get-ChildItem $tmp -Recurse -Filter 'Lumen.exe' | Select-Object -First 1
+            if (-not $inner) { Write-Host "::error::no Lumen.exe in $($zip.Name)"; $failed = $true; continue }
+            Test-Signed $inner.FullName
+            if ((Get-FileHash $inner.FullName).Hash -ne (Get-FileHash $exe).Hash) { Write-Host "::error::Lumen.exe in $($zip.Name) is not the signed one"; $failed = $true }
+            Remove-Item $tmp -Recurse -Force
+          }
+          if ($failed) { exit 1 }
 
       - name: Remove the notarization key and build keychain
         if: always() && matrix.platform == 'mac'

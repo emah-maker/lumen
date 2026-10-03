@@ -83,12 +83,24 @@ if (platformFlag === '--mac') {
   console.log(`macOS signing: ${s.mode}${s.mode === 'developer-id' ? `, notarization: ${s.notarize || 'off (no credentials)'}` : ''}`);
   if (s.partialNotarization) console.warn(`warning: ${s.partialNotarization} is only partly set; the app will be signed but not notarized`);
 }
+// Windows signing (Azure Artifact Signing, docs/windows-signing.md): on only when all the AZURE_* values
+// exist. Lumen.exe is then edited and signed, so it no longer matches Electron's binary.
+const winSigned = platformFlag === '--win' && signing.winSigning().enabled;
+if (platformFlag === '--win') {
+  const w = signing.winSigning();
+  builderArgs.push(...signing.winBuilderArgs());
+  builderEnv = signing.winBuilderEnv();
+  console.log(`Windows signing: ${w.enabled ? 'Azure Artifact Signing' : 'off (unsigned build)'}`);
+  if (w.partial) console.warn(`warning: Azure signing is only partly set up (missing: ${w.partial.join(', ')}); building unsigned`);
+  if (w.invalid) console.warn(`warning: ${w.invalid.join(', ')} does not look right; building unsigned`);
+}
 const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit', env: builderEnv });
 if (wroteGoogle) fs.rmSync(googleFile, { force: true });
 if (result.status !== 0) process.exit(result.status || 1);
 
-// The Windows exe must be the unmodified Electron binary.
-if (platformFlag === '--win') {
+// The unsigned Windows exe must be the unmodified Electron binary (a signed one is checked by the
+// release workflow's signature step instead).
+if (platformFlag === '--win' && !winSigned) {
   const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const built = path.join(out, 'win-unpacked', 'Lumen.exe');
   const stock = path.join(electronDist, 'electron.exe');

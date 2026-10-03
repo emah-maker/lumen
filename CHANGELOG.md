@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Windows code signing with Azure Artifact Signing is wired into the release workflow, off until the repository has the Azure secrets and variables (docs/windows-signing.md); unsigned builds and the in-app updater are unchanged.
+
 ## 0.5.5 (2026-10-02)
 
 - New tab keeps the text cursor in the address bar: widgets on the new-tab page that focus themselves as they load no longer take it, and a tab opened behind the one you're using (a link opened in a new tab, a tab the AI opened) no longer takes the keyboard, so typing goes where you were typing.
