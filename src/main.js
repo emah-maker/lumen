@@ -205,7 +205,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state', 'sidebar:set',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
