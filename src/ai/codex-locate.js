@@ -77,7 +77,7 @@ async function registryPath(seams) {
 }
 // macOS / Linux: the login shell's PATH (what Terminal would give `codex`).
 async function loginShellPath(seams) {
-  const shell = seams.env.SHELL && path.isAbsolute(seams.env.SHELL) ? seams.env.SHELL : '/bin/zsh';
+  const shell = seams.env.SHELL && path.posix.isAbsolute(seams.env.SHELL) ? seams.env.SHELL : '/bin/zsh';
   const r = await seams.exec(shell, ['-ilc', 'printf "__LUMEN_PATH__%s__LUMEN_END__" "$PATH"'], { timeout: 5000 });
   return /__LUMEN_PATH__(.*?)__LUMEN_END__/s.exec(r.stdout || '')?.[1] || '';
 }
@@ -190,7 +190,7 @@ function extensionBinaries(seams, add) {
 function npmShimTarget(cmdPath, seams) {
   const { platform } = seams;
   const j = (...p) => join(platform, ...p);
-  const dir = path.dirname(cmdPath);
+  const dir = (platform === 'win32' ? path.win32 : path.posix).dirname(cmdPath);
   const pkgDir = j(dir, 'node_modules', '@openai', 'codex');
   const pkgJson = seams.readFile(j(pkgDir, 'package.json'));
   if (!pkgJson) return null;
@@ -221,7 +221,7 @@ async function nodeCommand(seams) {
 
 // { command, args, env?, kind } for a file, or null when it cannot be run.
 async function specFor(file, seams) {
-  const ext = path.extname(file).toLowerCase();
+  const ext = (seams.platform === 'win32' ? path.win32 : path.posix).extname(file).toLowerCase();
   if (seams.platform === 'win32') {
     if (ext === '.exe') return { command: file, args: [], kind: 'exe' };
     if (ext === '.cmd' || ext === '.bat') {
