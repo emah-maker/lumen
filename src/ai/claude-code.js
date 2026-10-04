@@ -21,6 +21,7 @@ const path = require('path');
 const { removeDir, removeDirSync } = require('./temp-dirs');
 const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -97,11 +98,12 @@ const MODELS = [
 // prompt plus CLAUDE_CODE_NOTE (agent.js) names the mcp__lumen__ tools. Tool use itself needs no
 // prompt: the tool definitions come from the MCP server.
 // [full access] Claude Code keeps its own system prompt (its tools, CLAUDE.md, skills): Lumen's is appended.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false }) {
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '' }) {
   return [
     ...(fullAccess ? ARGS_FULL : ARGS_BASE),
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
+    ...effortLib.cliArgs('claudecode', effort), // Settings → AI → AI providers: --effort (none: the CLI's own default)
     '--mcp-config', mcpConfig, fullAccess ? '--append-system-prompt' : '--system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
   ];
 }
@@ -135,7 +137,7 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // turn cap and system prompt (a new chat, a model or settings change starts another one). Today's date
 // (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
 // started with rather than respawning, and a warm start made before midnight stays usable after it.
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), effortLib.clean('claudecode', effort), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
 
 // A step row shown while the model is still writing a tool call's input (a long fill_form or batch):
 // it appears after EARLY_STEP_MS, and Lumen's MCP side takes it over when the call arrives
@@ -298,7 +300,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, effort = '' }) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -316,7 +318,7 @@ class ClaudeCodeEngine {
       this.workDirs.delete(dir);
       throw err;
     }
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, effort });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
@@ -328,7 +330,7 @@ class ClaudeCodeEngine {
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess }); };
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess, effort }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -565,13 +567,13 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '', signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess }, { fresh, emit });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, effort }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -695,7 +697,7 @@ class ClaudeCodeEngine {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
       // Only when the caller knows the next message will want the same process (prestart: a picked model, or
       // an auto-routed top tier that can't go higher); otherwise it would start for a key that may not match.
-      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns };
+      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, effort };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);
     }

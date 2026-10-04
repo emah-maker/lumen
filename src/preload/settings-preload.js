@@ -84,7 +84,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     // You and AI → Usage (features/usage.js)
     usage: call('prefs:usage'),
     clearUsage: call('prefs:clear-usage'),
-    setUsageBudget: call('prefs:usage-budget'),
+    setUsageBudget: call('prefs:usage-budget'), // { unit, daily, weekly, engine? }: Grok's budget, or the named provider's
+    cliInfo: call('prefs:cli-info'), // Settings → AI → AI providers: each CLI's version, path, sign-in and menu state
     // About → Updates (features/updates.js)
     updates: {
       state: call('settings:updates-state'),

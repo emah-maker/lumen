@@ -112,6 +112,10 @@ const DEFAULTS = {
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  claudeCodeSidebar: true, // [ai] Claude Code is offered in the sidebar's model menu once found (features/ai-agents.js modelOptions); off hides it without uninstalling
+  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
+  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
+  aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
   codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings > AI)
@@ -182,6 +186,7 @@ function validate(key, value) {
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
+    case 'aiEffort': return require('../ai/effort').cleanAll(value);
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
@@ -930,7 +935,8 @@ function create(deps) {
     handle('prefs:internals', internals);
     handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }) ?? null); // [usage]
     handle('prefs:clear-usage', () => { deps.usage?.clear(); return true; });
-    handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget) ?? null); // [usage] the Grok budget
+    handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget, budget && typeof budget.engine === 'string' ? budget.engine : 'grokbuild') ?? null); // [usage] a provider's budget (Grok's when no engine is named)
+    handle('prefs:cli-info', () => (deps.cliInfo ? deps.cliInfo() : [])); // [ai] version, path, sign-in and menu state of each CLI
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)
   }
 
