@@ -11,6 +11,7 @@
     "dist": "node scripts/build.js",
     "test": "node scripts/test-all.js",
     "test:units": "node scripts/test-units.js",
+    "test:acceptance": "node scripts/test-acceptance.js",
     "lint": "eslint .",
     "measure": "node scripts/measure-perf.js",
     "check:package": "node scripts/check-package.js",
