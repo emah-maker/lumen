@@ -322,7 +322,7 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
   let res = await h.connect.add();
   const addRun = h.state.ran.find((x) => x.args[0] === 'mcp' && x.args[1] === 'add');
   check('Add (standalone codex.exe, not in config): `codex mcp add lumen --env … -- <Lumen> <mcp.js>` as an argv array, no shell', res.ok && !res.already && addRun.file === 'C:\\tools\\codex.exe' && addRun.args.join('|') === 'mcp|add|lumen|--env|ELECTRON_RUN_AS_NODE=1|--|C:\\Lumen\\Lumen.exe|C:\\Lumen\\resources\\app\\mcp.js' && addRun.opts.shell === false && h.state.connected[0] === 'codex', JSON.stringify({ res, addRun }));
-  fs.writeFileSync(cfgFile, `[mcp_servers.lumen]\ncommand = '${lumenCmd().command}'\nargs = ['${lumenCmd().args[0]}']\nenv = { ELECTRON_RUN_AS_NODE = "1" }\n`);
+  fs.writeFileSync(cfgFile, `[mcp_servers.lumen]\ncommand = '${lumenCmd().command}'\nargs = ['${lumenCmd().args[0]}']\nenv = { ELECTRON_RUN_AS_NODE = "1" }\nstartup_timeout_sec = 30\ntool_timeout_sec = 600\n`);
   h = harness();
   res = await h.connect.add();
   check('Add when config.toml already has the current entry: "Already connected", no CLI call to add', res.ok && res.already && res.text === 'Already connected' && !h.state.ran.some((x) => x.args.includes('add')), JSON.stringify(res));
@@ -342,7 +342,7 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
   h = harness({ files: {} });
   res = await h.connect.add();
   check('Add with no Codex: not found, the install hint with winget/npm/releases, links for the buttons', !res.ok && res.notFound && /winget install OpenAI\.Codex/.test(res.text) && /Locate codex/.test(res.text) && /github\.com\/openai\/codex/.test(res.links.github), JSON.stringify(res));
-  fs.writeFileSync(cfgFile, `[mcp_servers.lumen]\ncommand = '${lumenCmd().command}'\nargs = ['${lumenCmd().args[0]}']\nenv = { ELECTRON_RUN_AS_NODE = "1" }\nenabled = false\n`);
+  fs.writeFileSync(cfgFile, `[mcp_servers.lumen]\ncommand = '${lumenCmd().command}'\nargs = ['${lumenCmd().args[0]}']\nenv = { ELECTRON_RUN_AS_NODE = "1" }\nstartup_timeout_sec = 30\ntool_timeout_sec = 600\nenabled = false\n`);
   h = harness();
   res = await h.connect.add();
   check('Add when Lumen is switched off in Codex\'s config: tells the user, does not flip it', !res.ok && /enabled = false/.test(res.text), res.text);
@@ -391,6 +391,34 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
   check('ai-agents.js: the Codex button uses codex-connect, not the npm-only finder; the terminal snippet no longer assumes codex.cmd', /codexConnect\.add\(\)/.test(agents) && !/findCli\('codex'/.test(agents) && !/'codex\.cmd' : 'codex'/.test(agents), '');
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
   check('main.js: codex: channels are Settings-page-only (PRIVILEGED_IPC)', /PRIVILEGED_IPC = \/\^\([^)]*\bcodex\b/.test(mainSrc), '');
+
+  // ---------- Codex driving Lumen: timeouts, the name on the pill, read-only hints ----------
+  {
+    const withT = { ...want, timeouts: { startup_timeout_sec: 30, tool_timeout_sec: 600 } };
+    const fresh = cfg.mergeLumen('', withT);
+    check('timeouts: a new entry carries startup_timeout_sec = 30 and tool_timeout_sec = 600 (Codex stops a server at 10 s and a tool call at 60 s)', fresh.changed && /\nstartup_timeout_sec = 30\ntool_timeout_sec = 600\n$/.test(fresh.text) && cfg.inspect(fresh.text, withT).state === 'same', fresh.text);
+    const old = cfg.mergeLumen('', want).text; // an entry an older Lumen (or `codex mcp add`) wrote: no timeouts
+    check('timeouts: an entry without them is stale, and the update adds them without touching the rest', cfg.inspect(old, withT).state === 'stale' && (() => { const u = cfg.mergeLumen(old, withT); return u.changed && /tool_timeout_sec = 600/.test(u.text) && u.text.includes(want.command) && cfg.inspect(u.text, withT).state === 'same'; })(), old);
+    const mine = old.replace(/\n+$/, '\nstartup_timeout_sec = 120\ntool_timeout_sec = 90\n');
+    check('timeouts: a value the user set is theirs and never changed', cfg.inspect(mine, withT).state === 'same' && !cfg.mergeLumen(mine, withT).changed, mine);
+    const mcp = require('../src/automation/mcp');
+    check('the pill names Codex however it names itself (codex-mcp-client, with or without a title), and others as before', mcp.clientLabel({ name: 'codex-mcp-client' }) === 'Codex' && mcp.clientLabel({ name: 'codex-mcp-client', title: 'Codex' }) === 'Codex' && mcp.clientLabel({ name: 'codex-exec', version: '1' }) === 'Codex' && mcp.clientLabel({ name: 'claude-code' }) === 'Claude Code' && mcp.clientLabel({ name: 'cursor' }) === 'cursor' && mcp.clientLabel({}) === 'An AI agent', '');
+    // A Codex-style session over MCP: initialize (clientInfo), initialized, tools/list, tools/call.
+    const sent = [];
+    const events = [];
+    const { handle, session } = mcp.createSession({ tools: [{ name: 'read_page', description: 'r', input_schema: { type: 'object', properties: {} } }, { name: 'navigate', description: 'n', input_schema: { type: 'object', properties: {} } }], callTool: async (name) => ({ content: [{ type: 'text', text: `did ${name}` }], isError: false }), enabled: () => true, onEvent: (e) => events.push(e), send: (m) => sent.push(m) });
+    await handle({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex-mcp-client', version: '0.130.0' } } });
+    await handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+    await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
+    const list = sent.find((m) => m.id === 1)?.result?.tools || [];
+    check('a Codex-style MCP session: initialize answers the same protocol version, the session is named Codex, tools list and call work', sent[0].result.protocolVersion === '2025-06-18' && session.clientName === 'Codex' && events[0]?.clientName === 'Codex' && list.length === 2 && sent.find((m) => m.id === 2).result.content[0].text === 'did read_page', JSON.stringify(sent).slice(0, 300));
+    check('tools/list marks the tools that only read as readOnlyHint (Codex then does not ask before each call); acting tools carry none', list.find((t) => t.name === 'read_page').annotations?.readOnlyHint === true && !list.find((t) => t.name === 'navigate').annotations, JSON.stringify(list));
+    const off = [];
+    const closed = mcp.createSession({ tools: [], callTool: async () => ({}), enabled: () => false, onEvent: () => {}, send: (m) => off.push(m) });
+    await closed.handle({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { clientInfo: { name: 'codex-mcp-client' } } });
+    check('"Allow AI agents to connect" off: initialize fails with the setting named (what Codex shows as a startup error)', /Allow AI agents to connect/.test(off[0]?.error?.message || ''), JSON.stringify(off));
+  }
 
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nAll Codex checks passed');

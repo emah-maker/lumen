@@ -21,6 +21,9 @@ const MEDIUM_WORDS = /\b(fix|bug|error|exception|crash\w*|write|build|script|cod
 const LIGHT_WORDS = /\b(what(?:'s| is) the (?:time|date|weather)|what time|summari[sz]e|tl;?dr|translate|define|definition of|spell\w*|convert|weather|who is|open|go to|navigate to|search for|look up|scroll|click|bookmark|close (?:this|the) tab|rephrase|proofread|hello|hi|hey|thanks|thank you)\b/gi;
 const ACK = /^\s*(?:continue|go on|keep going|carry on|yes|yeah|yep|y|ok|okay|sure|do it|fix it|try again|retry|proceed|go ahead|next|more|and\??|then\??|please|thanks?|sounds good|that works|again)[\s.!?]*$/i;
 
+// A pure sign-off ("thanks", "great, thank you so much", "got it"): nothing to read or do, so the smallest model
+// answers it, whatever the chat was doing before. ("ok" and "yes" alone stay follow-ups: they may mean "go ahead".)
+const CLOSER = /^\s*(?:(?:ok(?:ay)?|great|perfect|awesome|nice|cool|good|got it|brilliant|wonderful|excellent|amazing)[\s,.!-]*)?(?:thanks?(?: a lot| a bunch| so much| very much| again)?|thank you(?: so much| very much| again)?|thx|ty|cheers|got it|perfect|great|awesome|nice one|cool|that'?s? (?:all|it)|all good|no thanks)(?:\s+(?:for (?:that|the help|your help|everything)|that(?:'s| is) (?:perfect|great|all|it)))?[\s.!)]*$/i;
 const count = (text, re) => (String(text).match(re) || []).length;
 
 // How hard a message looks. Higher is harder; roughly -4 (a greeting) to 15+ (a multi-part debugging brief).
@@ -58,6 +61,7 @@ function tierFor(prompt, { imageCount = 0, tabCount = 0, previous = null, pinned
   const s = score(prompt, { imageCount, tabCount });
   let tier = tierOf(s);
   const t = String(prompt || '').trim();
+  if (!pinned && !imageCount && !tabCount && t.length <= 60 && CLOSER.test(t)) return { tier: 'light', score: s, followUp: false, closer: true };
   const prev = previous && TIERS.includes(previous.tier) && previous.turns > 0 ? previous.tier : null;
   const followUp = Boolean(prev) && (ACK.test(t) || (t.length <= 40 && !imageCount && !count(t, LIGHT_WORDS)));
   if ((followUp || (pinned && prev)) && TIERS.indexOf(prev) > TIERS.indexOf(tier)) tier = prev;

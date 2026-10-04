@@ -19,7 +19,6 @@ const crypto = require('crypto');
 
 const MAX_BYTES = 12 * 1024 * 1024; // one picture, on disk and from the network
 const MAX_PER_REPLY = 8;
-const MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 // The type of an image from its first bytes: { mime, ext } or null. (SVG is never accepted: it can carry script.)
@@ -271,6 +270,6 @@ async function fetchRemoteImage(url, { fetchImpl = globalThis.fetch, max = MAX_B
 }
 
 module.exports = {
-  MAX_BYTES, MAX_PER_REPLY, MIME_EXT, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, markdownImages,
+  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, markdownImages,
   createImageStore, pathsIn, findLocalImages, publicHost, fetchRemoteImage,
 };
