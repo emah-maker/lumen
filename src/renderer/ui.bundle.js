@@ -5525,7 +5525,11 @@ function createTabEl(id) {
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
-  inner.append(globeIcon(), chatMark, title, aiMark, close);
+  // [ai off-tab] a tab the user keeps the AI off: a small shield after the title (styles.css .tab-off-mark)
+  const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
+  offMark.setAttribute('aria-hidden', 'true');
+  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 2 2.5v3c0 2.4 1.7 4.1 4 5.5 2.3-1.4 4-3.1 4-5.5v-3Z"/></svg>';
+  inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
@@ -5581,8 +5585,9 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
+  el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -5838,7 +5843,8 @@ function fillHoverCard(el) {
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
   if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
-  hostEl.hidden = !host && !tab.aiOpened;
+  if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
+  hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff;
   return true;
 }
 
@@ -6216,6 +6222,13 @@ function finishTabsRender(state, before, container, switched) {
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
   reader.title = active?.page === 'reader' ? 'Leave reader mode' : 'Reader mode';
+  // [ai off-tab] The shield: keeps the AI off this tab (every AI reading and acting path, main.js setKeepOff). Shown on pages, like the star.
+  const offTab = $('ai-off-tab');
+  const kept = Boolean(active?.aiKeepOff);
+  offTab.hidden = !active?.url || currentError || lumenPage;
+  offTab.setAttribute('aria-pressed', String(kept));
+  offTab.title = t(kept ? 'toolbar.aiOffTab.on' : 'toolbar.aiOffTab.off');
+  offTab.setAttribute('aria-label', offTab.title);
   const star = $('bookmark');
   star.hidden = !active?.url || currentError || lumenPage;
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
@@ -6409,6 +6422,7 @@ $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
+$('ai-off-tab').onclick = () => { if (lastTabState?.activeId != null) window.browser.toggleAiOffTab?.(lastTabState.activeId); }; // [ai off-tab]
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 // The lock (or "Not secure") opens the site's page info under it.
 function openPageInfo() {

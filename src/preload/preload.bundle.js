@@ -518,6 +518,7 @@ contextBridge.exposeInMainWorld('browser', {
   onSuggestionPicked: on('suggest:picked'),
   // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
+  toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id), // [ai off-tab]
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),

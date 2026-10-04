@@ -274,6 +274,12 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-ai-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
 .tab.ai-opened .tab-ai-mark { display: block; }
 .tab-ai-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
+/* [ai off-tab] a tab the AI is kept off: a small shield after the title */
+.tab-off-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
+.tab.ai-kept-off .tab-off-mark { display: block; }
+.tab.ai-kept-off:hover .tab-off-mark, .tab.ai-kept-off.active .tab-off-mark { margin-right: 18px; } /* (the close button is laid over the title's end) */
+.tab-off-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
+@container tab (max-width: 60px) { .tab-off-mark { display: none !important; } }
 .tab.pinned .tab-ai-mark, .tab.sleeping .tab-ai-mark { opacity: 0.6; }
 @container tab (max-width: 60px) { .tab-ai-mark { display: none !important; } }
 /* [ai manners] The sidebar's "hide the tabs the AI opened" toggle: shown while the AI has tabs open (or the toggle is on), with their count. */
@@ -457,6 +463,12 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 .omnibox-action:hover { color: var(--text); background: var(--hover); }
 .reader svg { stroke-width: 1.3; }
 .reader[aria-pressed="true"] { color: var(--accent); }
+/* [ai off-tab] the shield in the address bar: an outline while the AI may use the tab, tinted and accented (with a slash) once it is kept off */
+.ai-off-tab svg { stroke-width: 1.3; fill: none; }
+.ai-off-tab .ai-off-slash { display: none; }
+.ai-off-tab[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ai-off-tab[aria-pressed="true"] svg { fill: color-mix(in srgb, var(--accent) 28%, transparent); }
+.ai-off-tab[aria-pressed="true"] .ai-off-slash { display: block; }
 .star svg { stroke-width: 1.3; transition: fill var(--t-fast) ease-out; }
 .passwords-btn svg { stroke-width: 1.3; } /* [passwords] renderer/passwords.js */
 .star[aria-pressed="true"] { color: var(--accent); }
