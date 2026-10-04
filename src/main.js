@@ -36,6 +36,7 @@ const path = require('path');
 const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
+const { shortcutMod } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere
 // The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
@@ -3692,7 +3693,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.on('did-navigate-in-page', retitle);
   wc.on('context-menu', (_e, p) => showContextMenu(wc, p)); // paste into a password field, spelling, copy
   wc.on('before-input-event', (e, input) => { // Ctrl+W (Cmd+W) closes it, as it would a tab
-    if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
+    if (input.type === 'keyDown' && shortcutMod(input) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
   });
   if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
   const popupLimit = createBurstLimit();
@@ -3842,8 +3843,8 @@ function showContextMenu(wc, p) {
 
 function handleShortcut(event, input) {
   if (input.type !== 'keyDown') return;
-  const mod = input.control || input.meta;
   const key = input.key.toLowerCase();
+  const mod = shortcutMod(input); // macOS: Cmd, never Control (the text-editing key there; browser/shortcut-mod.js)
   const wc = activeTab()?.webContents;
   let handled = true;
   if (mod && input.shift && key === 'n') privateWindows.open();
