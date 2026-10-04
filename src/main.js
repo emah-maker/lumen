@@ -81,6 +81,7 @@ const { createSafeBrowsing, GATE_FILTER } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const { createCoalescer } = require('./features/event-coalesce'); // streamed text sent in ~16 ms batches, not per token
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
@@ -3743,8 +3744,12 @@ function applyChromeIdentity(wc) {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
     const frame = targetInfo.type === 'iframe';
-    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
-      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const resume = () => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
+    // A worker target (service, shared, dedicated) answers nothing until it runs: its Network/Emulation commands queue behind
+    // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
+    // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
+    if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
+    Promise.all([identify(sessionId, GOOGLE_AUTH.isAuthUrl(targetInfo.url)), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
   // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
@@ -6450,6 +6455,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
+  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
@@ -7157,6 +7163,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     emit({ type: 'error', text: stale ? raw : t('agent.startFailed'), details: stale ? undefined : raw.slice(0, 600) });
     emit({ type: 'done' });
   };
+  // Streamed text/thinking chunks are joined (event-coalesce.js); every other event goes out at once, after any held text.
+  const sendOut = (msg) => {
+    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+  };
+  const out = createCoalescer(sendOut);
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
@@ -7174,8 +7186,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
-    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
-    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+    out.push(msg);
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));

@@ -11,6 +11,15 @@ const { createLocal } = require('../src/features/translate-local');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
+// Wait for a condition (up to a generous 30 s deadline, so a loaded machine only makes it slower, never red)
+// instead of sleeping a guessed time and hoping the work finished.
+async function until(cond, label = 'condition') {
+  const deadline = Date.now() + 30000;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 // A registry record for one file of a pair.
@@ -48,7 +57,7 @@ const RECORDS = [
   check('sizes read as people say them', M.formatBytes(24e6) === '24 MB' && M.formatBytes(1.5e9) === '1.5 GB' && M.formatBytes(2500) === '3 KB', M.formatBytes(24e6));
 
   // ---- the store ----
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-translate-models-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-unit-translate-models-'));
   let registryHits = 0;
   let fileHits = 0;
   let offline = false;
@@ -81,7 +90,7 @@ const RECORDS = [
   const stale = await createStore(dir, fakeFetch, () => clock).loadIndex();
   check('store: offline with a stale cache still works', Object.keys(stale).length === Object.keys(index).length, '');
   let failedNoCache = false;
-  try { await createStore(fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-translate-empty-')), fakeFetch, () => clock).loadIndex(); } catch { failedNoCache = true; }
+  try { await createStore(fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-unit-translate-empty-')), fakeFetch, () => clock).loadIndex(); } catch { failedNoCache = true; }
   check('store: offline with no cache fails clearly', failedNoCache, '');
   offline = false;
 
@@ -117,7 +126,7 @@ const RECORDS = [
   hold = new Promise((r) => { release = r; });
   const slow = store.download('de', 'en');
   slow.catch(() => {});
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => store.downloading().join() === 'de>en', 'the download to start');
   check('a running download is reported', store.downloading().join() === 'de>en', store.downloading().join());
   store.cancel('de', 'en');
   let cancelCode = '';
@@ -175,7 +184,7 @@ const RECORDS = [
   await local.translate(plan.route, ['a']);
   check('client: the process is reused', forks === 1, forks);
   check('client: no texts means no work, same language means no change', (await local.translate(plan.route, [])).length === 0 && (await local.translate([], ['x', 'y'])).join() === 'x,y' && forks === 1, '');
-  await new Promise((r) => setTimeout(r, 200));
+  await until(() => kills === 1 && local.stats().running === false, 'the idle stop');
   check('client: the process is stopped when idle', kills === 1 && local.stats().running === false, `${kills}`);
   await local.translate([['fr', 'en']], ['a']);
   check('client: it starts again on the next request', forks === 2, forks);

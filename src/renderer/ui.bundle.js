@@ -538,13 +538,17 @@
   // Where a streaming reply's finished blocks end: just after the last blank line that is outside a code fence and
   // outside a formula. Everything before it renders the same however much text follows, so a stream only has to
   // redraw the text after it. Blocks (lists, tables, paragraphs) all end at a blank line. One pass over the text.
-  function stableLength(source) {
-    let fenced = false;
-    let dollars = 0; // $$ seen outside code (odd: inside a display formula)
-    let brackets = 0; // \[ minus \]
-    let envs = 0; // \begin minus \end
-    let stable = 0;
-    let pos = 0;
+  // `memo` (an object the caller keeps for one growing text) makes a stream's passes resume where the last one
+  // stopped instead of rescanning from the start: a reply is only ever appended to, and lines before the last
+  // newline never change. A text that is not an extension of the remembered one starts over.
+  function stableLength(source, memo) {
+    let st = memo && memo.pos > 0 && memo.pos <= source.length && source.charCodeAt(memo.pos - 1) === 10 && memo.head === source.slice(0, 64) ? memo : null;
+    let fenced = st ? st.fenced : false;
+    let dollars = st ? st.dollars : 0; // $$ seen outside code (odd: inside a display formula)
+    let brackets = st ? st.brackets : 0; // \[ minus \]
+    let envs = st ? st.envs : 0; // \begin minus \end
+    let stable = st ? st.stable : 0;
+    let pos = st ? st.pos : 0;
     while (pos < source.length) {
       const end = source.indexOf('\n', pos);
       if (end === -1) break; // an unfinished last line is never stable
@@ -559,6 +563,7 @@
       }
       pos = end + 1;
     }
+    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, stable, head: source.slice(0, 64) });
     return stable;
   }
 
@@ -1681,7 +1686,7 @@ explain describe list find give compare difference summarize summary write rewri
     m.querySelector('button').focus();
   }
 
-  // pic: { id, alt }
+  // pic: { id, alt, credit? }
   function figure(pic) {
     const fig = el('figure', { className: 'gen-img' });
     fig.dataset.id = pic.id;
@@ -1706,7 +1711,8 @@ explain describe list find give compare difference summarize summary write rewri
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
-      fig.replaceChildren(open, bar);
+      // [image routing] which provider made it (the user's own keys or plan, so it is always said)
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []));
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
@@ -2788,7 +2794,7 @@ function renderStreaming(el, source) {
 // left in the DOM; each frame replaces only the nodes after them and parses only the tail text.
 function drawTail(el) {
   const source = el.source;
-  const stable = window.markdownStableLength(source);
+  const stable = window.markdownStableLength(source, el.stableMemo || (el.stableMemo = {})); // (resumes where the last frame stopped)
   const done = el.stableLen || 0;
   if (el.headNodes === undefined || stable < done) { el.innerHTML = ''; el.headNodes = 0; el.stableLen = 0; }
   while (el.childNodes.length > el.headNodes) el.lastChild.remove();
@@ -2884,7 +2890,7 @@ window.assistant.onEvent((event) => {
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
-      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '' }));
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}) }));
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));
@@ -5019,6 +5025,7 @@ function tabStripRoom() {
   let count = 0;
   for (const el of bar.children) {
     if (el === strip) { count++; continue; }
+    if (el.classList.contains('drag-gutter')) { others += parseFloat(getComputedStyle(el).minWidth) || 0; count++; continue; } // (its room is reserved, not what it grows to)
     if (el.getBoundingClientRect().width > 0) { others += el.getBoundingClientRect().width; count++; }
   }
   return Math.max(80, bar.clientWidth - pad - others - gap * Math.max(0, count - 1));
