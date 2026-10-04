@@ -70,6 +70,7 @@
     const view = await (share ? api.share(id) : api.open(id));
     if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
+    shownChatId = view.id || null;
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
