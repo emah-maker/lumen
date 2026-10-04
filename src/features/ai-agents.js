@@ -129,15 +129,38 @@ function setupAiAgents(deps) {
     claudeCode ||= newClaudeCode();
     return claudeCode;
   };
-  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
-  agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
+  // [warm per chat] Each tab chat's own Claude Code engine, whose process stays warm between that chat's messages
+  // (features/warm-chats.js): its own process and MCP token. Freed on chat delete / last tab closed (chatGone), after
+  // the idle time (claude-code.js IDLE_MS, the engine's own idle timeout), past the idle cap (Performance mode: fewer
+  // on a slow PC; the least recently used idle one goes), and on quit. Active runs are never capped.
+  const ccIdleMs = () => { const ms = deps.warmIdleMs?.(); return Number.isFinite(ms) && ms > 0 ? ms : claudeCodeModule().IDLE_MS; }; // (tests: deps.warmIdleMs)
+  const warmChats = require('./warm-chats').createWarmChats({
+    make: () => newClaudeCode({ idleMs: ccIdleMs() }),
+    maxIdle: () => { try { const n = deps.maxWarmChats?.(); return Number.isFinite(n) && n >= 0 ? n : 4; } catch { return 4; } },
+    idleMs: ccIdleMs,
+  });
+  // A chat's engine borrows what the sidebar's engine already looked up (the binary, the sign-in check).
+  const chatClaudeCode = (engine) => {
+    const shared = claudeCodeEngine();
+    if (engine.bin === undefined && shared.bin !== undefined) engine.bin = shared.bin;
+    if (!engine.statusCache || (shared.statusCache && shared.statusCache.at > engine.statusCache.at)) engine.statusCache = shared.statusCache;
+    return engine;
+  };
+  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends. (the read cache too: the
+  // chat's CLI session is gone.) [warm per chat] A chat's own warm process stays when the user only switches away; on a
+  // rewind (its session is dropped) it goes.
+  agent.onEngineReset = (why) => {
+    freshReads();
+    claudeCode?.release();
+    if (why === 'rewind') warmChats.releaseIdle(agent.chatKey?.(agent.messages));
+  };
   // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
   // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
   // text: what is already typed (routed for the model guess); the preload passes it through.
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
   ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -235,13 +258,20 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : warmChats.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
   // own, so its MCP token file is never another chat's).
   // release() frees everything the message held: a side engine's process (and with it its MCP token) is ended.
-  function leaseEngine(kind) {
+  // [warm per chat] key: the message's tab chat (agent.js engineFor). Claude Code then uses that chat's own engine, kept
+  // warm between its messages (warmChats); without a key (or under the one-shot test CLI) it is leased as above.
+  function leaseEngine(kind, key = null) {
+    if (kind === 'claudecode' && key != null && !oneShotClaude()) {
+      const lease = warmChats.lease(key);
+      chatClaudeCode(lease.engine);
+      return lease;
+    }
     const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : null;
     if (!shared) return null;
     let done = false;
@@ -268,7 +298,12 @@ function setupAiAgents(deps) {
       },
     };
   }
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size };
+  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
+    // [warm per chat] The chat's own engine outside a message (agent.js prewarm), and whether a message of that chat holds it.
+    warmFor: (kind, key) => (kind === 'claudecode' && key != null && !oneShotClaude() ? chatClaudeCode(warmChats.peek(key)) : null),
+    warmed: () => warmChats.warmed(),
+    busyFor: (kind, key) => kind === 'claudecode' && key != null && warmChats.busy(key),
+    warmChats };
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
@@ -662,6 +697,9 @@ function setupAiAgents(deps) {
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // [warm per chat] A chat was deleted, or its last tab closed: its own warm Claude Code process (and MCP token) ends,
+    // now or when its message in flight ends.
+    chatGone: (chatId) => { if (chatId != null) warmChats.drop(String(chatId)); },
     // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
     async useGrokBuild() {
       if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });

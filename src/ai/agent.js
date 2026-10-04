@@ -1219,7 +1219,7 @@ class Agent {
     // A saved chat may hold page content from before the restart: treat it as having read some.
     if (messages.length) messages.tainted = true;
     this.messages = messages;
-    this.onEngineReset?.();
+    this.onEngineReset?.('switch');
   }
 
   // Retry / Regenerate: the last exchange (from the user's last message on) is taken back, so asking again doesn't
@@ -1242,7 +1242,7 @@ class Agent {
       repairHistory(m);
       // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
       if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; }
-      this.onEngineReset?.(); // its kept Claude Code process holds the old session (features/ai-agents.js)
+      this.onEngineReset?.('rewind'); // its kept Claude Code process holds the old session (features/ai-agents.js)
       return 'rewound';
     }
     return 'absent';
@@ -1279,7 +1279,7 @@ class Agent {
     this.messages = [];
     this.approvedHosts = new Set();
     this.nextModel = null;
-    this.onEngineReset?.(); // an idle kept Claude Code process ends; one mid-reply goes on
+    this.onEngineReset?.('reset'); // an idle kept Claude Code process ends; one mid-reply goes on
   }
 
   // Makes a chat that is still running (left with detach) the open one again: the same array, so its
@@ -1535,10 +1535,13 @@ class Agent {
   // The engine of `kind` this message works with, the same one for the whole message: leased from main
   // (features/ai-agents.js leaseEngine: the sidebar's shared engine when no other chat holds it, else one made for this
   // message). Outside a message (no task scope) or without leasing (tests): the shared engine.
+  // [warm per chat] The lease is for the message's tab chat (its chat id; a run without one: its messages array), so
+  // Claude Code gives each chat an engine of its own whose process stays warm between that chat's messages.
   engineFor(kind) {
-    const leases = taskScope.getStore()?.engineLeases;
+    const scope = taskScope.getStore();
+    const leases = scope?.engineLeases;
     if (!leases || !this.engines?.lease) return this.engines?.[kind];
-    if (!leases.has(kind)) leases.set(kind, this.engines.lease(kind));
+    if (!leases.has(kind)) leases.set(kind, this.engines.lease(kind, scope.chatId ?? scope.chat ?? null));
     const lease = leases.get(kind);
     if (!lease) throw new Error(`${kind === 'antigravity' ? 'Antigravity' : kind === 'grokbuild' ? 'Grok Build' : 'Claude Code'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
     return lease.engine;
@@ -1891,11 +1894,15 @@ class Agent {
   // "summarize this page", "click the login button"). A picked model, or a resumed session's pinned tier,
   // is exactly what routing gives. A different model at send just replaces the process. A pre-warmed process
   // that no message takes is released after ~3 min, and pre-warming backs off after failures (claude-code.js).
+  // [warm per chat] The open chat's own engine (engines.warmFor) when there is one: other chats' messages don't hold it.
   prewarm(text = '', { retried = false } = {}) {
     const messages = this.messages;
     const settings = messages?.settings;
-    if (!settings || !String(settings.model).startsWith('claudecode:') || (this.engines?.leased ? this.engines.leased('claudecode') : this.engineRuns > 0) || this.running) return false;
-    const cc = this.engines?.claudecode;
+    if (!settings || !String(settings.model).startsWith('claudecode:') || this.running) return false;
+    const key = this.engines?.warmFor ? this.chatKey(messages) : null;
+    const own = key != null ? this.engines.warmFor('claudecode', key) || null : null;
+    if (own ? this.engines.busyFor?.('claudecode', key) : (this.engines?.leased ? this.engines.leased('claudecode') : this.engineRuns > 0)) return false;
+    const cc = own || this.engines?.claudecode;
     if (!cc?.warm || cc.canPrewarm?.() === false) return false;
     const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     const plan = this.claudeCodePlan(messages, typed || PREWARM_GUESS, 0, 0);
@@ -1911,7 +1918,19 @@ class Agent {
     if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
     if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
     cc.warm(plan.spawn, { speculative: true });
+    if (own) this.engines.warmed?.(); // (the idle cap counts it)
     return true;
+  }
+
+  // [warm per chat] The key a chat's engines are kept under: the open chat's id (main.js browser.openChatId, the same id
+  // its runs carry as scope.chatId), else the messages array itself.
+  chatKey(messages = this.messages) {
+    if (messages === this.messages) {
+      let id = null;
+      try { id = this.browser.openChatId?.() ?? null; } catch {}
+      if (id != null) return id;
+    }
+    return messages;
   }
 
   // The images a CLI engine's model can take: all of them, or none (with a notice) when the picked model is known to be

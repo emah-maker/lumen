@@ -4222,8 +4222,18 @@ function bindOpenChatHere(sender) {
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
+// [warm per chat] A chat left Lumen's tabs or was deleted: its own warm Claude Code process ends (features/warm-chats.js).
+// After a tab close, only once no tab shows the chat a few seconds later (another tab may adopt it).
+function warmChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const gone = () => { try { aiAgents.chatGone(chat); } catch { /* not set up yet */ } };
+  if (now) { gone(); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat)) gone(); }, 5000); // (a chat still working is freed when its message ends)
+  t.unref?.();
+}
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
+  warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
   chatBind.unbindTab(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
@@ -6354,6 +6364,7 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
@@ -7247,6 +7258,7 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 // Deleting the open chat leaves an empty one in its place.
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
+  warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
@@ -7702,6 +7714,7 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
+  maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),

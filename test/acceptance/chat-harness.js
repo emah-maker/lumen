@@ -102,8 +102,14 @@ agent.execute = async function execute(name) {
   return `ok in tab ${tab}`;
 };
 
-setupAiAgents({
-  app: { getPath: () => tmp, on() {} },
+// [warm per chat] Knobs a suite may turn: the idle warm cap and idle time (main.js passes Performance mode's cap).
+const limits = { maxWarmChats: 4, idleMs: undefined };
+const quitHandlers = [];
+const quit = () => { for (const fn of quitHandlers.splice(0)) { try { fn(); } catch {} } };
+const aiAgents = setupAiAgents({
+  app: { getPath: () => tmp, on(ev, fn) { if (ev === 'will-quit') quitHandlers.push(fn); } },
+  maxWarmChats: () => limits.maxWarmChats,
+  warmIdleMs: () => limits.idleMs,
   ipcMain: { handle() {}, on() {} },
   agent,
   tools: EXTERNAL_TOOLS,
@@ -154,4 +160,4 @@ function finish() {
 // A suite must never hang CI: a hard stop well inside scripts/test-units.js's 120 s.
 const hardStop = (ms = 100000) => setTimeout(() => { console.log(`FAIL  suite timed out after ${ms / 1000}s`); failures++; finish(); }, ms).unref();
 
-module.exports = { tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };
+module.exports = { aiAgents, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };
