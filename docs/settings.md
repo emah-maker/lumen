@@ -44,6 +44,10 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 | Give Claude Code full access to this computer | `claudeCodeFullAccess` | off | Claude Code in the sidebar works as it does in a terminal: its own tools (shell, file reads and edits), your MCP servers, skills and slash commands such as `/goal`, run without asking (`--permission-mode bypassPermissions`, home folder as working folder). See [Full access for command-line AIs](#full-access-for-command-line-ais). |
 | Give Grok Build full access to this computer | `grokBuildFullAccess` | off | Grok Build in the sidebar runs with `--always-approve` and `--permission-mode bypassPermissions`, its own tools (shell, files, subagents) and no deny rules, in your home folder. |
 | Give Antigravity full access to this computer | `antigravityFullAccess` | off | Antigravity in the sidebar runs with `--dangerously-skip-permissions` and without `--sandbox` or its terminal sandbox, in your home folder. |
+| Reasoning effort (per AI) | `aiEffort` | none (each AI's own default) | `{ "claudecode": "high", "openai": "low", … }`, one entry per AI, set in Settings → AI → AI providers; a missing entry means the AI's default, an invalid level is dropped. Levels: Claude Code `low`..`max` (`--effort`), Grok Build `low`/`medium`/`high` (`--reasoning-effort`; a chosen effort skips "Keep Grok Build connected" because a kept process keeps the effort it started with), Antigravity `low`..`max` (`--effort`), Codex `low`..`max` (`-c model_reasoning_effort=`), Claude API `low`/`medium`/`high` (only models Lumen already sends an effort to, such as Opus 5.5), OpenAI `minimal`..`high` (`reasoning_effort`, o-series and GPT-5), Grok API `low`/`high` (Grok 3 Mini only), Gemini `low`/`medium`/`high` (2.5 and newer), OpenRouter `low`/`medium`/`high` (`reasoning.effort`). A level a model does not take is not sent for the API providers; the CLIs report their own error. |
+| Offer Claude Code in the model menu | `claudeCodeSidebar` | on | Off hides Claude Code and its models from every model picker without uninstalling or signing out. |
+| Offer Grok Build / Antigravity in the model menu | `grokSidebar`, `antigravitySidebar` | off until you connect or choose them | The same switch for the other CLIs (Codex has `codexSidebar` above). |
+| Usage budget (per AI) | — (kept in `usage.json`) | none | Settings → Usage: an optional daily and weekly budget in dollars at API prices or in tokens, for each AI, counting only what Lumen itself used. Lumen tells you at 80% and 100%, shows a bar toward it, and never blocks anything. |
 | Close tabs the AI opened when it finishes | `closeAiTabs` | off | Off / Ask / Always. Never closes a tab you used, pinned or that holds typed text, nor the tab a chat lives in. Closing shows Undo. You can also close them any time, in every window, from the ⋯ menu (Close Tabs Opened by AI) or from Lumen's taskbar icon: right-click it and choose Close tabs the AI opened (Windows, installed Lumen) or use its Dock menu (macOS). |
 | Hide tabs the AI opened (tab strip button) | `hideAiTabs` | off | Leaves the AI's tabs out of the tab strip (they stay open); the tab in front and one playing sound stay shown. |
 | Allow AI agents to connect | `mcpEnabled` | off | Turns on Lumen's MCP server for Claude Code, Codex CLI, Grok Build, Antigravity and other MCP clients. The commands to connect each one are listed under it. See the [MCP tool reference](mcp-tools.md). |
@@ -226,3 +230,20 @@ Lists the Chrome Web Store extensions you installed, with **Remove** (deletes th
 **About Lumen** shows the version, update status and **Check for updates**. **Internals** shows versions, a task manager (every Lumen process with memory and CPU), GPU features, the proxy in use and command-line switches. Nothing there changes a setting.
 
 **Report an issue.** About has **Report a problem** (and **Copy version details**), and on macOS Help → Report an Issue does the same. Both open a new issue at [github.com/emah-maker/lumen/issues](https://github.com/emah-maker/lumen/issues/new/choose); the Help item fills in your Lumen version and OS. Nothing is sent until you submit the issue on GitHub.
+
+### Usage for every AI
+
+Settings → Usage has the same sections for each AI. What each one can show, and why:
+
+| AI | Plan limits | Rate limits | Lumen counted |
+|---|---|---|---|
+| Claude Code | 5-hour and weekly windows from `claude -p /usage` and each turn's `rate_limit_event` | — | yes, with cost at API prices |
+| Codex CLI | 5-hour and weekly windows from Codex's own session logs (ChatGPT sign-in) | — | tokens (Codex reports no price) |
+| Grok Build | none published; Grok's limit-reached message and its reset time when it names one | — | yes |
+| Antigravity | none published; the quota message with its reset time ("Resets in 110h") when a run hits it | — | tokens (no price) |
+| Claude (API key) | none (an API key has no plan balance) | `anthropic-ratelimit-*` headers of the last reply | yes, estimated from the price table |
+| OpenAI, Grok (API key) | none | `x-ratelimit-*` headers of the last reply | tokens; cost where the price table knows the model |
+| Gemini | none | none sent by its OpenAI-compatible endpoint | tokens; cost where the price table knows the model |
+| OpenRouter | none | `x-ratelimit-*` when sent | yes (OpenRouter reports each request's cost) |
+
+Nothing is requested for this: rate limits are read from responses Lumen already received, plan windows from commands and logs it already read, and the rest is Lumen's own log (35 days, `usage.json`). A cost shows only when the provider reported it or the model is in the price table (`src/features/chat-usage.js`); otherwise the count says "no price known".
