@@ -345,7 +345,7 @@ const fakeGate = {
       const rec = fake.agents()[0];
       check('full access: answered by a kept process (no headless run), the second message reuses it', a1.out.text === 'warm reply 1' && a2.out.text === 'warm reply 2' && fake.agents().length === 1 && fake.headless().length === 0, JSON.stringify(fake.spawned.map((r) => r.argv)));
       check('full access: argv has --always-approve and no agent profile; its gate run is a full-access one', rec.argv.includes('--always-approve') && !rec.argv.includes('--agent-profile') && rec.argv.at(-1) === 'stdio' && fakeGate.lastOpen.opts.fullAccess === true, JSON.stringify(rec.argv));
-      check('full access: the user\'s home folder is the working folder (spawn and session), the whole environment is passed', rec.opts.cwd === os.homedir() && rec.requests.find((m) => m.method === 'session/new').params.cwd === os.homedir() && rec.opts.env.HOME === os.homedir() && 'PATH' in rec.opts.env, JSON.stringify({ cwd: rec.opts.cwd, home: rec.opts.env.HOME }));
+      check('full access: Lumen\'s empty folder (not the home folder) is the working folder (spawn and session), the whole environment is passed', rec.opts.cwd === engine.dir && rec.requests.find((m) => m.method === 'session/new').params.cwd === engine.dir && rec.opts.env.HOME === os.homedir() && 'PATH' in rec.opts.env, JSON.stringify({ cwd: rec.opts.cwd, home: rec.opts.env.HOME }));
       check('full access: config.toml (written for it) has no deny rules', !/^deny = /m.test(fs.readFileSync(path.join(engine.home, 'config.toml'), 'utf8')));
       // toggling off: the full-access process is never reused for a locked-down message
       const l1 = await send(engine, { sessionId: a1.out.sessionId, resume: true, systemPrompt: 'SYS-FULL' });

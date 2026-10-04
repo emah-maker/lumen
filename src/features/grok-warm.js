@@ -36,8 +36,8 @@
 //    refused) kills the process and fails the message, as toolWatch does for a headless run.
 //  - Never for background tasks (grok-build.js keeps those headless), and never with --always-approve while locked down.
 // FULL ACCESS (grok-build.js's header) is served too, by a process of its own kind: no agent profile (nothing removed),
-// --always-approve, the config.toml without the deny rules, the user's whole environment and home folder as the working
-// folder, no stream check, the longer watchdog; Lumen's gate (a fullAccess run: Grok's own tools through, `lumen__*` names
+// --always-approve, the config.toml without the deny rules, the user's whole environment (HOME is theirs; the working
+// folder stays Lumen's empty one, grok-build.js), no stream check, the longer watchdog; Lumen's gate (a fullAccess run: Grok's own tools through, `lumen__*` names
 // checked, UserPromptSubmit still required) is what it is headless. A chosen reasoning effort is a flag of the process
 // (--reasoning-effort). Access and effort are the process's `mode` (modeOf): a process is only ever used for its own mode,
 // so a locked-down process never answers a full-access message nor the other way round; a chat whose mode changed has its
@@ -55,7 +55,6 @@
 // every other copy-back).
 
 const crypto = require('crypto');
-const os = require('os');
 const path = require('path');
 const effortLib = require('../ai/effort');
 
@@ -222,7 +221,6 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     // [sign-in lock] From its link on, this process counts as a run in Lumen's GROK_HOME until it ends (see the header).
     const authHold = gb.holdAuth(gb.userGrokHome(), engine.home);
     const profile = path.join(engine.home, PROFILE_FILE);
-    const cwd = fullAccess ? os.homedir() : engine.dir; // [full access] the home folder, as in a terminal
     if (!fullAccess) { try { await gb.writeIfChanged(profile, agentProfile(gb), 0o600); } catch (err) { authHold(); throw err; } }
     const tag = crypto.randomBytes(18).toString('hex');
     const p = { tag, gate, key: systemPrompt, mode: modeOf(fullAccess, effort), full: fullAccess, sessionId: null, model: null, defaultModel: null, spare, authHold, busy: false, turns: 0, exited: false, disposed: false, idle: null, used: ++used, stderr: '', onUpdate: null, known: new Map(), child: null, rpc: null, owner: null };
@@ -243,7 +241,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       // (full access: the user's own environment, and none of the feature switches that keep a locked-down run small)
       const env = fullAccess ? gb.buildEnv({ userData: engine.userData, run: gateRun, home: engine.home, dir: engine.dir, fullAccess }) : { ...gb.buildEnv({ userData: engine.userData, run: gateRun, home: engine.home, dir: engine.dir }), ...EXTRA_ENV };
       const argv = ['agent', ...(fullAccess ? ['--always-approve'] : ['--agent-profile', profile]), ...effortLib.cliArgs('grokbuild', effort), 'stdio'];
-      p.child = engine.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd });
+      p.child = engine.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: engine.dir });
       stats.spawned++;
       if (p.disposed) throw new Error('cancelled');
       p.child.stderr?.setEncoding?.('utf8');
@@ -263,8 +261,8 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       const fail = (r, what) => { if (r?.error) throw new Error(`${what}: ${r.error.message || 'failed'}`); return r.result || {}; };
       fail(await p.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'initialize');
       const created = sessionId
-        ? fail(await p.rpc.request('session/resume', { sessionId, cwd, mcpServers: [] }, startTimeoutMs), 'session/resume')
-        : fail(await p.rpc.request('session/new', { cwd, mcpServers: [], _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'session/new');
+        ? fail(await p.rpc.request('session/resume', { sessionId, cwd: engine.dir, mcpServers: [] }, startTimeoutMs), 'session/resume')
+        : fail(await p.rpc.request('session/new', { cwd: engine.dir, mcpServers: [], _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'session/new');
       p.sessionId = sessionId || created.sessionId;
       if (!p.sessionId) throw new Error('no session');
       gate.bindChat?.(tag, p.sessionId);
