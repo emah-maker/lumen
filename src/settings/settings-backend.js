@@ -124,6 +124,7 @@ const DEFAULTS = {
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
   grokKeepConnected: false, // [ai] each Grok Build chat keeps its own `grok agent stdio` process between messages (features/grok-warm.js)
+  codexKeepConnected: true, // [ai] each Codex chat keeps its own `codex app-server` process between messages (features/codex-warm.js); ~80 MB each while it waits
   grokKeepIdleMinutes: 15, // [ai] an idle kept Grok Build process ends after this many minutes; 0: only when its chat goes
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)

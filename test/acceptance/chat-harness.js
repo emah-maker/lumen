@@ -41,6 +41,7 @@ process.env.LUMEN_GROK_SIDEBAR = '1';
 process.env.LUMEN_AGY_BIN = FAKE_AGY;
 process.env.LUMEN_AGY_SIDEBAR = '1';
 process.env.LUMEN_CODEX_SIDEBAR = '1';
+process.env.LUMEN_CODEX_WARM = '0'; // (the kept `codex app-server` is covered by test/codex-warm-units.js; these runs are headless `codex exec`)
 fs.mkdirSync(process.env.GROK_HOME, { recursive: true });
 
 // ---- the fake HTTP gate (mcp-http.js startHttp's shape: open/close/armed/listed/port/stop)

@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main({ argv, LOG, DIR }) {
+  if (argv[0] === 'app-server') { process.stderr.write('error: unrecognized subcommand app-server\n'); process.exit(2); } // (headless only: the kept process is tested in test/codex-warm-units.js)
   const home = process.env.CODEX_HOME;
   const sessions = path.join(home, 'sessions');
   const out = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
