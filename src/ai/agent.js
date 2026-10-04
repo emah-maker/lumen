@@ -1619,7 +1619,17 @@ class Agent {
       if (ask?.explicit) userText = `Generate an image: ${ask.prompt}`;
     }
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
-    const state = aiOff
+    const tabOff = tab && this.browser.tabOff?.(tab.id); // [ai off-tab]
+    const state = tabOff
+      ? `<browser_state>
+Active tab id: ${tab.id}
+Title: ${tab.webContents.getTitle()}
+URL: ${tab.webContents.getURL()}
+The user keeps the AI off this tab: its content is not shared, and tools can't use it.
+</browser_state>
+
+`
+      : aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
       : tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
@@ -1765,6 +1775,7 @@ class Agent {
     const url = wc.getURL();
     if (!/^https?:/i.test(url)) return '';
     if (this.browser.aiOff?.(url)) return ''; // [ai controls]
+    if (this.browser.tabOff?.(tab.id)) return ''; // [ai off-tab] the page's text is never attached to a message while the user keeps the AI off this tab
     let page;
     // (Read at once even while the page still loads: Electron's own isolated-world call waited for the load,
     // up to these 4 s, and then sent no page at all. See page-text.js.)
@@ -2863,6 +2874,7 @@ ${prompt}` : prompt), historyImages: [] };
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
+    this.offTabCheck(name, input); // [ai off-tab] ...nor a tab the user keeps the AI off
     this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
     const gate = { emit, signal, hosts, who, external, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
@@ -2943,6 +2955,24 @@ ${prompt}` : prompt), historyImages: [] };
       try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
       if (off(url)) refuse(url);
     }
+  }
+
+  // ---- [ai off-tab] "Keep the AI off this tab" (the button in the address bar; browser.tabOff(id), per tab). Stricter than hands-off
+  // mode: reading is refused as well, and it needs no setting. Same reach as aiOffCheck (every caller comes through ensureAllowed and
+  // execute): a tool that works in the task's tab, and a tool that names a tab. read_tabs and list_tabs name tabs too but report
+  // per tab (readTabEntries, list_tabs) instead of failing the whole call. The refusal is the same text everywhere.
+  offTabCheck(name, input = {}) {
+    const off = this.browser.tabOff;
+    if (!off) return;
+    const refuse = () => { throw new Error(manners.offTabRefusal()); };
+    const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
+      : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : [])
+        : name === 'read_pdf' && input.tab_id !== undefined ? [input.tab_id] : [];
+    for (const id of named) if (id !== undefined && id !== null && off(id)) refuse();
+    if (TAB_FREE_TOOLS.has(name)) return;
+    let id = null;
+    try { id = this.taskTab()?.id ?? null; } catch {}
+    if (id !== null && off(id)) refuse();
   }
 
   // ---- [ai manners] "Don't let the AI act on my pages" (Settings, off by default). Enforced here, in the tool layer, for
@@ -3266,7 +3296,7 @@ ${prompt}` : prompt), historyImages: [] };
     const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
       const tab = open.find((t) => t.id === id);
       if (!tab) return { id, title: '', url: '', skipped: 'no open tab of this window has that id' };
-      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url) }, ctx);
+      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url), keptOff: this.browser.tabOff?.(tab.id) }, ctx); // [ai off-tab]
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
       try {
@@ -3484,6 +3514,7 @@ ${out.text}${note}
   async execute(name, input) {
     if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
     this.aiOffCheck(name, input);
+    this.offTabCheck(name, input); // [ai off-tab]
     this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
@@ -3935,7 +3966,8 @@ ${same}
         return JSON.stringify(agentTabList(this.browser.listTabs())
           .map((t) => {
             const view = pinned === null ? t : { ...t, active: t.id === pinned, ...(t.active && t.id !== pinned ? { in_front: true } : {}) };
-            return this.browser.aiOff?.(t.url) ? { id: t.id, active: view.active, ai_off: true } : view;
+            if (this.browser.aiOff?.(t.url)) return { id: t.id, active: view.active, ai_off: true };
+            return this.browser.tabOff?.(t.id) ? { ...view, off_limits: manners.OFF_TAB_NOTE } : view; // [ai off-tab] listed, but marked
           }));
       }
       case 'open_tab': {

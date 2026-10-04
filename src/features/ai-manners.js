@@ -5,6 +5,7 @@
 //                       navigated it, pinned it, moved it into a group)
 //   closeSelection()    which of those tabs "Close the tabs the AI opened" may close
 //   handsOffRefusal()   "Don't let the AI act on my pages": the tools that act, and the refusal for a tab that is not the AI's
+//   keepOff / isKeptOff / offTabCheck / offTabRefusal   "Keep the AI off this tab": one tab, off limits to every AI path
 //   typingWait()        how long the AI's typing waits while the user types in the same tab
 //   guardsFocus()       whether the user's caret in a page needs putting back after the AI acted there
 //   showsTab()          may open_tab / switch_tab bring the tab to the front (never by default)
@@ -101,12 +102,29 @@ const isAutomationRead = (method) => AUTOMATION_READS.test(String(method || ''))
 // { ok: true } (run it), { noop: true } (answer {} without running it) or { error } (refuse, with the text for the client).
 //   handsOff   the setting
 //   ownTab     the command is for a tab the AI opened
-// Not for hands-off mode: everything is { ok: true }.
-function automationVerdict({ method, handsOff = false, ownTab = false } = {}) {
+// Not for hands-off mode: everything is { ok: true }. A tab the user keeps the AI off (`offTab`) refuses every command.
+function automationVerdict({ method, handsOff = false, ownTab = false, offTab = false } = {}) {
+  if (offTab) return { error: `The user has kept the AI off this tab, so ${method} was not run. Don't use this tab; ask the user if you need it.` }; // [ai off-tab] even a read, even with hands-off mode off
   if (!handsOff || ownTab || isAutomationRead(method)) return { ok: true };
   if (AUTOMATION_INIT_NOOPS.has(method)) return { noop: true };
   return { error: `Hands-off mode is on in Lumen: ${method} is not a read-only command, and this is not a tab the AI opened, so it was not run. Reads (screenshots, DOM, accessibility tree, Runtime.enable) work; evaluating script here (Runtime.evaluate) is refused. Open your own tab (Target.createTarget) to act.` };
 }
+
+// ---- [ai off-tab] "Keep the AI off this tab": the button in the address bar and the tab's menu. Per TAB (it stays through
+// navigation, ends when the tab closes, comes back with the restored session), and stricter than hands-off mode: reading is
+// refused too, whoever asks (the sidebar's AI, its CLI engines, outside agents over MCP, the CDP proxy). Only the user clears it:
+// no tool does.
+const isKeptOff = (tab) => Boolean(tab && tab.aiKeepOff);
+function keepOff(tab, on = true) {
+  if (!tab) return tab;
+  if (on) tab.aiKeepOff = true; else delete tab.aiKeepOff;
+  return tab;
+}
+const OFF_TAB_REFUSAL = "The user has kept the AI off this tab. Don't use it; ask the user if you need it.";
+const OFF_TAB_NOTE = '(off limits: the user keeps the AI off this tab)'; // what list_tabs and the browser state say about it
+const offTabRefusal = () => OFF_TAB_REFUSAL;
+// null when the call may go ahead, else the error text for the model. `offTab`: the tab the tool names or would act on is kept off.
+const offTabCheck = ({ offTab = false } = {}) => (offTab ? OFF_TAB_REFUSAL : null);
 
 // One line for the system prompt, so the model plans around it instead of finding out by being refused.
 const HANDS_OFF_PROMPT = 'Hands-off mode is on: you may read the user\'s tabs but not click, type, scroll or navigate in them. To act, open a tab of your own with open_tab and work there.';
@@ -193,6 +211,7 @@ const userInput = {
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
+  isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };

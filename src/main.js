@@ -975,7 +975,7 @@ const tabGroups = createTabGroups({
   // A sleeping / restored-but-unloaded tab has no webContents; its stored URL and title stand in, so it can be grouped.
   urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || ''),
   titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || ''),
-  textOf: (t) => t.pageText || '', // the page's description / first heading (see readPageText)
+  textOf: (t) => (manners.isKeptOff(t) ? '' : t.pageText || ''), // [ai off-tab] (nothing of a tab the AI is kept off goes to the grouping AI) the page's description / first heading (see readPageText)
   isWeb: (url) => isWebUrl(url),
   mode: () => groupingMode(),
   aiTopics: () => readSettings().topicAi === true,
@@ -992,7 +992,7 @@ let autoGroupTimer = null;
 const PAGE_TEXT_WORLD = 1001;
 function readPageText(tab) {
   const wc = tab.view.webContents;
-  if (groupingMode() !== 'topic' || !isWebUrl(realUrl(wc))) return;
+  if (groupingMode() !== 'topic' || !isWebUrl(realUrl(wc)) || manners.isKeptOff(tab)) return; // [ai off-tab] not read at all on a tab the AI is kept off
   wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `[document.querySelector('meta[name="description"],meta[property="og:description"]')?.content || '', document.querySelector('meta[name="keywords"]')?.content || '', document.querySelector('meta[property="og:title"]')?.content || '', document.querySelector('h1')?.textContent || ''].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 300)` }])
     .then((text) => {
       if (!alive(tab) || typeof text !== 'string' || text === tab.pageText) return;
@@ -1551,6 +1551,7 @@ function tabState() {
           sleeping: true,
           chat: tabChatMark(t.id),
           aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
+          aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...tabTools.state(t, false),
         };
       }
@@ -1579,6 +1580,7 @@ function tabState() {
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by AI" in its card)
+        aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI off this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -3079,6 +3081,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
     ...audioMenuItems(tab),
+    ...offTabMenu(tab),
     ...moveWindowItems(id),
     { type: 'separator' },
     { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => clipboard.writeText(url) },
@@ -3174,6 +3177,7 @@ function duplicateTab(id) {
   const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null, partition: tab.isolated });
   const copy = tabs.find((t) => t.id === newId);
   copy.pinned = Boolean(tab.pinned);
+  manners.keepOff(copy, manners.isKeptOff(tab)); // [ai off-tab] a copy of a tab kept off is kept off too
   placeAfter(copy, tab);
   switchTab(newId);
   return newId;
@@ -3193,6 +3197,15 @@ function reloadTab(tab, { ignoreCache = false } = {}) {
 }
 
 // [ai controls] "Turn off AI on <site>" for a web tab (features/ai-sites.js).
+// [ai off-tab] "Keep the AI off this tab" / "Let the AI use this tab" (the same switch as the address bar's button).
+function setKeepOff(tab, on) {
+  if (!tab || tab.settings || manners.isKeptOff(tab) === on) return;
+  manners.keepOff(tab, on);
+  if (on) delete tab.pageText; // what the topic grouping had read from the page is dropped too
+  sendTabs(); // (also schedules the session save)
+}
+const offTabMenu = (tab) => (tab.settings ? [] : [{ label: manners.isKeptOff(tab) ? t('menu.allowAiTab') : t('menu.keepAiOffTab'), click: () => setKeepOff(tab, !manners.isKeptOff(tab)) }]);
+
 function aiSiteMenu(tab) {
   const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
   const site = aiSiteOf(url);
@@ -4554,6 +4567,7 @@ function sessionEntry() {
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
+    aiKeepOff: saved.map((t) => manners.isKeptOff(t)), // [ai off-tab] stays with the tab across a restart
     chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart); a chat shown in several tabs is in each
     chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
     sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
@@ -4606,6 +4620,7 @@ function restoreTabsFrom(saved) {
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
+    if (saved.aiKeepOff?.[i] === true) manners.keepOff(tab); // [ai off-tab]
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
     sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
   });
@@ -6291,7 +6306,7 @@ const agentTabById = (id) => {
 const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleeping)).map((t) => {
   const live = alive(t);
   const url = live ? realUrl(t.view.webContents) : t.sleepUrl || '';
-  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
+  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping), active: t.id === activeId, offLimits: agentOffLimits(t), keptOff: manners.isKeptOff(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
 });
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
@@ -6449,7 +6464,7 @@ const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
-  aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
+  aiOff: (url) => aiSites.isOff(url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
@@ -6597,7 +6612,7 @@ if (TEST) {
 const skillPageScripts = require('./ai/page-scripts');
 const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
 const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
-const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && !manners.isKeptOff(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
 // Told whenever the model shown for the open chat may have changed without a pick (another chat opened, a new one begun).
 let lastShownModel = null;
 function announceModelIfChanged() {
@@ -7032,6 +7047,7 @@ function moveTab(id, toIndex) {
 }
 ipcMain.on('bookmark:toggle', toggleBookmark);
 ipcMain.on('tab:context-menu', (_e, id, point) => tabMenu(id, point));
+ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
 ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
@@ -7238,7 +7254,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
 ipcMain.handle('tabs:ask-list', (event) => {
   if (!syntheticTestEvent(event) && !recOfSender(event?.sender)) return []; // a private window's UI is in no window record
   return askTabsList()
-    .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
+    .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null) // (askTabsList marks a tab kept off: keptOff)
     .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
 // Stops a chat's run: one waiting for a slot leaves the line, one working is aborted. `id`: any chat (the chat list's
@@ -7826,7 +7842,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 // ---------- AI agents over MCP and CDP, and the Claude Code engine (features/ai-agents.js) ----------
 
 const aiAgents = setupAiAgents({
-  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t),
+  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
