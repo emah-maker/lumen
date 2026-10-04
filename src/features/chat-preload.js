@@ -70,7 +70,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onChanged: on('skills:changed'),
   });
   contextBridge.exposeInMainWorld('lumenExtras', {
-    usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),
+    usage: (refresh, cached) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh), cached: Boolean(cached) }),
     openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
   });
 }

@@ -202,6 +202,7 @@ contextBridge.exposeInMainWorld('assistant', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
+  useCodex: () => ipcRenderer.invoke('settings:use-codex'), // the setup card (Codex, once found)
   useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'), // the setup card (Antigravity replaces Gemini CLI)
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
@@ -241,7 +242,7 @@ contextBridge.exposeInMainWorld('lumenExtras', {
   aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url), // { site, off }
   setAiSite: (site, off) => ipcRenderer.invoke('settings:set-ai-site', site, off),
   // [usage] the plan's limits and Lumen's share (features/usage.js)
-  usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),
+  usage: (refresh, cached) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh), cached: Boolean(cached) }),
   openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
 });
 // ---- [/claude code engine] + [/page context]

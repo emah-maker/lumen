@@ -45,7 +45,10 @@ function createCodexConnect(deps) {
   const configFile = () => config.configPath(env(), home());
   // The first lines of a failure's output, for the user (ANSI already removed): the error comes first, clap's usage text after it is dropped.
   const trimmed = (text) => String(text || '').split('\n').map((l) => l.trim()).filter((l) => l && !/^(usage:|for more information|tip:)/i.test(l)).slice(0, 3).join(' ').slice(0, 300);
-  const desired = () => { const { command, args } = deps.mcpCommand(); return { command, args, env: { ELECTRON_RUN_AS_NODE: '1' } }; };
+  // Codex stops a stdio server that has not started in 10 s and a tool call that has not answered in 60 s (config.toml's defaults):
+// Lumen's bridge may have to start Lumen, and its approval card waits for the user, so both are raised (ai/codex-config.js).
+const TIMEOUTS = { startup_timeout_sec: 30, tool_timeout_sec: 600 };
+const desired = () => { const { command, args } = deps.mcpCommand(); return { command, args, env: { ELECTRON_RUN_AS_NODE: '1' }, timeouts: TIMEOUTS }; };
 
   async function status(refresh) {
     const spec = await find(refresh);
@@ -80,7 +83,11 @@ function createCodexConnect(deps) {
     const got = await run(['mcp', 'get', 'lumen']);
     if (got.ok && got.out.includes(args[0])) return done('Already connected', { already: true });
     const added = await run(['mcp', 'add', 'lumen', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', command, ...args]);
-    if (added.ok) return done('Added. Start a new Codex session to use Lumen.');
+    if (added.ok) {
+      // `codex mcp add` writes no timeouts: the entry it made gets them (a failure here leaves a working entry on Codex's defaults).
+      const raised = config.applyToFile(file, want);
+      return done(raised.ok && raised.changed ? wroteText('Added to', raised) : 'Added. Start a new Codex session to use Lumen.');
+    }
     if (st.state !== 'absent') return { ok: false, text: trimmed(added.out) || 'Codex could not add Lumen.' };
     // An older CLI without `mcp add`: write the entry ourselves (a backup of config.toml is kept).
     const wrote = config.applyToFile(file, want);
@@ -109,7 +116,7 @@ function createCodexConnect(deps) {
     return status(true);
   }
 
-  ipcMain?.handle('codex:status', (_e, refresh) => status(Boolean(refresh)).catch((err) => ({ installed: false, signedIn: 'unknown', reason: err.message, hint: locate.installHint(), links: locate.INSTALL_LINKS })));
+  ipcMain?.handle('codex:status', (_e, refresh) => status(Boolean(refresh)).then((r) => { try { deps.onStatus?.(r); } catch { /* optional */ } return r; }).catch((err) => ({ installed: false, signedIn: 'unknown', reason: err.message, hint: locate.installHint(), links: locate.INSTALL_LINKS })));
   ipcMain?.handle('codex:locate', (e, clear) => locatePicked(e, Boolean(clear)));
 
   return { find, status, add, locatePicked, state: () => ({ installed: found, signedIn }), codexHome };

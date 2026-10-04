@@ -819,6 +819,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
@@ -832,7 +833,8 @@ app.whenReady().then(() => {
 
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']); // display-capture: the screen picker (pickScreenToShare) is the consent
+const SITE_PERMISSIONS = require('./browser/site-permissions'); // canonical origins, what pages read, the always-allowed list
+const thirdPartyBlocked = () => ({ blockThirdPartyCookies: Boolean(settingsBackend.prefs().blockThirdPartyCookies) });
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -849,16 +851,11 @@ function setupPermissions() {
     if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
-    if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+    if (SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked())) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
-    let origin;
-    try {
-      origin = new URL(details.requestingUrl || wc.getURL()).origin;
-    } catch {
-      return callback(false);
-    }
-    if (!reason || !isWebUrl(origin)) return callback(false);
+    const origin = SITE_PERMISSIONS.requestOrigin(wc, details); // '' unless http(s)
+    if (!reason || !origin) return callback(false);
     const key = `${origin}|${permission}`;
     if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
     if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
@@ -876,9 +873,13 @@ function setupPermissions() {
     permissionDecisions.set(key, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
+    SITE_PERMISSIONS.notify(ses); // open pages: PermissionStatus 'change'
   });
-  ses.setPermissionCheckHandler((wc, permission, origin) =>
-    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
+  ses.setPermissionCheckHandler((wc, permission, origin, details) =>
+    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+  SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
+  SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -1038,6 +1039,7 @@ const privateWindows = createPrivateWindows({
   prepareSession: (ses) => {
     ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
@@ -1055,6 +1057,7 @@ const privateWindows = createPrivateWindows({
   // Permissions as in a normal window, except that answers are kept for the window only: Settings' "Block" defaults,
   // the screen-sharing picker (over the private window), and "Open the app for mailto: links?".
   permissionDefault: (permission) => settingsBackend.permissionDefault(permission),
+  thirdPartyCookiesBlocked: () => Boolean(settingsBackend.prefs().blockThirdPartyCookies),
   pickScreen: (request, callback, owner) => pickScreenToShare(request, callback, owner),
   askOpenExternal: (wc, details, decisions) => askOpenExternal(wc, details, decisions),
   defaultZoom: () => settingsBackend.prefs().defaultZoom,
@@ -2810,15 +2813,18 @@ async function organizeTabs() {
   const groupsBefore = back(() => tabGroups.layoutSignature().groups); // groups that exist before this click (automatic grouping may have made some)
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
-    await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
-    if (organizeAbort.signal.aborted) return 0;
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
     // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
     // The model is asked only when "Use AI to name and group topics" is on and a route to one exists (a key, or a signed-in CLI); the
     // route is worked out once per click. Otherwise this stays on this computer: nothing is sent and there is nothing to complain about.
     const aiOn = readSettings().topicAi === true || (TEST && global.__organizeAlwaysAsk === true);
-    const route = aiOn ? await groupingRoute(String(cheapTopicModel())).catch(() => null) : null;
-    const timeoutMs = organizeAi.timeoutFor(route);
+    // Worked out AFTER the local groups are on screen (organizeProgressive's `prepare`): a CLI engine's sign-in check and the wait for a
+    // stopped CLI to be gone used to hold up the first change by a second or more.
+    const prepare = aiOn ? async () => {
+      await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
+      const route = await groupingRoute(String(cheapTopicModel())).catch(() => null);
+      return { ask: organizeAi.askIfEnabled({ enabled: true, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }), timeoutMs: organizeAi.timeoutFor(route) };
+    } : null;
     const stats = await organizeAi.organizeProgressive({
       tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
@@ -2826,8 +2832,7 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      timeoutMs,
-      ask: organizeAi.askIfEnabled({ enabled: aiOn, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }),
+      prepare,
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
@@ -2890,6 +2895,8 @@ function cheapTopicModel() {
 function cheapTopicModelFor() {
   let chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
   if (autoModel.isAuto(chosen)) chosen = agent.messages.settings?.autoFrom ? agent.messages.settings.model : (autoConcrete(chosen, 'classification') || DEFAULT_MODEL); // [auto model] the cheapest fit
+  // Codex answers chats only (its runs need Lumen's MCP session and take turns): a one-shot job goes to another connected model.
+  if (/^codex:/.test(chosen)) chosen = modelOptions().find((o) => !/^codex:/.test(o.id) && !o.id.endsWith(':__more') && o.signedIn !== false && !autoModel.isAuto(o.id))?.id || DEFAULT_MODEL;
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
   if (provider === 'anthropic') return 'claude-haiku-4-5';
@@ -3432,6 +3439,7 @@ function homeAssistant() {
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
+  if (String(modelId).startsWith('codex:')) return named('Codex');
   const { provider } = providers.splitModel(modelId);
   return named(ASSISTANT_NAMES[provider] || 'AI');
 }
@@ -4130,7 +4138,8 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
-onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+let lastCodexSidebar = null;
+onSettingsWritten = (s) => { if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
@@ -6491,13 +6500,13 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
-const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
+const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
   ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
-ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
+ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
 // (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
 const bgTasks = require('./features/background-runner').create({
@@ -6689,6 +6698,7 @@ function aiStatusFacts() {
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
     aiTabs: [...winRecs].filter(rcAlive).reduce((n, rec) => n + tabsOf(rec).filter((tab) => manners.isAiTab(tab)).length, 0),
     handsOff: s.aiHandsOff === true,
+    showBars: s.usageBars !== false, // [usage bars] Settings → Usage
   };
 }
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
@@ -7189,7 +7199,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
   // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
-  // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
+  // its own tag (features/ai-agents.js leaseEngine). Every CLI chat runs on a slot of kind 'cli' (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
   const kind = tabChatsLib.slotKind(autoModel.scopeOf(messages.settings?.autoFrom) ? messages.settings.autoFrom : messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat; a provider's own Auto, 'grokbuild:auto', as that provider)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
@@ -7338,6 +7348,7 @@ ipcMain.handle('chats:delete', (event, id) => {
   }
   chatBind.unbindChat(id); // [chat per tab]
   require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
+  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
@@ -7416,7 +7427,13 @@ setTimeout(() => {
   try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
   // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
-  try { if (chats().list().length) require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean))).catch(() => {}); } catch { /* nothing to prune */ }
+  try {
+    if (chats().list().length) {
+      const keep = new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean));
+      require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), keep).catch(() => {});
+      require('./ai/codex').pruneChatHomes(app.getPath('userData'), keep).catch(() => {}); // Codex homes (threads) likewise
+    }
+  } catch { /* nothing to prune */ }
 }, 30000).unref?.();
 // The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
 ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
@@ -7532,10 +7549,12 @@ ipcMain.handle('settings:get', () => {
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
     grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
     antigravity: aiAgents.cliStatus().antigravity, // same, for Antigravity (which replaces Gemini CLI)
+    codex: aiAgents.cliStatus().codex, // same, for Codex (offered once found and signed in)
   };
 });
 ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
 ipcMain.handle('settings:use-antigravity', () => aiAgents.useAntigravity());
+ipcMain.handle('settings:use-codex', () => aiAgents.useCodex());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept

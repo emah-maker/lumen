@@ -466,3 +466,6 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 /* [auto model] Settings > AI > Auto may use: one tick per connected provider */
 .auto-use { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
 .auto-use-item { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: default; }
+/* [usage bars] the bar from renderer/usage-bars.js, here on a row: its rules are picker.css's, which settings.html also loads. */
+.usage-chip { display: inline-flex; align-items: center; }
+.usage-chip .ubar { margin-left: 0; }

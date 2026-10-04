@@ -163,10 +163,10 @@ function setupAiAgents(deps) {
   // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
   ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} });
   // Every Claude Code engine: the sidebar's, each chat's own, the background and side ones.
-  const ccEngines = () => [claudeCode, ...warmChats.engines(), ...bgEngines, ...sideEngines].filter((e) => e && typeof e.purgeDirs === 'function');
+  const ccEngines = () => [claudeCode, codex, ...warmChats.engines(), ...bgEngines, ...sideEngines].filter((e) => e && typeof e.purgeDirs === 'function');
   app.on?.('will-quit', () => {
     const engines = ccEngines(); // (before disposeAll forgets the chats' engines)
-    claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true });
+    claudeCode?.dispose(); codex?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true });
     for (const e of engines) { try { e.purgeDirs(); } catch {} } // their temp folders (each holds an MCP token) go before the app does
   });
   // Folders (lumen-cc-*) that a crash or a forced quit left behind, a day old or more: swept once, well after start-up.
@@ -252,6 +252,23 @@ function setupAiAgents(deps) {
     return antigravity;
   };
 
+  // ---------- Codex engine (created on first use) ----------
+  // Runs `codex exec` with a Codex home of Lumen's own per chat, whose config.toml names only the `lumen` MCP server (this run's URL; its
+  // token goes by environment variable): see codex.js's file header. "Add to Codex CLI" (codex-connect.js) is the other direction,
+  // Codex driving Lumen from a terminal; this one is Lumen using the user's Codex sign-in to answer in the sidebar.
+  let codex = null;
+  let codexFound = false;
+  let codexSignedIn = 'unknown'; // true | false | 'unknown' — mirrors codex.status().signedIn
+  let codexModels = []; // [{ id, name, tier }]: the account's cached list, else the documented ids
+  const codexModule = () => require('../ai/codex');
+  // Offered in the sidebar once Codex is found and signed in, unless the user turned it off (Settings > AI), or LUMEN_CODEX_SIDEBAR=0/1.
+  const codexSidebar = () => process.env.LUMEN_CODEX_SIDEBAR === '1' || (process.env.LUMEN_CODEX_SIDEBAR !== '0' && readSettings().codexSidebar !== false);
+  const newCodex = () => new (codexModule().CodexEngine)({ userData: app.getPath('userData'), gate: startGrokGate, locate: (refresh) => (deps.codexLocate ? deps.codexLocate() : codexConnect.find(Boolean(refresh))), bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
+  const codexEngine = () => {
+    codex ||= newCodex();
+    return codex;
+  };
+
   // Grok's PreToolUse hook (mcp-http.js terminalDecision) asks this before letting a
   // run_terminal_command call through: the same approval card as an MCP tool's (renderer/app.js
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
@@ -291,7 +308,7 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : codex?.owns(session?.engine) ? codex : warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
@@ -305,7 +322,7 @@ function setupAiAgents(deps) {
       chatClaudeCode(lease.engine);
       return lease;
     }
-    const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : null;
+    const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : kind === 'codex' ? codexEngine() : null;
     if (!shared) return null;
     let done = false;
     if (!leased.has(shared)) {
@@ -316,6 +333,8 @@ function setupAiAgents(deps) {
       ? newClaudeCode({ keepAlive: false }) // one message, then its process ends
       : kind === 'antigravity'
       ? newAntigravity() // the chat's own home folder: its conversation resumes there
+      : kind === 'codex'
+      ? newCodex() // the chat's own Codex home folder: its thread resumes there
       : new (grokBuildModule().GrokBuildEngine)({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads }); // the sidebar's GROK_HOME: the chat's session resumes there
     engine.bin = shared.bin;
     engine.statusCache = shared.statusCache;
@@ -334,7 +353,7 @@ function setupAiAgents(deps) {
       },
     };
   }
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
+  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, get codex() { return codexEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
     // [warm per chat] The chat's own engine outside a message (agent.js prewarm), and whether a message of that chat holds it.
     warmFor: (kind, key) => (kind === 'claudecode' && key != null && !oneShotClaude() ? chatClaudeCode(warmChats.peek(key)) : null),
     warmed: () => warmChats.warmed(),
@@ -395,7 +414,7 @@ function setupAiAgents(deps) {
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
-      ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : owner.kind === 'antigravity' ? 'Antigravity' : 'Claude', input: args, run: scope || engineRun }
+      ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : owner.kind === 'antigravity' ? 'Antigravity' : owner.kind === 'codex' ? 'Codex' : 'Claude', input: args, run: scope || engineRun }
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
@@ -603,7 +622,7 @@ function setupAiAgents(deps) {
       ? { ok: true, text: `Added. Start a new ${agent.label} session to use Lumen.` }
       : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || `${agent.label} could not add Lumen.` };
   }
-  const codexConnect = require('./codex-connect').createCodexConnect({ ipcMain, readSettings, writeSettings, mcpCommand, connected, isSettingsSender: deps.isSettingsSender, pickFile: deps.pickCodexFile, seams: require('../test-mode').isTest() ? global.__codexSeams : undefined });
+  const codexConnect = require('./codex-connect').createCodexConnect({ ipcMain, readSettings, writeSettings, mcpCommand, connected, isSettingsSender: deps.isSettingsSender, pickFile: deps.pickCodexFile, onStatus: () => { const before = `${codexFound}|${codexSignedIn}`; refreshCodexStatus(false).then(() => { if (before !== `${codexFound}|${codexSignedIn}`) modelsChanged(); }).catch(() => {}); }, seams: require('../test-mode').isTest() ? global.__codexSeams : undefined });
   ipcMain.handle('mcp:add-to-agent', (_e, id) => addToAgent(id));
 
   // ---------- automation tools over CDP: Playwright / CDP clients see only the user's tabs ----------
@@ -699,6 +718,16 @@ function setupAiAgents(deps) {
       return s;
     });
   }
+  // Same shape again, for the Codex engine (codex.js). It shares the binary lookup with "Add to Codex CLI" (codexConnect.find).
+  function refreshCodexStatus(refresh) {
+    return codexEngine().status(refresh).then((s) => {
+      codexFound = s.installed;
+      codexSignedIn = s.signedIn;
+      codexModels = s.models || [];
+      return s;
+    });
+  }
+
   // Settings → AI: where Antigravity stands, and the install command for this OS (shown to the user; run only by the click below).
   ipcMain.handle('antigravity:status', async (_e, refresh) => {
     const s = await refreshAntigravityStatus(Boolean(refresh)).catch(() => ({ installed: false, signedIn: false }));
@@ -731,14 +760,14 @@ function setupAiAgents(deps) {
       // has loaded, not while it does.
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
-        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false)])
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false).then(() => refreshCodexStatus(false))])
           .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); try { warmGrokChat(); } catch {} });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
-    engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity):/.test(String(id)),
+    engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity|codex):/.test(String(id)),
     mcpServer: () => mcpServer,
     // [warm per chat] A chat was deleted, or its last tab closed: its own warm Claude Code process (and MCP token) ends,
     // now or when its message in flight ends.
@@ -763,12 +792,20 @@ function setupAiAgents(deps) {
       modelsChanged();
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
+    // The setup card's "Use your own Codex": on in the sidebar, looked for again (just installed or signed in).
+    async useCodex() {
+      if (readSettings().codexSidebar === false) writeSettings({ ...readSettings(), codexSidebar: true });
+      await codexConnect.status(true).catch(() => null);
+      const s = await refreshCodexStatus(true).catch(() => ({ installed: false, signedIn: false }));
+      modelsChanged();
+      return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
+    },
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
     cliStatus: () => ({
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
       grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
       antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() }, // (sidebar chats only: not offered to background tasks)
-      codex: codexConnect.state(), // (no sidebar engine: Settings shows it, and Codex drives Lumen over MCP)
+      codex: { installed: codexFound || codexConnect.state().installed, signedIn: codexSignedIn, enabled: codexSidebar() }, // (sidebar chats only: not offered to background tasks)
     }),
     // A fresh engine for one background run: { engine, release }. It shares nothing live with the
     // sidebar's engine (its own child, MCP tag and `active` run; Grok also its own GROK_HOME and folder,
@@ -797,6 +834,7 @@ function setupAiAgents(deps) {
     modelOptions: () => [
       ...(claudeCodeFound ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
       ...(grokSidebar() && grokBuildFound ? grokBuildOptions({ signedIn: grokBuildSignedIn, accountDetail: grokBuildDetail, models: grokBuildModels, saved: readSettings().model }) : []),
+      ...(codexSidebar() && codexFound ? codexOptions({ signedIn: codexSignedIn, models: codexModels, saved: readSettings().model }) : []),
       ...(antigravitySidebar() && antigravityFound ? antigravityOptions({ signedIn: antigravitySignedIn, models: antigravityModels, names: antigravityNames, saved: readSettings().model }) : []),
     ],
   };
@@ -867,4 +905,27 @@ function antigravityOptions({ signedIn = 'unknown', models = [], names = {}, sav
   }));
 }
 
-module.exports = { setupAiAgents, prepareAutomation, inProcessAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions, antigravityOptions };
+// The picker entries for the user's own Codex CLI: its default (no -m: Codex's own choice for the account), then each model it lists.
+// Each carries a tier (fast / balanced / strong) for Auto. A saved pick Codex didn't list this time stays offered, as for Grok Build.
+function codexOptions({ signedIn = 'unknown', models = [], saved = null } = {}) {
+  const list = models.filter((m) => m && m.id && m.id !== 'default' && validModel(m.id));
+  const pick = /^codex:(.+)$/.exec(String(saved || ''))?.[1];
+  if (pick && pick !== 'default' && validModel(pick) && !list.some((m) => m.id === pick)) list.push({ id: pick, name: require('../ai/codex').pretty(pick), tier: require('../ai/codex').tierFor(pick) });
+  const note = 'experimental: only Lumen’s browser tools are allowed (no shell, no file writes)';
+  return [{ id: 'default', name: 'Codex', tier: 'balanced' }, ...list].map((m) => ({
+    id: `codex:${m.id}`,
+    label: m.id === 'default' ? 'Codex (experimental)' : `Codex · ${m.name} (experimental)`,
+    name: m.id === 'default' ? 'Codex' : m.name,
+    provider: 'Codex',
+    tier: m.tier,
+    badges: [...(signedIn === false ? ['sign in'] : []), ...(m.id === 'default' ? ['experimental'] : [])],
+    detail: signedIn === false
+      ? 'Not signed in: open a terminal, run codex login'
+      : m.id === 'default' ? `Codex’s default model for your account. ${note.charAt(0).toUpperCase()}${note.slice(1)}` : '',
+    group: 'Your OpenAI account',
+    signedIn,
+    accountDetail: null,
+  }));
+}
+
+module.exports = { setupAiAgents, prepareAutomation, inProcessAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions, antigravityOptions, codexOptions };

@@ -198,12 +198,12 @@ function providerOf(id) {
   const m = /^([a-z][a-z0-9]*):/.exec(String(id || ''));
   return m ? m[1] : 'anthropic';
 }
-const isEngine = (id) => /^(claudecode|grokbuild|antigravity):/.test(String(id || ''));
+const isEngine = (id) => /^(claudecode|grokbuild|antigravity|codex):/.test(String(id || ''));
 const TIERS = ['fable', 'opus', 'sonnet', 'haiku']; // most capable first
 const familyOf = (id) => /fable|opus|sonnet|haiku/i.exec(String(id || '').replace(/^[a-z][a-z0-9]*:/, ''))?.[0]?.toLowerCase() || null;
-const isDefaultEngineModel = (id) => /^(claudecode|grokbuild|antigravity):default$/.test(String(id || ''));
+const isDefaultEngineModel = (id) => /^(claudecode|grokbuild|antigravity|codex):default$/.test(String(id || ''));
 // Antigravity runs Google's models (and Claude through Google), so the Gemini API key is its same-vendor route.
-const RELATED = { anthropic: ['claudecode'], claudecode: ['anthropic'], xai: ['grokbuild'], grokbuild: ['xai'], gemini: ['antigravity'], antigravity: ['gemini'] };
+const RELATED = { anthropic: ['claudecode'], claudecode: ['anthropic'], xai: ['grokbuild'], grokbuild: ['xai'], gemini: ['antigravity'], antigravity: ['gemini'], openai: ['codex'], codex: ['openai'] };
 const relatedOf = (provider) => RELATED[provider] || [];
 
 // Models a turn can be handed to: connected (the picker only lists those), signed in, and able to use tools.
@@ -385,7 +385,7 @@ function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = tru
 
 // ---------- the chat's line ----------
 
-const PROVIDER_NAMES = { anthropic: 'Anthropic', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const PROVIDER_NAMES = { anthropic: 'Anthropic', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex', openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini', openrouter: 'OpenRouter' };
 
 // A model as a person reads it, like the reply label: "Claude Opus 5.5", "OpenAI GPT-5.6", "Claude Code · Sonnet".
 function nameOf(id, options = []) {

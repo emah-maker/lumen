@@ -572,6 +572,186 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath };
 })();
 ;
+// ---- usage-bars.js
+// Small usage bars: one shared formatter and one bar element for every place that helps you choose an AI by how
+// much of its plan is left (the model pickers, the AI status card, Settings → AI). It reads the numbers Lumen
+// already holds (features/usage.js summary(): the plan windows, Grok's budget and limit message, and the
+// cooldowns of models that hit a limit) and never asks a network: the data is main's cached summary
+// (usage:get with `cached`), re-read after a reply finishes and when a menu opens, at most every few seconds.
+// No data for a provider (an API key has no plan window): no bar, never a made-up one.
+//
+//   describe(bar, opts)      one provider's bar -> { percent, level, out, text, windows, title, valuetext } | null
+//   forModel(id, state, now) the same for a picker id ('claudecode:sonnet'), plus a model-only limit | null
+//   forProvider(key, state)  for a provider heading
+//   element(desc)            a <span class="ubar"> (role=progressbar; the percent is written beside it, so colour is never the only signal)
+//   annotate(text, id)       text for a native <option> that cannot hold a bar: "Name · 82% used"
+// The visual style is picker.css's .ubar rules (the design tokens of the page it sits in); `level` is
+// 'ok' | 'warn' (from 80%) | 'high' (at 100%), the same levels as the sidebar meter (features/usage.js levelOf).
+(function (root) {
+'use strict';
+
+const WARN_AT = 80;
+const HIGH_AT = 100;
+const levelOf = (percent) => (percent >= HIGH_AT ? 'high' : percent >= WARN_AT ? 'warn' : 'ok');
+const clamp = (p) => Math.max(0, Math.min(100, p));
+const finite = (n) => typeof n === 'number' && Number.isFinite(n);
+
+const tr = (key, fallback, vars) => {
+  let s = root.t ? root.t(key, vars) : key;
+  if (!s || s === key) s = fallback;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, k) => (k in vars ? String(vars[k]) : '')) : s;
+};
+
+const providerOf = (id) => {
+  const m = /^([a-z][a-z0-9]*):/.exec(String(id || ''));
+  return m ? m[1] : 'anthropic';
+};
+
+const clockOf = (ms, now) => {
+  const d = new Date(ms);
+  const sameDay = d.toDateString() === new Date(now).toDateString();
+  return sameDay ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+};
+// "resets 8:09 PM" ("resets Mon 12:00 AM" on another day), from a time or from the CLI's own words; '' when unknown.
+function resetText(w, now = Date.now()) {
+  if (w && finite(w.resetsAt) && w.resetsAt > now) return tr('usage.resets', 'resets {time}', { time: clockOf(w.resetsAt, now) });
+  if (w && typeof w.resetsText === 'string' && w.resetsText.trim()) return tr('usage.resets', 'resets {time}', { time: w.resetsText.trim() });
+  return '';
+}
+
+// The windows a features/usage.js bar describes, each { key, label, percent, level, reset }. Only real plan windows, the
+// limit-reached state and the budget the user set: a chat's context fill is not usage of a plan, so it has no window here.
+function windowsOf(bar, now = Date.now()) {
+  if (!bar || typeof bar !== 'object') return [];
+  const out = [];
+  const add = (key, label, percent, source) => {
+    if (!finite(percent)) return;
+    if (finite(source.resetsAt) && source.resetsAt <= now) return; // that window has reset since the reading: stale, so no number
+    const p = clamp(percent);
+    out.push({ key, label, percent: p, level: levelOf(p), reset: resetText(source, now), resetsAt: finite(source.resetsAt) ? source.resetsAt : null });
+  };
+  if (bar.kind === 'plan') {
+    add('5h', tr('usage.bar.window.5h', '5-hour limit'), bar.percent, { resetsAt: bar.resetsAt, resetsText: bar.resetsText });
+    if (bar.weekly) add('week', tr('usage.bar.window.week', 'weekly limit'), bar.weekly.percent, { resetsText: bar.weekly.resetsText, resetsAt: bar.weekly.resetsAt });
+  } else if (bar.kind === 'limit') {
+    add('limit', tr('usage.bar.window.limit', 'limit reached'), 100, { resetsAt: bar.resetsAt });
+  } else if (bar.kind === 'budget') {
+    add(bar.period === 'weekly' ? 'budget-week' : 'budget-day', tr(bar.period === 'weekly' ? 'usage.bar.window.budgetWeek' : 'usage.bar.window.budgetDay', bar.period === 'weekly' ? 'weekly budget' : 'daily budget'), bar.percent, { resetsAt: bar.resetsAt });
+  }
+  return out;
+}
+
+// A cooldown entry (ai/fallback.js snapshot) that keeps this provider (or model) out of use right now.
+function coolingFor(cooling, provider, modelId, now) {
+  const e = cooling && cooling[provider];
+  if (!e || e.kind !== 'limit' || !(Number(e.until) > now)) return null;
+  if (e.scope === 'model') {
+    const bare = String(modelId || '').replace(/^[a-z][a-z0-9]*:/, '').toLowerCase();
+    return bare && e.model && bare.includes(String(e.model).toLowerCase()) ? e : null;
+  }
+  return e;
+}
+
+// bar: features/usage.js barFor(); cooling: the cooldown entry for it, if any. Returns null with nothing real to show.
+function describe(bar, { cooling = null, now = Date.now(), name = '' } = {}) {
+  const windows = windowsOf(bar, now);
+  const hold = cooling && Number(cooling.until) > now ? cooling : null;
+  if (!windows.length && !hold) return null;
+  const tight = windows.reduce((a, w) => (!a || w.percent > a.percent ? w : a), null);
+  const out = Boolean(hold) || windows.some((w) => w.key === 'limit') || Boolean(tight && tight.percent >= HIGH_AT);
+  const percent = out ? 100 : tight.percent;
+  const level = out ? 'high' : tight.level;
+  const rounded = Math.round(percent);
+  const lines = windows.filter((w) => w.key !== 'limit').map((w) => `${w.label}: ${tr('usage.bar.used', '{percent}% used', { percent: Math.round(w.percent) })}${w.reset ? `, ${w.reset}` : ''}`);
+  const when = hold ? resetText({ resetsAt: hold.until }, now) : (windows.find((w) => w.key === 'limit') || {}).reset || (tight && tight.percent >= HIGH_AT ? tight.reset : '');
+  if (out) lines.unshift(`${tr('usage.bar.out.title', 'Out of usage')}${when ? `, ${when}` : ''}`);
+  const text = out ? tr('usage.bar.out', 'out') : `${rounded}%`;
+  const valuetext = out ? lines[0] : (lines.length === 1 ? lines[0] : lines.join('; '));
+  return {
+    percent, level, out, text, windows, resetsAt: hold ? hold.until : (tight && tight.resetsAt) || null,
+    valuetext: name ? `${name}: ${valuetext}` : valuetext,
+    title: lines.join('\n'),
+  };
+}
+
+// state: { bars: { claudecode, grokbuild, codex }, cooling, showBars } (the cached summary)
+const usable = (state) => Boolean(state && state.showBars !== false);
+function forProvider(key, state, now = Date.now(), modelId = null) {
+  if (!usable(state) || !key) return null;
+  return describe(state.bars ? state.bars[key] : null, { cooling: coolingFor(state.cooling, key, modelId, now), now });
+}
+function forModel(id, state, now = Date.now()) {
+  if (!id || id === 'auto' || String(id).endsWith(':__more')) return null;
+  return forProvider(providerOf(id), state, now, id);
+}
+
+// Text for an option in a native <select>: it cannot hold a bar, so the number goes in its text.
+function annotate(text, id, state = root.usageBars && root.usageBars.state(), now = Date.now()) {
+  const d = forModel(id, state, now);
+  if (!d) return text;
+  return `${text} · ${d.out ? tr('usage.bar.out.option', 'out of usage') : tr('usage.bar.used', '{percent}% used', { percent: Math.round(d.percent) })}`;
+}
+
+function element(desc, { label = '' } = {}) {
+  const wrap = document.createElement('span');
+  wrap.className = 'ubar';
+  wrap.dataset.level = desc.level;
+  if (desc.out) wrap.dataset.out = '1';
+  wrap.setAttribute('role', 'progressbar');
+  wrap.setAttribute('aria-valuemin', '0');
+  wrap.setAttribute('aria-valuemax', '100');
+  wrap.setAttribute('aria-valuenow', String(Math.round(desc.percent)));
+  wrap.setAttribute('aria-valuetext', desc.valuetext);
+  wrap.setAttribute('aria-label', label || tr('usage.bar.label', 'Plan usage'));
+  wrap.title = desc.title;
+  const track = document.createElement('span');
+  track.className = 'ubar-track';
+  const fill = document.createElement('i');
+  fill.style.width = `${Math.round(desc.percent)}%`; // through the CSSOM: a page's CSP may drop inline style attributes
+  track.append(fill);
+  const text = document.createElement('span');
+  text.className = 'ubar-text';
+  text.textContent = desc.text;
+  wrap.append(track, text);
+  return wrap;
+}
+
+// ---- the cached data (a page only; the formatter above also runs in node) ----
+let state = null;
+let lastAt = 0;
+let inflight = null;
+const source = () => {
+  if (root.lumenExtras && root.lumenExtras.usage) return () => root.lumenExtras.usage(false, true);
+  if (root.lumenSettings && root.lumenSettings.usage) return () => root.lumenSettings.usage({ cached: true });
+  return null;
+};
+function load(force = false) {
+  const get = source();
+  if (!get) return Promise.resolve(state);
+  if (inflight) return inflight;
+  if (!force && Date.now() - lastAt < 4000) return Promise.resolve(state);
+  inflight = Promise.resolve().then(get).then((s) => {
+    lastAt = Date.now();
+    const next = s && typeof s === 'object' ? { bars: s.bars || {}, cooling: s.cooling || {}, showBars: s.showBars !== false } : null;
+    const changed = JSON.stringify(next) !== JSON.stringify(state);
+    state = next;
+    if (changed) { try { root.dispatchEvent(new CustomEvent('lumen-usage-bars')); } catch { /* not a page */ } }
+    return state;
+  }, () => state).finally(() => { inflight = null; });
+  return inflight;
+}
+
+const api = { levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+else {
+  root.usageBars = { ...api, state: () => state, load, touch: () => load(false) };
+  setTimeout(() => load(true), 800); // after the page's own start-up; the data is already in main's memory
+  // A reply finished or the plan meter moved (the same events the composer's meter follows): look again.
+  if (root.assistant && root.assistant.onEvent) root.assistant.onEvent((e) => { if (e && (e.type === 'done' || e.type === 'rate_limit')) setTimeout(() => load(true), 400); });
+  root.addEventListener('focus', () => load(false));
+}
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- picker-match.js
 // Matching for the model picker's search (renderer/picker.js). A plain script in the UI; test/units.js loads it
 // with require().
@@ -846,9 +1026,20 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
+    if (usageBars) decorateUsage(el, top, usageBars.forModel(o.value, usageBars.state()), o);
     act.set(el, () => choose(o.value));
     rows.push({ el, value: o.value });
     return el;
+  }
+  // [usage bars] renderer/usage-bars.js: a provider's plan window next to its heading (or its rows, when there is no
+  // heading), and a model that is out of usage marked on its own row. All of it is absent when there is no data.
+  const usageBars = window.usageBars;
+  let usageRows = false;
+  function decorateUsage(el, top, desc, o) {
+    if (!desc || !(usageRows || desc.out)) return; // (a row under a heading that has the bar carries one only when it is out)
+    top.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: nameOf(o) }) }));
+    if (desc.out) el.classList.add('picker-out');
+    el.setAttribute('aria-label', `${el.getAttribute('aria-label')}, ${desc.valuetext}`);
   }
   function actionRow(key, textContent, detail, handler, cls = 'picker-more') {
     const el = Object.assign(document.createElement('div'), { className: `picker-item ${cls}`, id: `${uid}-${key}` });
@@ -858,6 +1049,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     act.set(el, handler);
     return el;
+  }
+  // The provider's plan bar at the end of its heading; the models that are out of usage are marked on their rows.
+  function decorateHeading(h, o) {
+    const desc = o && usageBars ? usageBars.forProvider(usageBars.providerOf(o.value), usageBars.state()) : null;
+    if (!desc) return;
+    h.classList.add('has-ubar');
+    h.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: h.firstChild.textContent }) }));
   }
   function heading(textContent, count) {
     const h = Object.assign(document.createElement('div'), { className: 'picker-group' });
@@ -909,8 +1107,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
         section.setAttribute('aria-labelledby', h.id);
         section.append(h);
         recentRow = true;
+        usageRows = true;
         recents.forEach((o, i) => section.append(row(o, `r${i}`)));
         recentRow = false;
+        usageRows = false;
         out.push(section);
       }
     }
@@ -936,7 +1136,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const actions = all2.filter((m) => m.o.dataset.more);
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
-      if (g && (headings || words.length || ordered.length > 1 || out.length)) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
+      usageRows = !(g && (headings || words.length || ordered.length > 1 || out.length)); // no heading to carry the provider's bar: each row does
+      if (!usageRows) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {
@@ -1036,6 +1237,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     search.setAttribute('aria-label', tr('picker.search', 'Search models'));
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
+    usageBars?.touch(); // the cached usage numbers, at most every few seconds; the list redraws if they changed
     place();
     centreNext = true;
     render();
@@ -1098,6 +1300,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (!list.contains(e.target) || list.scrollHeight <= list.clientHeight || atEnd) e.preventDefault();
   }, { passive: false });
   sync();
+  window.addEventListener('lumen-usage-bars', () => { if (!menu.hidden) { keepHighlight = true; render(); } });
   // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
   return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) { keepHighlight = true; render(); } } };
 };
@@ -1580,7 +1783,7 @@ function setupError(text) {
   el.textContent = text;
 }
 function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
-for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity']) optional(id).addEventListener('click', clearSetupError, true);
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity', 'setup-codex']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
   if (s.model) clearSetupError();
@@ -1604,6 +1807,10 @@ async function refreshSetup() {
   const agy = s.antigravity || {};
   optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
   optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
+  // Codex (OpenAI's CLI): offered once it is found on this computer; the click turns it on in the sidebar.
+  const cx = s.codex || {};
+  optional('setup-codex').hidden = !cx.installed || !window.assistant.useCodex;
+  optional('setup-codex-detail').textContent = cx.signedIn === false ? t('setup.codex.signedOut') : t('setup.codex.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -1720,6 +1927,13 @@ optional('setup-antigravity').onclick = async () => {
   if (await window.assistant.setModel('antigravity:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-codex').onclick = async () => {
+  const r = await window.assistant.useCodex?.().catch(() => null);
+  if (!r?.installed) { setupError(t('setup.codex.notFound')); return; }
+  if (!r.signedIn) { setupError(t('setup.codex.signedOut')); return; }
+  if (await window.assistant.setModel('codex:default')) await loadModels();
+  refreshSetup();
+};
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -1784,6 +1998,12 @@ const ASSISTANTS = {
     // A neutral mark: an arch with a spark above it.
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M3 13.2 8 3.4l5 9.8"/><path d="M5.6 9.6h4.8"/><circle cx="8" cy="1.8" r=".8"/></svg>',
   },
+  Codex: {
+    name: 'Codex',
+    tint: 'currentColor',
+    // OpenAI's blossom, as ChatGPT's mark, with a prompt caret in the middle.
+    svg: '<svg viewBox="0 0 16 16" class="mark"><g transform="translate(8 8)"><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4"/><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4" transform="rotate(120)"/><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4" transform="rotate(240)"/></g><path d="M6.6 6.8 8.4 8 6.6 9.2"/></svg>',
+  },
   Gemini: {
     name: 'Gemini',
     tint: 'url(#gemini-grad)',
@@ -1795,7 +2015,7 @@ let assistantIdentity = null;
 function setAssistantIdentity(group) {
   // Claude Code answers as Claude, Grok Build as Grok. No group (nothing connected) or an unknown
   // one: the neutral mark.
-  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group] || ASSISTANTS.AI;
+  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group === 'Your OpenAI account' ? 'Codex' : group] || ASSISTANTS.AI;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
   assistantIdentity = who;
@@ -7449,7 +7669,7 @@ $('agent-stop')?.addEventListener('click', () => {
     sites.setAttribute('aria-label', T('tasks.create.sites'));
     let sitesTouched = false;
     sites.addEventListener('input', () => { sitesTouched = true; summarize(); });
-    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === pv.model, disabled: !m.available })));
+    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === pv.model, disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox' });
     const mcp = h('input', { type: 'checkbox' });
     // A Claude Code / Grok Build task has Lumen's browser tools only: the user's MCP tools are for API models.
@@ -7681,7 +7901,7 @@ $('agent-stop')?.addEventListener('click', () => {
   // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }) };
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }), 'codex:': window.t('composer.ask', { name: 'Codex' }) };
   function syncEngine() {
     const value = String(select?.value || '');
     const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));
@@ -8491,7 +8711,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const sites = h('input', { type: 'text', spellcheck: false, value: task ? task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', ') : pv.sites.join(', ') });
     let sitesTouched = Boolean(task);
     sites.addEventListener('input', () => { sitesTouched = true; });
-    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === (task?.model || pv.model), disabled: !m.available })));
+    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === (task?.model || pv.model), disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });
