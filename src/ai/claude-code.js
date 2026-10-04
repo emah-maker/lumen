@@ -609,6 +609,16 @@ class ClaudeCodeEngine {
       if (!this.watchdogMs || over || active.inflight > 0) return;
       active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, this.watchdogMs);
     };
+    // "Reply complete" (once per message): the screen clears its working state and takes the next message now. This run
+    // goes on to `result` for its cost, usage and session id (`done`), and a message sent meanwhile waits for it
+    // (agent.js run: a run that is settling is waited for, not aborted). Never while a tool call is in flight, in a
+    // subagent's own turn, or while compacting.
+    let early = false;
+    const replyComplete = (msg) => {
+      if (early || msg.parent_tool_use_id || active.inflight > 0 || active.builtin.size || compacting || over || signal.aborted) return;
+      early = true;
+      emit({ type: 'reply_complete' });
+    };
     const handle = (msg) => {
       active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
@@ -627,6 +637,9 @@ class ClaudeCodeEngine {
         emit({ type: 'status', text: compacting ? 'Compacting the conversation…' : '' });
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
+        // The reply's last model call ended its turn (message_delta end_turn, no tool call of this turn still running): the
+        // text is complete. `result` follows 0.8-1.1 s later (post_turn_summary in between); the screen need not wait for it.
+        if (e.type === 'message_delta' && e.delta?.stop_reason === 'end_turn') replyComplete(msg);
         // Each text block (one per turn around a tool call) starts a new paragraph, on screen and in
         // the saved reply alike; joined bare they ran together ("I'll check.The price is…").
         if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
@@ -636,6 +649,7 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
+        if (msg.message?.stop_reason === 'end_turn') replyComplete(msg); // (a CLI that puts it on the message itself)
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
