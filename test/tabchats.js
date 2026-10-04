@@ -23,6 +23,7 @@ const launch = (profile) => electron.launch({
 // records what its read_page tool saw.
 const fakeModel = (app) => app.evaluate(() => {
   global.__seen = {};
+  global.__switchTarget = {};
   global.__models = {};
   global.__inflight = new Set();
   const holds = {};
@@ -33,6 +34,13 @@ const fakeModel = (app) => app.evaluate(() => {
     global.__models[who] = params.model;
     const results = params.messages.filter((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
     const usage = { input_tokens: 100, output_tokens: 20 };
+    if (!results.length && /^SW\d$/.test(who)) { // a chat whose own tool call switches tabs (no hold): global.__switchTarget[who]
+      const text = `${who} switching`;
+      return {
+        async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }; },
+        finalMessage: async () => ({ role: 'assistant', model: 'claude-opus-5', stop_reason: 'tool_use', content: [{ type: 'text', text }, { type: 'tool_use', id: `tu-${who}`, name: 'switch_tab', input: { tab_id: global.__switchTarget[who], show: true } }], usage }),
+      };
+    }
     if (!results.length) {
       const text = `${who} is working`;
       return {
@@ -136,7 +144,57 @@ const fakeModel = (app) => app.evaluate(() => {
   check('chat A\'s reply is in tab A', /A finished/.test(await messagesText()) && !/B finished/.test(await messagesText()), await messagesText());
   check('viewing the chat clears the done dot', await waitFor(async () => (await mark(tabA)) === null), await mark(tabA));
 
-  // ---- 3b. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
+  // ---- 3b. Only a run's own switch_tab / open_tab is "the AI's switch". A switch through the main-process API while a reply runs is the
+  // user's: the tab keeps its own chat and the sidebar shows it. And a run's switch never takes a tab that shows another chat.
+  const tabP = await openTab(`${base}/p`); await waitFor(async () => (await active()) === tabP);
+  await send('chat-P: go'); await inflight('P');
+  const tabQ = await openTab(`${base}/q`); await waitFor(async () => (await active()) === tabQ);
+  await waitFor(() => tc(() => global.__tabChats.shown() === global.__tabChats.chatId()));
+  const chatOfTab = (id) => tc((_e, i) => global.__tabChats.bindings.chatOf(i), id);
+  const chatP = await chatOfTab(tabP);
+  const chatQ0 = await chatOfTab(tabQ);
+  await showTab(tabP); await waitFor(async () => /chat-P/.test(await messagesText()));
+  await showTab(tabQ); // while P's reply is running, through the main-process API
+  await waitFor(async () => (await active()) === tabQ);
+  await sleep(500);
+  const afterSwitch = await tc(() => ({ shown: global.__tabChats.shown(), open: global.__tabChats.chatId() }));
+  const [pNow, qNow] = [await chatOfTab(tabP), await chatOfTab(tabQ)];
+  check('a main-process tab switch mid-run keeps each tab on its own chat', pNow === chatP && qNow === chatQ0 && chatP !== chatQ0, JSON.stringify({ pNow, qNow, chatP, chatQ0 }));
+  check('... and the sidebar shows the chat of tab Q, not the running chat P', afterSwitch.shown === chatQ0 && afterSwitch.open === chatQ0 && !/chat-P/.test(await messagesText()), `${JSON.stringify(afterSwitch)} ${await messagesText()}`);
+  // The same switch made from inside some task's async scope (code that is not a switch_tab / open_tool call, e.g. a hook a run's
+  // tool triggers) is still not "the AI's switch": the sidebar follows the tab.
+  await showTab(tabP); await waitFor(async () => /chat-P/.test(await messagesText()));
+  await app.evaluate((_e, [p, q]) => global.__agent.inTask(p, null, async () => { global.__agent.browser.switchTab(q); }, null), [tabP, tabQ]);
+  await waitFor(async () => (await active()) === tabQ);
+  await waitFor(async () => !/chat-P/.test(await messagesText()));
+  await sleep(300);
+  const inScope = await tc(() => ({ shown: global.__tabChats.shown(), open: global.__tabChats.chatId() }));
+  check('a switch inside a task scope that is not a tab tool still shows the tab chat', inScope.shown === chatQ0 && (await chatOfTab(tabQ)) === chatQ0 && (await chatOfTab(tabP)) === chatP && !/chat-P/.test(await messagesText()), `${JSON.stringify(inScope)} ${await messagesText()}`);
+  await send('chat-Q: go'); await inflight('Q');
+  await tc(() => { global.__release('P'); global.__release('Q'); });
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  // A run's own switch_tab to a tab that shows another chat (with history) leaves that tab alone...
+  const tabS1 = await openTab(`${base}/sw1`); await waitFor(async () => (await active()) === tabS1);
+  const chatQ = await chatOfTab(tabQ);
+  await tc((_e, q) => { global.__switchTarget.SW1 = q; }, tabQ);
+  await send('chat-SW1: go');
+  await waitFor(() => tc(() => global.__seen.SW1 !== undefined));
+  const chatS1 = await chatOfTab(tabS1);
+  await sleep(300);
+  const bound1 = await chatOfTab(tabQ);
+  check('a run switch_tab to a tab showing another chat does not rebind it', bound1 === chatQ && chatQ !== chatS1 && Boolean(chatS1), JSON.stringify({ bound1, chatQ, chatS1 }));
+  // ...while a switch to a tab with no chat of its own yet still binds it to the run's chat, as designed.
+  const tabR = await tc(() => global.__agent.browser.openTab('about:blank', { background: true }).id);
+  await tc((_e, r) => { global.__switchTarget.SW2 = r; }, tabR);
+  const tabS2 = await openTab(`${base}/sw2`); await waitFor(async () => (await active()) === tabS2);
+  await send('chat-SW2: go');
+  await waitFor(() => tc(() => global.__seen.SW2 !== undefined));
+  await sleep(300);
+  const chatS2 = await chatOfTab(tabS2);
+  const boundR = await chatOfTab(tabR);
+  check('a run own switch_tab to a fresh tab still binds that tab to the run chat', Boolean(chatS2) && boundR === chatS2, JSON.stringify({ boundR, chatS2, seen: await tc(() => global.__seen) }));
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  // ---- 3c. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
   const tX = await openTab(`${base}/s`); await waitFor(async () => (await active()) === tX);
   await send('chat-QA: go'); await inflight('QA');
   const tY = await openTab(`${base}/u`); await waitFor(async () => (await active()) === tY);
