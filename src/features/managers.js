@@ -6,7 +6,8 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { toNetscape, parseNetscape } = require('./bookmark-html');
+const toNetscape = (...a) => require('./bookmark-html').toNetscape(...a); // (bookmark import/export, loaded on first use)
+const parseNetscape = (...a) => require('./bookmark-html').parseNetscape(...a);
 const chatPage = require('./chat-page'); // lumen://chat opens and is switched to like these pages, with its own preload
 
 const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'bookmarks.html')).href;

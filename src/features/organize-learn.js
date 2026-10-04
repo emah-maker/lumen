@@ -189,6 +189,5 @@ function shouldAutoOrganize({ enabled, ungrouped, topics = [], key: setKey, last
   const oneTopic = topics.length === 1 && topics[0].length === ungrouped;
   return !onlyMixed || !oneTopic; // by default, organize only when something unrelated is among them
 }
-const IDLE_MIN_UNGROUPED = 2;
 
-module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, IDLE_MIN_UNGROUPED, ORGANIZE_DELAYS, DEFAULT_ORGANIZE_DELAY, organizeDelay };
+module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, ORGANIZE_DELAYS, DEFAULT_ORGANIZE_DELAY, organizeDelay };

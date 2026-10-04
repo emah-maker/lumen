@@ -36,8 +36,6 @@ function ineligible(tab, ctx = {}) {
   return null;
 }
 
-const eligibleTabs = (tabs, ctx) => tabs.filter((t) => ineligible(t, ctx) === null);
-
 // Characters each tab may use: the per-tab cap, or an even share of the total when that is less.
 function perTabBudget(count, { perTab = PER_TAB_CHARS, total = TOTAL_CHARS } = {}) {
   const n = Math.max(1, count);
@@ -97,4 +95,4 @@ function summaryLine(tabs) {
   return { read: read.length, other, names };
 }
 
-module.exports = { PER_TAB_CHARS, TOTAL_CHARS, MAX_TABS, CONFIRM_ALL_OVER, isReadableUrl, hostOf, ineligible, eligibleTabs, perTabBudget, labelOf, cleanIds, renderTabs, messageBlock, summaryLine };
+module.exports = { PER_TAB_CHARS, TOTAL_CHARS, MAX_TABS, CONFIRM_ALL_OVER, isReadableUrl, hostOf, ineligible, perTabBudget, labelOf, cleanIds, renderTabs, messageBlock, summaryLine };
