@@ -83,12 +83,12 @@ async function engineSuite(engine) {
   await Promise.race([Promise.all([ra.done, rb.done]), H.sleep(15000)]);
   check(`${name}: each chat gets its own reply`, /reply from RUN-\wA/.test(turnText(lastAssistant(A))) && /reply from RUN-\wB/.test(turnText(lastAssistant(B))) && !/RUN-\wB/.test(textOf(ra.events)) && !/RUN-\wA/.test(textOf(rb.events)), J({ a: turnText(lastAssistant(A)), b: turnText(lastAssistant(B)) }));
 
-  // ---- connections after finish
+  // ---- connections after finish ([warm per chat] Claude Code keeps one warm process per chat: S, A and B here)
   await H.sleep(300);
   const tokensOfLive = () => new Set(readLog().filter((e) => e.ev === 'start' && live.has(e.pid)).map((e) => e.token));
   const orphans = () => gate.openNow().filter((t) => !tokensOfLive().has(t));
   if (engine === 'grokbuild') check(`${name}: after both finish, both connections are closed`, gate.openNow().length === 0 && live.size === 0, J({ open: gate.openNow().length, live: live.size }));
-  else check(`${name}: after both finish, no connection is left without its process, and at most one kept process per chat`, orphans().length === 0 && gate.openNow().length <= 2, J({ open: gate.openNow().length, orphans: orphans().length, live: live.size }));
+  else check(`${name}: after both finish, no connection is left without its process, and at most one kept process per chat`, orphans().length === 0 && gate.openNow().length <= 3, J({ open: gate.openNow().length, orphans: orphans().length, live: live.size }));
 
   // ---- after an error
   const E = chat(model);
