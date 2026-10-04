@@ -10,7 +10,7 @@ const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anth
 const PROVIDER_CLI = { claudecode: true, grokbuild: true, codex: true, antigravity: true };
 // Which pref turns each CLI's model-menu entry on or off (Codex and Antigravity already had one), and what it is when never set.
 const MENU_PREF = { claudecode: ['claudeCodeSidebar', true], grokbuild: ['grokSidebar', false], codex: ['codexSidebar', true], antigravity: ['antigravitySidebar', false] };
-const FULL_ACCESS_PREF = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess' };
+const FULL_ACCESS_PREF = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess', codex: 'codexFullAccess' };
 // ai/effort.js LEVELS (the page cannot require node modules), and what each takes.
 const EFFORT_LEVELS = {
   claudecode: ['low', 'medium', 'high', 'xhigh', 'max'], grokbuild: ['low', 'medium', 'high'], antigravity: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -126,7 +126,6 @@ async function buildProviders(page) {
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
       if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced). Off by default.`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
-      else out.push(row('Full access', 'Codex runs read-only with no shell or file tools, by design: it has no full-access mode here.'));
     } else {
       const k = keys[key] || {};
       const state = k.stored ? 'Key saved' : k.env ? 'Key from the environment' : 'No key';

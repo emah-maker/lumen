@@ -34,6 +34,12 @@
 // Anything that goes wrong before a message is sent (no app-server in this Codex, the MCP server not ready, a thread Codex
 // no longer has) makes run() return null, and the message goes through a headless run instead.
 //
+// FULL ACCESS (codexFullAccess, codex.js): a kept process is for one kind only, "locked" or "full" (modeOf): a message of the other kind
+// ends an idle process of this chat and starts the right one, and prewarm() starts the kind the setting asks for. A full-access process
+// has config.toml with the sandbox off and Codex's shell, patch, picture-view and web tools on, the user's whole environment, thread and
+// turn sandbox danger-full-access, and the longer watchdog; Codex's own approval requests are allowed (only another MCP server's tool
+// stays refused). The working folder is still the empty Lumen folder; Lumen's note names the user's home folder.
+//
 // SIGN-IN: auth.json is copied in before a process starts (when the user's is newer) and back after each turn and when it
 // ends (when Codex refreshed it), as for a headless run; a kept process whose user-side sign-in has changed since is
 // restarted at the next message, so it never keeps using a token the user has replaced.
@@ -56,18 +62,20 @@ const READY_WAIT_MS = 8000; // a new thread's wait for Lumen's MCP server to be 
 const CANCEL_WAIT_MS = 5000; // Stop: how long an interrupted turn may take to end before its process is killed
 const QUIT_GRACE_MS = 2000; // stdin closed: time to flush before the process is killed
 const EXIT_WAIT_MS = 8000; // a headless run in the same home waits this long at most for an ending process
+const modeOf = (fullAccess) => (fullAccess === true ? 'full' : 'locked');
 const FAILURES_BEFORE_GIVING_UP = 2; // consecutive start failures: this Codex gets headless runs only until Lumen restarts
 // Notifications Lumen never reads (the connection opts out of them: less to parse).
 const OPT_OUT = ['remoteControl/status/changed', 'account/rateLimits/updated', 'thread/status/changed', 'account/updated', 'skills/changed', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/commandExecution/outputDelta', 'item/fileChange/outputDelta', 'turn/diff/updated', 'turn/plan/updated'];
 
 // Lumen's answer to a request Codex makes of its client: allow only Lumen's tools. Returns the result object, or null for a
 // method this client doesn't know (answered "Method not found"). Pure, so tests feed it recorded requests.
-function approvalAnswer(method, params = {}) {
+// fullAccess: Codex's own tools are the user's to run (approval policy is never, so these are rare): a command or a change is allowed once.
+function approvalAnswer(method, params = {}, { fullAccess = false } = {}) {
   switch (method) {
-    case 'item/commandExecution/requestApproval': return { decision: 'decline' };
-    case 'item/fileChange/requestApproval': return { decision: 'decline' };
-    case 'applyPatchApproval': case 'execCommandApproval': return { decision: 'denied' };
-    case 'item/permissions/requestApproval': return { permissions: {}, scope: 'turn' }; // grants nothing
+    case 'item/commandExecution/requestApproval': return { decision: fullAccess ? 'accept' : 'decline' };
+    case 'item/fileChange/requestApproval': return { decision: fullAccess ? 'accept' : 'decline' };
+    case 'applyPatchApproval': case 'execCommandApproval': return { decision: fullAccess ? 'approved' : 'denied' };
+    case 'item/permissions/requestApproval': return fullAccess && params.permissions && typeof params.permissions === 'object' ? { permissions: params.permissions, scope: 'turn' } : { permissions: {}, scope: 'turn' }; // (locked: grants nothing)
     case 'item/tool/requestUserInput': return { answers: {} };
     case 'item/tool/call': return { contentItems: [], success: false }; // Lumen offers no client-side tools
     case 'mcpServer/elicitation/request': return String(params.serverName || '') === 'lumen' ? { action: 'accept', content: null } : { action: 'decline', content: null };
@@ -77,15 +85,18 @@ function approvalAnswer(method, params = {}) {
 
 // An item of a thread that is not one of Lumen's tools: the label to stop the run with, else null (codex.js offItemOf, for
 // app-server's item names).
-function offItemOf(item) {
+function offItemOf(item, { fullAccess = false } = {}) {
   if (!item || typeof item !== 'object') return null;
   const type = String(item.type || '');
-  if (type === 'commandExecution') return 'a shell command';
-  if (type === 'fileChange') return 'a file change';
-  if (type === 'webSearch') return 'a web search';
+  if (!fullAccess) { // [full access] Codex's own shell, patch, web and picture-view tools are expected then
+    if (type === 'commandExecution') return 'a shell command';
+    if (type === 'fileChange') return 'a file change';
+    if (type === 'webSearch') return 'a web search';
+    if (type === 'imageView') return 'a picture tool';
+  }
   if (type === 'dynamicToolCall') return 'a tool Lumen did not give it';
   if (type === 'collabAgentToolCall' || type === 'subAgentActivity') return 'a sub-agent';
-  if (type === 'imageGeneration' || type === 'imageView') return 'a picture tool';
+  if (type === 'imageGeneration') return 'a picture tool';
   if (type === 'mcpToolCall' && String(item.server || '') !== 'lumen') return `${String(item.server || 'another server').slice(0, 40)}/${String(item.tool || '').slice(0, 40)}`;
   return null;
 }
@@ -178,7 +189,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
   }
 
   // A new kept process with its thread: resumed (sessionId) or new. Resolves the process, or throws (nothing sent).
-  async function start({ chatId, sessionId = null, spare = false }, slot = {}) {
+  async function start({ chatId, sessionId = null, spare = false, fullAccess = false }, slot = {}) {
     if (process.env.LUMEN_CODEX_MCP === 'stdio') throw new Error('stdio bridge');
     const prepared = await engine.prepare();
     if (!prepared?.spec) throw new Error('not installed');
@@ -190,7 +201,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
     await cx.pullAuth({ userHome, home });
     const tag = crypto.randomBytes(18).toString('hex');
-    const p = { tag, gate, key: cx.chatKey(chatId), home, dir: null, threadId: null, effort: '', spare, busy: false, turns: 0, exited: false, disposed: false, cleaned: false, idle: null, used: ++used, stderr: '', mcp: 'starting', mcpError: '', onNote: null, child: null, rpc: null, owner: null, exitedP: null };
+    const p = { tag, gate, key: cx.chatKey(chatId), mode: modeOf(fullAccess), full: fullAccess === true, home, dir: null, threadId: null, effort: '', spare, busy: false, turns: 0, exited: false, disposed: false, cleaned: false, idle: null, used: ++used, stderr: '', mcp: 'starting', mcpError: '', onNote: null, child: null, rpc: null, owner: null, exitedP: null };
     // The owner of this process's MCP tag (features/ai-agents.js engineForSession / onTerminalApproval): its `active` is the
     // turn in progress (with that message's own task scope), null between turns.
     p.owner = {
@@ -208,9 +219,9 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       p.dir = fs.mkdtempSync(path.join(engine.tmp, 'lumen-cx-')); // the working folder: empty
       engine.workDirs.add(p.dir);
       // No `model` line: the model is chosen per turn (turn/start), so a process serves any of the chat's messages.
-      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun }), { mode: 0o600 });
+      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess }), { mode: 0o600 });
       const inv = locate.buildInvocation(spec, ['app-server']);
-      const env = cx.buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {} });
+      const env = cx.buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
       p.child = engine.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: p.dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
       stats.spawned++;
       if (p.disposed) throw new Error('cancelled');
@@ -228,7 +239,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
           p.onNote?.(method, params || {});
         },
         onRequest: (method, params) => {
-          const answer = approvalAnswer(method, params);
+          const answer = approvalAnswer(method, params, { fullAccess });
           if (answer === null) throw new Error('unsupported');
           return answer;
         },
@@ -236,7 +247,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       const fail = (r, what) => { if (r?.error) throw Object.assign(new Error(`${what}: ${r.error.message || 'failed'}`), { rpc: r.error }); return r.result || {}; };
       fail(await p.rpc.request('initialize', { clientInfo: { name: 'lumen', title: 'Lumen', version: '1' }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }, startTimeoutMs), 'initialize');
       p.rpc.notify('initialized', undefined);
-      const common = { cwd: p.dir, approvalPolicy: 'never', sandbox: 'read-only' };
+      const common = { cwd: p.dir, approvalPolicy: 'never', sandbox: fullAccess ? 'danger-full-access' : 'read-only' };
       const created = sessionId
         ? fail(await p.rpc.request('thread/resume', { threadId: sessionId, excludeTurns: true, ...common }, startTimeoutMs), 'thread/resume')
         : fail(await p.rpc.request('thread/start', { ephemeral: false, serviceName: 'lumen', ...common }, startTimeoutMs), 'thread/start');
@@ -260,7 +271,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
 
   // start(), recorded while in flight so a run() can wait for a prewarm()'s start of the same chat.
   function starting(opts) {
-    const slot = { key: cx.chatKey(opts.chatId), wanted: opts.sessionId || null, spare: opts.spare === true, promise: null, proc: null, cancelled: false };
+    const slot = { key: cx.chatKey(opts.chatId), mode: modeOf(opts.fullAccess), wanted: opts.sessionId || null, spare: opts.spare === true, promise: null, proc: null, cancelled: false };
     slot.promise = start(opts, slot).then((p) => { if (opts.claimed) p.busy = true; failures = 0; return p; }, (err) => { failures++; throw err; }).finally(() => pending.delete(slot));
     pending.add(slot);
     return slot.promise;
@@ -268,12 +279,12 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
 
   // The kept process for this message (claimed: busy), after waiting for a prewarm() start of it still in flight. A process
   // of this chat for another thread is ended (a new chat, a thread Lumen dropped). null: none.
-  async function find({ key, sessionId, resume }) {
-    const wait = [...pending].find((s) => s.key === key && (resume ? s.wanted === sessionId : s.spare));
+  async function find({ key, sessionId, resume, mode }) {
+    const wait = [...pending].find((s) => s.key === key && s.mode === mode && (resume ? s.wanted === sessionId : s.spare));
     if (wait) { try { await wait.promise; } catch { /* the caller starts its own */ } }
     for (const p of [...procs]) {
       if (p.key !== key || !live(p) || p.busy) continue;
-      if (resume ? p.spare || p.threadId !== sessionId : !p.spare) { dispose(p); continue; }
+      if (p.mode !== mode || (resume ? p.spare || p.threadId !== sessionId : !p.spare)) { dispose(p); continue; } // (the other kind of process, or another thread)
       p.busy = true;
       return p;
     }
@@ -282,12 +293,13 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
 
   // One message through the chat's kept process. Resolves codex.js run()'s result, or null when this message must go through
   // a headless run instead (nothing was sent to Codex then).
-  async function run({ chatId, prompt, images = [], sessionId, systemPrompt, model = 'default', effort = '', signal, emit, runAgent = null, scope = null }) {
+  async function run({ chatId, prompt, images = [], sessionId, systemPrompt, model = 'default', effort = '', fullAccess = false, signal, emit, runAgent = null, scope = null }) {
+    fullAccess = fullAccess === true;
     if (!enabled()) { disposeAll(); return null; }
     if (chatId == null || failures >= FAILURES_BEFORE_GIVING_UP) { stats.fallbacks++; return null; }
     const resume = Boolean(sessionId) && cx.SAFE_SESSION.test(sessionId);
     const key = cx.chatKey(chatId);
-    let p = await find({ key, sessionId, resume });
+    let p = await find({ key, sessionId, resume, mode: modeOf(fullAccess) });
     // The user's sign-in changed since this process copied it (a new login, or a token another Codex refreshed): start over.
     if (p && await userSignInChanged(p)) { p.busy = false; dispose(p); stats.restarts++; p = null; }
     // A reasoning effort chosen earlier stays on a thread until another is chosen: back to Codex's own default needs a new process.
@@ -295,7 +307,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     if (p) stats.reused++;
     else {
       emit({ type: 'status', text: 'Starting Codex…' }); // the working line says why it waits (cleared on the first output)
-      try { p = await starting({ chatId, sessionId: resume ? sessionId : null, claimed: true }); } catch { stats.fallbacks++; return null; }
+      try { p = await starting({ chatId, sessionId: resume ? sessionId : null, claimed: true, fullAccess }); } catch { stats.fallbacks++; return null; }
     }
     p.spare = false;
     p.used = ++used;
@@ -334,7 +346,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     let lastId = null;
     const shown = new Map(); // agentMessage id -> how much of its text is on screen
     const shownText = new Map(); // agentMessage id -> its text so far, from the deltas
-    const watchdogMs = engine.watchdogMs;
+    const watchdogMs = p.full && engine.watchdogMs ? Math.max(engine.watchdogMs, cx.FULL_WATCHDOG_MS) : engine.watchdogMs; // [full access] a silent shell command is not a hang
     const kill = () => { engine.kill(p.child); };
     let finish;
     const ended = new Promise((resolve) => { finish = resolve; });
@@ -367,7 +379,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       }
       if (method === 'item/started' || method === 'item/completed') {
         const item = params.item || {};
-        const bad = offItemOf(item);
+        const bad = offItemOf(item, { fullAccess: p.full });
         if (bad) { offItem = bad; kill(); finish('off'); return; }
         if (item.type === 'agentMessage' && method === 'item/completed' && typeof item.text === 'string') { shownText.set(String(item.id), item.text); say(String(item.id), item.text); }
         else if (item.type === 'reasoning' && method === 'item/completed') { const t = reasoningText(item); if (t) emit({ type: 'thinking', text: t }); }
@@ -407,7 +419,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         files.push(f);
       }
       input.push({ type: 'text', text: cx.promptFor({ prompt, systemPrompt, resume }), text_elements: [] }, ...files.map((f) => ({ type: 'localImage', path: f })));
-      const params = { threadId, input, approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(model !== 'default' && validModel(model) ? { model } : {}), ...(effort ? { effort } : {}) };
+      const params = { threadId, input, approvalPolicy: 'never', sandboxPolicy: { type: p.full ? 'dangerFullAccess' : 'readOnly' }, ...(model !== 'default' && validModel(model) ? { model } : {}), ...(effort ? { effort } : {}) };
       const res = signal.aborted ? { error: { message: 'stopped' } } : await p.rpc.request('turn/start', params, startTimeoutMs);
       if (res.error) { if (!signal.aborted) failedMsg = res.error.message || 'Codex did not start the turn.'; finish('start'); } else {
         turnId = res.result?.turn?.id || null;
@@ -446,7 +458,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       return { text, sessionId: threadId, usage, rateLimit, model: served, keep: true };
     }
     const failText = failedMsg || lastError || p.stderr || '';
-    const failure = cx.describeFailure(failText, p.exited ? p.exitCode : null);
+    const failure = cx.describeFailure(failText, p.exited ? p.exitCode : null, { fullAccess: p.full });
     if (/not signed in/.test(failure.text)) { engine.signedOut = true; engine.statusCache = null; }
     emit({ type: 'error', ...failure });
     return { text, sessionId: threadId, failed: true, usage, rateLimit, planLimit: codexUsage.limitMessage(failText), model: served, keep: false };
@@ -458,11 +470,14 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     if (!enabled() || spec?.chatId == null || failures >= FAILURES_BEFORE_GIVING_UP) return false;
     const resume = Boolean(spec.sessionId) && cx.SAFE_SESSION.test(spec.sessionId);
     const key = cx.chatKey(spec.chatId);
-    const mine = (x) => x.key === key && (resume ? (x.threadId || x.wanted) === spec.sessionId && !x.spare : x.spare);
+    const fullAccess = spec.fullAccess === true;
+    const mode = modeOf(fullAccess);
+    for (const p of [...procs]) if (p.key === key && p.mode !== mode && !p.busy) dispose(p); // the setting changed: the other kind of process goes
+    const mine = (x) => x.key === key && x.mode === mode && (resume ? (x.threadId || x.wanted) === spec.sessionId && !x.spare : x.spare);
     const kept = [...procs].find((p) => live(p) && mine(p));
     if (kept || [...pending].some(mine)) { if (kept && !kept.busy) { kept.used = ++used; idleLater(kept, kept.spare ? spareIdleMs : idleMs()); } return false; }
     stats.prewarmed++;
-    starting({ chatId: spec.chatId, sessionId: resume ? spec.sessionId : null, spare: !resume })
+    starting({ chatId: spec.chatId, sessionId: resume ? spec.sessionId : null, spare: !resume, fullAccess })
       .then((p) => { if (!p.busy) idleLater(p, p.spare ? spareIdleMs : idleMs()); })
       .catch(() => {});
     return true;
@@ -495,4 +510,4 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
   return { run, prewarm, dropChat, disposeAll, count, owner, stats };
 }
 
-module.exports = { createCodexWarm, approvalAnswer, offItemOf, reasoningText, addUsage, OPT_OUT, IDLE_MS, MAX_PROCS };
+module.exports = { createCodexWarm, modeOf, approvalAnswer, offItemOf, reasoningText, addUsage, OPT_OUT, IDLE_MS, MAX_PROCS };
