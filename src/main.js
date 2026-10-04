@@ -77,7 +77,7 @@ const { createUsage } = require('./features/usage');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [ai controls] "Turn off AI on this site"
-const { createSafeBrowsing } = require('./features/safe-browsing');
+const { createSafeBrowsing, GATE_FILTER } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
@@ -1039,7 +1039,7 @@ const privateWindows = createPrivateWindows({
   // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
   // Do Not Track / Global Privacy Control, languages and Chrome hints.
   prepareSession: (ses) => {
-    ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+    ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
@@ -1710,7 +1710,7 @@ function researchSession() {
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
-  ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
+  ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
@@ -4148,7 +4148,7 @@ const runSlots = tabChatsLib.createRunSlots({
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 let lastCodexSidebar = null;
-onSettingsWritten = (s) => { if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+onSettingsWritten = (s) => { adblock.sync(); if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
@@ -7907,7 +7907,7 @@ app.whenReady().then(async () => {
   loadHistory();
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
-  session.defaultSession.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+  session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
   safeBrowsing.refresh().catch(() => {});
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
   // otherwise load unfiltered, and without the document-start scriptlets). The first run's download

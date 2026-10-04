@@ -553,6 +553,9 @@ function describe(threat) {
   return { SOCIAL_ENGINEERING: 'suspected phishing (deceptive)', MALWARE: 'possibly harmful (malware)', UNWANTED_SOFTWARE: 'possibly hosting unwanted software' }[threat] || 'possibly unsafe';
 }
 
+// The webRequest filter for the gate: it only ever acts on pages, so scripts, images and fetches never reach it.
+const GATE_FILTER = { urls: ['http://*/*', 'https://*/*'], types: ['mainFrame'] };
+
 module.exports = {
-  createSafeBrowsing, canonicalize, expressions, riceDecode, applyUpdate, checksum, backoffMs, durationMs, prefixesToBytes, prefixesFromBytes, sha256, isLocal, LISTS,
+  GATE_FILTER, createSafeBrowsing, canonicalize, expressions, riceDecode, applyUpdate, checksum, backoffMs, durationMs, prefixesToBytes, prefixesFromBytes, sha256, isLocal, LISTS,
 };
