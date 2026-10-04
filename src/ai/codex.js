@@ -168,7 +168,9 @@ const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 // The [features] that give Codex a tool of its own (checked against `codex features list` and `codex exec --strict-config`, codex-cli 0.160.0):
 // a shell, pictures, a browser or the computer, sub-agents, apps and plugins, hooks, and so on. All off: Lumen's MCP tools are all Codex gets.
 // (`unified_exec` is on whatever the config says in that version; shell_tool = false, the read-only sandbox and offItemOf cover it.)
-const OFF_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'apps', 'multi_agent', 'multi_agent_v2', 'in_app_browser', 'hooks', 'plugins', 'tool_suggest', 'skill_search', 'sleep_tool', 'goals', 'memories', 'code_mode_host', 'request_permissions_tool'];
+// NOT code_mode_host: Codex 0.160 hands the model its MCP tools only through Code Mode (`functions.exec`), so with the host off the
+// model sees none of Lumen's tools ("Code Mode is unavailable because code-mode host is disabled"). Checked with a signed-in run.
+const OFF_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'apps', 'multi_agent', 'multi_agent_v2', 'in_app_browser', 'hooks', 'plugins', 'tool_suggest', 'skill_search', 'sleep_tool', 'goals', 'memories', 'request_permissions_tool'];
 
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.

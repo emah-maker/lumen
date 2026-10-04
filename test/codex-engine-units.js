@@ -44,6 +44,7 @@ const fallback = require('../src/ai/fallback');
   const t = cx.configFor({ model: 'gpt-6-luna', run });
   check('config: read-only sandbox, never asks, no update check', /sandbox_mode = "read-only"/.test(t) && /approval_policy = "never"/.test(t) && /check_for_update_on_startup = false/.test(t));
   check('config: Codex\'s shell, picture, browser, computer, sub-agent, app and plugin tools and web search are off, with only keys codex-cli 0.160.0 knows', ['shell_tool', 'view_image', 'image_generation', 'browser_use', 'computer_use', 'multi_agent', 'apps', 'plugins'].every((k) => new RegExp(`${k} = false`).test(t)) && /web_search = "disabled"/.test(t) && !/include_apply_patch_tool|view_image_tool|apply_patch_freeform|web_search_request/.test(t), t);
+  check('config: the Code Mode host stays on (Codex 0.160 gives the model its MCP tools only through it)', !/code_mode_host = false/.test(t), t);
   check('config: exactly one MCP server, lumen, over HTTP with the bearer token in an environment variable', (t.match(/^\[mcp_servers\./gm) || []).length === 1 && /\[mcp_servers\.lumen\]/.test(t) && /url = "http:\/\/127\.0\.0\.1:5123\/mcp"/.test(t) && /bearer_token_env_var = "LUMEN_MCP_TOKEN"/.test(t), t);
   check('config: the token itself is not in the file', !t.includes('SECRETTOKEN'));
   check('config: long timeouts (an approval card waits for the user) and tool approvals left to Lumen\'s own card', /startup_timeout_sec = 30/.test(t) && /tool_timeout_sec = 600/.test(t) && /default_tools_approval_mode = "approve"/.test(t));
