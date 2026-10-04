@@ -4,11 +4,13 @@
 //   claudeCodeFullAccess   ai/claude-code.js   ARGS_FULL
 //   grokBuildFullAccess    ai/grok-build.js    ARGS_FULL
 //   antigravityFullAccess  ai/antigravity.js   FULL_FLAGS
+//   codexFullAccess        ai/codex.js         FULL_ON
 (() => {
   const CLI_ACCESS = [
     { key: 'claudeCodeFullAccess', name: 'Claude Code' },
     { key: 'grokBuildFullAccess', name: 'Grok Build' },
     { key: 'antigravityFullAccess', name: 'Antigravity' },
+    { key: 'codexFullAccess', name: 'Codex' },
   ];
   const KEYS = CLI_ACCESS.map((c) => c.key);
 

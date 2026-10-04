@@ -38,6 +38,10 @@ module.exports = async function usageBarsUnits(check) {
   const state = { showBars: true, bars: { claudecode: plan(55), codex: { engine: 'codex', kind: 'plan', percent: 20, resetsAt: NOW + H, weekly: null }, grokbuild: { engine: 'grokbuild', kind: 'context', percent: 40 } }, cooling: {} };
   check('usage bars: a provider with no usage data (an API key, Antigravity, Grok without a budget) has no bar', ['anthropic:claude-opus-5', 'openai:gpt-5', 'antigravity:default', 'grokbuild:default', 'xai:grok-4', 'auto', 'claudecode:__more'].every((id) => UB.forModel(id, state, NOW) === null), '');
   check('usage bars: models of an engine with a plan window get its bar, a provider heading too', UB.forModel('claudecode:sonnet', state, NOW).text === '55%' && UB.forProvider('codex', state, NOW).text === '20%' && UB.forModel('claudecode:auto', state, NOW).text === '55%');
+
+  // ---- the composer strip: which engine's bar a picker id gets (Auto of an engine is that engine's)
+  check('usage bars: engineOf maps Auto-of-an-engine and every CLI id to its engine, bare Claude ids to Anthropic, plain Auto and "more" rows to none', UB.engineOf('claudecode:auto') === 'claudecode' && UB.engineOf('codex:auto') === 'codex' && UB.engineOf('grokbuild:auto') === 'grokbuild' && UB.engineOf('antigravity:auto') === 'antigravity' && UB.engineOf('claudecode:sonnet') === 'claudecode' && UB.engineOf('claude-opus-5') === 'anthropic' && UB.engineOf('xai:grok-4') === 'xai' && UB.engineOf('auto') === '' && UB.engineOf('') === '' && UB.engineOf(null) === '' && UB.engineOf('claudecode:__more') === '', '');
+  check('usage bars: under claudecode:auto the composer finds Claude Code\'s plan bar (the 0.5.9 bug: Auto ids were skipped)', state.bars[UB.engineOf('claudecode:auto')].percent === 55, '');
   check('usage bars: the setting off hides every bar', UB.forModel('claudecode:sonnet', { ...state, showBars: false }, NOW) === null && UB.forProvider('claudecode', { ...state, showBars: false }, NOW) === null);
   check('usage bars: no state yet (nothing loaded) is no bar', UB.forModel('claudecode:sonnet', null, NOW) === null);
 

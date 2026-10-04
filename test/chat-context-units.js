@@ -24,6 +24,8 @@ const J = (v) => JSON.stringify(v);
   check('context: no usage, no figure', CU.contextTokensOf(null) === 0 && CU.contextTokensOf({}) === 0);
   check('window: what the engine reported wins', CU.windowFor('claudecode:opus', 1_000_000) === 1_000_000 && CU.windowFor('gpt-5', 400_000) === 400_000);
   check('window: a [1m] model is 1M, anything else 200k', CU.windowFor('claudecode:opus[1m]') === 1_000_000 && CU.windowFor('claudecode:default') === 200_000 && CU.windowFor(null) === 200_000);
+  check('window: Codex, Antigravity and Grok Build without a reported window use the engine\'s usual one; a reported one still wins', CU.windowFor('codex:default') === 272_000 && CU.windowFor('codex:gpt-5.5') === 272_000 && CU.windowFor('antigravity:default') === 1_000_000 && CU.windowFor('grokbuild:default') === 256_000 && CU.windowFor('codex:default', 400_000) === 400_000 && CU.windowFor('codex:default', 0) === 272_000);
+  check('window: a codex chat\'s context records against 272k (never 0, so the strip can show a total)', (() => { const s = {}; CU.setContext(s, { tokens: 26_878, model: 'codex:default', estimated: true }); const v = CU.contextView(s.context); return v.window === 272_000 && Math.round(v.percent) === 10 && v.estimated; })());
   const settings = {};
   CU.setContext(settings, { tokens: 50_000, window: 200_000, now: 5 });
   check('setContext: saved on the chat\'s settings', J(settings.context) === J({ tokens: 50000, window: 200000, at: 5 }), J(settings.context));

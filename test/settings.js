@@ -151,17 +151,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   })());
   await inTab(sid, "location.hash = '#ai'");
   // ---- AI: full access for the command-line AIs (renderer/cli-access.js) ----
-  const accessState = () => inTab(sid, "(() => { const m = document.getElementById('pref-cliFullAccess'); const k = (id) => document.getElementById('pref-' + id).checked; return JSON.stringify({ master: m.indeterminate ? 'mixed' : m.checked ? 'on' : 'off', cc: k('claudeCodeFullAccess'), gb: k('grokBuildFullAccess'), ag: k('antigravityFullAccess'), aria: m.getAttribute('aria-checked') }); })()");
-  const accessFile = () => { const p = readPrefsFile(); return JSON.stringify([p.claudeCodeFullAccess === true, p.grokBuildFullAccess === true, p.antigravityFullAccess === true]); };
-  check('full access: the master switch and one switch per CLI exist, everything off by default', (await accessState()) === '{"master":"off","cc":false,"gb":false,"ag":false,"aria":"false"}', await accessState());
+  const accessState = () => inTab(sid, "(() => { const m = document.getElementById('pref-cliFullAccess'); const k = (id) => document.getElementById('pref-' + id).checked; return JSON.stringify({ master: m.indeterminate ? 'mixed' : m.checked ? 'on' : 'off', cc: k('claudeCodeFullAccess'), gb: k('grokBuildFullAccess'), ag: k('antigravityFullAccess'), cx: k('codexFullAccess'), aria: m.getAttribute('aria-checked') }); })()");
+  const accessFile = () => { const p = readPrefsFile(); return JSON.stringify([p.claudeCodeFullAccess === true, p.grokBuildFullAccess === true, p.antigravityFullAccess === true, p.codexFullAccess === true]); };
+  check('full access: the master switch and one switch per CLI exist, everything off by default', (await accessState()) === '{"master":"off","cc":false,"gb":false,"ag":false,"cx":false,"aria":"false"}', await accessState());
   await clickEl('#pref-cliFullAccess');
-  check('full access: the master switch turns all three on and saves them', (await accessState()) === '{"master":"on","cc":true,"gb":true,"ag":true,"aria":"true"}' && accessFile() === '[true,true,true]', `${await accessState()} ${accessFile()}`);
+  check('full access: the master switch turns all four on and saves them', (await accessState()) === '{"master":"on","cc":true,"gb":true,"ag":true,"cx":true,"aria":"true"}' && accessFile() === '[true,true,true,true]', `${await accessState()} ${accessFile()}`);
   await clickEl('#pref-grokBuildFullAccess');
-  check('full access: turning one off shows the master switch half-way', (await accessState()) === '{"master":"mixed","cc":true,"gb":false,"ag":true,"aria":"mixed"}' && accessFile() === '[true,false,true]', `${await accessState()} ${accessFile()}`);
+  check('full access: turning one off shows the master switch half-way', (await accessState()) === '{"master":"mixed","cc":true,"gb":false,"ag":true,"cx":true,"aria":"mixed"}' && accessFile() === '[true,false,true,true]', `${await accessState()} ${accessFile()}`);
   await clickEl('#pref-cliFullAccess');
-  check('full access: clicking the half-way master switch clears all three', (await accessState()) === '{"master":"off","cc":false,"gb":false,"ag":false,"aria":"false"}' && accessFile() === '[false,false,false]', `${await accessState()} ${accessFile()}`);
+  check('full access: clicking the half-way master switch clears all four', (await accessState()) === '{"master":"off","cc":false,"gb":false,"ag":false,"cx":false,"aria":"false"}' && accessFile() === '[false,false,false,false]', `${await accessState()} ${accessFile()}`);
   await clickEl('#pref-antigravityFullAccess');
-  check('full access: one CLI on alone is half-way, and the others stay off', (await accessState()) === '{"master":"mixed","cc":false,"gb":false,"ag":true,"aria":"mixed"}' && accessFile() === '[false,false,true]', `${await accessState()} ${accessFile()}`);
+  check('full access: one CLI on alone is half-way, and the others stay off', (await accessState()) === '{"master":"mixed","cc":false,"gb":false,"ag":true,"cx":false,"aria":"mixed"}' && accessFile() === '[false,false,true,false]', `${await accessState()} ${accessFile()}`);
   await clickEl('#pref-antigravityFullAccess');
 
   // ---- theme ----

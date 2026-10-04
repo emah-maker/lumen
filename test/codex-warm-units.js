@@ -177,11 +177,11 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
     engine.keepWarm = warmLib.createCodexWarm({ engine, enabled: () => state.on, idleMs: () => state.idleMs, maxProcs, cancelWaitMs, readyWaitMs, quitGraceMs: 100 });
     return { fake, engine, state, pool: engine.keepWarm, userData, fakeGate };
   };
-  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', systemPrompt = 'SYS', model = 'default', effort = '', images = [], signal = new AbortController().signal, quietExpired = false } = {}) => {
+  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', systemPrompt = 'SYS', model = 'default', effort = '', fullAccess = false, images = [], signal = new AbortController().signal, quietExpired = false } = {}) => {
     const events = [];
     const t0 = Date.now();
     let ttft = null;
-    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, signal, quietExpired, scope: { chatId }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
+    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, quietExpired, scope: { chatId }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
     return { out, events, ttft, ms: Date.now() - t0 };
   };
 
@@ -447,6 +447,61 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       pending.pool.dropChat('pc');
       await sleep(STARTUP_MS + 100);
       check('dropChat: a start still in flight is cancelled', pending.pool.count() === 0, String(pending.pool.count()));
+    }
+
+    // ---- full access (codexFullAccess): a kind of process of its own
+    {
+      const { fake, engine, pool, userData } = setup();
+      process.env.LUMEN_TEST_SECRET = 'visible-only-with-full-access';
+      const lock = await send(engine);
+      const full = await send(engine, { sessionId: lock.out.sessionId, fullAccess: true });
+      const [pl, pf] = fake.apps();
+      check('full: a locked-down process is never reused for full access: the message starts a full-access one (the idle locked one ends)', fake.apps().length === 2 && await until(() => pl.ended, 500) && full.out.text === 'warm reply 1' && pool.stats.reused === 0, J({ n: fake.apps().length }));
+      const home = cx.chatHomeFor(userData, 'chat-a');
+      const config = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+      check('full: config.toml has the sandbox off, approval never, web search live, the shell tools back on, the rest off, Code Mode host on, one MCP server', /sandbox_mode = "danger-full-access"/.test(config) && /approval_policy = "never"/.test(config) && /web_search = "live"/.test(config) && !/shell_tool = false/.test(config) && !/unified_exec = false/.test(config) && !/view_image = false/.test(config) && /plugins = false/.test(config) && /apps = false/.test(config) && /multi_agent = false/.test(config) && /memories = false/.test(config) && !/code_mode_host = false/.test(config) && (config.match(/^\[mcp_servers\./gm) || []).length === 1, config);
+      check('full: the thread and every turn say danger-full-access, never a bypass flag; argv is only app-server', pf.startParams === undefined && pf.requests.some((m) => m.method === 'thread/resume' && m.params.sandbox === 'danger-full-access' && m.params.approvalPolicy === 'never') && pf.inputs[0].sandboxPolicy.type === 'dangerFullAccess' && pf.inputs[0].approvalPolicy === 'never' && J(pf.argv) === '["app-server"]', J(pf.requests.map((m) => m.method)));
+      check('full: the user\'s whole environment (not Electron\'s switch), the same token and Codex home, an empty working folder', pf.opts.env.LUMEN_TEST_SECRET === 'visible-only-with-full-access' && !('ELECTRON_RUN_AS_NODE' in pf.opts.env) && /^m-/.test(pf.opts.env.LUMEN_MCP_TOKEN) && path.resolve(pf.opts.env.CODEX_HOME) === path.resolve(home) && /lumen-cx-/.test(pf.opts.cwd) && fs.readdirSync(pf.opts.cwd).length === 0 && !('LUMEN_TEST_SECRET' in pl.opts.env));
+      const again = await send(engine, { sessionId: full.out.sessionId, fullAccess: true });
+      check('full: the next full-access message reuses its process', fake.apps().length === 2 && again.out.text === 'warm reply 2' && pool.stats.reused === 1);
+      const back = await send(engine, { sessionId: full.out.sessionId, fullAccess: false });
+      check('full: turning it off ends the full-access process and the next message starts a locked-down one', fake.apps().length === 3 && await until(() => pf.ended, 500) && fake.apps()[2].inputs[0].sandboxPolicy.type === 'readOnly' && back.out.text === 'warm reply 1', J(fake.apps().length));
+      // Codex's own tools are not stopped, another server's still is
+      const f2 = setup();
+      await send(f2.engine, { fullAccess: true });
+      const sid = f2.fake.apps()[0].thread;
+      f2.fake.script.turn = ({ tid, id, say, item, done, note }) => {
+        note('turn/started', { threadId: tid, turn: { id } });
+        item('item/started', { type: 'commandExecution', id: 'c1', command: 'echo hi', status: 'inProgress' });
+        item('item/completed', { type: 'commandExecution', id: 'c1', command: 'echo hi', status: 'completed' });
+        item('item/completed', { type: 'webSearch', id: 'w1', query: 'x' });
+        say('m', 'hi'); item('item/completed', { type: 'agentMessage', id: 'm', text: 'hi' }); done();
+      };
+      const ok = await send(f2.engine, { sessionId: sid, fullAccess: true });
+      check('full: a shell command and a web search are Codex\'s own tools then: nothing stops the message', ok.out.text === 'hi' && !ok.out.failed && !f2.fake.apps()[0].killed, J(ok.out));
+      f2.fake.script.turn = ({ tid, id, item, note }) => { note('turn/started', { threadId: tid, turn: { id } }); item('item/started', { type: 'mcpToolCall', id: 'c3', server: 'github', tool: 'create_issue', status: 'inProgress' }); };
+      const bad = await send(f2.engine, { sessionId: sid, fullAccess: true });
+      check('full: another MCP server\'s tool is still refused', bad.out.failed && bad.events.some((e) => e.type === 'error' && /github\/create_issue/.test(e.text)));
+      const ans = warmLib.approvalAnswer;
+      check('full: Codex\'s own approval requests are allowed once; locked-down ones stay declined', ans('item/commandExecution/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('item/fileChange/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('execCommandApproval', {}, { fullAccess: true }).decision === 'approved' && ans('item/commandExecution/requestApproval', {}).decision === 'decline' && ans('mcpServer/elicitation/request', { serverName: 'other' }, { fullAccess: true }).action === 'decline');
+      const o = warmLib.offItemOf;
+      check('full: offItemOf lets the shell, patch, web and picture-view items through but not sub-agents, picture generation or other servers', o({ type: 'commandExecution' }, { fullAccess: true }) === null && o({ type: 'fileChange' }, { fullAccess: true }) === null && o({ type: 'webSearch' }, { fullAccess: true }) === null && o({ type: 'imageView' }, { fullAccess: true }) === null && o({ type: 'collabAgentToolCall' }, { fullAccess: true }) && o({ type: 'imageGeneration' }, { fullAccess: true }) && o({ type: 'commandExecution' }));
+      // prewarm: the right kind, and the other kind goes
+      const pre = setup();
+      pre.pool.prewarm({ chatId: 'chat-a', sessionId: null, fullAccess: false });
+      await sleep(STARTUP_MS + 100);
+      pre.pool.prewarm({ chatId: 'chat-a', sessionId: null, fullAccess: true });
+      await sleep(STARTUP_MS + 100);
+      check('full: prewarm starts the kind the setting asks for; a spare of the other kind ends', pre.fake.apps().length === 2 && pre.fake.apps()[0].ended === true && pre.pool.count() === 1 && pre.fake.apps()[1].startParams.sandbox === 'danger-full-access', J(pre.fake.apps().map((r) => r.ended)));
+      const first = await send(pre.engine, { fullAccess: true });
+      check('full: the first full-access message takes that prewarmed process', pre.fake.apps().length === 2 && first.out.text === 'warm reply 1' && first.ttft < STARTUP_MS / 3, J({ n: pre.fake.apps().length, ttft: first.ttft }));
+      // headless fallback keeps the flag
+      const noApp = setup();
+      noApp.fake.script.appServer = false;
+      await send(noApp.engine, { fullAccess: true });
+      const h = noApp.fake.headless()[0];
+      check('full: a headless run says --sandbox danger-full-access (never the bypass flag), whole environment, empty folder, config with the sandbox off', h.argv.includes('danger-full-access') && !h.argv.includes('read-only') && !h.argv.some((a) => /bypass|dangerously|full-auto/.test(a)) && h.opts.env.LUMEN_TEST_SECRET === 'visible-only-with-full-access' && /lumen-cx-/.test(h.opts.cwd) && /sandbox_mode = "danger-full-access"/.test(fs.readFileSync(path.join(cx.chatHomeFor(noApp.userData, 'chat-a'), 'config.toml'), 'utf8')), J(h.argv));
+      delete process.env.LUMEN_TEST_SECRET;
     }
 
     // ---- a headless run in the chat's home waits for / replaces a kept process
