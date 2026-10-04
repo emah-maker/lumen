@@ -114,6 +114,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   await sleep(300);
   const second = (await send('hello'))[0];
   check('a model that hit its limit is left alone by Auto', second !== first, `${first} -> ${second}`);
+  check('the Auto reply says which provider it skipped for being out of usage', await waitFor(() => ui.evaluate(() => { const el = [...document.querySelectorAll('.reply-model')].pop(); return Boolean(el) && /skipped: out of usage/.test(el.title); })), await ui.evaluate(() => [...document.querySelectorAll('.reply-model')].map((e) => e.title).join(' ; ')));
   await app.evaluate(() => global.__aiFallback.shared.clear());
   await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity'] }));
   const picks = [];

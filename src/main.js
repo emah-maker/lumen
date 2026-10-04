@@ -2810,15 +2810,18 @@ async function organizeTabs() {
   const groupsBefore = back(() => tabGroups.layoutSignature().groups); // groups that exist before this click (automatic grouping may have made some)
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
-    await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
-    if (organizeAbort.signal.aborted) return 0;
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
     // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
     // The model is asked only when "Use AI to name and group topics" is on and a route to one exists (a key, or a signed-in CLI); the
     // route is worked out once per click. Otherwise this stays on this computer: nothing is sent and there is nothing to complain about.
     const aiOn = readSettings().topicAi === true || (TEST && global.__organizeAlwaysAsk === true);
-    const route = aiOn ? await groupingRoute(String(cheapTopicModel())).catch(() => null) : null;
-    const timeoutMs = organizeAi.timeoutFor(route);
+    // Worked out AFTER the local groups are on screen (organizeProgressive's `prepare`): a CLI engine's sign-in check and the wait for a
+    // stopped CLI to be gone used to hold up the first change by a second or more.
+    const prepare = aiOn ? async () => {
+      await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
+      const route = await groupingRoute(String(cheapTopicModel())).catch(() => null);
+      return { ask: organizeAi.askIfEnabled({ enabled: true, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }), timeoutMs: organizeAi.timeoutFor(route) };
+    } : null;
     const stats = await organizeAi.organizeProgressive({
       tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
@@ -2826,8 +2829,7 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      timeoutMs,
-      ask: organizeAi.askIfEnabled({ enabled: aiOn, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }),
+      prepare,
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
@@ -6491,13 +6493,13 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
-const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
+const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
   ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
-ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
+ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
 // (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
 const bgTasks = require('./features/background-runner').create({
@@ -6689,6 +6691,7 @@ function aiStatusFacts() {
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
     aiTabs: [...winRecs].filter(rcAlive).reduce((n, rec) => n + tabsOf(rec).filter((tab) => manners.isAiTab(tab)).length, 0),
     handsOff: s.aiHandsOff === true,
+    showBars: s.usageBars !== false, // [usage bars] Settings → Usage
   };
 }
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
