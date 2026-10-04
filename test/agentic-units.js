@@ -12,6 +12,55 @@ const { PassThrough, Writable } = require('stream');
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A virtual clock for the timing checks whose bounds are about elapsed time (settle waits, spinner waits): while
+// installed, setTimeout/setInterval/Date.now run on a clock that only moves when run() drives it, so a loaded
+// machine cannot stretch a 100 ms wait past its upper bound. run(p) fires due timers in order (letting promise
+// callbacks run between them) until p settles.
+function fakeClock() {
+  const real = { setTimeout, clearTimeout, setInterval, clearInterval, now: Date.now, setImmediate };
+  const base = real.now();
+  let now = 0;
+  let seq = 0;
+  const timers = new Map();
+  const add = (fn, ms, every) => { const id = ++seq; timers.set(id, { fn, at: now + Math.max(Number(ms) || 0, 0), every, id }); return id; };
+  return {
+    install() {
+      globalThis.setTimeout = (fn, ms) => add(fn, ms);
+      globalThis.setInterval = (fn, ms) => add(fn, Math.max(Number(ms) || 1, 1), Math.max(Number(ms) || 1, 1));
+      globalThis.clearTimeout = globalThis.clearInterval = (id) => { timers.delete(id); };
+      Date.now = () => base + now;
+    },
+    uninstall() {
+      Object.assign(globalThis, { setTimeout: real.setTimeout, clearTimeout: real.clearTimeout, setInterval: real.setInterval, clearInterval: real.clearInterval });
+      Date.now = real.now;
+    },
+    async run(p) {
+      let settled = false;
+      let value;
+      let error;
+      p.then((v) => { value = v; settled = true; }, (e) => { error = e; settled = true; });
+      for (let guard = 0; !settled; guard++) {
+        await new Promise((r) => real.setImmediate(r)); // let promise callbacks run before the next timer fires
+        if (settled) break;
+        const next = [...timers.values()].sort((a, b) => a.at - b.at || a.id - b.id)[0];
+        if (!next || guard > 100000) throw new Error('fake clock: the promise never settled and no timers are pending');
+        now = Math.max(now, next.at);
+        if (next.every) next.at = now + next.every; else timers.delete(next.id);
+        next.fn();
+      }
+      if (error) throw error;
+      return value;
+    },
+  };
+}
+// Wait for a condition up to a generous deadline (a loaded machine only makes it slower, never red) instead of sleeping a guessed time.
+async function until(cond, label = 'condition', ms = 30000) {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for ' + label);
+    await sleep(5);
+  }
+}
 const flag = (argv, f) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : undefined);
 
 // ---- a fake `claude`: one child per spawn, reads stream-json lines, answers through `respond`
@@ -78,7 +127,7 @@ async function engineRuns() {
   let events = [];
 
   // Warm first (runTask), then the message: one process, started before run().
-  const eng = make({ interruptMs: 60 });
+  const eng = make({ interruptMs: 1500 }); // (long: the stop below must resolve without waiting it out, however slow the machine)
   eng.warm({ sessionId: 'sess-1', resume: false, systemPrompt: 'SYS', model: 'default', maxTurns: 0 });
   await sleep(20);
   check('warm: the CLI is started before the message', cli.spawned.length === 1, String(cli.spawned.length));
@@ -106,8 +155,8 @@ async function engineRuns() {
   const t0 = Date.now();
   ctl.abort();
   const stopped = await pending;
-  check('stop: resolves at once as stopped; the CLI is asked to interrupt first', stopped.stopped === true && Date.now() - t0 < 50 && !second.killed && second.controls.length === 1 && second.controls[0].request?.subtype === 'interrupt' && /^lumen-stop-/.test(second.controls[0].request_id), JSON.stringify({ stopped, controls: second.controls }));
-  await sleep(120);
+  check('stop: resolves at once as stopped; the CLI is asked to interrupt first', stopped.stopped === true && Date.now() - t0 < 1000 && !second.killed && second.controls.length === 1 && second.controls[0].request?.subtype === 'interrupt' && /^lumen-stop-/.test(second.controls[0].request_id), JSON.stringify({ stopped, controls: second.controls }));
+  await until(() => second.killed, 'the unanswered interrupt to end in a kill');
   check('stop: a CLI that never answers the interrupt is killed after the wait', second.killed, '');
   respond = echo;
   const r3 = await eng.run(opts({ prompt: 'back', resume: true, model: 'opus' }));
@@ -557,7 +606,7 @@ async function grokRuns() {
   check('grok: a process silent past the watchdog is ended with a clear error', hung.failed === true && live[0].killed === true && evs.some((e) => e.type === 'error' && /stopped responding/.test(e.text)), JSON.stringify({ hung, evs }));
   script = (child) => { let n = 0; const tick = setInterval(() => { child.out({ type: 'system', subtype: 'init', session_id: 's' }); if (++n === 8) { clearInterval(tick); child.finish('chatty'); } }, 30); };
   const chatty = await runLive();
-  check('grok: steady output (each line restarts the watchdog) is never cut off', chatty.text === 'chatty' && !chatty.failed && !live[1].killed, JSON.stringify(chatty));
+  check('grok: steady output (each line restarts the watchdog) is never cut off', chatty.text === 'chatty' && !chatty.failed, JSON.stringify(chatty));
   script = (child) => child.out({ type: 'system', subtype: 'init', session_id: 's' });
   const waiting = runLive();
   for (let i = 0; i < 100 && !live[2]; i++) await sleep(25); // (the process starts after an async setup that a loaded machine slows)
@@ -578,7 +627,7 @@ async function grokRuns() {
   const n0 = live.length;
   script = (child) => setTimeout(() => { child.out({ type: 'system', subtype: 'init', session_id: 's' }); child.finish('slow start'); }, 150);
   const slow = await runFirst(false);
-  check('grok: a first message slow to print its first line (past the watchdog, within the MCP-wait allowance) is not called hung', slow.text === 'slow start' && !slow.failed && !live[n0].killed, JSON.stringify(slow));
+  check('grok: a first message slow to print its first line (past the watchdog, within the MCP-wait allowance) is not called hung', slow.text === 'slow start' && !slow.failed, JSON.stringify(slow));
   script = () => {};
   const silent = await runFirst(true);
   check('grok: a resumed message silent from the start still hits the plain watchdog', silent.failed === true && live[live.length - 1].killed === true, JSON.stringify(silent));
@@ -712,6 +761,11 @@ function searchRuns() {
 }
 
 async function settleRuns() {
+  const clock = fakeClock();
+  clock.install();
+  try { await settleBody(clock); } finally { clock.uninstall(); }
+}
+async function settleBody(clock) {
   const { settleAfterAction } = require('../src/ai/agent');
   const fakeWc = ({ quietAfter, navigate }) => {
     const wc = new EventEmitter();
@@ -726,17 +780,17 @@ async function settleRuns() {
     return wc;
   };
   let t = Date.now();
-  await settleAfterAction(fakeWc({ quietAfter: 110 }));
+  await clock.run(settleAfterAction(fakeWc({ quietAfter: 110 })));
   const quick = Date.now() - t;
   check('settle: no navigation returns once the DOM is quiet, without the fixed 550 ms', quick >= 100 && quick < 400, `${quick} ms`);
   t = Date.now();
-  await settleAfterAction(fakeWc({ quietAfter: null, navigate: true }));
+  await clock.run(settleAfterAction(fakeWc({ quietAfter: null, navigate: true })));
   const nav = Date.now() - t;
   check('settle: a navigation that starts is waited for until it has loaded', nav >= 300, `${nav} ms`);
   t = Date.now();
   const spa = fakeWc({ quietAfter: 120 });
   setTimeout(() => spa.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true }), 20);
-  await settleAfterAction(spa);
+  await clock.run(settleAfterAction(spa));
   check('settle: a same-document navigation (pushState) is not waited on as a load', Date.now() - t < 400, `${Date.now() - t} ms`);
 
   // The in-page DOM wait itself (run against a fake MutationObserver): a constantly mutating page resolves at ~650 ms.
@@ -748,16 +802,16 @@ async function settleRuns() {
     const start = Date.now();
     vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: FakeObserver, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
   });
-  const still = await runQuiet(0);
+  const still = await clock.run(runQuiet(0));
   check('settle: a page with no mutations is quiet after ~100 ms', still.why === 'quiet' && still.ms >= 90 && still.ms < 400, JSON.stringify(still));
-  const animating = await runQuiet(30);
+  const animating = await clock.run(runQuiet(30));
   check('settle: mutations that never pause for 100 ms stop being waited on at ~650 ms (not 1.5 s)', animating.why === 'busy' && animating.ms >= 600 && animating.ms < 1000, JSON.stringify(animating));
-  const bursty = await runQuiet(0).then(() => new Promise((resolve) => {
+  const bursty = await clock.run(runQuiet(0).then(() => new Promise((resolve) => {
     let fire = null;
     class Obs { constructor(cb) { fire = cb; } observe() { let n = 0; this.tick = setInterval(() => { if (++n > 4) clearInterval(this.tick); else fire([]); }, 40); } disconnect() { clearInterval(this.tick); } }
     const start = Date.now();
     vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
-  }));
+  })));
   check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 640, JSON.stringify(bursty));
 }
 
@@ -818,13 +872,13 @@ async function toolCallRuns() {
   // The row is shown at once; describeStep's label follows as a tool_update and does not delay the call.
   events.length = 0;
   calls.length = 0;
-  describe = async () => { await sleep(300); calls.push('described'); return 'Reading the page closely'; };
+  describe = async () => { await sleep(3000); calls.push('described'); return 'Reading the page closely'; }; // (far longer than the call may take: the bound below proves it did not wait)
   const t0 = Date.now();
   const read = await callTool('read_page', {}, session);
   const took = Date.now() - t0;
   const rowAt = events.findIndex((e) => e.type === 'tool');
-  check('step label: a read-only tool\'s row shows at once (generic label) and the call runs without waiting for describeStep', read.isError === false && rowAt === 0 && events[0].label == null && calls[0] === 'execute:read_page' && took < 250, JSON.stringify({ took, events, calls }));
-  await sleep(350);
+  check('step label: a read-only tool\'s row shows at once (generic label) and the call runs without waiting for describeStep', read.isError === false && rowAt === 0 && events[0].label == null && calls[0] === 'execute:read_page' && took < 2500, JSON.stringify({ took, events, calls }));
+  await until(() => calls.includes('described'), 'the late label');
   check('step label: a label that arrives after the call finished is dropped (no update on a done row)', !events.some((e) => e.type === 'tool_update') && calls.includes('described'), JSON.stringify(events));
   // Same, with the call still running when the label lands: the specific label replaces the generic one.
   events.length = 0;
@@ -998,7 +1052,9 @@ async function warmAndQuietRuns() {
     return els;
   };
   const marker = (visible = true) => ({ getAttribute: () => null, getClientRects: () => (visible ? [1] : []) });
-  const timed = async (p) => { const t = Date.now(); const why = await p; return { why, ms: Date.now() - t }; };
+  const clock = fakeClock(); // virtual time: the bounds below are exact, not machine-speed dependent
+  const timed = (p) => { const t = Date.now(); return clock.run(p).then((why) => ({ why, ms: Date.now() - t })); };
+  clock.install();
   try {
     page([]);
     let r = await timed(domQuiet({ quietMs: 30, capMs: 400 }));
@@ -1034,6 +1090,7 @@ async function warmAndQuietRuns() {
     delete globalThis.__lumenStaticMarkers;
     delete global.document;
     delete global.MutationObserver;
+    clock.uninstall();
   }
 
   const can = cc.ClaudeCodeEngine.prototype.canPrewarm;

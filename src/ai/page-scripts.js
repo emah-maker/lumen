@@ -435,6 +435,16 @@ function scroll(pages) {
   })()`;
 }
 
+// wait_for's page check: does the page's visible text contain `text`? Case-insensitive, and whitespace-insensitive on both
+// sides (a heading split by a line break or a non-breaking space still matches its multi-word text).
+function textProbe(text) {
+  return `(() => {
+    const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const want = norm(${JSON.stringify(text)});
+    return norm(document.body ? document.body.innerText : '').includes(want);
+  })()`;
+}
+
 // Finds the best element for a piece of visible text or a label. mode 'field' only considers
 // form controls; 'click' prefers buttons and links. Returns { id } or { error }.
 function findTarget(text, mode) {
@@ -533,4 +543,4 @@ ${text}
 </untrusted_page_content>`;
 }
 
-module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe };

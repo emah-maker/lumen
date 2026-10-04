@@ -14,8 +14,10 @@ const fallback = require('./fallback'); // [model fallback] a model out of usage
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
+const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
+const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
-const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
+const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
@@ -71,7 +73,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline with [id] refs (start here); "full": raw text + element count (elements:true lists them). extract: tables|links|lists as JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -312,6 +314,7 @@ const TOOLS = [
 const snapshot = require('./snapshot');
 snapshot.extendTools(TOOLS);
 // --- end efficiency hook ---
+imageRouter.extendTools(TOOLS); // [image routing]
 
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
 // Other providers get a client-side search tool (DuckDuckGo's HTML results, read without cookies).
@@ -642,6 +645,12 @@ function withoutImages(messages) {
 const isContextError = (err) => /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length/i.test(String(err?.message || ''));
 
 // settings = { model, adhdMode }; adhdMode is fixed per conversation, the model can change.
+// Once the chat has passed the API's own context-management trigger (loop(): messages.pageStub), the pages
+// attached to earlier messages are stubbed (loop-guard.js stubOldPages). Not before: a request that
+// changed an old message would break the prompt cache on every normal turn. Sticky once set, so the
+// stubbed prefix is the same on every later request and caches again at once.
+const pagesFor = (messages) => (messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
+
 function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
   const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -657,7 +666,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
     tools: cacheLastTool(cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS),
-    messages: historyFor(fitContext(messages, budget), model),
+    messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
   if (cfg.effort) params.output_config = { effort: cfg.effort };
@@ -700,7 +709,7 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
 const { siteOf } = require('../features/ai-sites');
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
@@ -1064,7 +1073,7 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
       const final = !blocks.some((b) => b.type === 'tool_use');
-      const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '' }));
+      const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '', ...(b.credit ? { credit: b.credit } : {}) }));
       const pictures = generated.length ? { generated } : {};
       const name = authorName(producedBy.get(m));
       if (name) pictures.by = name;
@@ -1182,6 +1191,8 @@ class Agent {
 
   // The tab this task works in: its pinned tab, or the active tab outside a task (or before a task
   // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
+  taskTabUrl() { try { return this.taskTab()?.webContents.getURL() || ''; } catch { return ''; } }
+
   taskTab() {
     const scope = taskScope.getStore();
     // [chat per tab] A run acts on the tab it is bound to, never on whichever one is in front; only a run
@@ -1353,10 +1364,12 @@ class Agent {
   run(userText, emit, images = [], extra = {}, skill = null) {
     const messages = extra.messages || this.messages;
     const previous = this.runs.get(messages);
-    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts };
+    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts, settling: false };
     const next = (async () => {
       if (previous) {
-        previous.controller.abort();
+        // A run whose reply the screen already has whole (an engine's 'reply_complete', see claudeCodeTurn) is only waiting
+        // for its CLI's last line (cost, session id): a message sent in that moment waits for it, never cuts it short.
+        if (!previous.settling) previous.controller.abort();
         await previous.promise.catch(() => {});
       }
       await this.runOnce(userText, emit, images, extra, skill, messages, rec);
@@ -1940,7 +1953,7 @@ class Agent {
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2032,6 +2045,9 @@ class Agent {
     emit({ type: 'turn_start' });
     const startedAt = Date.now() - 2000; // (pictures written from here on are this run's: enginePictures)
     const engine = this.engineFor('claudecode');
+    const rec = this.runs.get(messages);
+    const sidebarEmit = emit;
+    emit = (event) => { if (event.type === 'reply_complete' && rec) rec.settling = true; sidebarEmit(event); }; // (run(): a settling run is waited for)
     let out = await engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] this message's tab, approvals and signal, for its MCP tool calls
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
@@ -2287,8 +2303,9 @@ ${prompt}` : prompt), historyImages: [] };
       try { got = await genImages.resolveImage(entry, { fetchImpl }); } catch { /* skipped below */ }
       const ref = got && store.save(chatId, got.buffer, { alt: entry.alt || alt });
       if (!ref) continue;
-      blocks.push({ type: 'generated_image', id: ref.id, mime: ref.mime, alt: ref.alt, bytes: ref.bytes });
-      emit({ type: 'image', id: ref.id, mime: ref.mime, alt: ref.alt });
+      const credit = entry.credit ? String(entry.credit).slice(0, 80) : '';
+      blocks.push({ type: 'generated_image', id: ref.id, mime: ref.mime, alt: ref.alt, bytes: ref.bytes, ...(credit ? { credit } : {}) });
+      emit({ type: 'image', id: ref.id, mime: ref.mime, alt: ref.alt, ...(credit ? { credit } : {}) });
     }
     if (!blocks.length) emit({ type: 'notice', text: 'The AI sent a picture Lumen could not show (a type it does not display, damaged, or too large).' });
     return blocks;
@@ -2309,12 +2326,119 @@ ${prompt}` : prompt), historyImages: [] };
   // made may lie anywhere there (or in a folder its shell command was pointed at, engine.freshRoots()): shown only when the
   // file was written after `since` (the start of this message's run). Older files, and files elsewhere, are never shown.
   async enginePictures(text, engine, emit, { since = null } = {}) {
-    if (!this.imageStore || typeof engine?.imageRoots !== 'function') return [];
+    const viaTool = await this.scopeImages(emit); // [image routing] pictures the CLI's generate_image calls made during this message
+    if (!this.imageStore || typeof engine?.imageRoots !== 'function') return viaTool;
     let found = [];
     const fresh = since !== null && typeof engine.freshRoots === 'function' ? { roots: engine.freshRoots(), since, until: Date.now(), home: require('os').homedir() } : null;
-    try { found = genImages.findLocalImages(text, engine.imageRoots(), { fresh }); } catch { return []; }
-    return this.keepImages(found.map((f) => ({ data: f.buffer.toString('base64'), alt: require('path').basename(f.file) })), emit);
+    try { found = genImages.findLocalImages(text, engine.imageRoots(), { fresh }); } catch { return viaTool; }
+    return [...viaTool, ...(await this.keepImages(found.map((f) => ({ data: f.buffer.toString('base64'), alt: require('path').basename(f.file) })), emit))];
   }
+
+  // ---- [image routing] (ai/image-router.js) Any engine can ask for a picture: the generate_image tool, or a message like "draw a cat".
+  // The request goes to a provider the user already connected that makes pictures (Settings > AI > Image generation: Automatic, one
+  // provider, or off); the picture is shown in the chat like any generated one, with a "Made with <provider>" line.
+  imageSetting() { return imageRouter.cleanSetting(this.browser.imageGen?.()); }
+
+  // Which image providers are connected right now: an API key set (OpenRouter: and a picture model known for it), Grok Build signed in.
+  async imageConnected(current) {
+    const has = (p) => { try { return Boolean(this.getKey?.(p)); } catch { return false; } };
+    const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false };
+    out.openrouter = has('openrouter') && Boolean(providers.openRouterImageModel(String(current || '').startsWith('openrouter:') ? String(current).slice(11) : null));
+    try { const st = await this.engines?.grokbuild?.status?.(); out.grokbuild = st?.installed === true && st?.signedIn === true; } catch { out.grokbuild = false; }
+    return out;
+  }
+
+  imageBackends(current) {
+    const api = (provider) => async ({ prompt, source, signal }) => providers.generateImage({
+      provider, apiKey: this.getKey(provider), prompt, source, signal,
+      ...(provider === 'openrouter' ? { model: providers.openRouterImageModel(String(current || '').startsWith('openrouter:') ? String(current).slice(11) : null) } : {}),
+      ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
+    });
+    return {
+      openai: api('openai'), xai: api('xai'), gemini: api('gemini'), openrouter: api('openrouter'),
+      grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal }),
+      ...(this.imageBackendOverrides || {}),
+    };
+  }
+
+  // The routed request: { images, credit, label, ... }, or an Error with `code` (image-router.js route). onTry(key) runs before each provider.
+  routeImage({ prompt, source = null, signal, current, onTry = null }) {
+    return imageRouter.route({
+      setting: this.imageSetting(), current, prompt, source, signal, onTry,
+      exclude: this.browser.autoExcluded?.() || [],
+      connected: () => this.imageConnected(current),
+      cooling: (key) => fallback.shared.cooling(`${key}:image`), // out of usage right now (shared with the chat models): asked last
+      backends: this.imageBackends(current),
+      isPolicy: (err) => providers.isPolicyError(err),
+      classify: (err) => fallback.classify(err),
+    });
+  }
+
+  // The newest picture of this chat, { buffer, mime }, for "edit the last one".
+  lastGeneratedPicture(messages) {
+    for (let i = (messages?.length || 0) - 1; i >= 0; i--) {
+      const blocks = Array.isArray(messages[i]?.content) ? messages[i].content : [];
+      for (let j = blocks.length - 1; j >= 0; j--) {
+        if (blocks[j]?.type === 'generated_image' && blocks[j].id) { const got = this.imageStore?.read(blocks[j].id); if (got) return got; }
+      }
+    }
+    return null;
+  }
+
+  // The generate_image tool. Only in a chat of Lumen's own: an outside agent over MCP has nowhere to show a picture, and would spend the
+  // user's keys and plan. The picture is queued on the run's scope (shown when the step ends: flushToolImages / enginePictures).
+  async generateImageTool(input) {
+    const scope = taskScope.getStore();
+    if (!scope?.chat || scope.gate?.external === true) throw new Error("Pictures can only be made in Lumen's own chat.");
+    const prompt = String(input?.prompt ?? '').trim().slice(0, 4000);
+    if (!prompt) throw new Error('prompt is empty');
+    let source = null;
+    if (input.edit === true) {
+      source = this.lastGeneratedPicture(scope.chat);
+      if (!source) throw new Error('There is no earlier picture in this chat to edit. Make one first.');
+    }
+    const made = await this.routeImage({ prompt, source, signal: scope.signal, current: scope.chat.settings?.model });
+    (scope.toolImages ||= []).push(...made.images.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300), credit: made.credit })));
+    return imageRouter.toolResult(made);
+  }
+
+  // Pictures queued on this run's scope by tools (an outside MCP tool's, generate_image): shown and kept. -> blocks
+  async scopeImages(emit) {
+    const scope = taskScope.getStore();
+    const entries = scope?.toolImages;
+    if (!entries?.length) return [];
+    scope.toolImages = [];
+    return this.keepImages(entries, emit);
+  }
+
+  // A message that asks for a picture, routed (setting not off). true: it was handled (the picture, or why not, is the reply);
+  // false: no connected provider makes pictures, so the caller says so the way it always did.
+  async routedImageTurn(messages, ask, picked, signal, emit) {
+    let started = false;
+    const begin = (key) => {
+      if (!started) { started = true; emit({ type: 'turn_start' }); }
+      emit({ type: 'status', text: `Making your picture with ${imageRouter.labelOf(key)}…` });
+    };
+    const reply = (content) => { const r = { role: 'assistant', content }; producedBy.set(r, picked); messages.push(r); };
+    let made;
+    try {
+      made = await this.routeImage({ prompt: ask.prompt, signal, current: picked, onTry: begin });
+    } catch (err) {
+      if (started) emit({ type: 'status', text: '' });
+      if (err.code === 'none' && !err.missing) return false;
+      if (err.code === 'none') { emit({ type: 'turn_start' }); emit({ type: 'text', text: err.userMessage }); reply([{ type: 'text', text: err.userMessage }]); return true; } // the chosen provider is not connected: said, never swapped for another
+      if (err.code === 'aborted') throw new Error('Stopped');
+      if (err.code === 'refused') { const text = err.userMessage || err.message; emit({ type: 'text', text }); reply([{ type: 'text', text }]); return true; }
+      throw Object.assign(new Error(err.userMessage || err.message), err.provider ? { __provider: err.provider } : {});
+    }
+    emit({ type: 'status', text: '' });
+    const blocks = await this.keepImages(made.images.map((i) => ({ ...i, credit: made.credit })), emit, { alt: ask.prompt });
+    const content = [...(made.said ? [{ type: 'text', text: made.said }] : []), ...blocks];
+    if (made.said) emit({ type: 'text', text: made.said });
+    if (blocks.length) reply(content);
+    return true;
+  }
+  // ---- [/image routing]
 
   // Claude Code without full access has no shell or file tools, so it can't run an image tool of its own. The notice says what
   // would let it: full access (then it uses the user's own image tools), or a model that makes pictures, naming the ones
@@ -2339,6 +2463,8 @@ ${prompt}` : prompt), historyImages: [] };
     // [full access] Claude Code with its own tools on runs as in a terminal: the user's own image tools (a CLI named in their
     // CLAUDE.md / rules) are theirs to use, so the message goes to it as any other. (runTask turned "/image …" into words.)
     if (picked.startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) return false;
+    // [image routing] A connected provider that makes pictures takes it (the chat's own first), whatever model the chat is on.
+    if (this.imageSetting() !== 'off' && await this.routedImageTurn(messages, ask, picked, signal, emit)) return true;
     if (viaEngine || !providers.canGenerateImages(provider, model)) {
       const text = picked.startsWith('claudecode:') ? this.claudeCodeNoImageNotice() : `${viaEngine ? label : (provider === 'openrouter' ? model : label)} can't make pictures here. Pick GPT, Grok or Gemini (with your own API key) in the model menu to generate images; this one can describe or write about the picture instead.`;
       if (ask.explicit) {
@@ -2423,7 +2549,7 @@ ${prompt}` : prompt), historyImages: [] };
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
-      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
+      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
@@ -2436,6 +2562,7 @@ ${prompt}` : prompt), historyImages: [] };
     const repeats = new RepeatDetector(); // a run of the same failing call gets a "change strategy" note
     let budgetScale = 1; // halved once if the model still says the request is too long (see fitContext)
     const budget = new RunBudget({ limit: stepLimit(this.browser.maxSteps?.()) }); // the user's step limit (0: unlimited), run_script count, notes (loop-guard.js)
+    const calls = new ToolCallCache(); // an identical read repeated with nothing done in between gets one line back (loop-guard.js)
     let wrap = null; // 'limit' | 'stalled': the next turn has tools off and must answer in text
 
     for (let step = 0; step < budget.max; step++) {
@@ -2505,6 +2632,9 @@ ${prompt}` : prompt), historyImages: [] };
       }
 
       recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+      calls.nextTurn();
+      if (message.usage && contextTokensOf(message.usage) >= CONTEXT_TRIGGER_TOKENS) messages.pageStub = true; // past the 60k trigger: older attached pages get stubbed (in batches, advancePageStub)
+      if (messages.pageStub) advancePageStub(messages);
       if (message.usage) recordContext(messages, { tokens: contextTokensOf(message.usage), window: fallback.capsOf(model, this.fallbackOptionsList()).context, model }, emit); // [context]
 
       for (const block of message.content) {
@@ -2568,7 +2698,7 @@ ${prompt}` : prompt), historyImages: [] };
           if (problem) throw Object.assign(new Error(problem), { invalid: true });
           await this.ensureAllowed(use.name, emit, signal, { input: use.input, who });
         },
-        exec: (use) => abortable(this.execute(use.name, use.input), signal),
+        exec: (use) => abortable(calls.run(use, this.taskTabUrl(), () => this.execute(use.name, use.input)), signal),
         halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
         onOutcome: (use, o) => {
           if (o.skipped) return;
@@ -2638,6 +2768,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'ungroup_tabs') return `Ungrouping ${input.tab_ids.length} tab${input.tab_ids.length === 1 ? '' : 's'}`;
       if (name === 'find') return `Looking for ${quote(input.query || '')} on the page`;
       if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
+      if (name === 'generate_image') return input.edit ? 'Editing the picture' : 'Making a picture';
       if (name === 'read_pdf') return 'Reading the PDF';
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
@@ -2706,6 +2837,12 @@ ${prompt}` : prompt), historyImages: [] };
       for (const host of destinationHosts(name, input)) {
         if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search to DuckDuckGo. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
+    }
+    // [image routing] The prompt leaves for an image provider: after page content was read, the user sees it first (once per prompt).
+    if (name === 'generate_image' && taintHolder(run)?.tainted) {
+      const prompt = String(input.prompt ?? '');
+      const card = { query: prompt, title: `${who} wants to send this to an image AI: ${quote(prompt, 160)}` };
+      if (!(await this.askOpen(`image prompt: ${prompt.slice(0, 200)}`, gate, card))) throw new Error(`The user did not allow ${who} to send this picture request out. Ask them what to do instead.`);
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
@@ -3580,6 +3717,7 @@ ${same}
         if (!results.length) return 'No results.';
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
+      case 'generate_image': return this.generateImageTool(input); // [image routing]
       case 'read_pdf': return this.readPdf(input);
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
@@ -3620,7 +3758,7 @@ ${same}
       case 'wait_for': {
         const wc = this.requireTab();
         const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
-        const probe = `(document.body ? document.body.innerText : '').toLowerCase().includes(${JSON.stringify(input.text.toLowerCase())})`;
+        const probe = scripts.textProbe(input.text);
         while (Date.now() < deadline && !this.signalAborted()) {
           if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;

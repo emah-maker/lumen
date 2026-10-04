@@ -36,9 +36,10 @@ const path = require('path');
 const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
-const { ElectronChromeExtensions } = require('electron-chrome-extensions');
-const { installChromeWebStore, installExtension, uninstallExtension, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
-const { extensionPermissionLines } = require('./browser/extension-permissions');
+// The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
+// after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
+const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
+const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
@@ -47,12 +48,14 @@ const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
+cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
 const cliAuth = lazy(() => require('./ai/cli-auth'));
+const spotifyRedirectPort = () => require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 // The SDK needs `new`, which the plain get-trap `lazy()` proxy above can't forward, so it gets its
 // own tiny cached accessor instead. Only the Claude API path (getClient, organizeTabsWithAi's catch)
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
@@ -74,17 +77,16 @@ const { createUsage } = require('./features/usage');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [ai controls] "Turn off AI on this site"
-const { createSafeBrowsing } = require('./features/safe-browsing');
+const { createSafeBrowsing, GATE_FILTER } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const { createCoalescer } = require('./features/event-coalesce'); // streamed text sent in ~16 ms batches, not per token
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
-const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
-const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -565,10 +567,10 @@ if (TEST) {
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
 // ---------- what's new after an update (features/whats-new.js): once, over the first window ----------
-const whatsNew = require('./features/whats-new').createWhatsNew({
+const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   app, readSettings, writeSettings, t, test: TEST,
   showNotes: (opts) => dialogs.showNotes(opts),
-});
+}));
 if (TEST) global.__whatsNew = whatsNew;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
@@ -661,7 +663,7 @@ function togglePictureInPicture(wc) {
 }
 
 // The lock (or "Not secure") next to the address opens the site's page info (features/page-info.js).
-const pageInfo = require('./features/page-info').createPageInfo({
+const pageInfo = lazy(() => require('./features/page-info').createPageInfo({
   t,
   decisions: () => permissionDecisions, // (declared further down)
   savePermissions: () => settingsBackend.savePermissions(permissionDecisions),
@@ -674,7 +676,7 @@ const pageInfo = require('./features/page-info').createPageInfo({
     if (!win || win.isDestroyed() || (TEST && global.__pageInfoNoPopup)) return;
     Menu.buildFromTemplate(template).popup({ window: win, ...(point && Number.isFinite(point.x) ? { x: Math.round(point.x), y: Math.round(point.y) } : {}) });
   },
-});
+}));
 function openPageInfo(point = null) {
   const wc = activeTab()?.webContents;
   if (!wc || wc.isDestroyed()) return Promise.resolve(null);
@@ -683,7 +685,7 @@ function openPageInfo(point = null) {
 ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point === 'object' ? point : null)); // (UI-only: UI_ONLY_IPC)
 
 // Keyboard Shortcuts (⋯ menu, Help menu, Ctrl+Shift+/): the list in Lumen's own dialog (features/shortcuts-help.js).
-const shortcutsHelp = require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) });
+const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) }));
 
 // "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
@@ -819,6 +821,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
@@ -832,7 +835,8 @@ app.whenReady().then(() => {
 
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']); // display-capture: the screen picker (pickScreenToShare) is the consent
+const SITE_PERMISSIONS = require('./browser/site-permissions'); // canonical origins, what pages read, the always-allowed list
+const thirdPartyBlocked = () => ({ blockThirdPartyCookies: Boolean(settingsBackend.prefs().blockThirdPartyCookies) });
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -849,16 +853,11 @@ function setupPermissions() {
     if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
-    if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+    if (SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked())) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
-    let origin;
-    try {
-      origin = new URL(details.requestingUrl || wc.getURL()).origin;
-    } catch {
-      return callback(false);
-    }
-    if (!reason || !isWebUrl(origin)) return callback(false);
+    const origin = SITE_PERMISSIONS.requestOrigin(wc, details); // '' unless http(s)
+    if (!reason || !origin) return callback(false);
     const key = `${origin}|${permission}`;
     if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
     if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
@@ -876,9 +875,13 @@ function setupPermissions() {
     permissionDecisions.set(key, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
+    SITE_PERMISSIONS.notify(ses); // open pages: PermissionStatus 'change'
   });
-  ses.setPermissionCheckHandler((wc, permission, origin) =>
-    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
+  ses.setPermissionCheckHandler((wc, permission, origin, details) =>
+    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+  SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
+  SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -1036,8 +1039,9 @@ const privateWindows = createPrivateWindows({
   // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
   // Do Not Track / Global Privacy Control, languages and Chrome hints.
   prepareSession: (ses) => {
-    ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+    ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
@@ -1055,6 +1059,7 @@ const privateWindows = createPrivateWindows({
   // Permissions as in a normal window, except that answers are kept for the window only: Settings' "Block" defaults,
   // the screen-sharing picker (over the private window), and "Open the app for mailto: links?".
   permissionDefault: (permission) => settingsBackend.permissionDefault(permission),
+  thirdPartyCookiesBlocked: () => Boolean(settingsBackend.prefs().blockThirdPartyCookies),
   pickScreen: (request, callback, owner) => pickScreenToShare(request, callback, owner),
   askOpenExternal: (wc, details, decisions) => askOpenExternal(wc, details, decisions),
   defaultZoom: () => settingsBackend.prefs().defaultZoom,
@@ -1094,6 +1099,9 @@ function isContentBlocker(manifest = {}, name = '') {
 
 async function setupExtensions() {
   const ses = session.defaultSession;
+  const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+  const { installChromeWebStore, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
+  const { extensionPermissionLines } = require('./browser/extension-permissions');
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
@@ -1702,7 +1710,7 @@ function researchSession() {
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
-  ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
+  ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
@@ -3736,8 +3744,12 @@ function applyChromeIdentity(wc) {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
     const frame = targetInfo.type === 'iframe';
-    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
-      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const resume = () => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
+    // A worker target (service, shared, dedicated) answers nothing until it runs: its Network/Emulation commands queue behind
+    // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
+    // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
+    if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
+    Promise.all([identify(sessionId, GOOGLE_AUTH.isAuthUrl(targetInfo.url)), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
   // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
@@ -4136,7 +4148,7 @@ const runSlots = tabChatsLib.createRunSlots({
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 let lastCodexSidebar = null;
-onSettingsWritten = (s) => { if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+onSettingsWritten = (s) => { adblock.sync(); if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
@@ -4969,7 +4981,7 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // browser/window-merge.js plans it (the order, pinned tabs, groups, which windows may take part); this carries it
 // out with moveTabBetween, so every page keeps running (media included) and a sleeping tab stays asleep. Private
 // windows never take part (they are not in winRecs, and their sessions stay apart by design).
-const windowMerge = require('./browser/window-merge');
+const windowMerge = lazy(() => require('./browser/window-merge'));
 let mergeUndo = null; // { dstId, entries, at }: what the toast's Undo puts back, for as long as that toast is up (windowMerge.undoValid)
 let mergePending = false; // a merge waiting for an organize to stop
 const MERGE_ACCELERATOR = 'CmdOrCtrl+Shift+M'; // handled in handleShortcut (so it works without a menu bar); the menus only show it
@@ -5131,7 +5143,7 @@ function mergeWindowItems(src) {
 // where the card was. Escape puts the card away and changes nothing. A window's only tab drags the window
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
-const tabDragMath = require('./features/tab-drag-math');
+const tabDragMath = lazy(() => require('./features/tab-drag-math'));
 let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
@@ -6442,6 +6454,8 @@ const agent = new Agent({
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
+  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
@@ -6741,7 +6755,7 @@ if (TEST) global.__widgets = widgets;
 // it answers for the account signed in on tradingview.com in Lumen. No redirects, answer capped at 1 MB.
 function tradingviewAccountLists() {
   return new Promise((resolve, reject) => {
-    const req = net.request({ url: TVW_ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
+    const req = net.request({ url: require('./features/tradingview-view').ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
     req.setHeader('Accept', 'application/json');
     const timer = setTimeout(() => { req.abort(); reject(new Error('TradingView took too long')); }, 15e3);
     const done = (fn, v) => { clearTimeout(timer); fn(v); };
@@ -7149,6 +7163,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     emit({ type: 'error', text: stale ? raw : t('agent.startFailed'), details: stale ? undefined : raw.slice(0, 600) });
     emit({ type: 'done' });
   };
+  // Streamed text/thinking chunks are joined (event-coalesce.js); every other event goes out at once, after any held text.
+  const sendOut = (msg) => {
+    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+  };
+  const out = createCoalescer(sendOut);
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
@@ -7166,8 +7186,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
-    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
-    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+    out.push(msg);
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
@@ -7701,8 +7720,8 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
     }
   });
   const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
-  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
-  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
+  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: spotifyRedirectPort() }) }));
+  server.listen(spotifyRedirectPort(), '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
@@ -7888,7 +7907,7 @@ app.whenReady().then(async () => {
   loadHistory();
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
-  session.defaultSession.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+  session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
   safeBrowsing.refresh().catch(() => {});
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
   // otherwise load unfiltered, and without the document-start scriptlets). The first run's download

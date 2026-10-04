@@ -111,7 +111,7 @@
     m.querySelector('button').focus();
   }
 
-  // pic: { id, alt }
+  // pic: { id, alt, credit? }
   function figure(pic) {
     const fig = el('figure', { className: 'gen-img' });
     fig.dataset.id = pic.id;
@@ -136,7 +136,8 @@
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
-      fig.replaceChildren(open, bar);
+      // [image routing] which provider made it (the user's own keys or plan, so it is always said)
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []));
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
