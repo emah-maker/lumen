@@ -819,6 +819,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
@@ -832,7 +833,8 @@ app.whenReady().then(() => {
 
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']); // display-capture: the screen picker (pickScreenToShare) is the consent
+const SITE_PERMISSIONS = require('./browser/site-permissions'); // canonical origins, what pages read, the always-allowed list
+const thirdPartyBlocked = () => ({ blockThirdPartyCookies: Boolean(settingsBackend.prefs().blockThirdPartyCookies) });
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -849,16 +851,11 @@ function setupPermissions() {
     if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
-    if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+    if (SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked())) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
-    let origin;
-    try {
-      origin = new URL(details.requestingUrl || wc.getURL()).origin;
-    } catch {
-      return callback(false);
-    }
-    if (!reason || !isWebUrl(origin)) return callback(false);
+    const origin = SITE_PERMISSIONS.requestOrigin(wc, details); // '' unless http(s)
+    if (!reason || !origin) return callback(false);
     const key = `${origin}|${permission}`;
     if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
     if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
@@ -876,9 +873,13 @@ function setupPermissions() {
     permissionDecisions.set(key, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
+    SITE_PERMISSIONS.notify(ses); // open pages: PermissionStatus 'change'
   });
-  ses.setPermissionCheckHandler((wc, permission, origin) =>
-    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
+  ses.setPermissionCheckHandler((wc, permission, origin, details) =>
+    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+  SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
+  SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -1038,6 +1039,7 @@ const privateWindows = createPrivateWindows({
   prepareSession: (ses) => {
     ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
@@ -1055,6 +1057,7 @@ const privateWindows = createPrivateWindows({
   // Permissions as in a normal window, except that answers are kept for the window only: Settings' "Block" defaults,
   // the screen-sharing picker (over the private window), and "Open the app for mailto: links?".
   permissionDefault: (permission) => settingsBackend.permissionDefault(permission),
+  thirdPartyCookiesBlocked: () => Boolean(settingsBackend.prefs().blockThirdPartyCookies),
   pickScreen: (request, callback, owner) => pickScreenToShare(request, callback, owner),
   askOpenExternal: (wc, details, decisions) => askOpenExternal(wc, details, decisions),
   defaultZoom: () => settingsBackend.prefs().defaultZoom,
