@@ -12,6 +12,8 @@
 - **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, the current chat is encrypted at rest, and the start page makes no network requests.
 - **Calm to look at.** Light and dark themes that follow your system, and spring animations.
 
+**Found a bug or have an idea?** [Report an issue](https://github.com/emah-maker/lumen/issues/new/choose) · [Report a security problem privately](https://github.com/emah-maker/lumen/security/advisories/new)
+
 ## Install
 
 Download the latest build from [Releases](https://github.com/emah-maker/lumen/releases).
@@ -296,6 +298,10 @@ To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 ### Screenshots and GIFs
 
 The images in this README are captured from a throwaway profile by `node scripts/capture-media.js` (needs `ffmpeg` on PATH for the GIFs and the MP4; Windows only for the screen recording).
+
+## Report an issue
+
+Something broken, or something missing? [Open an issue on GitHub](https://github.com/emah-maker/lumen/issues/new/choose) and pick **Bug report** or **Feature request**. Include your Lumen version (**Settings → About Lumen**) and your operating system, and [search the open issues](https://github.com/emah-maker/lumen/issues) first in case it's already reported. Security problems go to a [private security advisory](https://github.com/emah-maker/lumen/security/advisories/new), not a public issue ([SECURITY.md](SECURITY.md)).
 
 ## Documentation
 
