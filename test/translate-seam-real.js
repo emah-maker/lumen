@@ -143,7 +143,7 @@ const show = (s) => JSON.stringify(s).replace(/./gu, (c) => (c.codePointAt(0) >=
     local.stop(); // a fresh engine for the next pair
   }
   local.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   out.push('## Summary', '', '| Pair | ' + Object.keys(CANDIDATES).join(' | ') + ' | shipped path |', '|---|' + '---|'.repeat(Object.keys(CANDIDATES).length + 1));
   for (const pair of [...new Set(summary.map((s) => s.pair))]) {
     const row = summary.filter((s) => s.pair === pair);

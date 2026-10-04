@@ -121,7 +121,7 @@ process.stdin.on('data', (d) => {
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
 

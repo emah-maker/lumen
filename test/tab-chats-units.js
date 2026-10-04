@@ -109,10 +109,10 @@ const J = (v) => JSON.stringify(v);
 // ---- run slots: the cap and the waiting line
 {
   const started = [];
-  const mk = (max, cliMax) => TC.createRunSlots({ max, cliMax });
+  const mk = (max) => TC.createRunSlots({ max });
   const go = (slots, id, kind = 'api') => slots.request(id, { kind, start: () => started.push(id) });
   let s = mk(3);
-  check('slots: the default cap is three', TC.DEFAULT_MAX_RUNS === 3 && s.limit === 3);
+  check('slots: a cap of three holds three', s.limit === 3);
   check('slots: three chats start at once', go(s, 'a') === 'started' && go(s, 'b') === 'started' && go(s, 'c') === 'started' && J(started) === '["a","b","c"]', J(started));
   check('slots: the fourth waits, with a visible state', go(s, 'd') === 'queued' && s.state('d') === 'queued' && s.state('a') === 'running' && s.reason('d') === 'limit', `${s.state('d')} ${s.reason('d')}`);
   check('slots: a fifth waits behind it', go(s, 'e') === 'queued' && J(s.waitingIds()) === '["d","e"]');
@@ -128,21 +128,45 @@ const J = (v) => JSON.stringify(v);
   check('slots: ... and then only up to the cap', s.state('g') === 'queued' && s.size() === 2, J(s.runningIds()));
   s.release('d');
   check('slots: ... the waiting one starts once there is room', s.state('g') === 'running');
-  check('slots: the cap is clamped to 1..8', TC.clampRuns(0) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
+  check('slots: the cap is clamped to 1..8', TC.clampRuns(99) === 8 && TC.clampRuns(2.4) === 2 && TC.clampRuns(1) === 1);
+  check('slots: 0 / "unlimited" mean no cap', TC.clampRuns(0) === Infinity && TC.clampRuns('0') === Infinity && TC.clampRuns('unlimited') === Infinity && TC.clampRuns(Infinity) === Infinity && TC.clampRuns(-2) === Infinity && TC.clampRuns('x') === Infinity && TC.clampRuns(undefined) === Infinity);
+  {
+    const u = mk(0);
+    const many = Array.from({ length: 25 }, (_, i) => `u${i}`);
+    const kinds = many.map((id, i) => go(u, id, i % 2 ? TC.slotKind('claudecode:default') : TC.slotKind('grokbuild:default')));
+    check('slots: with no cap, 25 Claude Code / Grok Build chats all start at once', kinds.every((k) => k === 'started') && u.size() === 25 && u.waitingIds().length === 0, J(kinds));
+    many.forEach((id) => u.release(id));
+    check('slots: ...and every slot is given back when they end', u.size() === 0);
+    u.setMax(2);
+    check('slots: a cap set later applies again', go(u, 'v1') === 'started' && go(u, 'v2') === 'started' && go(u, 'v3') === 'queued');
+  }
 
-  // CLI engines take turns
+  {
+    // no limit (0, the default)
+    started.length = 0;
+    const n = TC.createRunSlots({ cliMax: 99 });
+    check('slots: the default is no limit', TC.DEFAULT_MAX_RUNS === 0 && n.limit === Infinity);
+    for (const id of ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10']) go(n, id);
+    check('slots: with no limit every chat starts at once, none waits', n.size() === 10 && n.waitingIds().length === 0 && started.length === 10, J({ r: n.runningIds(), w: n.waitingIds() }));
+    n.setMax(2);
+    check('slots: a limit set while many run makes the next one wait', go(n, 'n11') === 'queued' && n.reason('n11') === 'limit');
+    n.setMax(0);
+    check('slots: going back to no limit starts the waiting one at once', n.state('n11') === 'running' && n.waitingIds().length === 0);
+  }
+
+  // Claude Code, Grok Build and Antigravity all run side by side; only the cap makes a chat wait
   started.length = 0;
   s = mk(3);
-  check('slots: slotKind tells a CLI engine from an API model', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
-  go(s, 'cc1', 'cli');
-  check('slots: a second Claude Code / Grok Build chat waits even with room, and says why', go(s, 'cc2', 'cli') === 'queued' && s.reason('cc2') === 'cli', s.reason('cc2'));
-  check('slots: an API chat still starts beside a CLI chat', go(s, 'api1') === 'started' && s.size() === 2);
-  s.release('cc1');
-  check('slots: the CLI chat in line starts when the CLI chat ends', s.state('cc2') === 'running', J(started));
-  // a CLI chat waiting does not block API chats that fit
+  check('slots: slotKind: Claude Code / Grok Build / Antigravity are CLI chats', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('antigravity:default') === 'cli' && TC.slotKind('antigravity:gemini-3.1-pro-high') === 'cli' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
+  check('slots: Claude Code and Grok Build chats start together, up to the cap', go(s, 'ccA', 'cli') === 'started' && go(s, 'gbB', 'cli') === 'started' && go(s, 'ccC', 'cli') === 'started' && go(s, 'ccD', 'cli') === 'queued' && s.reason('ccD') === 'limit', s.reason('ccD'));
+  s.cancel('ccD'); s.release('ccA'); s.release('gbB'); s.release('ccC');
+  go(s, 'ag1', TC.slotKind('antigravity:default'));
+  check('slots: a second Antigravity chat starts at once beside the first (no Antigravity-only line)', go(s, 'ag2', TC.slotKind('antigravity:default')) === 'started' && s.reason('ag2') === null && s.size() === 2, J({ state: s.state('ag2'), reason: s.reason('ag2') }));
+  check('slots: past the cap an Antigravity chat waits for the cap only, never "cli"', go(s, 'ag3', 'cli') === 'started' && go(s, 'ag4', 'cli') === 'queued' && s.reason('ag4') === 'limit', s.reason('ag4'));
+  s.release('ag1');
+  check('slots: ... and starts when any chat ends', s.state('ag4') === 'running', J(started));
+  check('slots: unlimited (the default): many Antigravity chats at once', (() => { const u = mk(0); for (let i = 0; i < 6; i++) go(u, `agu${i}`, 'cli'); return u.size() === 6 && u.waitingIds().length === 0; })());
   s = mk(3); started.length = 0;
-  go(s, 'cc1', 'cli'); go(s, 'cc2', 'cli');
-  check('slots: a CLI chat in line does not hold up the API chats behind it', go(s, 'x') === 'started' && s.state('cc2') === 'queued', J(started));
   // a start that throws gives its place back
   s = mk(1);
   s.request('boom', { start: () => { throw new Error('x'); } });
@@ -297,7 +321,8 @@ const J = (v) => JSON.stringify(v);
     check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
     const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
     check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
-    check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
+    check('queue: a waiting chat waits only for room (no "Antigravity works on one chat at a time" line)', /const waitingText = \(\) => t\('agent\.waiting'\)/.test(mainSrc) && !/agent\.waitingCli/.test(mainSrc));
+    check('delete: a deleted chat\'s Antigravity home goes with it', /removeChatHome\(app\.getPath\('userData'\), id\)/.test(del));
   }
   check('marks: the tab mark and the list badge are the same size (12px)', /\.tab-chat-mark \{[^}]*width: 12px; height: 12px/.test(css) && /\.chat-badge \{[^}]*width: 12px; height: 12px/.test(css));
 }

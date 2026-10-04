@@ -383,7 +383,7 @@ const FULL_WATCHDOG_MS = 15 * 60 * 1000;
 // content in it, -p/--prompt-json overflowed Windows' ~32,767-character command line (spawn
 // ENAMETOOLONG). --prompt-file takes the same JSON content blocks as --prompt-json, images included
 // (flat ACP blocks: { type: 'image', data, mimeType }; verified 2026-09-27, a red test image came back
-// "Red"). The system prompt (~4 KB) stays on the command line: there is no file form of it.
+// "Red"). The system prompt (~2-3 KB) stays on the command line: there is no file form of it.
 // model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
 // fullAccess: [full access] ARGS_FULL instead of the lockdown (never for a background task).
 function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0, background = false, fullAccess = false }) {
@@ -595,6 +595,64 @@ async function settleAuthAsync(userHome, home, before) {
   return true;
 }
 
+// [sign-in lock] Sidebar chats run Grok Build side by side (parallel CLI chats), every run in the same GROK_HOME with
+// the same auth.json link. Linking again while another run is in flight could put the user's older file back over a
+// token that run's Grok just refreshed (and rotated), and two copy-backs could cross. So per home there is one shared
+// sign-in state: shareAuth() hands every run the same in-flight link while any run there is going (one link, not one per
+// run), holdAuth() counts the runs, and only when the last one ends is the token copied back, once (settleAuthAsync).
+// Background tasks have homes of their own, so they never share this.
+const authShares = new Map(); // path.resolve(home) -> { runs, link, pending, before, settling, links }
+function authShareOf(home) {
+  const key = path.resolve(home);
+  let s = authShares.get(key);
+  if (!s) { s = { runs: 0, link: null, pending: false, before: null, settling: Promise.resolve(), links: 0 }; authShares.set(key, s); }
+  return s;
+}
+// The sign-in link for a run in `home`: the one already made while runs are in flight there (or one being made now),
+// else a new one, made after the last copy-back finished. Resolves what the user's file looked like (linkAuth).
+function shareAuth(userHome, home) {
+  const s = authShareOf(home);
+  if (s.link && (s.runs > 0 || s.pending)) return s.link;
+  s.pending = true;
+  s.links++;
+  const p = (async () => {
+    await s.settling; // the last copy-back first: it may carry a refreshed token
+    const before = await linkAuthAsync(userHome, home).catch(() => null); // no login shared: the run reports "not signed in"
+    if (s.link === p) s.before = before;
+    return before;
+  })();
+  s.link = p;
+  p.finally(() => { if (s.link === p) s.pending = false; }).catch(() => {});
+  return p;
+}
+// A run in `home` starts: no new link is made until it ends. The returned release() (once) ends it; the last run's end
+// copies a refreshed token back to the user's file. After Lumen copies it back the user's file is Lumen's own write, so
+// it becomes the new "before" (a later run's refresh is copied back too, not taken for a new sign-in).
+// release.settle(): the copy-back alone, the hold kept. A kept Grok process (features/grok-warm.js) holds the sign-in
+// for its whole life and copies a refreshed token back after each of its turns; copy-backs are chained, never crossed.
+function holdAuth(userHome, home) {
+  const s = authShareOf(home);
+  s.runs++;
+  let done = false;
+  const copyBack = () => {
+    const before = s.before;
+    s.settling = s.settling.then(() => settleAuthAsync(userHome, home, before)).then(async (copied) => {
+      if (copied && s.before === before) s.before = await fs.promises.stat(path.join(userHome, 'auth.json'), { bigint: true }).catch(() => before);
+    }).catch(() => {});
+    return s.settling;
+  };
+  const release = () => {
+    if (done) return s.settling;
+    done = true;
+    s.runs = Math.max(0, s.runs - 1);
+    if (s.runs > 0) return s.settling;
+    return copyBack();
+  };
+  release.settle = () => (done ? s.settling : copyBack());
+  return release;
+}
+const authStats = (home) => { const s = authShares.get(path.resolve(home)); return s ? { runs: s.runs, links: s.links, pending: s.pending } : { runs: 0, links: 0, pending: false }; };
+
 // Writes a file only when its content differs (config.toml and the gate script are the same for every
 // message: rewriting them cost a disk write, and on Windows a virus-scan, per message).
 async function writeIfChanged(file, content, mode) {
@@ -689,11 +747,12 @@ class GrokBuildEngine {
     // The sign-in is shared the way run() shares it, except during a run, whose own link stays put
     // (re-linking then could drop a token Grok just refreshed, before settleAuth copies it back).
     const userHome = userGrokHome();
-    const link = !this.active;
+    const share = authShareOf(home);
+    const link = !this.active && share.runs === 0 && !share.pending; // [sign-in lock] never under a run in flight
     let authBefore = null;
     if (link) try { authBefore = linkAuth(userHome, home); } catch {}
     const value = await checkAuthStatus(bin, { env: buildEnv({ userData: this.userData, home, dir }), cwd: dir, exec: this.exec });
-    if (link && !this.active) try { settleAuth(userHome, home, authBefore); } catch {}
+    if (link && !this.active && share.runs === 0 && !share.pending) try { settleAuth(userHome, home, authBefore); } catch {}
     if (value.models.length) this.lastModels = value.models;
     else if (value.signedIn !== false) value.models = modelsFallback({ last: this.lastModels || [], home });
     this.statusCache = { at: Date.now(), value };
@@ -744,11 +803,10 @@ class GrokBuildEngine {
       const { home, dir } = this;
       const gateFile = path.join(home, GATE_FILE);
       await Promise.all([fs.promises.mkdir(home, { recursive: true, mode: 0o700 }), fs.promises.mkdir(dir, { recursive: true })]);
-      await this.settling; // the last run's token copy-back finishes before the link is looked at again
       const authBefore = (await Promise.all([
         writeIfChanged(gateFile, gateScript(), 0o700),
         writeIfChanged(path.join(home, 'config.toml'), grokConfig({ gate: gateFile, fullAccess }), 0o600),
-        linkAuthAsync(userGrokHome(), home).catch(() => null), // no login shared: the run reports "not signed in"
+        shareAuth(userGrokHome(), home), // [sign-in lock] after the last copy-back; shared while other runs are in flight
       ]))[2];
       return { bin, gate, authBefore };
     })();
@@ -757,11 +815,30 @@ class GrokBuildEngine {
     return promise;
   }
 
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, shownModel = null, fullAccess = false }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
+    // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
+    // long-lived `grok agent stdio` process answers. It returns null when it can't take this message (setting off, images,
+    // full access, a start that failed before anything was sent): then the one-process-per-message run below does.
+    if (this.keepWarm) {
+      const warm = fullAccess || this.background ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
+      if (warm) return warm;
+      this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
+    }
     const prepared = this.prepare({ fullAccess }); // (the one runTask started, if it is recent)
     this.prep = null; // each message prepares afresh
-    const { bin, gate, authBefore } = await prepared;
+    const ready = await prepared;
+    // [sign-in lock] From its link on, this message counts as a run in its home (no re-link under it) until its process
+    // ends; the last run there to end copies a refreshed token back.
+    const releaseAuth = holdAuth(userGrokHome(), this.home);
+    try {
+      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired });
+    } finally {
+      this.settling = releaseAuth(); // not awaited: the reply doesn't wait on it (the next link does)
+    }
+  }
+
+  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -771,7 +848,7 @@ class GrokBuildEngine {
     const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, shownModel, authBefore, fullAccess };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -787,7 +864,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null, authBefore = null, fullAccess = false }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
@@ -796,7 +873,6 @@ class GrokBuildEngine {
     // this chat, so a run_terminal_command "allow for this chat" (mcp-http.js terminalDecision) can
     // outlive this one message's tag, which is fresh every time.
     const gateRun = gate.open(tag, sessionId, { fullAccess });
-    const userHome = userGrokHome();
     try { this.onFresh?.({ sessionId, resume }); } catch {}
     const workDir = fullAccess ? os.homedir() : dir; // [full access] the home folder, as in a terminal
     const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: workDir, model, maxTurns, background: this.background, fullAccess });
@@ -805,7 +881,7 @@ class GrokBuildEngine {
     emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir, fullAccess }), cwd: workDir });
     // tools / inflight / dog / arm: the inactivity watchdog, as in claude-code.js (callBegin / callEnd pause it).
-    const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     let over = false; // the process has ended (the watchdog stays off)
@@ -938,7 +1014,7 @@ class GrokBuildEngine {
     // A turn Grok ended without Lumen's gate ever seeing it (its prompt hook blocked, say) is no reply.
     if (!armed && !gate.armed(tag) && result && !result.is_error) unguarded = true;
     gate.close(tag);
-    this.settling = settleAuthAsync(userHome, home, authBefore).catch(() => {}); // not awaited: the reply doesn't wait on it (the next prepare() does)
+    // (The token copy-back happens once the last run in this home ends: run()'s holdAuth.)
     stderr = (stderr + errBuffer).slice(-4000);
 
     if (offTool) {
@@ -970,6 +1046,9 @@ class GrokBuildEngine {
       // A tool call outside the allow rules ends the whole run in error here (unlike Claude Code,
       // where it's one failed step and the turn continues) -- see file header.
       const failText = (result?.errors || []).join('\n') || result?.result || stderr;
+      // quietExpired: a resumed session Grok no longer has resolves { expired: true } without an error, so the caller can
+      // start a new session with the conversation handed over (agent.js grokBuildTurn), as claude-code.js does.
+      if (quietExpired && resume && !text && /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`)) return { text: '', sessionId: null, failed: true, expired: true, usage, model: served };
       emit({ type: 'error', ...describeFailure(failText || stderr, code, { fullAccess }) });
       // planLimit: the plan's usage limit was hit, with the reset time when the message names one.
       return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage, planLimit: limitOf(failText), model: served };
@@ -980,4 +1059,4 @@ class GrokBuildEngine {
 
 GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };

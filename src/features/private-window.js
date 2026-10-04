@@ -25,6 +25,7 @@ const TOP = 78; // tab strip + toolbar height in renderer/private.css
 const PROMPTABLE = new Set(['media', 'geolocation', 'notifications', 'clipboard-read']); // permission.<name> in locales/en.json
 // As main.js: protected video (mediaKeySystem) plays, and screen sharing's own picker (pickScreen) is the consent.
 const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']);
+const { createBurstLimit } = require('./popup-guard'); // a page opening windows or tabs in a loop
 const { RISKY_TYPES } = require('./downloads'); // programs and scripts: never saved without the user choosing to
 const FAVICON_MAX = 256 * 1024;
 const CLOSED_KEEP = 25; // closed tabs Ctrl+Shift+T can bring back, per window (memory only)
@@ -350,6 +351,7 @@ function createPrivateWindows(deps) {
   // A sign-in or payment popup ("Sign in with Google" on a site) stays a popup, in this window's private session,
   // with window.opener kept so it can report back to the page; a link that opens a tab opens a private tab.
   function popupOrTab(rec, url, disposition) {
+    if (!(rec.popupLimit ||= createBurstLimit()).allow()) return { action: 'deny' };
     if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
       return {
         action: 'allow',
@@ -713,6 +715,13 @@ function createPrivateWindows(deps) {
     command: (name) => { const rec = focusedRec(); if (!rec) return false; command(rec, name); return true; },
     // One of this module's tabs (Safe Browsing and certificate warnings treat it as a tab).
     ownsTab: (wc) => Boolean(wc && tabOwner(wc)),
+    // [passkeys] Is this one of our tabs, the one in front of its window? (features/passkeys.js owns the dialog to that window.)
+    tabWindow: (wc) => {
+      const rec = wc ? tabOwner(wc) : null;
+      if (!rec || !alive(rec)) return null;
+      const tab = activeTab(rec);
+      return { win: rec.win, active: Boolean(tab && tab.view.webContents === wc) };
+    },
     refresh: (wc) => { const rec = tabOwner(wc); if (rec) sendStateSoon(rec); },
     // Test hooks read these; nothing in the app itself needs them.
     list: () => [...windows].filter(alive).map((rec) => ({

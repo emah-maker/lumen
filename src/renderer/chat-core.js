@@ -305,7 +305,7 @@ async function loadModels() {
     modelPicker.button.title = hint;
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
-  prompt.placeholder = !current ? t('composer.setup') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
+  prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
   setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
@@ -348,7 +348,7 @@ $('model').addEventListener('change', async (e) => {
   select.title = select.selectedOptions[0].title;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
+  prompt.placeholder = select.value === 'auto' ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
@@ -470,8 +470,12 @@ function setRunning(value) {
   updateSend();
 }
 
+// "Send now" (Ctrl+Enter while a reply runs): shown only while one runs and something is typed.
+const sendNowBtn = optional('send-now');
 function updateSend() {
-  send.disabled = !running && !prompt.value.trim() && attachments.length === 0;
+  const typed = Boolean(prompt.value.trim() || attachments.length);
+  send.disabled = !running && !typed;
+  sendNowBtn.hidden = !(running && typed);
 }
 
 // ---------- image attachments: paste, drop or pick images for the message ----------
@@ -685,7 +689,23 @@ function queueControls(entry) {
   const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
   cancel.setAttribute('aria-label', t('chat.queued.cancel'));
   cancel.onclick = drop;
-  entry.notice.append(' ', edit, cancel);
+  const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
+  now.onclick = () => sendNow(entry);
+  entry.notice.append(' ', now, edit, cancel);
+}
+// Send now: `entry` goes first in the line and the running reply is stopped through the Stop button's own path
+// (agent:stop: a CLI engine is interrupted or its process tree ended, an API request aborted), so the reply's 'done'
+// sends it as the next turn. What the reply had said stays on screen, marked interrupted, and in the history (agent.js).
+function sendNow(entry) {
+  const i = queued.indexOf(entry);
+  if (i === -1) return;
+  if (i > 0) { queued.splice(i, 1); queued.unshift(entry); }
+  const first = messages.querySelector(':scope > .notice.queued');
+  if (first && first !== entry.notice) first.before(entry.notice);
+  if (!running) return; // (the reply ended meanwhile: the line moves on by itself)
+  for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
+  if (turn) turn.interrupted = true;
+  window.assistant.stop();
 }
 function sendQueued() {
   const next = queued.shift();
@@ -721,7 +741,7 @@ function ask(text, images = [], tabs = null) {
     const entry = { text, images, tabs, notice };
     queued.push(entry);
     queueControls(entry);
-    return;
+    return entry; // (for Send now)
   }
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
@@ -1051,6 +1071,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (!turn || event.runId !== runId) return;
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
+  if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
   switch (event.type) {
@@ -1155,7 +1176,7 @@ window.assistant.onEvent((event) => {
       break;
     case 'notice': {
       if (event.stopped) turn.stopped = true;
-      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
+      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t(turn.interrupted ? 'chat.interrupted' : 'chat.stopped') : event.text }));
       if (event.fallback) retireFallbackButtons(); // an older "Switch back" would undo whatever is answering now
       if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
       if (event.fallback && event.fallback.kind !== 'back' && event.fallback.from !== event.fallback.to) {
@@ -1211,7 +1232,7 @@ window.assistant.onEvent((event) => {
         turn.working.before(row);
       }
       if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
-      labelReply(turn.text, event.model);
+      labelReply(turn.text, event.model, event.auto || turn.auto);
       scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
@@ -1240,7 +1261,7 @@ function settledMarkdown(source) {
 }
 
 // Which model wrote a reply: a quiet label, since a chat can move between models.
-function labelReply(bubble, modelId) {
+function labelReply(bubble, modelId, auto = null) {
   flushStreaming(bubble);
   if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
   const option = [...$('model').options].find((o) => o.value === modelId);
@@ -1251,7 +1272,10 @@ function labelReply(bubble, modelId) {
     : group === 'Claude' ? `Claude ${option.textContent}`
     : !group || /^Your .* account$/.test(group) ? option.textContent
     : `${group} · ${option.textContent}`;
-  bubble.append(Object.assign(document.createElement('span'), { className: 'reply-model', textContent: name }));
+  // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 4.5"), and why in its tooltip.
+  const span = Object.assign(document.createElement('span'), { className: 'reply-model', textContent: auto ? t('models.auto.reply', { name }) : name });
+  if (auto?.reason) { span.title = auto.reason; span.dataset.auto = '1'; }
+  bubble.append(span);
 }
 
 // Screen readers: the messages list itself is quiet (streamed text would be read out piece by piece), so the
@@ -1681,7 +1705,8 @@ prompt.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     // While a reply runs, Enter sends what was typed after it (queued); it never stops the reply (the button does).
-    if (running) { if (prompt.value.trim() || attachments.length) sendComposer(); return; }
+    // Ctrl+Enter (Cmd+Enter on a Mac) is Send now: the reply stops and this message goes next.
+    if (running) { if (prompt.value.trim() || attachments.length) sendComposer({ now: e.ctrlKey || e.metaKey }); return; }
     $('composer').requestSubmit();
   } else if (e.key === 'Escape' && running && !prompt.value) {
     e.preventDefault();
@@ -1694,7 +1719,8 @@ $('composer').addEventListener('submit', async (e) => {
   if (running) { window.assistant.stop(); return; } // the button, while running, is Stop
   sendComposer();
 });
-async function sendComposer() {
+sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
+async function sendComposer({ now = false } = {}) {
   const text = prompt.value.trim();
   if (!text && attachments.length === 0) return;
   const images = attachments;
@@ -1704,7 +1730,7 @@ async function sendComposer() {
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
-  if (running) ask(text, images, tabs); // (queued for after the reply)
+  if (running) { const entry = ask(text, images, tabs); if (now && entry) sendNow(entry); } // (queued for after the reply, or Send now)
   else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
   updateSend();
 }

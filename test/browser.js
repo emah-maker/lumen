@@ -28,6 +28,10 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
       res.setHeader('Content-Type', 'text/html');
       return res.end(`<title>cookie</title><body>cookie=[${req.headers.cookie || ''}]</body>`);
     }
+    if (req.url === '/echo-headers') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify(req.headers));
+    }
     if (req.url === '/popup') {
       res.setHeader('Content-Type', 'text/html');
       return res.end('<title>Popup</title><script>window.opener && window.opener.postMessage("from-popup", "*"); document.title = window.opener ? "has-opener" : "no-opener";</script>');
@@ -79,7 +83,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await pageEval("document.getElementById('blank').click()");
   await waitFor(async () => (await tabCount()) === before + 1);
   check('target=_blank link opens a new tab', (await tabCount()) === before + 1, await tabCount());
-  await run('switch_tab', { tab_id: 1 });
+  await run('switch_tab', { tab_id: 1, show: true });
   const activeBefore = await app.evaluate(() => global.__agent.browser.activeTab().id);
   await app.evaluate(({ BrowserWindow }) => {}); // keep window alive
   // A real Ctrl+click (synthetic page events can't open background tabs).
@@ -108,6 +112,19 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   });
   check('window.open popup is a real window with window.opener', popup.title === 'has-opener' && popup.count === windowsBefore + 1, JSON.stringify(popup));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('/popup'))?.close());
+
+  // A page opening tabs and windows in a loop gets only a handful (features/popup-guard.js).
+  const idsBefore = new Set(JSON.parse(await run('list_tabs', {})).map((t) => t.id));
+  const winsBeforeBurst = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  await pageEval("for (let i = 0; i < 60; i++) { window.open('/other'); window.open('/popup', 'w' + i, 'width=300,height=200'); }");
+  await new Promise((r) => setTimeout(r, 1500));
+  const burstTabs = JSON.parse(await run('list_tabs', {})).filter((t) => !idsBefore.has(t.id));
+  const burstWins = (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) - winsBeforeBurst;
+  check('a page opening windows in a loop gets at most a few', burstTabs.length + burstWins <= 10 && burstTabs.length + burstWins >= 1, `tabs=${burstTabs.length} windows=${burstWins}`);
+  for (const t of burstTabs) await run('close_tab', { tab_id: t.id });
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows().slice(winsBeforeBurst)) w.close(); }, null).catch(() => {});
+  await waitFor(async () => (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) <= winsBeforeBurst);
+  await run('switch_tab', { tab_id: 1, show: true });
 
   // HTML fullscreen fills the window. It takes the window into macOS fullscreen, which never
   // finishes for the invisible window of LUMEN_TEST_BACKGROUND runs, so those skip it.
@@ -160,7 +177,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   check('tabs can be reordered', state.tabs[0].id === last, JSON.stringify(state.tabs.map((t) => t.id)));
 
   // Downloads save to the Downloads folder without a dialog.
-  await run('switch_tab', { tab_id: 1 });
+  await run('switch_tab', { tab_id: 1, show: true });
   const dlDir = await app.evaluate(({ app: a }) => a.getPath('downloads'));
   const existing = new Set(fs.readdirSync(dlDir));
   await pageEval("document.getElementById('dl').click()");
@@ -230,6 +247,17 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await run('navigate', { url: base + '/' });
   const brands = await pageEval('navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand).join(",") : "none"');
   check('navigator.userAgentData says Google Chrome', brands.includes('Google Chrome'), brands);
+  // The identity is in the page at document start (this app runs with Chromium's debugging port, where a script added
+  // without enabling the Page domain was skipped and window.chrome stayed Electron's empty {}), and the language list
+  // the page reports is the one the request header carries.
+  const chromeKeys = await pageEval('Object.getOwnPropertyNames(window.chrome || {}).join()');
+  check('window.chrome has loadTimes, csi and app at document start', chromeKeys === 'loadTimes,csi,app', chromeKeys);
+  check('navigator.webdriver is false', (await pageEval('navigator.webdriver')) === false, 'webdriver');
+  const sentHeaders = JSON.parse(await pageEval("fetch('/echo-headers').then((r) => r.text())"));
+  const pageLanguages = await pageEval('navigator.languages.join()');
+  const headerLanguages = String(sentHeaders['accept-language'] || '').split(',').map((l) => l.split(';')[0]).join();
+  check('Accept-Language is the q-weighted list and equals navigator.languages', /;q=0\.9/.test(sentHeaders['accept-language'] || '') && headerLanguages === pageLanguages, `${sentHeaders['accept-language']} vs ${pageLanguages}`);
+  check('Sec-CH-UA and the User-Agent name one Chrome major', (() => { const m = /Chrome\/(\d+)\./.exec(sentHeaders['user-agent'] || ''); return m && String(sentHeaders['sec-ch-ua']).includes(`"Google Chrome";v="${m[1]}"`); })(), `${sentHeaders['user-agent']} | ${sentHeaders['sec-ch-ua']}`);
   const devtools = await app.evaluate(async () => {
     const wc = global.__agent.browser.activeTab().webContents;
     wc.openDevTools({ mode: 'detach' });

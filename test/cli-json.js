@@ -124,7 +124,7 @@ if (mode === 'hang') setInterval(() => {}, 1000);
   const unknown = await cj.completeJSON({ engine: 'other', bin: 'x', system: 'S', user: 'x', schema: SCHEMA, userData: dir }).then(() => null, (e) => e);
   check('an unknown engine is refused', unknown && /No one-shot runner/.test(unknown.message), unknown && unknown.message);
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.log(`FAIL  cli-json: ${err.stack}`); process.exit(1); });

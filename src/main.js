@@ -42,6 +42,7 @@ const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
+const { createBurstLimit } = require('./features/popup-guard'); // caps windows/tabs one page opens in a burst
 const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
@@ -191,7 +192,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -205,7 +206,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state', 'sidebar:set',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -443,6 +444,26 @@ const modelNames = require('./features/model-names');
 // [model fallback] ai/fallback.js: a model out of usage or unreachable is left alone for a while and another connected one answers.
 const aiFallback = require('./ai/fallback');
 const fallbackOn = () => readSettings().autoFallback !== false; // Settings > AI: Switch models automatically when one is unavailable
+// [auto model] The picker's "Auto" (ai/auto-model.js, docs/auto-model.md): which connected model answers a request. The router
+// is pure; this is its settings: the models turned off for Auto (autoExclude), the provider the user was on before choosing Auto
+// (autoHome), the models this account was refused (in memory) and the cooldowns fallback.js keeps. Nothing leaves this computer.
+const autoModel = require('./ai/auto-model');
+const autoDenied = autoModel.createDenied();
+const autoExcluded = () => (Array.isArray(readSettings().autoExclude) ? readSettings().autoExclude : []);
+function autoRoute({ request, last = null, allowEngines = true, apiOnly = false, scope = null } = {}) {
+  const options = modelOptions().filter((o) => !apiOnly || !aiFallback.isEngine(o.id));
+  return autoModel.route({ options, request, last, prefer: autoModel.preferFrom({ lastId: last, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines, scope });
+}
+function autoEscalate({ current, failure, request, tried = [], allowEngines = true }) {
+  return autoModel.escalate({ options: modelOptions(), current, failure, request, tried, prefer: autoModel.preferFrom({ lastId: current, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines });
+}
+// A model for a one-shot job outside the chat (topic naming, Organize, translation, a skill's proposal): the open chat's
+// pick when it is a model, else Auto's cheapest fit for `kind`. apiOnly: no CLI engine (translation runs one request per chunk).
+function autoConcrete(id, kind = 'quick', { apiOnly = false } = {}) {
+  if (!autoModel.isAuto(id)) return id;
+  const d = autoRoute({ request: { kind, prompt: '' }, last: agent.messages?.settings?.autoLast?.id || null, apiOnly });
+  return d.id || null;
+}
 function modelOptions() {
   const groups = [];
   if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).sort(([a], [b]) => (b === DEFAULT_MODEL) - (a === DEFAULT_MODEL)).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) }); // the default first
@@ -478,6 +499,24 @@ function modelOptions() {
   const options = groups.flatMap((g) => g.entries.map((e) => ({ ...e, group: g.label })));
   options.push(...aiAgents.modelOptions()); // local engine(s) last: the user's own Claude Code CLI, when installed
   return options;
+}
+
+// Settings > AI > "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
+function autoProviderList(options = modelOptions()) {
+  const seen = new Map();
+  for (const o of options) {
+    if (o.more || String(o.id).endsWith(':__more') || autoModel.isAuto(o.id)) continue;
+    const key = aiFallback.providerOf(o.id);
+    if (!seen.has(key)) seen.set(key, { key, label: aiFallback.providerName(o.id, options), on: !autoExcluded().includes(key) });
+  }
+  return [...seen.values()];
+}
+// What every picker lists: Auto first (no heading), then the connected models. modelOptions() stays the real models only: the
+// fallback and the router must never see "auto" as one. The row says what Auto chose last in the open chat ("Auto · Haiku").
+function pickerOptions(options = modelOptions()) {
+  if (!options.some((o) => !o.more)) return options;
+  const last = agent.messages?.settings?.autoLast || null;
+  return [autoModel.pickerEntry({ last, describe: t('models.auto.detail') }), ...options];
 }
 
 let client = null;
@@ -772,6 +811,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
   // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
@@ -990,6 +1030,7 @@ const privateWindows = createPrivateWindows({
   prepareSession: (ses) => {
     ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
   },
@@ -1657,6 +1698,7 @@ function researchSession() {
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // pages the AI opened: always the hidden API (features/passkeys.js candidate)
   settingsBackend.mirrorSession(ses); // the profile's proxy, Do Not Track / Global Privacy Control, languages
   adblock.attachSession(ses); // the same filters as normal tabs (waits for the engine if it is still loading)
   researchSes = ses;
@@ -1888,7 +1930,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   // [ai manners] a page the AI opened that opens another (target=_blank, window.open) opens it behind and as the AI's own: it can be closed again and, in hands-off mode, worked in
   const fromAiTab = () => (manners.isAiTab(tab) ? { openedBy: { chatId: tab.openedBy.chatId, runId: tab.openedBy.runId } } : {});
+  const popupLimit = createBurstLimit(); // a page opening windows or tabs in a loop (features/popup-guard.js)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (!popupLimit.allow()) return { action: 'deny' };
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (agentContents.has(wc) && disposition === 'new-window') return { action: 'deny' }; // [agent window] a popup window would come up in front of the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
@@ -2828,7 +2872,8 @@ function cheapTopicModel() {
   return standInOf(cheapTopicModelFor());
 }
 function cheapTopicModelFor() {
-  const chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
+  let chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
+  if (autoModel.isAuto(chosen)) chosen = agent.messages.settings?.autoFrom ? agent.messages.settings.model : (autoConcrete(chosen, 'classification') || DEFAULT_MODEL); // [auto model] the cheapest fit
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
   if (provider === 'anthropic') return 'claude-haiku-4-5';
@@ -3364,8 +3409,9 @@ function homeAssistant() {
   const options = modelOptions();
   if (!options.length) return { name: 'AI', agentUsable: false, model: null }; // nothing connected: no provider to privilege
   const modelId = shownModel(options, { forChat: false }).model; // what the sidebar's picker shows right now (a stand-in during a usage limit included)
-  const label = options.find((o) => o.id === modelId)?.name || String(modelId);
+  const label = autoModel.isAuto(modelId) ? 'Auto' : options.find((o) => o.id === modelId)?.name || String(modelId);
   const named = (name) => ({ name, agentUsable: true, model: modelId, label });
+  if (autoModel.isAuto(modelId)) return named('AI'); // [auto model] the model is chosen per message
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
@@ -3524,6 +3570,13 @@ const UA_METADATA = CHROME_IDENTITY.uaMetadata({
 // secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
 // Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
 const UA_HINT_HEADERS = CHROME_IDENTITY.lowEntropyHeaders(UA_METADATA);
+// The languages a Chrome on this machine reports: Settings → Languages if set, else the system's (Electron's own
+// default gave navigator.languages ["en-US","en-001"] and an Accept-Language of just "en-US"). One list feeds the
+// Accept-Language header (settings-backend.js) and navigator.languages (applyChromeIdentity), so they cannot disagree.
+const chromeLanguages = {
+  list: () => CHROME_IDENTITY.languageList((settingsCache || readSettings()).languages?.length ? (settingsCache || readSettings()).languages : app.getPreferredSystemLanguages()),
+  header: () => CHROME_IDENTITY.acceptLanguageHeader(chromeLanguages.list()),
+};
 // Sec-CH-UA-Arch, -Platform-Version, -Full-Version-List… for an origin whose response asked for them (settings-backend.js).
 const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_METADATA, hints);
 // The override only covers the tab's own frame. Cross-origin iframes and workers are separate
@@ -3612,7 +3665,9 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
     if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
   });
   if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
+  const popupLimit = createBurstLimit();
   wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (!popupLimit.allow()) return { action: 'deny' };
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
     if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
     const byAi = manners.isAiTab(openerTab); // [ai manners] a link from a window an AI tab's page opened is the AI's too: behind the user's tab, and kept out of the strip when hiding is on
@@ -3633,24 +3688,27 @@ function applyChromeIdentity(wc) {
   }
   identified.add(wc);
   aiFrames.track(wc); // before the auto-attach below: every out-of-process frame's session is recorded
-  const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
-  const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
-  const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
+  const lang = () => chromeLanguages.list().join(','); // navigator.languages (DevTools takes the plain list, no q-weights); the request header is the same list, q-weighted
+  const override = () => ({ userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA, acceptLanguage: lang() });
+  const firefox = () => ({ userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform, acceptLanguage: lang() }); // no userAgentMetadata: Firefox has no client hints
+  const basic = () => ({ ...override(), userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }); // (if this DevTools rejects the newest metadata fields, the brands still apply)
   const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
   // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
   const identify = (sessionId, asFirefox = false) => (asFirefox
-    ? send('Emulation.setUserAgentOverride', firefox, sessionId).catch(() => send('Network.setUserAgentOverride', firefox, sessionId)).catch(() => {})
-    : send('Emulation.setUserAgentOverride', override, sessionId)
-      .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
-      .catch(() => send('Network.setUserAgentOverride', override, sessionId))
-      .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {}));
+    ? send('Emulation.setUserAgentOverride', firefox(), sessionId).catch(() => send('Network.setUserAgentOverride', firefox(), sessionId)).catch(() => {})
+    : send('Emulation.setUserAgentOverride', override(), sessionId)
+      .catch(() => send('Emulation.setUserAgentOverride', basic(), sessionId))
+      .catch(() => send('Network.setUserAgentOverride', override(), sessionId))
+      .catch(() => send('Network.setUserAgentOverride', basic(), sessionId)).catch(() => {}));
   // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
   // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
-  const script = (sessionId) => Promise.all([
+  // The Page domain is switched on first: with Chromium's debugging port open (automation, test drivers) a script added
+  // to a session that never enabled Page is not run at document start, and window.chrome stayed Electron's empty {}.
+  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() => Promise.all([
     send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
     send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
-  ]);
+  ]));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
@@ -3663,10 +3721,12 @@ function applyChromeIdentity(wc) {
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
   // settings-backend.js and the navigator by the script above, so neither waits on this.)
   let asFirefox = false;
+  let languages = lang(); // navigator.languages follows the Languages setting: re-applied at the next navigation after it changes
   const follow = (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
     const want = GOOGLE_AUTH.isAuthUrl(details.url);
-    if (want !== asFirefox) { asFirefox = want; identify(undefined, want); }
+    const now = lang();
+    if (want !== asFirefox || now !== languages) { asFirefox = want; languages = now; identify(undefined, want); }
   };
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
@@ -4073,7 +4133,7 @@ function openForApproval(tab) {
 ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
+const waitingText = () => t('agent.waiting'); // (only the "Chats working at once" cap makes a chat wait)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -4175,11 +4235,31 @@ function bindOpenChatHere(sender) {
   pushAttention();
   refreshSidebars();
 }
+// [keep connected] A chat's tab closed: once no tab shows the chat (a few seconds later: another tab may adopt it) and it
+// isn't working, its kept Grok Build process ends (features/grok-warm.js). Nothing is read unless a process is kept.
+function grokChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const sessionOf = () => (chatRuns.get(chat)?.messages || (chat === chatId ? agent.messages : chats().load(chat)))?.settings?.gbSession || null;
+  if (now) { aiAgents.grokChatGone(sessionOf); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat) && !chatRuns.has(chat)) aiAgents.grokChatGone(sessionOf); }, 5000);
+  t.unref?.();
+}
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
+// [warm per chat] A chat left Lumen's tabs or was deleted: its own warm Claude Code process ends (features/warm-chats.js).
+// After a tab close, only once no tab shows the chat a few seconds later (another tab may adopt it).
+function warmChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const gone = () => { try { aiAgents.chatGone(chat); } catch { /* not set up yet */ } };
+  if (now) { gone(); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat)) gone(); }, 5000); // (a chat still working is freed when its message ends)
+  t.unref?.();
+}
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
+  warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
+  grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
@@ -6310,6 +6390,7 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
@@ -6317,6 +6398,7 @@ const agent = new Agent({
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
+  autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -6367,7 +6449,12 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null, ...(TEST ? { otherActivity: async () => false } : {}) });
+// Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
+const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
+  // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
+  codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
+  codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
+  ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
@@ -6381,6 +6468,7 @@ const bgTasks = require('./features/background-runner').create({
   maxBackgroundTasks: () => perfMode.limits().maxBackgroundTasks, // Performance mode: one at a time
   getClient: (...args) => agent.getClient(...args), getKey: providerKey,
   effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
+  autoRoute: (a) => autoRoute({ ...a, apiOnly: true, allowEngines: false }), autoEscalate: (a) => autoEscalate({ ...a, allowEngines: false }), autoDeny: (id) => autoDenied.add(id), // [auto model] a task on Auto is routed to an API model at each run
   aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
   reportUsage: (engine, data) => agent.onUsage?.(engine, data),
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
@@ -6539,7 +6627,8 @@ function aiStatusFacts() {
   if (anthropicUsable()) apis.push('anthropic');
   for (const p of Object.keys(providers.PROVIDERS)) if (providerKey(p)) apis.push(p);
   const cli = aiAgents.cliStatus();
-  const model = effectiveModel();
+  let model = effectiveModel();
+  if (autoModel.isAuto(model)) model = agent.messages?.settings?.autoLast?.id || null; // [auto model] the status card names the model that last answered; before any, no row is marked
   const provider = model ? aiFallback.providerOf(model) : null;
   const bare = model ? String(model).replace(/^[a-z][a-z0-9]*:/, '') : '';
   const cooling = {};
@@ -6552,6 +6641,8 @@ function aiStatusFacts() {
     cooling,
     meter: glance.meter,
     grokLimit: glance.grokLimit,
+    codexLimit: glance.codexLimit,
+    codexMeter: glance.codexMeter,
     today: glance.today,
     fullAccess: Object.fromEntries(Object.entries(AI_FULL_ACCESS).map(([id, key]) => [id, s[key] === true ? true : s[key] === false ? false : undefined])),
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
@@ -6637,7 +6728,46 @@ const spotifyWeb = SW.createSpotifyWeb({
 if (TEST) global.__spotifyWeb = spotifyWeb;
 app.on('before-quit', () => spotifyWeb.destroy());
 
+// ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
+// Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,
+// never one the AI is working in or opened (agent windows, research tabs, a tab a run is using, an AI-opened tab,
+// a signed-in-site tab the AI reads), so no AI tool can start or finish a ceremony.
+function passkeyContext(wc) {
+  if (!wc || wc.isDestroyed() || agentContents.has(wc)) return { ok: false, reason: 'ai' };
+  const front = (w, active) => Boolean(active && w && !w.isDestroyed() && w.isFocused() && w.isVisible() && !w.isMinimized());
+  for (const rec of winRecs) {
+    if (!rcAlive(rec) || isSpare(rec)) continue;
+    const t = tabsOf(rec).find((x) => alive(x) && x.view.webContents === wc);
+    if (!t) continue;
+    if (rec.agent || t.isolated || t.aiLock || manners.isAiTab(t) || agent.usingTab(t.id)) return { ok: false, reason: 'ai' };
+    const w = rec === curRec ? win : rec.win;
+    return front(w, activeIdOf(rec) === t.id) ? { ok: true, win: w, inPrivate: false } : { ok: false, reason: 'not-front' };
+  }
+  const p = privateWindows.tabWindow(wc);
+  if (p) return front(p.win, p.active) ? { ok: true, win: p.win, inPrivate: true } : { ok: false, reason: 'not-front' };
+  return { ok: false, reason: 'not-a-tab' };
+}
+const passkeys = require('./features/passkeys').createPasskeys({
+  ipcMain,
+  enabled: () => readSettings().passkeys !== false,
+  context: passkeyContext,
+  // The API at all: hidden (as before) in the AI's own pages; a page Lumen can't place yet keeps it, and the
+  // request itself is checked against passkeyContext.
+  candidate: (wc) => {
+    if (agentContents.has(wc) || (researchSes && wc.session === researchSes)) return false;
+    for (const rec of winRecs) {
+      const t = rcAlive(rec) ? tabsOf(rec).find((x) => alive(x) && x.view.webContents === wc) : null;
+      if (t) return !(rec.agent || t.isolated || manners.isAiTab(t));
+    }
+    return true;
+  },
+});
+passkeys.attach();
+if (process.platform === 'win32') app.whenReady().then(() => setTimeout(() => passkeys.warm(), 1500));
+if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkeys.busy(), context: (id) => { const wc = require('electron').webContents.fromId(id); return wc ? passkeyContext(wc) : null; }, openBackground: (url) => openTab(url, { background: true })?.webContents?.id ?? null };
+
 const settingsBackend = settingsPage.create({
+  passkeys, // [passkeys] Settings → Privacy
   usage, // [usage] You and AI → Usage
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
@@ -6645,6 +6775,7 @@ const settingsBackend = settingsPage.create({
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
+  systemLanguages: () => chromeLanguages.list(), // [identity] Accept-Language when Settings → Languages is empty: the system's, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   broadcastUi: (channel, payload) => { // [ai manners] every window's browser UI and the chat page, not just the one in front
     const to = new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents), ...(chatPageRt?.surfaces() || [])]);
@@ -7015,10 +7146,11 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
-  // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
-  // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
+  // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
+  // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
+  // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
-  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel());
+  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
@@ -7153,6 +7285,8 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 // Deleting the open chat leaves an empty one in its place.
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
+  warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
+  grokChatLeft(id, { now: true }); // [keep connected] (read before the chat is removed)
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
@@ -7162,6 +7296,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
+  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
@@ -7238,6 +7373,9 @@ Object.defineProperty(agent, 'imageStore', { get: imageStore, set() {}, configur
 if (TEST) global.__imageStore = imageStore;
 setTimeout(() => {
   try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
+  // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
+  // empty list: a history that could not be read must not cost every chat its conversation.)
+  try { if (chats().list().length) require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean))).catch(() => {}); } catch { /* nothing to prune */ }
 }, 30000).unref?.();
 // The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
 ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
@@ -7294,9 +7432,14 @@ function migrateGeminiCli(model) {
 function effectiveModel(preferred = readSettings().model) {
   preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
+  // [auto model] Auto, picked: it stays the pick (settings.json keeps 'auto'); the model that answers is chosen per message.
+  if (autoModel.isAuto(preferred) && options.length) return autoModel.AUTO;
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
   if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
+  // [auto model] Nothing picked yet (a fresh install, or a profile that never chose): Auto, once there is more than one model to
+  // choose from. A saved pick is never replaced: not by Auto, and when it is gone (its key was removed) it falls back as before.
+  if ((preferred == null || preferred === '') && options.filter((o) => o.signedIn !== false && !(o.badges || []).includes('sign in')).length > 1) return autoModel.AUTO;
   // Nothing picked yet (or it's gone): the default model when it's connected, else the first one.
   return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
@@ -7309,11 +7452,11 @@ function effectiveModel(preferred = readSettings().model) {
 // page's Ask AI, starts on the saved default (forChat: false).
 function chatModelPick() {
   const s = agent.messages?.settings;
-  return agent.nextModel || (s ? s.fallbackFrom || s.model : null) || undefined;
+  return agent.nextModel || (s ? s.autoFrom || s.fallbackFrom || s.model : null) || undefined; // (autoFrom: the chat's pick is Auto, whichever model answered last)
 }
 function shownModel(options = modelOptions(), { forChat = true } = {}) {
   const model = effectiveModel(forChat ? chatModelPick() : undefined);
-  const standIn = fallbackOn() ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
+  const standIn = fallbackOn() && !autoModel.isAuto(model) ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
   return { pick: model, model: standIn.from ? standIn.model : model, standIn };
 }
 ipcMain.handle('settings:get', () => {
@@ -7339,7 +7482,8 @@ ipcMain.handle('settings:get', () => {
     model: standIn.from ? standIn.model : model,
     fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
     autoFallback: fallbackOn(),
-    models: options,
+    models: pickerOptions(options),
+    autoProviders: autoProviderList(options), // Settings > AI: which providers Auto may use
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
@@ -7552,12 +7696,14 @@ ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
-  if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
+  if (id === 'openrouter:__more' || (!pickedFromMore && !(autoModel.isAuto(id) && modelOptions().length) && !modelOptions().some((o) => o.id === id))) return false;
   const s = readSettings();
   // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
   const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
   const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
-  writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  // [auto model] The provider the user was on before choosing Auto is the one Auto prefers when two would do.
+  const autoHome = autoModel.isAuto(id) && s.model && !autoModel.isAuto(s.model) ? s.model : s.autoHome;
+  writeSettings({ ...s, model: id, ...(autoHome ? { autoHome } : {}), ...(recentOpenRouter ? { recentOpenRouter } : {}) });
   aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
@@ -7596,6 +7742,10 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
+  maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
+  // [warm per chat] how long a chat's idle Claude Code process is kept: the same setting as a kept Grok Build's
+  // (grokKeepIdleMinutes; 0: never, Infinity), read when the chat's engine is made.
+  warmIdleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? (m === 0 ? Infinity : m * 60000) : null; },
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),

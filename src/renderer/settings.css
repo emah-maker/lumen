@@ -462,3 +462,7 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 .cal-edit .cal-url { grid-column: 1 / -1; min-width: 0; }
 .cal-edit .cal-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .cal-edit .cal-test { flex: 1 1 160px; min-width: 0; }
+
+/* [auto model] Settings > AI > Auto may use: one tick per connected provider */
+.auto-use { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
+.auto-use-item { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: default; }

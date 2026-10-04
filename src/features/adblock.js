@@ -191,7 +191,9 @@ function createAdblock(deps) {
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
-      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
+      // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
+      // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
+      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || require('../browser/google-auth-identity').isAuthUrl(page)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = engine.match(request);

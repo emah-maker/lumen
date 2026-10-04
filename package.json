@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "productName": "Lumen",
-  "version": "0.5.5",
+  "version": "0.5.7",
   "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
   "main": "src/main.js",
   "type": "commonjs",
@@ -11,6 +11,7 @@
     "dist": "node scripts/build.js",
     "test": "node scripts/test-all.js",
     "test:units": "node scripts/test-units.js",
+    "test:acceptance": "node scripts/test-acceptance.js",
     "lint": "eslint .",
     "measure": "node scripts/measure-perf.js",
     "check:package": "node scripts/check-package.js",
@@ -25,6 +26,7 @@
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.10",
+    "koffi": "^3.3.2",
     "openai": "^7.23.0",
     "qrcode-generator": "^2.0.4",
     "tldts-experimental": "^7.4.15"
@@ -53,6 +55,7 @@
       "CHANGELOG.md",
       "!build/**",
       "!.impeccable/**",
+      "!.claude/**",
       "!**/.impeccable/**",
       "!scripts/**",
       "!.github/**",
@@ -65,7 +68,12 @@
       "!**/node_modules/**/*.map",
       "!**/node_modules/**/*.{ts,mts,cts,tsbuildinfo}",
       "!**/node_modules/{openai,@anthropic-ai/sdk}/**/*.mjs",
-      "!**/node_modules/{openai,@anthropic-ai/sdk}/src/**"
+      "!**/node_modules/{openai,@anthropic-ai/sdk}/src/**",
+      "!**/node_modules/koffi/{doc,lib,vendor}/**",
+      "!**/node_modules/koffi/src/koffi/src/**/*.{cc,hh,inc,def,S,asm}",
+      "!**/node_modules/koffi/src/koffi/CMakeLists.txt",
+      "!**/node_modules/koffi/cnoke.cjs",
+      "!**/node_modules/@koromix/koffi-*/*/*.lib"
     ],
     "electronLanguages": [
       "en-US",

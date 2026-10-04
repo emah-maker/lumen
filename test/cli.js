@@ -55,7 +55,7 @@ const os = require('os');
   check('signed in: shows the profile and Sign out', cli.status.includes('“work”') && cli.button === 'Sign out', JSON.stringify(cli));
   await app.close();
 
-  fs.rmSync(bin, { recursive: true, force: true });
+  fs.rmSync(bin, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

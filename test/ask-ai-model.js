@@ -252,7 +252,7 @@ const LIMIT_MS = 200;
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* temp */ }
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* temp */ }
   console.log(failures ? `\n${failures} check(s) failed` : '\nall ask-ai-model checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

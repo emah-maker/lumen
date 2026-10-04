@@ -206,7 +206,7 @@ const RECORDS = [
   check('settings: languages with a pack are listed with sizes and what is missing; English and unknown ones are not', ov.languages.map((l) => l.code).join() === 'fr,de,zh-CN' && ov.languages.find((l) => l.code === 'fr').missing === index['en>fr'].bytes && ov.languages.find((l) => l.code === 'de').missing === 0, JSON.stringify(ov.languages));
   check('settings: installed packs use Lumen\'s language codes', ov.installed.every((p) => p.from && p.to) && ov.used === store.usedBytes(), JSON.stringify(ov.installed));
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

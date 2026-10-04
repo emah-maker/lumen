@@ -13,7 +13,8 @@ const root = path.join(__dirname, '..');
 const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'src/features/qr.js', 'src/features/screenshot.js', 'src/features/tool-overlay.js'];
 // modules 200 -> 250 and uiKB 500 -> 600: the home-page widgets, merge, fallback and animation work grew the app (217 modules, 547 KB at the last measure); a runaway eager SDK or bundle still trips them.
 // uiKB 600 -> 650 (0.5.1): Routines, the context meter and frame-aware chat UI took the bundle to 601 KB.
-const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 650, idleIntervals: 4 };
+// uiKB 650 -> 700, idleIntervals 4 -> 5 (0.5.5): the UI bundle measures 675 KB; a fifth, cheap unref'd timer (the 15 s background-task tick, next to the run-slot sweep, the AI status refresh, the sleep sweep and the extension update check) idles at 0.2% CPU with 15 tabs.
+const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 700, idleIntervals: 5 };
 
 (async () => {
   let failures = 0;
@@ -35,7 +36,7 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 650, idleI
   check('Code Cache under its cap is kept', perf.trimCodeCache(dir, 10000, { every: 0 }) === 'kept' && fs.existsSync(path.join(dir, 'Code Cache')), '');
   check('Code Cache over its cap is removed', perf.trimCodeCache(dir, 1000, { every: 0 }) === 'trimmed' && !fs.existsSync(path.join(dir, 'Code Cache')), '');
   check('a check made this week is not repeated', perf.trimCodeCache(dir, 1000) === 'skipped', '');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   // Startup of the real app.
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-perfbudget-'));
@@ -86,7 +87,7 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 650, idleI
     check('the main process is not blocked for over 500 ms while a new tab opens', lagMax <= 500, `${Math.round(lagMax)} ms`);
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `${failures} failed` : 'all passed');
   process.exit(failures ? 1 : 0);

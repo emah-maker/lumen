@@ -230,9 +230,22 @@ const HELPER_FILES = ['icudtl.dat', 'snapshot_blob.bin', 'v8_context_snapshot.bi
 
 // Copy the running (signed) exe, its startup data and swap-helper.js into a temp folder, so the swap
 // can run from outside the install it replaces. Returns { exe, script }. The exe copy is
-// byte-identical; nothing is edited or re-signed.
-function prepareHelper(execPath, tmp = path.join(os.tmpdir(), 'lumen-update-helper')) {
-  fs.rmSync(tmp, { recursive: true, force: true });
+// byte-identical; nothing is edited or re-signed. Each attempt gets its own folder: an earlier one
+// can't always be removed (a Lumen relaunched by an older helper ran with it as its working
+// directory, which Windows keeps locked), and that must not fail the next update. Earlier folders
+// are removed when they can be.
+const HELPER_PREFIX = 'lumen-update-helper';
+function prepareHelper(execPath, tmp = null, base = os.tmpdir()) {
+  if (!tmp) {
+    try {
+      for (const f of fs.readdirSync(base)) {
+        if (f.startsWith(HELPER_PREFIX)) try { fs.rmSync(path.join(base, f), { recursive: true, force: true }); } catch {}
+      }
+    } catch {}
+    tmp = path.join(base, `${HELPER_PREFIX}-${process.pid}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
+  } else {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
   fs.mkdirSync(tmp, { recursive: true });
   const exe = path.join(tmp, path.basename(execPath));
   fs.copyFileSync(execPath, exe);

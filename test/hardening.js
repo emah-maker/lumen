@@ -182,7 +182,7 @@ const http = require('http');
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   // ---- a packaged build ignores CLAUDE_BROWSER_TEST / CLAUDE_BROWSER_PROFILE
   // A stand-in entry makes app.isPackaged true, gives Lumen its own throwaway profile (as a packaged
@@ -224,8 +224,8 @@ const http = require('http');
   const testCalls = await packedUi.evaluate(() => Object.keys(window.assistant).filter((k) => ['mcpInfo', 'setMcpEnabled', 'automationInfo', 'setAutomation', 'setAutoGroup', 'setProviderKey'].includes(k)));
   check('packaged: the UI bridge has no test-only calls', testCalls.length === 0, testCalls.join(', '));
   await packed.close();
-  fs.rmSync(packedDir, { recursive: true, force: true });
-  fs.rmSync(plantedProfile, { recursive: true, force: true });
+  fs.rmSync(packedDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(plantedProfile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   server.close();
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

@@ -988,13 +988,23 @@ const WIDGET_RENDERERS = {
     let src0 = pickUrl(true) || url;
     let shown = '';
     let was = null;
+    // The embeds read their options from the hash, and a change to only the hash is a same-page jump the frame never reloads for
+    // (the other theme's address differs from this one only there): go through a blank page so the widget starts over.
+    const load = (src) => {
+      const same = (() => { try { const a = new URL(frame.src); const b = new URL(src); a.hash = ''; b.hash = ''; return frame.src && a.href === b.href; } catch { return false; } })();
+      if (!same) { frame.src = src; return; }
+      frame.addEventListener('load', () => { if (shown === src) frame.src = src; }, { once: true });
+      frame.src = 'about:blank';
+    };
     const place = () => {
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       const next = fit ? fit.plan({ view: d.view, sections: d.sections, chart: d.chart === true }, w, h, was, Boolean(small)) : (w > 0 && h > 0 ? { compact: false, scale: 1 } : null);
       if (!next) return; // not laid out yet (a card in a stack that isn't showing): the observer calls again
       const src = next.compact && small ? small : src0;
-      if (src !== shown) { shown = src; frame.src = src; }
+      // TradingView's embed-widget pages (mini price view, watchlist) are see-through (isTransparent) and sit on the card; only the full chart paints its own background.
+      frame.classList.toggle('tv-clear', src.includes('/embed-widget/'));
+      if (src !== shown) { shown = src; load(src); }
       if (next.scale < 1) { frame.style.width = `${Math.round(w / next.scale)}px`; frame.style.height = `${Math.round(h / next.scale)}px`; frame.style.transform = `scale(${next.scale})`; }
       else { frame.style.width = ''; frame.style.height = ''; frame.style.transform = ''; }
       was = next;

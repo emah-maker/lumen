@@ -160,6 +160,45 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   check('antigravity run: the run\'s MCP token file is gone afterwards, the gate run closed', !fs.existsSync(path.join(ok.data, 'antigravity-home', '.gemini', 'config', 'mcp_config.json')) && ok.gate.closed.length === 1, '');
   check('antigravity run: the environment is a short list, no API keys of the user\'s shell', !('ANTHROPIC_API_KEY' in sp.opts.env) && sp.opts.env.NO_COLOR === '1', '');
 
+  // [parallel Antigravity chats] a chat's run uses that chat's own home (its token file and conversations), seeded once
+  {
+    const data = fs.mkdtempSync(path.join(tmp, 'ud-chat-'));
+    const mainGemini = path.join(data, 'antigravity-home', '.gemini');
+    fs.mkdirSync(path.join(mainGemini, 'antigravity-cli', 'conversations'), { recursive: true });
+    fs.mkdirSync(path.join(mainGemini, 'antigravity-cli', 'log'), { recursive: true });
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'conversations', 'old-conv.db'), 'old');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'conversations', 'other-conv.db'), 'other');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'installation_id'), 'inst-1');
+    fs.writeFileSync(path.join(mainGemini, 'oauth_creds.json'), 'creds-1');
+    const runIn = async (chatId, sessionId = null) => {
+      const f = fake([init, done('ok')]);
+      const g = { open() { return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 't'.repeat(48), hookUrl: 'http://127.0.0.1:1/hook/x' }; }, close() {} };
+      const engine = new ag.AntigravityEngine({ userData: data, gate: async () => g, spawn: f.spawn, kill: f.kill });
+      engine.bin = process.execPath;
+      const out = await engine.run({ prompt: 'hi', sessionId, systemPrompt: 'S', signal: new AbortController().signal, emit: () => {}, scope: { chatId } });
+      return { out, sp: f.spawns[0] };
+    };
+    const c1 = await runIn('chat1', 'old-conv');
+    const home1 = ag.chatHomeFor(data, 'chat1');
+    const g1 = path.join(home1, '.gemini');
+    check('antigravity chat home: a chat\'s run has HOME in its own folder, with its MCP token file there (not in the main home)', c1.sp.opts.env.HOME === home1 && c1.sp.mcp?.mcpServers?.lumen && !fs.existsSync(path.join(mainGemini, 'config', 'mcp_config.json')) && !fs.existsSync(path.join(g1, 'config', 'mcp_config.json')), JSON.stringify([c1.sp.opts.env.HOME, home1]));
+    check('antigravity chat home: seeded from the main home without logs or other chats\' conversations; the chat\'s saved conversation is migrated; sign-in files shared', fs.readFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'utf8') === 'inst-1' && !fs.existsSync(path.join(g1, 'antigravity-cli', 'log')) && fs.readdirSync(path.join(g1, 'antigravity-cli', 'conversations')).join() === 'old-conv.db' && fs.readFileSync(path.join(g1, 'oauth_creds.json'), 'utf8') === 'creds-1', JSON.stringify(fs.readdirSync(path.join(g1, 'antigravity-cli'))));
+    fs.writeFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'chat-own');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'installation_id'), 'inst-2');
+    const later = Date.now() / 1000 + 5;
+    fs.writeFileSync(path.join(mainGemini, 'oauth_creds.json'), 'creds-2');
+    fs.utimesSync(path.join(mainGemini, 'oauth_creds.json'), later, later);
+    await runIn('chat1', 'old-conv');
+    check('antigravity chat home: seeded once (later runs keep the chat\'s own state), but a newer sign-in in the main home is picked up', fs.readFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'utf8') === 'chat-own' && fs.readFileSync(path.join(g1, 'oauth_creds.json'), 'utf8') === 'creds-2');
+    const later2 = Date.now() / 1000 + 20;
+    fs.writeFileSync(path.join(g1, 'oauth_creds.json'), 'creds-refreshed');
+    fs.utimesSync(path.join(g1, 'oauth_creds.json'), later2, later2);
+    await runIn('chat1', 'old-conv'); // (agy refreshed its sign-in during this run)
+    const c2 = await runIn('chat2');
+    check('antigravity chat home: another chat gets another home; a sign-in a chat\'s agy refreshed goes back to the main home and on to new chats', c2.sp.opts.env.HOME === ag.chatHomeFor(data, 'chat2') && c2.sp.opts.env.HOME !== home1 && fs.readFileSync(path.join(mainGemini, 'oauth_creds.json'), 'utf8') === 'creds-refreshed' && fs.readFileSync(path.join(ag.chatHomeFor(data, 'chat2'), '.gemini', 'oauth_creds.json'), 'utf8') === 'creds-refreshed', fs.readFileSync(path.join(mainGemini, 'oauth_creds.json'), 'utf8'));
+    check('antigravity chat home: an odd chat id never escapes the chats folder', path.dirname(ag.chatHomeFor(data, '../../etc')) === ag.chatsDirFor(data) && ag.chatHomeFor(data, null) === null);
+  }
+
   const resumed = await runAgy([init, say(1, 'ok'), done('ok')], { run: { sessionId: 'conv-1', model: 'gemini-3.1-pro-high' } });
   const rp = resumed.f.spawns[0];
   check('antigravity run: a later message continues the conversation with --conversation and the model, with a reminder, not the whole system text; the gate run carries the conversation id', flag(rp.argv, '--conversation') === 'conv-1' && flag(rp.argv, '--model') === 'gemini-3.1-pro-high' && !flag(rp.argv, '-p').includes('SYS') && /lumen_reminder/.test(flag(rp.argv, '-p')) && resumed.gate.opened[0].session === 'conv-1', rp.argv.join(' ').slice(0, 300));
@@ -197,7 +236,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   const eng = new ag.AntigravityEngine({ userData: tmp, gate: async () => ({}), exec: (file, args, o, cb) => { calls.push({ file, args }); cb(null, 'installed\n', ''); } });
   check('antigravity install(): nothing runs until it is called; then exactly the official command, no shell string from input', calls.length === 0 && (await eng.install()).ok === true && calls.length === 1 && calls[0].args.includes(ag.installCommand()), JSON.stringify(calls));
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* Windows may still hold the folder for a moment; the OS temp cleanup takes it */ }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

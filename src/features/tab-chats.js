@@ -3,8 +3,8 @@
 // This file is the pure part:
 //   createBindings()   which chat each tab shows in the sidebar (many tabs may show one chat; its home
 //                      tab is the one it was last moved or started in)
-//   createRunSlots()   how many chats may work at once, the waiting line behind them, and the rule
-//                      that CLI engines (Claude Code, Grok Build) run one chat at a time
+//   createRunSlots()   how many chats may work at once (no cap at all when the setting says so) and the waiting
+//                      line behind them
 //   resolveToolTab()   which tab a chat's browser tools act on: its own, never "whichever is in front"
 //   tabStatus()        the little mark a tab shows: working, waiting its turn, or done and not viewed
 //   followPlan()       what the sidebar shows when a tab comes to the front
@@ -14,12 +14,16 @@
 // nobody else holds (the last chat after a restart, or one whose tab closed), which the tab you are
 // on adopts so the sidebar never opens empty on a chat that still has a history.
 
-const DEFAULT_MAX_RUNS = 3;
+const DEFAULT_MAX_RUNS = 0; // 0: no limit (every chat that is sent a message works at once)
 const MAX_RUNS_LIMIT = 8;
 
+// maxChatRuns 0 (the default), 'unlimited', Infinity, or anything unreadable: no cap (every chat starts at once).
+// Any other number is held to 1..MAX_RUNS_LIMIT.
 const clampRuns = (n) => {
+  if (n === 'unlimited' || n === Infinity) return Infinity;
   const v = Math.round(Number(n));
-  return Number.isFinite(v) ? Math.min(MAX_RUNS_LIMIT, Math.max(1, v)) : DEFAULT_MAX_RUNS;
+  if (!Number.isFinite(v) || v <= 0) return Infinity;
+  return Math.min(MAX_RUNS_LIMIT, v);
 };
 
 // ---- tab <-> chat
@@ -102,20 +106,19 @@ function createBindings() {
 }
 
 // ---- running chats: the cap and the waiting line
-// slot kinds: 'api' (a model reached over its API) or 'cli' (Claude Code, Grok Build). The CLI engines
-// call back into Lumen's tools through one connection that finds its run through a single pin, and keep
-// one process warm, so only one of them works at a time; other chats wait (reason 'cli').
+// slot kinds: 'api' (a model reached over its API) or 'cli' (Claude Code, Grok Build, Antigravity: each run reaches
+// Lumen's tools over a connection of its own, found by its own tag, so they run side by side like any other chat;
+// Antigravity's runs each use their chat's own home folder for the token file). Only the cap makes a chat wait.
 //   onError(chatId, err)  a start() that throws: the slot is given back and the chat is told (an error and a done), so it
 //                         is never left showing "running" for ever
 //   onStale(chatId)       sweep() found a slot whose run is gone without ever saying done (an engine process that exited
 //                         without reaching "done"): the slot is released and the chat is told
-function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, onStale = null, misses = 2 } = {}) {
+function createRunSlots({ max = DEFAULT_MAX_RUNS, onError = null, onStale = null, misses = 2 } = {}) {
   let limit = clampRuns(max);
   const running = new Map(); // chat id -> { kind, alive, missed }
   const waiting = []; // { chatId, kind, start, alive }
-  const cliBusy = () => [...running.values()].filter((r) => r.kind === 'cli').length;
-  const fits = (kind) => running.size < limit && (kind !== 'cli' || cliBusy() < cliMax);
-  const why = (kind) => (running.size >= limit ? 'limit' : kind === 'cli' && cliBusy() >= cliMax ? 'cli' : null);
+  const fits = () => running.size < limit;
+  const why = () => (running.size >= limit ? 'limit' : null);
 
   const begin = (chatId, kind, alive, start) => {
     running.set(chatId, { kind, alive, missed: 0 });
@@ -129,7 +132,7 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
   function pump() {
     for (let i = 0; i < waiting.length;) {
       const w = waiting[i];
-      if (!fits(w.kind)) { i++; continue; }
+      if (!fits()) { i++; continue; }
       waiting.splice(i, 1);
       begin(w.chatId, w.kind, w.alive, w.start);
       i = 0; // (the line is looked at again from the front: a slot may have been taken)
@@ -174,11 +177,9 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
       return true;
     },
     state: (chatId) => (running.has(chatId) ? 'running' : waiting.some((w) => w.chatId === chatId) ? 'queued' : null),
-    // Why a queued chat waits: 'limit' (the cap), 'cli' (a CLI engine is busy in another chat), or null.
+    // Why a queued chat waits: 'limit' (the cap), or null.
     reason(chatId) {
-      const w = waiting.find((x) => x.chatId === chatId);
-      if (!w) return null;
-      return why(w.kind);
+      return waiting.some((x) => x.chatId === chatId) ? why() : null;
     },
     runningIds: () => [...running.keys()],
     waitingIds: () => waiting.map((w) => w.chatId),
@@ -186,8 +187,8 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
   };
 }
 
-// The engine kind of a model id, for the slots.
-const slotKind = (model) => (/^(claudecode|grokbuild):/.test(String(model || '')) ? 'cli' : 'api');
+// The engine kind of a model id, for the slots (see createRunSlots): a CLI engine or an API model.
+const slotKind = (model) => (/^(claudecode|grokbuild|antigravity):/.test(String(model || '')) ? 'cli' : 'api');
 
 // ---- tools
 // The tab a chat's tools act on. `pinned`: the tab the chat's run is bound to (null: none yet).

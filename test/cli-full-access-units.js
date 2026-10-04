@@ -259,7 +259,30 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
   await flip.antigravityTurn(t1.messages, 'more', [], new AbortController().signal, () => {});
   check('agent: with the setting unchanged the conversation is continued', calls3[0].sessionId === 'conv-2', JSON.stringify(calls3[0]?.sessionId));
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Stop (or the sidebar's Send now) mid-reply: what the CLI had said stays in the history, marked interrupted.
+  for (const [model, method] of [['grokbuild:default', 'grokBuildTurn'], ['antigravity:default', 'antigravityTurn']]) {
+    const agent = newAgent({});
+    const engine = { statusCache: null, run: async () => ({ text: 'Half an answ', sessionId: 's-1', stopped: true }) };
+    agent.engines = { grokbuild: engine, antigravity: engine };
+    agent.enginePictures = async () => [];
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+    messages.settings = { model };
+    const events = [];
+    await agent[method](messages, 'hi', [], new AbortController().signal, (e) => events.push(e));
+    const kept = messages[messages.length - 1];
+    check(`agent: ${method} stopped mid-reply keeps the partial text in the history, marked interrupted`, kept.role === 'assistant' && /^Half an answ\n\n\[This reply was interrupted\.\]$/.test(kept.content[0].text) && events.some((e) => e.type === 'notice' && e.stopped), JSON.stringify(kept));
+    // The next message (Send now's, say) on the resumed session carries what was said, since the killed process may not have kept it.
+    const prompts = [];
+    engine.run = async (o) => { prompts.push(o.prompt); return { text: 'ok', sessionId: 's-1' }; };
+    if (method === 'grokBuildTurn') messages.settings.gbSession = 's-1'; else { messages.settings.agySession = 's-1'; messages.settings.agyFull = false; }
+    messages.push({ role: 'user', content: [{ type: 'text', text: 'do this instead' }] });
+    await agent[method](messages, 'do this instead', [], new AbortController().signal, () => {});
+    check(`agent: ${method} the next resumed prompt includes the interrupted partial, then the new message`, /<interrupted_reply>[\s\S]*Half an answ[\s\S]*<\/interrupted_reply>\s+do this instead$/.test(prompts[0] || ''), prompts[0]);
+    const done = await turnOf(newAgent({}), model, method);
+    check(`agent: ${method} a finished reply is kept as said`, done.messages[done.messages.length - 1].content[0].text === 'done', JSON.stringify(done.messages.at(-1)));
+  }
+
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

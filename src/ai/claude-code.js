@@ -417,6 +417,8 @@ class ClaudeCodeEngine {
 
   idleLater(proc, ms = this.idleMs) {
     clearTimeout(proc.idle);
+    proc.idle = null;
+    if (ms === Infinity) return; // never idle out (Settings: a chat's warm process kept until its chat goes)
     proc.idle = setTimeout(() => this.dispose(proc), ms);
     proc.idle.unref?.();
   }
@@ -549,7 +551,7 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -568,7 +570,7 @@ class ClaudeCodeEngine {
     // tools: Lumen tool calls this message made (callBegin); inflight: those still running; dog/arm: the watchdog.
     // builtin: [full access] the CLI's own tool calls still running (each also counts in inflight: a long
     // shell command prints nothing until it ends, and must not look hung).
-    const active = { tag, emit, signal, child: proc.child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null, builtin: new Set() };
+    const active = { tag, emit, signal, child: proc.child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null, builtin: new Set() };
     this.active = active;
 
     let text = '';

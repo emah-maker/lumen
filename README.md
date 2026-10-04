@@ -12,7 +12,7 @@
 - **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, the current chat is encrypted at rest, and the start page makes no network requests.
 - **Calm to look at.** Light and dark themes that follow your system, and spring animations.
 
-**Found a bug or have an idea?** [Report an issue](https://github.com/emah-maker/lumen/issues/new/choose). In the app, use Help → Report an Issue (macOS) or Settings → About → Report a problem.
+**Found a bug or have an idea?** [Report an issue](https://github.com/emah-maker/lumen/issues/new/choose) · [Report a security problem privately](https://github.com/emah-maker/lumen/security/advisories/new). In the app, use Help → Report an Issue (macOS) or Settings → About → Report a problem.
 
 ## Install
 
@@ -166,7 +166,8 @@ claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Lum
 ```
 
 ```toml
-# Codex CLI: ~/.codex/config.toml
+# Codex CLI: ~/.codex/config.toml (or $CODEX_HOME/config.toml). The Add to Codex CLI button in Settings
+# writes this for you and finds codex however it was installed (npm, winget, the standalone .exe, Homebrew…).
 [mcp_servers.lumen]
 command = 'C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe'
 args = ['C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js']
@@ -243,6 +244,7 @@ Compact is about 4–5× smaller than a full read. The big savings come from not
 - **Keys and the chat** are encrypted with the OS keychain. Lumen keeps one chat; **New chat** replaces it. Without a keychain, keys aren't saved (use the environment variables) and the chat isn't kept between sessions.
 - **Background reading and web search** run in a separate in-memory session with none of your cookies or logins. That session denies every permission request and cancels downloads.
 - **Lumen's own UI is locked down.** The browser UI, the address-bar suggestions and the dialog overlay can't be navigated away or open popups (links open as tabs), web pages in tabs can't send the UI's privileged messages, and a link dropped on the window opens as a tab.
+- **Passkeys, Windows Hello and security keys** (Windows 10 1903 and later; Settings → Privacy and security → **Use passkeys and security keys**, on by default). Sites that offer "Sign in with a passkey" get the Windows Security prompt (face, fingerprint, PIN, a USB/NFC/Bluetooth security key, or a phone over QR); Windows keeps the passkeys and Lumen stores nothing. Lumen's main process checks every request itself (the page's real origin, the relying party, a secure page, the tab in front of a focused window) and refuses any page the AI opened or is working in, so no AI tool can start or approve a passkey prompt. Not yet: passkey autofill in the address/username field (conditional mediation), related-origin requests, macOS and Linux (there sites see no passkey API and offer a password or a code, as with the setting off). On Windows 11 with a third-party passkey provider, a cancelled "save this passkey" picker can stay up until you close it.
 - **Approvals** for the AI and for MCP agents are described in [Asking before it acts](#asking-before-it-acts).
 - Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
@@ -297,6 +299,10 @@ To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 
 The images in this README are captured from a throwaway profile by `node scripts/capture-media.js` (needs `ffmpeg` on PATH for the GIFs and the MP4; Windows only for the screen recording).
 
+## Report an issue
+
+Something broken, or something missing? [Open an issue on GitHub](https://github.com/emah-maker/lumen/issues/new/choose) and pick **Bug report** or **Feature request**. Include your Lumen version (**Settings → About Lumen**) and your operating system, and [search the open issues](https://github.com/emah-maker/lumen/issues) first in case it's already reported. Security problems go to a [private security advisory](https://github.com/emah-maker/lumen/security/advisories/new), not a public issue ([SECURITY.md](SECURITY.md)).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
@@ -334,7 +340,7 @@ docs/                   reference pages (below) and docs/media (the README's scr
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
 ```
 
-`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
+`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `passkeys`, `webauthn-windows`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
 
 **Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `npm run test:units` runs every pure-node suite (`scripts/test-units.js`, no window), which CI runs on pull requests and the release build runs before packaging. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 

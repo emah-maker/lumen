@@ -84,6 +84,7 @@ const DEFAULTS = {
   sendDoNotTrack: false,
   sendGpc: false,
   httpsOnly: false,
+  passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
   adblock: true,
   adblockAllow: [],
@@ -104,15 +105,18 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
-  maxChatRuns: 3, // [ai] sidebar chats that may work at once (one per tab); more wait their turn (features/tab-chats.js)
+  maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
+  autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
+  grokKeepConnected: false, // [ai] each Grok Build chat keeps its own `grok agent stdio` process between messages (features/grok-warm.js)
+  grokKeepIdleMinutes: 15, // [ai] an idle kept Grok Build process ends after this many minutes; 0: only when its chat goes
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
@@ -174,8 +178,10 @@ function validate(key, value) {
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
-    case 'maxChatRuns': return pick(Number(value), [1, 2, 3, 4, 6, 8], null);
+    case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
+    case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
@@ -215,18 +221,19 @@ function validate(key, value) {
 }
 
 // q-weighted Accept-Language: en-US,en;q=0.9,fr;q=0.8
-function acceptLanguage(langs) {
-  const out = [];
-  for (const l of langs) {
-    if (!out.includes(l)) out.push(l);
-    const base = l.split('-')[0];
-    if (base !== l && !langs.includes(base) && !out.includes(base)) out.push(base);
-  }
-  return out.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
-}
+const acceptLanguage = (langs) => require('../browser/chrome-identity').acceptLanguageHeader(langs); // (the one list navigator.languages uses too)
 
 const isLocalHost = (host) => host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]'
   || /^(10|192\.168)\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || !host.includes('.');
+
+// [chat per tab] "No limit" (0) replaced 3 as the default for maxChatRuns. A profile that still holds the old default
+// moves to the new one, once; a number chosen since (marked by MAX_CHAT_RUNS_MARK) or any other number is kept.
+// Returns the settings to write, or null when nothing changes.
+const MAX_CHAT_RUNS_MARK = 'maxChatRunsNoLimitDefault';
+function migrateMaxChatRuns(settings) {
+  if (!settings || settings[MAX_CHAT_RUNS_MARK] || settings.maxChatRuns === undefined) return null;
+  return { ...settings, ...(Number(settings.maxChatRuns) === 3 ? { maxChatRuns: 0 } : {}), [MAX_CHAT_RUNS_MARK]: true };
+}
 
 // Settings read before the app is ready: GPU and Chromium feature switches only apply at launch.
 function applyAtLaunch(app, settings) {
@@ -239,6 +246,7 @@ function applyAtLaunch(app, settings) {
 function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
+  { const moved = migrateMaxChatRuns(readSettings()); if (moved) writeSettings(moved); }
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
   const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
@@ -445,7 +453,9 @@ function create(deps) {
       }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
+      // Chrome always sends the q-weighted list of the browser's languages (Electron's default is the bare "en-US").
       if (p.languages.length) headers['Accept-Language'] = acceptLanguage(p.languages);
+      else if (deps.systemLanguages) headers['Accept-Language'] = acceptLanguage(deps.systemLanguages());
       // Electron has no client-hints store, so Chromium never sends this hint itself; Google (which
       // renders its theme on the server) and sites that asked for it get it from here.
       if (wantsColorHint(details.url)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
@@ -618,7 +628,7 @@ function create(deps) {
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
-    writeSettings({ ...readSettings(), [key]: valid });
+    writeSettings({ ...readSettings(), [key]: valid, ...(key === 'maxChatRuns' ? { [MAX_CHAT_RUNS_MARK]: true } : {}) }); // (a 3 chosen now is not the old default)
     await apply(key);
     return state();
   }
@@ -628,6 +638,7 @@ function create(deps) {
     return {
       prefs: p,
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
+      passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
       accent: accentOf(p.accentColor), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
@@ -937,4 +948,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, validate, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, validate, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

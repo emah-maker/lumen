@@ -4,6 +4,23 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.7 (2026-10-03)
+
+- Passkeys, Windows Hello and security keys now work on Windows: pages that ask you to sign in or register with one show the real Windows prompt instead of hanging. Turn it off any time in Settings with **Use passkeys and security keys (Windows Hello)**. Known limits: if you cancel while registering a passkey, the Windows picker can stay open until you close it, and passkey autofill (suggestions in the sign-in field) is not supported yet.
+- **Auto model.** Every model picker now starts with **Auto**: Lumen picks the model for each message, on your computer and without another model call. Quick questions go to a small, fast model, hard or long ones to a stronger one, and a model that is out of usage, turned off for Auto (Settings → AI → Auto may use) or not on your plan is skipped. It works with every connected AI: Claude Code, Grok Build, Antigravity, and the Anthropic, OpenAI, Grok, Gemini and OpenRouter keys; background tasks and routines can use it too. Each reply says which model answered and why. `/think`, `/deep` and `/fast` ask for the strongest or quickest model for one message. A model you pick yourself is always used as picked, and nothing you already chose is changed (a new install with several AIs connected starts on Auto). See [docs/auto-model.md](docs/auto-model.md).
+- Codex CLI: **Add to Codex CLI** (Settings → AI and agents) now works however Codex was installed, not only with npm: a standalone `codex.exe`, WinGet, scoop, the Microsoft Store, the Codex app, the VS Code or Cursor extension's copy, Homebrew, cargo and more are found (also when Lumen was started from the Start menu or Finder and has no shell PATH). The row shows the version, whether Codex is signed in and whether Lumen is connected; if Codex can't be found it says how to install it and offers **Locate codex…**. Lumen's entry in `~/.codex/config.toml` is added or updated without touching the rest of the file (a backup is kept), and clicking again says Already connected.
+- Usage: Settings → Usage shows Codex's own 5-hour and weekly plan limits and token totals (read from Codex's session logs on this computer, numbers only; Codex reports no price), and the AI status card shows Codex's limit when it is reached.
+
+## 0.5.6 (2026-10-03)
+
+- Updates: a failed update that is retried no longer fails again on a leftover helper folder from the first try (each attempt now uses its own folder).
+- Toolbar: the update and other pills are never cut off; when the window is narrow the address field gives up space first.
+- Sign-in with a passkey or Windows Hello: Electron cannot show that prompt, so pages that asked for it (Microsoft, for example) just hung. Lumen now hides passkey support from pages, so they offer your password or a code instead.
+- TradingView mini chart on the home page stays dark in dark theme.
+- Safer popups and downloads: one page can no longer open a burst of windows or tabs, more Windows program and launcher file types are held for your approval before a download is kept, and a page can no longer reach the chat-sharing channel meant only for Lumen's own screens.
+- Tests are more reliable on slow machines (development only).
+- Google sign-in: pages now always get the Chrome identity (window.chrome with loadTimes, csi and app) at document start; before, it was skipped whenever Chromium's debugging port was open (automation). Accept-Language is Chrome's q-weighted list ("en-US,en;q=0.9") even with no Languages setting, and navigator.languages is that same list (it said "en-001"). Google's own sign-in pages are no longer ad-filtered.
+
 ## 0.5.5 (2026-10-02)
 
 - New tab keeps the text cursor in the address bar: widgets on the new-tab page that focus themselves as they load no longer take it, and a tab opened behind the one you're using (a link opened in a new tab, a tab the AI opened) no longer takes the keyboard, so typing goes where you were typing.

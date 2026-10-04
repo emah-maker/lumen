@@ -109,7 +109,7 @@ function automationVerdict({ method, handsOff = false, ownTab = false } = {}) {
 }
 
 // One line for the system prompt, so the model plans around it instead of finding out by being refused.
-const HANDS_OFF_PROMPT = 'Hands-off mode is on: the user does not let you click, type, scroll or navigate in their own tabs. You can read them (read_page, find, screenshot, read_tabs, list_tabs). To act, open your own tab with open_tab (it opens in the background) and work there; those tabs are yours.';
+const HANDS_OFF_PROMPT = 'Hands-off mode is on: you may read the user\'s tabs but not click, type, scroll or navigate in them. To act, open a tab of your own with open_tab and work there.';
 
 // ---- the user's focus
 const TYPING_GRACE_MS = 1500; // the AI's typing waits this long after the user's last key in the same tab

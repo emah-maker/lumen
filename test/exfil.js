@@ -265,8 +265,9 @@ const path = require('path');
     const seen = JSON.parse(await agent.execute('list_tabs', {}));
     const web = seen.find((t) => t.url === `${h}/search`);
     const internal = raw.find((t) => /^file:/.test(t.url) && !/newtab\.html/.test(t.url)); // settings
-    const switched = web ? await agent.execute('switch_tab', { tab_id: web.id }) : '';
-    const refused = internal ? await agent.execute('switch_tab', { tab_id: internal.id }).then((x) => x, (err) => `ERR ${err.message}`) : 'no internal tab';
+    const inRun = (fn) => agent.inTask(web ? web.id : 1, new AbortController().signal, fn); // (real calls run in a task: switch_tab works on the tab it names, not the one in front)
+    const switched = web ? await inRun(() => agent.execute('switch_tab', { tab_id: web.id })) : '';
+    const refused = internal ? await inRun(() => agent.execute('switch_tab', { tab_id: internal.id })).then((x) => x, (err) => `ERR ${err.message}`) : 'no internal tab';
     return { raw: raw.map((t) => t.url), seen: seen.map((t) => t.url), switched, refused, internal: internal?.url || null };
   }, home);
   check('list_tabs shows the web tab without its query or fragment', tabs.seen.includes(`${home}/search`), JSON.stringify(tabs));
@@ -290,6 +291,6 @@ const path = require('path');
   server.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {}
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

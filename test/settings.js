@@ -307,7 +307,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('after relaunch, graphics acceleration is off', launched.launched.hardwareAcceleration === false && /disabled|software/.test(launched.gpu), JSON.stringify(launched));
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failure(s)` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

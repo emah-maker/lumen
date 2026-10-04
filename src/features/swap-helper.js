@@ -91,11 +91,13 @@ async function swap(o, start = launch) {
   return 'swapped';
 }
 
-// Start an exe detached, as a normal Lumen (Node mode is only for this helper).
+// Start an exe detached, as a normal Lumen (Node mode is only for this helper). Not from this
+// helper's temp folder: Windows locks a process's working directory, so a Lumen started there would
+// keep the next update from clearing it.
 function launch(exe, args = []) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  spawn(exe, args, { detached: true, stdio: 'ignore', env }).unref();
+  spawn(exe, args, { detached: true, stdio: 'ignore', env, cwd: require('os').homedir() }).unref();
 }
 
 if (require.main === module) {

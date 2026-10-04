@@ -158,7 +158,7 @@ function create(deps) {
     if (wanted && list.some((o) => o.id === wanted)) return wanted;
     const current = deps.currentModel?.();
     if (current && list.some((o) => o.id === current)) return current;
-    return (list.find((o) => o.engine === 'api') || list[0])?.id || null;
+    return (list.find((o) => o.engine === 'api' && o.id !== 'auto') || list.find((o) => o.engine === 'api') || list[0])?.id || null;
   }
   const cliError = (model) => { const p = bg.cliProblem(model, deps.cliStatus?.()); return p ? deps.t(p.key, p.params) : null; };
 
@@ -431,7 +431,9 @@ function create(deps) {
       hasUnsavedInput: async () => false,
       groupTabs: unavailable,
       ungroupTabs: unavailable,
-      effectiveModel: (m) => m, // the model is frozen when the task is made
+      effectiveModel: (m) => m, // the model is frozen when the task is made ('auto' is chosen at each run instead: autoRoute, API models only)
+      autoRoute: deps.autoRoute ? (a) => deps.autoRoute({ ...a, request: { ...a.request, kind: a.request?.kind === 'chat' ? 'agentic' : a.request?.kind } }) : undefined,
+      autoEscalate: deps.autoEscalate, autoDeny: deps.autoDeny, // (no onAuto: nothing in a task's window shows it)
       anthropicAuth: () => deps.anthropicAuth?.(),
       aiOff: (url) => deps.aiOff?.(url),
       autoApprove: () => false, // never, whatever the sidebar's switch says

@@ -97,6 +97,13 @@ function setupAiAgents(deps) {
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
   const bgEngines = new Set();
+  // [parallel CLI chats] Sidebar chats on the same CLI engine run side by side. The sidebar's own engine (kept process,
+  // pre-warm) goes to one chat at a time (leased); another chat that wants that engine meanwhile gets an engine of its
+  // own for that message (sideEngines: own process, own MCP tag and token, own `active` run), freed when the message
+  // ends (leaseEngine's release). Every tool call finds its run by the tag of the connection it came in on, never by a
+  // shared pin: the run's `active` carries its own task scope (tab, approvals, signal).
+  const sideEngines = new Set();
+  const leased = new Set(); // the sidebar's shared engines now lent to a message
   // Tests run the CLIs as a fake process (test/fixtures/fake-cli.js): its `spawn` stands in for both engines'.
   const cliSpawn = () => (require('../test-mode').isTest() && process.env.LUMEN_TEST_CLI_SPAWN ? require(process.env.LUMEN_TEST_CLI_SPAWN).spawn : undefined);
   // The fake CLI (test/fixtures/fake-cli.js) speaks only the stdio bridge and reads one message to
@@ -122,15 +129,40 @@ function setupAiAgents(deps) {
     claudeCode ||= newClaudeCode();
     return claudeCode;
   };
-  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
-  agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
+  // [warm per chat] Each tab chat's own Claude Code engine, whose process stays warm between that chat's messages
+  // (features/warm-chats.js): its own process and MCP token. Freed on chat delete / last tab closed (chatGone), after
+  // the idle time (deps.warmIdleMs: Settings > AI, the same choice as a kept Grok Build's, Infinity for never; else
+  // claude-code.js IDLE_MS; the engine's own idle timeout is the same), past the idle cap (Performance mode: fewer
+  // on a slow PC; the least recently used idle one goes), and on quit. Active runs are never capped.
+  const ccIdleMs = () => { let ms = null; try { ms = deps.warmIdleMs?.(); } catch {} return ms === Infinity || (Number.isFinite(ms) && ms > 0) ? ms : claudeCodeModule().IDLE_MS; };
+  const warmChats = require('./warm-chats').createWarmChats({
+    make: () => newClaudeCode({ idleMs: ccIdleMs() }),
+    maxIdle: () => { try { const n = deps.maxWarmChats?.(); return Number.isFinite(n) && n >= 0 ? n : 4; } catch { return 4; } },
+    idleMs: ccIdleMs,
+  });
+  // A chat's engine borrows what the sidebar's engine already looked up (the binary, the sign-in check).
+  const chatClaudeCode = (engine) => {
+    const shared = claudeCodeEngine();
+    if (engine.bin === undefined && shared.bin !== undefined) engine.bin = shared.bin;
+    if (!engine.statusCache || (shared.statusCache && shared.statusCache.at > engine.statusCache.at)) engine.statusCache = shared.statusCache;
+    return engine;
+  };
+  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends. (the read cache too: the
+  // chat's CLI session is gone.) [warm per chat] A chat's own warm process stays when the user only switches away; on a
+  // rewind (its session is dropped) it goes.
+  agent.onEngineReset = (why) => {
+    freshReads();
+    claudeCode?.release();
+    if (why === 'rewind') warmChats.releaseIdle(agent.chatKey?.(agent.messages));
+  };
   // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
   // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
   // text: what is already typed (routed for the model guess); the preload passes it through.
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
+  // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true }); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -153,9 +185,26 @@ function setupAiAgents(deps) {
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
       grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
+      // [keep connected] Settings > AI > Keep Grok Build connected (grokKeepConnected, off by default): each chat's own
+      // long-lived `grok agent stdio` process (features/grok-warm.js). Read live: turning it off ends them at the next look.
+      grokBuild.keepWarm = require('./grok-warm').createGrokWarm({
+        engine: grokBuild,
+        enabled: grokKeepOn,
+        idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+      });
     }
     return grokBuild;
   };
+  const grokKeepOn = () => readSettings().grokKeepConnected === true && grokSidebar();
+  // The open chat's Grok Build process, started ahead of its message (composer focus, startup): only with the setting on,
+  // Grok Build found, and the chat on Grok Build (agent.grokWarmSpec). With the setting off, any kept process ends.
+  function warmGrokChat() {
+    if (!grokBuild?.keepWarm && !grokKeepOn()) return;
+    if (!grokKeepOn()) { grokBuild.keepWarm.disposeAll(); return; }
+    if (!grokBuildFound) return;
+    const spec = agent.grokWarmSpec?.();
+    if (spec) grokBuildEngine().keepWarm.prewarm(spec);
+  }
 
   // "Warm up Grok Build when Lumen starts" (grokWarmup, default on; features/grok-warmup.js): the setup a message
   // starts with (binary, HTTP gate, config, sign-in link) is done in the background once the first tab has loaded
@@ -181,11 +230,11 @@ function setupAiAgents(deps) {
   const antigravityModule = () => require('../ai/antigravity');
   // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI), or with LUMEN_AGY_SIDEBAR=1.
   const antigravitySidebar = () => process.env.LUMEN_AGY_SIDEBAR === '1' || (process.env.LUMEN_AGY_SIDEBAR !== '0' && readSettings().antigravitySidebar === true);
+  // [parallel Antigravity chats] Each chat runs agy in a home folder of its own (antigravity.js chatHomeFor), so a message's
+  // own engine (leaseEngine) can run beside the sidebar's with its own MCP token file, and the chat still resumes there.
+  const newAntigravity = () => new (antigravityModule().AntigravityEngine)({ userData: app.getPath('userData'), gate: startGrokGate, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
   const antigravityEngine = () => {
-    if (!antigravity) {
-      const { AntigravityEngine } = antigravityModule();
-      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
-    }
+    antigravity ||= newAntigravity();
     return antigravity;
   };
 
@@ -194,7 +243,7 @@ function setupAiAgents(deps) {
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
   async function onTerminalApproval(tag, command) {
-    const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+    const owner = grokBuild?.owns(tag) ? grokBuild : grokBuild?.keepWarm?.owner(tag) || [...sideEngines, ...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag)); // (a kept Grok process: its own turn)
     const engineRun = owner ? owner.active : null;
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
@@ -228,9 +277,55 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); } };
+  // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
+  // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
+  // own, so its MCP token file is never another chat's).
+  // release() frees everything the message held: a side engine's process (and with it its MCP token) is ended.
+  // [warm per chat] key: the message's tab chat (agent.js engineFor). Claude Code then uses that chat's own engine, kept
+  // warm between its messages (warmChats); without a key (or under the one-shot test CLI) it is leased as above.
+  function leaseEngine(kind, key = null) {
+    if (kind === 'claudecode' && key != null && !oneShotClaude()) {
+      const lease = warmChats.lease(key);
+      chatClaudeCode(lease.engine);
+      return lease;
+    }
+    const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : null;
+    if (!shared) return null;
+    let done = false;
+    if (!leased.has(shared)) {
+      leased.add(shared);
+      return { engine: shared, shared: true, release: () => { if (!done) { done = true; leased.delete(shared); } } };
+    }
+    const engine = kind === 'claudecode'
+      ? newClaudeCode({ keepAlive: false }) // one message, then its process ends
+      : kind === 'antigravity'
+      ? newAntigravity() // the chat's own home folder: its conversation resumes there
+      : new (grokBuildModule().GrokBuildEngine)({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads }); // the sidebar's GROK_HOME: the chat's session resumes there
+    engine.bin = shared.bin;
+    engine.statusCache = shared.statusCache;
+    // [keep connected] A Grok Build message's own engine uses the same kept processes (one per chat, keyed by its Grok
+    // session): each its own tag, token and turn, so chats on Grok Build run side by side through them too.
+    if (kind === 'grokbuild') engine.keepWarm = shared.keepWarm;
+    sideEngines.add(engine);
+    return {
+      engine,
+      shared: false,
+      release: () => {
+        if (done) return;
+        done = true;
+        sideEngines.delete(engine);
+        try { engine.dispose?.(); } catch { /* already gone */ }
+      },
+    };
+  }
+  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
+    // [warm per chat] The chat's own engine outside a message (agent.js prewarm), and whether a message of that chat holds it.
+    warmFor: (kind, key) => (kind === 'claudecode' && key != null && !oneShotClaude() ? chatClaudeCode(warmChats.peek(key)) : null),
+    warmed: () => warmChats.warmed(),
+    busyFor: (kind, key) => kind === 'claudecode' && key != null && warmChats.busy(key),
+    warmChats };
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
@@ -279,8 +374,9 @@ function setupAiAgents(deps) {
     const runAgent = engineRun?.agent || agent;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
-    const scope = engineRun && runAgent.engineScope();
+    const scope = engineRun && (engineRun.scope || runAgent.engineScope()); // [parallel CLI chats] the run's own scope, carried by its connection
     if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
+    if (engineRun && !scope) return refuse('No message is in progress in Lumen for this call.'); // (never the tab in front: a sidebar run always brings its own scope)
     // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
@@ -373,7 +469,7 @@ function setupAiAgents(deps) {
         // On Windows these use the .cmd shim (not the .ps1 one): PowerShell's claude.ps1 swallows
         // `--`, but claude.cmd and quoted paths work in both PowerShell and cmd.exe.
         { id: 'claude', label: 'Claude Code', hint: 'One click, or run this in a terminal', text: `${win ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'claude' },
-        { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'codex.cmd' : 'codex'} mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.' },
+        { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `codex mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: `Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.${win ? ' (If Codex was installed with npm and PowerShell swallows the --, run codex.cmd instead of codex.)' : ''}` },
         { id: 'grok', label: 'Grok Build', hint: 'One click, or run this in a terminal (needs SuperGrok or X Premium+)', text: `grok mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'grok', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.grok/config.toml.' },
         // Antigravity (agy) keeps its MCP servers in ~/.gemini/config/mcp_config.json; the one click runs `agy mcp add`, which writes that file.
         { id: 'antigravity', label: 'Antigravity', hint: 'One click, or run this in a terminal (replaces Gemini CLI)', text: `agy mcp add -e ELECTRON_RUN_AS_NODE=1 lumen -- ${quoted}`, addButton: 'antigravity', secondary: 'Or add the JSON of Other MCP clients (below) under mcpServers in ~/.gemini/config/mcp_config.json.' },
@@ -441,19 +537,7 @@ function setupAiAgents(deps) {
       check: (run) => run(['mcp', 'get', 'lumen']),
       add: (run, argv) => run(['mcp', 'add', 'lumen', '--scope', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
     },
-    codex: {
-      label: 'Codex CLI',
-      find: () => findCli('codex', '@openai/codex'),
-      installHint: () => "Codex CLI isn't installed. Install it with: npm install -g @openai/codex",
-      // `codex mcp get` may not exist on older builds; `codex mcp list` is the reliable fallback.
-      check: async (run) => {
-        const got = await run(['mcp', 'get', 'lumen']);
-        if (got.ok) return { ok: true };
-        const list = await run(['mcp', 'list']);
-        return { ok: list.ok && list.out.includes('lumen') };
-      },
-      add: (run, argv) => run(['mcp', 'add', 'lumen', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
-    },
+    // Codex CLI has its own flow (codex-connect.js): found however it was installed, config.toml entry merged.
     // Google Antigravity's CLI (`agy`), which replaces Gemini CLI: `agy mcp add [flags] <name> <commandOrUrl> [args...]` (flags before the name;
     // checked against agy 1.2.14's own --help). On Windows agy is installed to %LOCALAPPDATA%\agy\bin, which is not on PATH: findAgy looks there.
     antigravity: {
@@ -484,6 +568,7 @@ function setupAiAgents(deps) {
     if (id === 'grok') refreshGrokBuildStatus(true).catch(() => {});
   }
   async function addToAgent(id) {
+    if (id === 'codex') return codexConnect.add();
     const key = AGENTS[id] ? id : 'claude';
     const agent = AGENTS[key];
     const found = await agent.find();
@@ -497,6 +582,7 @@ function setupAiAgents(deps) {
       ? { ok: true, text: `Added. Start a new ${agent.label} session to use Lumen.` }
       : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || `${agent.label} could not add Lumen.` };
   }
+  const codexConnect = require('./codex-connect').createCodexConnect({ ipcMain, readSettings, writeSettings, mcpCommand, connected, isSettingsSender: deps.isSettingsSender, pickFile: deps.pickCodexFile, seams: require('../test-mode').isTest() ? global.__codexSeams : undefined });
   ipcMain.handle('mcp:add-to-agent', (_e, id) => addToAgent(id));
 
   // ---------- automation tools over CDP: Playwright / CDP clients see only the user's tabs ----------
@@ -624,8 +710,8 @@ function setupAiAgents(deps) {
       // has loaded, not while it does.
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
-        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false)])
-          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); });
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false)])
+          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); try { warmGrokChat(); } catch {} });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
@@ -633,6 +719,15 @@ function setupAiAgents(deps) {
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // [warm per chat] A chat was deleted, or its last tab closed: its own warm Claude Code process (and MCP token) ends,
+    // now or when its message in flight ends.
+    chatGone: (chatId) => { if (chatId != null) warmChats.drop(String(chatId)); },
+    // [keep connected] A chat left Lumen's tabs or was deleted: its kept Grok Build process ends. sessionOf() is asked only
+    // when a process is kept (it may read the chat from disk).
+    grokChatGone(sessionOf) {
+      if (!grokBuild?.keepWarm?.count()) return;
+      try { grokBuild.keepWarm.drop(sessionOf()); } catch {}
+    },
     // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
     async useGrokBuild() {
       if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });
@@ -652,6 +747,7 @@ function setupAiAgents(deps) {
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
       grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
       antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() }, // (sidebar chats only: not offered to background tasks)
+      codex: codexConnect.state(), // (no sidebar engine: Settings shows it, and Codex drives Lumen over MCP)
     }),
     // A fresh engine for one background run: { engine, release }. It shares nothing live with the
     // sidebar's engine (its own child, MCP tag and `active` run; Grok also its own GROK_HOME and folder,
@@ -697,7 +793,7 @@ function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) 
     badges: signedIn === false ? ['sign in'] : [],
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run claude, then type /login'
-      : m.id === 'default' ? 'The model set in Claude Code' : '', // the heading says Claude Code; the name says which model
+      : m.id === 'default' ? 'Lumen picks Haiku, Sonnet or Opus for each message (Settings → AI: Pick the Claude Code model for me), else the model set in Claude Code' : '', // the heading says Claude Code; the name says which model
     group: 'Your Claude account',
     signedIn,
     accountDetail,

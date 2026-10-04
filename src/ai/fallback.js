@@ -377,7 +377,7 @@ function pick(args) { return choose(args)?.id || null; }
 // What a turn starts on. `preferred` is the model the user picked; while it cools down, its stand-in.
 // { model, from: preferred | null, until }. With the setting off, or nothing else to use, the pick as is.
 function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = true, allowEngines = true, need = null }) {
-  if (!enabled || !preferred || !cooldowns?.cooling(preferred, at)) return { model: preferred, from: null, until: 0 };
+  if (!enabled || !preferred || preferred === 'auto' || !cooldowns?.cooling(preferred, at)) return { model: preferred, from: null, until: 0 }; // ('auto' is the picker's Auto, chosen per message: ai/auto-model.js)
   const next = choose({ current: preferred, options, cooldowns, at, allowEngines, need });
   return next ? { model: next.id, from: preferred, until: cooldowns.until(preferred, at), trim: next.trim, noImages: next.noImages } : { model: preferred, from: null, until: 0 };
 }

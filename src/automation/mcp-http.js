@@ -62,7 +62,7 @@ function terminalCommand(msg) {
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
 // Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
-// armed(tag), listed(tag), allowed(tag), denied(tag), port and stop().
+// armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
 function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
   const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
@@ -200,6 +200,10 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
           if (run?.session) { run.session.close(); onEvent({ type: 'session', active: false, clientName: run.session.session.clientName, engine: tag }); }
         },
         armed: (tag) => Boolean(runs.get(tag)?.armed),
+        // A kept Grok process (features/grok-warm.js) keeps its run for many messages: each message must arm it again
+        // (its own UserPromptSubmit), and the chat session it serves is known only once its session exists.
+        rearm(tag) { const run = runs.get(tag); if (run) run.armed = false; },
+        bindChat(tag, chatSessionId) { const run = runs.get(tag); if (run && chatSessionId) run.chatSessionId = chatSessionId; },
         listed: (tag) => Boolean(runs.get(tag)?.session?.session.listed),
         allowed: (tag) => [...(runs.get(tag)?.allowed || [])],
         denied: (tag) => [...(runs.get(tag)?.denied || [])],

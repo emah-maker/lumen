@@ -107,6 +107,7 @@ module.exports = async function tradingviewUnits(check) {
   check('tradingview compact: a chart becomes the mini price view (the full chart is all toolbar on a small card)', new URL(cChart).pathname === '/embed-widget/mini-symbol-overview/' && hashOf(cChart).symbol === 'NASDAQ:AAPL' && TV.isEmbedUrl(cChart), cChart);
   check('tradingview compact: leaving compact off changes nothing (the default is the full address)', TV.embedUrl(chartCfg, false) === TV.embedUrl(chartCfg, false, false) && new URL(TV.embedUrl(chartCfg, false)).pathname === '/widgetembed/', '');
   const miniCfg = { symbol: 'BINANCE:BTCUSDT', view: 'mini', interval: 'W', theme: 'dark' };
+  check('tradingview compact: auto theme follows dark in the compact view and mini view alike', hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'chart', theme: 'auto' }, true, true)).colorTheme === 'dark' && hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'mini', theme: 'auto' }, true)).colorTheme === 'dark' && hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'mini', theme: 'auto' }, false)).colorTheme === 'light', '');
   check('tradingview compact: the mini view is already compact and stays as it is', TV.embedUrl(miniCfg, true, true) === TV.embedUrl(miniCfg, true), '');
   const multi = { view: 'watchlist', theme: 'light', chart: true, symbols: ['###Tech', 'AAPL', 'TSLA', '###Crypto', 'BINANCE:BTCUSDT', '###Index', 'SPX'] };
   const fullTabs = hashOf(TV.embedUrl(multi, false));

@@ -11,6 +11,10 @@ const { DEFAULTS } = require('../src/settings/settings-backend');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
+// The fake CLI is a Node child; on a machine where Node takes ~0.7 s to start (antivirus scanning), a fixed 400 ms (start-up varies from 0.2 to 3 s there)
+// watchdog ended it before it wrote anything. Scale the watchdog to the measured start-up time instead.
+const startMs = (() => { const t = Date.now(); require('child_process').spawnSync(process.execPath, ['-e', '0'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }); return Date.now() - t; })();
+const WATCHDOG = Math.max(1500, startMs * 4);
 const after = (argv, flag) => argv[argv.indexOf(flag) + 1];
 
 const FAKE = `
@@ -51,7 +55,7 @@ process.stdin.on('data', (d) => {
   const fake = path.join(dir, 'fake-claude.js');
   fs.writeFileSync(fake, FAKE);
   process.env.LUMEN_CLAUDE_BIN = fake; // findClaude: this file stands in for the CLI
-  const runOnce = async ({ fullAccess, silenceMs = 50, watchdogMs = 400 }) => {
+  const runOnce = async ({ fullAccess, silenceMs = 50, watchdogMs = WATCHDOG }) => {
     const log = path.join(dir, `log-${fullAccess ? 'full' : 'base'}-${silenceMs}.json`);
     const fakeSpawn = (bin, argv, opts) => spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1', FAKE_LOG: log, FAKE_SILENCE_MS: String(silenceMs) } }); // (run as Node under Electron's node, as CI's may be)
     const engine = new cc.ClaudeCodeEngine({ userData: dir, mcpCommand: () => ({ command: process.execPath, args: ['-e', ''], env: {} }), ensureServer: () => {}, keepAlive: false, watchdogMs, spawn: fakeSpawn });
@@ -61,7 +65,7 @@ process.stdin.on('data', (d) => {
     return { out, events, rec: JSON.parse(fs.readFileSync(log, 'utf8')) };
   };
 
-  const full = await runOnce({ fullAccess: true, silenceMs: 1200, watchdogMs: 400 });
+  const full = await runOnce({ fullAccess: true, silenceMs: WATCHDOG * 3, watchdogMs: WATCHDOG });
   const { argv, cwd } = full.rec;
   check('full access: bypassPermissions, no tool lockdown, Lumen prompt appended', after(argv, '--permission-mode') === 'bypassPermissions' && !argv.includes('--tools') && !argv.includes('--allowedTools') && !argv.includes('--strict-mcp-config') && after(argv, '--append-system-prompt') === 'LUMEN', argv.join(' '));
   check('full access: runs in the home folder, as in a terminal', fs.realpathSync(cwd) === fs.realpathSync(os.homedir()), cwd);
@@ -76,10 +80,10 @@ process.stdin.on('data', (d) => {
   const base = await runOnce({ fullAccess: false });
   check('off: the lockdown flags and an empty working folder', after(base.rec.argv, '--tools') === '' && after(base.rec.argv, '--permission-mode') === 'dontAsk' && base.rec.argv.includes('--strict-mcp-config') && after(base.rec.argv, '--system-prompt') === 'LUMEN' && fs.realpathSync(base.rec.cwd) !== fs.realpathSync(os.homedir()), base.rec.argv.join(' '));
 
-  const hung = await runOnce({ fullAccess: false, silenceMs: 3000, watchdogMs: 400 }).catch((e) => ({ err: e }));
+  const hung = await runOnce({ fullAccess: false, silenceMs: WATCHDOG * 3, watchdogMs: WATCHDOG }).catch((e) => ({ err: e }));
   check('off: the watchdog still ends a CLI that goes quiet', hung.err || hung.out?.failed || hung.events?.some((e) => e.type === 'error') || hung.out?.text !== 'Done.', JSON.stringify(hung.out));
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
