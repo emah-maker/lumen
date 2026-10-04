@@ -343,6 +343,16 @@ const BASIC_SEARCH_TOOLS = [...TOOLS, { type: 'web_search_20250305', name: 'web_
 // Which model wrote each assistant turn (a WeakMap, so nothing extra is serialized into requests).
 const producedBy = new WeakMap();
 
+// A short readable name for the model behind a turn, for handoff text ("Grok Build:" instead of "Assistant:"). '' when unknown.
+function authorName(id) {
+  id = String(id || '');
+  if (!id) return '';
+  if (id.startsWith('claudecode:')) return 'Claude Code';
+  if (id.startsWith('grokbuild:')) return 'Grok Build';
+  if (id.startsWith('antigravity:')) return 'Antigravity';
+  return MODELS[id]?.label || id.replace(/^[^:/]+[:/]/, '');
+}
+
 // The chat's token and cost totals live in its settings, so they're saved with the chat and move
 // with it in the history list. The sidebar gets the new total after each model turn.
 function recordUsage(messages, entry, emit) {
@@ -376,7 +386,7 @@ function handoffTurns(items, budget = HANDOFF_CHARS) {
     let text = String(m.text || '').trim();
     if (text.length > HANDOFF_TURN_CHARS) text = `${text.slice(0, HANDOFF_TURN_CHARS).trimEnd()} […]`;
     if (!text && m.images?.length) text = '(an image)';
-    return text ? `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}` : '';
+    return text ? `${m.role === 'user' ? 'User' : (m.by || 'Assistant')}: ${text}` : '';
   }).filter(Boolean);
   const size = (list) => list.reduce((n, l) => n + l.length + 2, 0);
   if (size(lines) <= budget) return lines.join('\n\n');
@@ -397,7 +407,7 @@ function missedItems(messages, seen) {
   if (!Number.isInteger(seen) || seen < 0 || seen >= messages.length - 1) return [];
   return transcriptFor(messages.slice(seen, -1), null);
 }
-const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them):';
+const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them; each reply is labeled with the model that wrote it):';
 // The chat's CLI sessions and their counts. A count past the chat's length means the history was cut since (rewound,
 // compacted): the session holds turns the chat no longer has, so it is dropped and the next message hands the chat over.
 const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen'], ['agySession', 'agySeen']];
@@ -1028,6 +1038,8 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       const final = !blocks.some((b) => b.type === 'tool_use');
       const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '' }));
       const pictures = generated.length ? { generated } : {};
+      const name = authorName(producedBy.get(m));
+      if (name) pictures.by = name;
       if (text && final) {
         items.push({ role: 'assistant', text, images: [], ...pictures, steps, ...(acted ? { acted: true } : {}) });
         steps = 0;
