@@ -401,12 +401,12 @@ function missedItems(messages, seen) {
 const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them):';
 // The chat's CLI sessions and their counts. A count past the chat's length means the history was cut since (rewound,
 // compacted): the session holds turns the chat no longer has, so it is dropped and the next message hands the chat over.
-const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen']];
+const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen'], ['agySession', 'agySeen']];
 function dropReshapedSessions(messages) {
   const s = messages.settings;
   if (!s) return;
   for (const [session, seen] of CLI_SESSIONS) {
-    if (Number.isInteger(s[seen]) && s[seen] > messages.length) { delete s[session]; delete s[seen]; if (session === 'gbSession') delete s.gbModel; }
+    if (Number.isInteger(s[seen]) && s[seen] > messages.length) { delete s[session]; delete s[seen]; if (session === 'gbSession') delete s.gbModel; if (session === 'agySession') delete s.agyModel; }
   }
 }
 
@@ -1807,7 +1807,7 @@ class Agent {
     // [chat history] A CLI session from earlier in this chat holds the turns now replaced by the summary: the next CLI message starts
     // a new one, handed the summary and the turns after it.
     for (const [session, seen] of CLI_SESSIONS) { delete messages.settings[session]; delete messages.settings[seen]; }
-    delete messages.settings.gbModel;
+    delete messages.settings.gbModel; delete messages.settings.agyModel;
     emit({ type: 'notice', text: auto
       ? `This chat was getting long, so its earlier part was summarized for the AI (about ${shortCount(before)} → ${shortCount(after)} tokens). It stays on screen.`
       : `Compacted: about ${shortCount(before)} → ${shortCount(after)} tokens. The earlier messages stay on screen; the AI now sees a summary of them.` });
@@ -2058,6 +2058,10 @@ class Agent {
       const earlier = earlierText(messages, priorItems);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
+    } else if (resume) {
+      // [chat history] A resumed conversation gets the turns other models answered since its last reply here.
+      const missed = handoffTurns(missedItems(messages, settings.agySeen));
+      if (missed) text = `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}`;
     }
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
@@ -2072,14 +2076,16 @@ class Agent {
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: 0 }, emit);
+    let caughtUp = false;
     if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
-    else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; }
+    else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.antigravity, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
+    if (caughtUp) settings.agySeen = messages.length; // [chat history] the conversation knows the chat up to here
   }
   // ---- [/antigravity engine]
 

@@ -202,6 +202,31 @@ function fakeClaudeCode({ delay = () => 0, gone = new Set() } = {}) {
     check('grok expired: the chat keeps the new session', m.settings.gbSession === calls[1].sessionId, J(m.settings));
   }
 
+  // Antigravity: back from another model, its conversation (agySession) is handed the turns it missed.
+  {
+    const agent = newAgent();
+    const calls = [];
+    agent.browser.antigravityFullAccess = () => false;
+    agent.engines = {
+      antigravity: {
+        prepare: async () => ({}),
+        async run(opts) {
+          calls.push({ sessionId: opts.sessionId, prompt: opts.prompt });
+          return { text: `agy reply ${calls.length}`, sessionId: opts.sessionId || 'agy-conv-1' };
+        },
+      },
+    };
+    const m = chat('antigravity:default');
+    await run(agent, m, 'agy first, remember MANGO');
+    check('antigravity: the chat keeps its conversation and count', m.settings.agySession === 'agy-conv-1' && m.settings.agySeen === m.length, J(m.settings));
+    m.push(user('asked an API model about kiwis'), reply('the API model talked about kiwis'));
+    await run(agent, m, 'agy second');
+    check('antigravity: continues its own conversation', calls[1].sessionId === 'agy-conv-1', J(calls[1]).slice(0, 200));
+    check('antigravity: handed the turns it missed, not its own again', calls[1].prompt.includes('asked an API model about kiwis') && calls[1].prompt.includes('the API model talked about kiwis') && !calls[1].prompt.includes('MANGO'), calls[1].prompt.slice(0, 300));
+    await run(agent, m, 'agy third');
+    check('antigravity: the next message carries nothing extra', !calls[2].prompt.includes('<earlier_conversation>') && m.settings.agySeen === m.length, calls[2].prompt.slice(0, 200));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
