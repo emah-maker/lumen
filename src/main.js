@@ -81,6 +81,7 @@ const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const { createCoalescer } = require('./features/event-coalesce'); // streamed text sent in ~16 ms batches, not per token
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
@@ -7161,6 +7162,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     emit({ type: 'error', text: stale ? raw : t('agent.startFailed'), details: stale ? undefined : raw.slice(0, 600) });
     emit({ type: 'done' });
   };
+  // Streamed text/thinking chunks are joined (event-coalesce.js); every other event goes out at once, after any held text.
+  const sendOut = (msg) => {
+    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+  };
+  const out = createCoalescer(sendOut);
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
@@ -7178,8 +7185,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
-    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
-    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
+    out.push(msg);
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
