@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Keep the AI off a tab.** A small shield button at the right end of the address bar (and "Keep the AI Off This Tab" in the tab's right-click menu) tells the AI not to touch the page you are on. It is per tab: it stays on while the tab navigates, comes back after a restart, and ends when the tab closes; the tab shows a small shield in the strip. Unlike hands-off mode it blocks reading too, for every AI path: the sidebar's AI and its Claude Code / Grok Build / Antigravity / Codex engines, outside agents over MCP, and programs on the Automation (CDP) server. The page's text is never attached to a message while it is on, and tab grouping does not read it. Only you can turn it off.
 - **macOS: Control is the text-editing key again.** In text boxes, Ctrl+A / Ctrl+E (start / end of line), Ctrl+P / Ctrl+N (previous / next line), Ctrl+F / Ctrl+B (forward / back) and the other emacs-style keys now work as in Chrome, Safari and Firefox. Before, Lumen took Control as Cmd, so Ctrl+P printed and Ctrl+N opened a window. Lumen's shortcuts on a Mac use Cmd only; Ctrl+Tab and Ctrl+Page Up / Down still switch tabs.
 ## 0.5.10 (2026-10-04)
 
