@@ -360,11 +360,54 @@ function recordContext(messages, ctx, emit) {
 }
 
 // The conversation so far as text, for an engine that starts mid-chat (Claude Code, Grok Build, Antigravity): the
-// chat's /compact summary first, when it has one, then the newest of the turns before this message.
+// chat's /compact summary first, when it has one, then the turns before this message (handoffTurns).
 function earlierText(messages, priorItems) {
   const summary = compactLib.summaryOf(messages);
-  const turns = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+  const turns = handoffTurns(priorItems);
   return [summary ? `Summary of the earlier conversation:\n${summary}` : '', turns].filter(Boolean).join('\n\n');
+}
+
+// [chat history] Turns as "User: … / Assistant: …" text, compact: a very long turn is clipped, and a chat over `budget`
+// keeps its opening exchange and as many of its newest turns as fit, with a line saying how many in between were left
+// out. (It used to keep only the last 6000 characters, so a session started mid-chat forgot how the chat began.)
+const HANDOFF_CHARS = 40000;
+const HANDOFF_TURN_CHARS = 4000;
+function handoffTurns(items, budget = HANDOFF_CHARS) {
+  const lines = (items || []).map((m) => {
+    let text = String(m.text || '').trim();
+    if (text.length > HANDOFF_TURN_CHARS) text = `${text.slice(0, HANDOFF_TURN_CHARS).trimEnd()} […]`;
+    if (!text && m.images?.length) text = '(an image)';
+    return text ? `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}` : '';
+  }).filter(Boolean);
+  const size = (list) => list.reduce((n, l) => n + l.length + 2, 0);
+  if (size(lines) <= budget) return lines.join('\n\n');
+  const head = lines.slice(0, Math.min(2, lines.length - 1));
+  const tail = [];
+  let room = budget - size(head) - 60;
+  for (let i = lines.length - 1; i >= head.length && room - lines[i].length - 2 >= 0; i--) { tail.unshift(lines[i]); room -= lines[i].length + 2; }
+  if (!tail.length) tail.push(lines[lines.length - 1].slice(-Math.max(1000, room)));
+  const left = lines.length - head.length - tail.length;
+  return [...head, ...(left > 0 ? [`[… ${left} message${left === 1 ? '' : 's'} left out …]`] : []), ...tail].join('\n\n');
+}
+
+// [chat history] A CLI engine's session (ccSession, gbSession) knows the chat up to `seen` messages (ccSeen, gbSeen: the
+// chat's length after that engine's last turn). Turns answered meanwhile by another model (an API model, the other
+// engine, Auto, a fallback) are what it missed: they go in front of the next message it gets, so it never answers from a
+// conversation with a hole in it. `messages` ends with the message being sent. An older chat (no count) missed nothing.
+function missedItems(messages, seen) {
+  if (!Number.isInteger(seen) || seen < 0 || seen >= messages.length - 1) return [];
+  return transcriptFor(messages.slice(seen, -1), null);
+}
+const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them):';
+// The chat's CLI sessions and their counts. A count past the chat's length means the history was cut since (rewound,
+// compacted): the session holds turns the chat no longer has, so it is dropped and the next message hands the chat over.
+const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen']];
+function dropReshapedSessions(messages) {
+  const s = messages.settings;
+  if (!s) return;
+  for (const [session, seen] of CLI_SESSIONS) {
+    if (Number.isInteger(s[seen]) && s[seen] > messages.length) { delete s[session]; delete s[seen]; if (session === 'gbSession') delete s.gbModel; }
+  }
 }
 
 // A turn written by another model is passed on in a form any model accepts: text (without
@@ -1514,6 +1557,7 @@ class Agent {
       delete messages.settings.gbSession;
       delete messages.settings.gbModel;
     }
+    dropReshapedSessions(messages); // [chat history] a session that holds turns the chat no longer has is not resumed
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
     // Tabs the user picked with "@" are attached too (read where they are, never switched to); the
     // current tab's own text is not sent twice when it is one of them.
@@ -1760,6 +1804,10 @@ class Agent {
     messages.simpleTurn = null;
     this.pageContexts.delete(messages); // the page text the replaced turns carried is gone: the next message sends it again
     snapshot.reads.clear();
+    // [chat history] A CLI session from earlier in this chat holds the turns now replaced by the summary: the next CLI message starts
+    // a new one, handed the summary and the turns after it.
+    for (const [session, seen] of CLI_SESSIONS) { delete messages.settings[session]; delete messages.settings[seen]; }
+    delete messages.settings.gbModel;
     emit({ type: 'notice', text: auto
       ? `This chat was getting long, so its earlier part was summarized for the AI (about ${shortCount(before)} → ${shortCount(after)} tokens). It stays on screen.`
       : `Compacted: about ${shortCount(before)} → ${shortCount(after)} tokens. The earlier messages stay on screen; the AI now sees a summary of them.` });
@@ -1876,7 +1924,12 @@ class Agent {
     // in as typed, without the browser state and page text put before it. (/compact and /context work without full
     // access: commandTurn sends them.)
     const slash = spawn.fullAccess ? require('./claude-code').slashCommand(hint.userText) : null;
-    const first = slash ? { text: slash, images } : spawn.resume ? { text: prompt, images } : handoff();
+    // A resumed session is handed the turns other models answered since its last reply here (missedItems).
+    const catchUp = () => {
+      const missed = handoffTurns(missedItems(messages, settings.ccSeen));
+      return { text: missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt, images };
+    };
+    const first = slash ? { text: slash, images } : spawn.resume ? catchUp() : handoff();
     this.prewarmed = null; // (its session id is this message's now)
     const onLateUsage = ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); };
     emit({ type: 'turn_start' });
@@ -1904,8 +1957,9 @@ class Agent {
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
     this.noteCliContext(messages, out, routed.model, emit); // [context]
+    let caughtUp = false;
     if (out.sessionId === null) delete settings.ccSession;
-    else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
+    else if (!out.failed && (!out.stopped || out.text)) { settings.ccSession = out.sessionId; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
@@ -1913,6 +1967,7 @@ class Agent {
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
+    if (caughtUp) settings.ccSeen = messages.length; // [chat history] the session knows the chat up to here
   }
   // ---- [/claude code engine]
 
@@ -1926,23 +1981,27 @@ class Agent {
     const picked = engineModel(settings.model);
     const known = (settings.gbShownFor === settings.model && settings.gbShown)
       || (picked !== 'default' ? picked : this.engines.grokbuild.statusCache?.value?.detail || null);
-    let text = prompt;
-    let historyImages = [];
-    if (!resume && messages.length > 1) {
-      // Switched to Grok Build mid-chat: hand it the conversation so far, same as claudeCodeTurn.
+    // Switched to Grok Build mid-chat (or its session is gone): hand it the conversation so far, same as claudeCodeTurn.
+    const handoff = () => {
+      if (messages.length <= 1) return { text: prompt, historyImages: [] };
       const priorItems = transcriptFor(messages).slice(0, -1);
       const earlier = earlierText(messages, priorItems);
-      if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
-      historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
-    }
+      return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, historyImages: priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean) };
+    };
+    // [chat history] A resumed session gets the turns other models answered since its last reply here.
+    const catchUp = () => {
+      const missed = handoffTurns(missedItems(messages, settings.gbSeen));
+      return { text: missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt, historyImages: [] };
+    };
+    const first = resume ? catchUp() : handoff();
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
     emit({ type: 'turn_start' });
-    const sent = this.engineImages('Grok Build', picked, [...historyImages, ...images], emit);
-    const out = await this.engines.grokbuild.run({
-      prompt: text,
-      images: sent,
-      sessionId: settings.gbSession || crypto.randomUUID(),
-      resume,
+    const runGrok = (input, sessionId, again) => this.engines.grokbuild.run({
+      prompt: input.text,
+      images: this.engineImages('Grok Build', picked, [...input.historyImages, ...images], emit),
+      sessionId,
+      resume: again,
+      quietExpired: again, // a resumed session Grok no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or one of `grok models`' ids
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
       systemPrompt: systemFor(settings) + grokBuildNote(known, { fullAccess }),
@@ -1951,6 +2010,13 @@ class Agent {
       signal,
       emit,
     });
+    let out = await runGrok(first, settings.gbSession || crypto.randomUUID(), resume);
+    if (out.expired && !signal.aborted) {
+      // [chat history] Grok no longer has this chat's session: a new one starts at once, handed the conversation so far.
+      delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen;
+      snapshot.reads.clear();
+      out = await runGrok(handoff(), crypto.randomUUID(), false);
+    }
     // The model Grok says it used, for this pick: the next reply's notice and system prompt use it.
     if (out.model) { settings.gbShown = out.model; settings.gbShownFor = settings.model; }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
@@ -1959,8 +2025,9 @@ class Agent {
     // finished turn clears it. The log may answer with a budget notice (features/usage.js).
     const logged = this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model), session: out.sessionId || settings.gbSession || null, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
     if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+    let caughtUp = false;
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
-    else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
+    else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
@@ -1968,6 +2035,7 @@ class Agent {
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
+    if (caughtUp) settings.gbSeen = messages.length; // [chat history] the session knows the chat up to here
   }
   // ---- [/grok build engine]
 
@@ -3658,4 +3726,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
