@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { removeDir, removeDirSync } = require('./temp-dirs');
 const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
 
@@ -307,7 +308,14 @@ class ClaudeCodeEngine {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc-'));
     (this.workDirs ||= new Set()).add(dir); // (imageRoots)
     const mcpConfig = path.join(dir, 'mcp.json');
-    fs.writeFileSync(mcpConfig, JSON.stringify(mcpConfigFor({ http, bridge: http ? null : this.mcpCommand(), userData: this.userData, tag })), { mode: 0o600 });
+    try {
+      fs.writeFileSync(mcpConfig, JSON.stringify(mcpConfigFor({ http, bridge: http ? null : this.mcpCommand(), userData: this.userData, tag })), { mode: 0o600 });
+    } catch (err) { // nothing owns the folder yet: it and the token go with the failure
+      try { http?.server.close(tag); } catch {}
+      removeDirSync(dir);
+      this.workDirs.delete(dir);
+      throw err;
+    }
     const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
@@ -329,7 +337,7 @@ class ClaudeCodeEngine {
       if (this.proc === proc) this.proc = null;
       if (proc.warmed && !proc.turns && !proc.disposed) this.warmFailed(); // a pre-warmed process died on its own, unused
       try { http?.server.close(tag); } catch {}
-      fs.rm(dir, { recursive: true, force: true }, () => {});
+      removeDir(dir, () => this.workDirs?.delete(dir)); // (its mcp.json holds the token; the folder is its cwd, so it can only go once the process has)
       proc.turn?.exit(code);
     };
     try {
@@ -432,6 +440,12 @@ class ClaudeCodeEngine {
     if (this.proc === proc) this.proc = null;
     try { proc.http?.server.close(proc.tag); } catch {}
     if (!proc.exited && proc.child) this.kill(proc.child);
+  }
+
+  // Lumen quits: the folders of every process started here go now (their processes were just killed; the async
+  // removal in finish() would not run before the app exits). Whatever is still busy is swept at the next start.
+  purgeDirs() {
+    for (const dir of [...(this.workDirs || [])]) { removeDirSync(dir); this.workDirs.delete(dir); }
   }
 
   // The chat was switched, cleared or rewound (agent.js onEngineReset), or a background task ended:

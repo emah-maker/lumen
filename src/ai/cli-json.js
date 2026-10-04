@@ -188,7 +188,7 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
     } catch (err) {
       throw err.output !== undefined ? new Error(describeFailure(err.output, err.code).text) : err;
     } finally {
-      fs.rmSync(cwd, { recursive: true, force: true });
+      require('./temp-dirs').removeDirSync(cwd); // (never throws: a busy folder must not replace the answer)
     }
   }
   if (engine === 'grokbuild') {
