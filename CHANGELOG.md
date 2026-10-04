@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New: Settings → AI → Never switch away from my tab.** The AI already works in background tabs; with this on it also never brings a tab to the front when it wants to show you a page, so the tab you're on stays in view.
 - **macOS: Control is the text-editing key again.** In text boxes, Ctrl+A / Ctrl+E (start / end of line), Ctrl+P / Ctrl+N (previous / next line), Ctrl+F / Ctrl+B (forward / back) and the other emacs-style keys now work as in Chrome, Safari and Firefox. Before, Lumen took Control as Cmd, so Ctrl+P printed and Ctrl+N opened a window. Lumen's shortcuts on a Mac use Cmd only; Ctrl+Tab and Ctrl+Page Up / Down still switch tabs.
 ## 0.5.10 (2026-10-04)
 
