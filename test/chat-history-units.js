@@ -227,6 +227,33 @@ function fakeClaudeCode({ delay = () => 0, gone = new Set() } = {}) {
     check('antigravity: the next message carries nothing extra', !calls[2].prompt.includes('<earlier_conversation>') && m.settings.agySeen === m.length, calls[2].prompt.slice(0, 200));
   }
 
+  // The catch-up names the model that wrote each missed reply, also after the chat is saved and reloaded.
+  {
+    const agent = newAgent();
+    const cc = fakeClaudeCode();
+    agent.engines = { claudecode: cc };
+    const m = chat('claudecode:sonnet');
+    await run(agent, m, 'first question');
+    const snap = agent.snapshot(m);
+    snap.messages.push({ role: 'user', content: [{ type: 'text', text: 'ask grok' }], author: null }, { role: 'assistant', content: [{ type: 'text', text: 'GROK SAID PINEAPPLE' }], author: 'grokbuild:default' },
+      { role: 'user', content: [{ type: 'text', text: 'ask the api' }], author: null }, { role: 'assistant', content: [{ type: 'text', text: 'API SAID FIG' }], author: 'claude-sonnet-5' });
+    const saved = JSON.parse(J(snap)); // as written to disk
+    agent.restore(saved);
+    const m2 = agent.messages;
+    m2.settings.model = 'claudecode:sonnet';
+    await run(agent, m2, 'What did Grok just answer?');
+    const prompt = cc.calls[cc.calls.length - 1].prompt;
+    check('handoff names Grok Build for its reply (after reload)', prompt.includes('Grok Build: GROK SAID PINEAPPLE'), prompt.slice(0, 500));
+    check('handoff names an API model by its display name', prompt.includes('Sonnet 5: API SAID FIG'), prompt.slice(0, 500));
+    check('handoff: the note says replies are labeled', /labeled with the model/.test(prompt), prompt.slice(0, 300));
+    check('handoff: the label is not sent to the APIs', !J(agent.snapshot(m2).messages).includes('"by"'));
+  }
+  {
+    const items = [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a', by: 'Antigravity' }, { role: 'assistant', text: 'b' }];
+    const want = ['User: q', 'Antigravity: a', 'Assistant: b'].join('\n\n');
+    check('handoff: labels by model, falls back to Assistant', handoffTurns(items) === want, handoffTurns(items));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
