@@ -263,6 +263,11 @@ const notices = (log) => log.events.filter((e) => e.type === 'notice').map((e) =
     check('Claude Code Auto: the guess, and the plans for sonnet and opus, share one system prompt that names no model', !/model answering/.test(guess.systemPrompt) && keyOf(guess) === keyOf(sentSonnet) && keyOf(sentSonnet) === keyOf(sentOpus) && sentSonnet.model === 'sonnet' && sentOpus.model === 'opus', J({ guess: guess.systemPrompt.slice(-80), a: sentSonnet.systemPrompt.slice(-80) }));
     check('Claude Code Auto: a model the user picked is still named in the prompt', /model answering is Claude Sonnet/.test(pickedPlan.systemPrompt), pickedPlan.systemPrompt.slice(-120));
     check('Claude Code Auto: the models differ only in the key\'s model, so a warm process can be switched (modelOnlyDiff)', claude.modelOnlyDiff(claude.procKey({ bin: 'c', ...guess, sessionId: 's', model: 'haiku' }), claude.procKey({ bin: 'c', ...sentOpus, sessionId: 's' })), '');
+    // The engine's own Auto picks a real model per message whatever the "auto model" setting says, so the warm-up must guess one too.
+    const offAgent = Object.assign(Object.create(Agent.prototype), { browser: { autoModel: () => false, claudeCodeFullAccess: () => false, maxSteps: () => 0 }, prewarmed: null });
+    const offChat = []; offChat.settings = { model: 'claudecode:auto', adhdMode: false };
+    const plainChat = []; plainChat.settings = { model: 'claudecode:default', adhdMode: false };
+    check('Claude Code Auto: even with "auto model" off the warm-up guesses a real model (a "default" process could not be switched), a plain default stays default', offAgent.claudeCodePlan(offChat, 'open a page', 0, 0).spawn.model !== 'default' && offAgent.claudeCodePlan(plainChat, 'open a page', 0, 0).spawn.model === 'default', J(offAgent.claudeCodePlan(offChat, 'open a page', 0, 0).spawn.model));
     const gbAgent = Object.assign(Object.create(Agent.prototype), { messages: [], browser: { grokBuildFullAccess: () => false }, runs: new Map(), engines: { grokbuild: { statusCache: {} } } });
     gbAgent.messages.settings = { model: 'grokbuild:auto', adhdMode: false };
     const spec = gbAgent.grokWarmSpec();

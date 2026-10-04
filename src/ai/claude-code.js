@@ -118,7 +118,9 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'defaul
 // A CLI kept for the chat's next message is stopped after this long without one.
 const IDLE_MS = 10 * 60 * 1000;
 // A process pre-warmed on composer focus (agent.js prewarm) that no message has taken is released after this long.
-const PREWARM_IDLE_MS = 3 * 60 * 1000;
+const PREWARM_IDLE_MS = 10 * 60 * 1000;
+// The first turn's wait for the user's own MCP servers under full access (see spawnProc).
+const MCP_STARTUP_WAIT_MS = 3000;
 // After a pre-warmed process dies unused (a broken CLI, no sign-in), pre-warming pauses this long, doubling per
 // repeat up to the max; a successful turn resets it.
 const WARM_BACKOFF_MS = 5 * 60 * 1000;
@@ -349,6 +351,12 @@ class ClaudeCodeEngine {
     const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
+    // [full access] The CLI loads the user's own MCP servers too, and its first turn waits for every one of them to connect (up to
+    // MCP_TIMEOUT, 30 s): measured with six of them, a cold start took 8 to 20 s before the first token, against 2.5 s with Lumen's
+    // alone. Capped (CLAUDE_CODE_MCP_STARTUP_WAIT_MS, CLI 2.1.274+): Lumen's own server connects within a second, and slower ones keep
+    // connecting in the background. A value the user set themselves is left alone. (Without full access --strict-mcp-config leaves
+    // Lumen's server as the only one, so there is nothing slow to wait for and no cap.)
+    if (fullAccess && !childEnv.CLAUDE_CODE_MCP_STARTUP_WAIT_MS) childEnv.CLAUDE_CODE_MCP_STARTUP_WAIT_MS = String(MCP_STARTUP_WAIT_MS);
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
     // process's messages, so a capped chat gets a fresh (pre-started) process per message instead.
     // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
@@ -822,4 +830,4 @@ function dirsInCommand(command) {
   return out;
 }
 
-module.exports = { modelOnlyDiff, ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
+module.exports = { MCP_STARTUP_WAIT_MS, PREWARM_IDLE_MS, modelOnlyDiff, ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
