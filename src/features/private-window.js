@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const googleAuth = require('../browser/google-auth-identity');
+const { shortcutMod } = require('../browser/shortcut-mod');
 const firefoxProfile = googleAuth.firefoxProfile(process.platform);
 const { pathToFileURL } = require('url');
 
@@ -383,7 +384,7 @@ function createPrivateWindows(deps) {
           // It belongs to this private window: it closes with it (whose session is then cleared).
           rec.popups.add(child);
           child.on('closed', () => rec.popups.delete(child));
-          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
+          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && shortcutMod(input, platform) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
           wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
           return wc;
         },
@@ -543,9 +544,9 @@ function createPrivateWindows(deps) {
 
   function handleShortcut(rec, event, input) {
     if (input.type !== 'keyDown') return;
-    const mod = input.control || input.meta;
     const mac = platform === 'darwin';
     const key = input.key.toLowerCase();
+    const mod = shortcutMod(input, platform); // macOS: Cmd, never Control (the text-editing key there)
     let name = null;
     if (mod && input.shift && key === 'n') name = 'newWindow';
     else if (mod && input.shift && key === 't') name = 'reopenTab';
