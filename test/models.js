@@ -44,6 +44,13 @@ const path = require('path');
   check('picker lists Auto and 5 models (and one Auto for the Claude API)', options.filter((o) => !o.startsWith('claudecode:') && o !== 'anthropic:auto').length === 6 && options[0] === 'auto' && options.includes('anthropic:auto'), JSON.stringify(options));
   check('Auto is the default on a fresh profile (more than one model is connected)', (await ui.inputValue('#model')) === 'auto', await ui.inputValue('#model'));
 
+  // [usage bars] A Claude API key has no plan window: its group in the picker carries no bar, and opening it asks for nothing new.
+  await ui.evaluate(() => modelPicker.open());
+  await ui.waitForSelector('.picker-menu:not([hidden]) .picker-group', { state: 'attached' });
+  const apiBars = await ui.evaluate(() => document.querySelectorAll('.picker-menu:not([hidden]) .ubar').length);
+  await ui.evaluate(() => modelPicker.close(false));
+  check('usage bars: a provider with no usage numbers (an API key) shows no bar in the model picker', apiBars === 0, String(apiBars));
+
   // The rest starts from Opus 5 and switches away and back, so pick it first.
   await ui.selectOption('#model', 'claude-opus-5');
   await ui.waitForTimeout(300);

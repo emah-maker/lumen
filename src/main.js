@@ -6493,13 +6493,13 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
-const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
+const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
   ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
-ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
+ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
 // (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
 const bgTasks = require('./features/background-runner').create({
@@ -6691,6 +6691,7 @@ function aiStatusFacts() {
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
     aiTabs: [...winRecs].filter(rcAlive).reduce((n, rec) => n + tabsOf(rec).filter((tab) => manners.isAiTab(tab)).length, 0),
     handsOff: s.aiHandsOff === true,
+    showBars: s.usageBars !== false, // [usage bars] Settings → Usage
   };
 }
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as

@@ -373,8 +373,8 @@ function createUsage(deps) {
   // Codex's session logs, read at most every 20 seconds (a few small file tails; no model call); the reading is kept
   // (usage.json: numbers only) so the status card has it without scanning.
   let codexAt = 0;
-  async function codexNow(now) {
-    if (deps.codexScan && now - codexAt > 20000) {
+  async function codexNow(now, scan = true) {
+    if (scan && deps.codexScan && now - codexAt > 20000) {
       codexAt = now;
       try {
         const scan = await deps.codexScan(now);
@@ -385,12 +385,13 @@ function createUsage(deps) {
   }
 
   // Everything the panel and the meter show.
-  async function summary({ refresh = false } = {}) {
+  // cached: only what is already in memory (no `claude /usage` run, no Codex log scan): what the small bars in the pickers read.
+  async function summary({ refresh = false, cached = false } = {}) {
     const now = clock();
     // The sidebar meter asks after every reply; while a turn's own rate_limit_event has the 5-hour
     // reading fresh, it doesn't need a `claude -p /usage` process (a whole CLI start) each time.
-    const passive = !refresh && meterIsFresh(now);
-    const planData = passive ? (plan?.data || { available: false, reason: 'Not read yet.' }) : await planUsage({ refresh }).catch((err) => ({ available: false, reason: err.message }));
+    const passive = !refresh && (cached || meterIsFresh(now));
+    const planData = passive ? (plan?.data && (!cached || Date.now() - plan.at < 6 * HOUR) ? plan.data : { available: false, reason: 'Not read yet.' }) : await planUsage({ refresh }).catch((err) => ({ available: false, reason: err.message }));
     const windowStart = meter && meter.resetsAt > now ? meter.resetsAt - FIVE_HOURS : now - FIVE_HOURS;
     const since = (t) => records.filter((r) => r.at >= t);
     const byEngine = {};
@@ -410,7 +411,7 @@ function createUsage(deps) {
       }
       engines[name] = { today: sum(today.filter((r) => r.engine === name)), background: sum(today.filter((r) => r.engine === name && r.background)), last: { at: last.at, contextTokens: fresh ? 0 : last.contextTokens || 0, contextWindow: last.contextWindow || 0, compactPercent: last.compactPercent || null } };
     }
-    const codex = await codexNow(now);
+    const codex = await codexNow(now, !cached);
     const result = {
       plan: planData,
       meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
@@ -426,6 +427,9 @@ function createUsage(deps) {
       // Grok: no plan numbers exist, only Lumen's own use, the user's budget and the limit message.
       grok: { limit: grokLimitNow(now), windows: grokWindows(records, now), budget: { config: budget, status: budgetStatus(records, budget, now) } },
     };
+    // The small bars (renderer/usage-bars.js): the setting, and the models being left alone after a limit (ai/fallback.js).
+    result.showBars = deps.showBars ? deps.showBars() !== false : true;
+    result.cooling = deps.cooling ? deps.cooling(now) : {};
     result.bars = { claudecode: barFor('claudecode', result), grokbuild: barFor('grokbuild', result), codex: barFor('codex', result) };
     return result;
   }
