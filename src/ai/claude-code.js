@@ -147,6 +147,20 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // [cc settings] userSettings is part of the key too (last, so warmModel's index holds): changing the setting ends a warm process.
 const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex'), Boolean(userSettings), effortLib.clean('claudecode', effort)]); // (effort last too, so warmModel's index holds)
 
+// [model switch] The model is the one part of a key a live CLI can change without a restart: a stream-json
+// `set_model` control request (checked against the CLI, 2.1.288) applies to the process's next message, even before
+// its first. Auto routing (claudecode:auto, the tier routing of 'default') picks the model per message, after the
+// composer-focus warm-up chose a guess, so a model-only mismatch switches the warm process instead of cold-starting one.
+const keyParts = (key) => { try { return JSON.parse(key); } catch { return null; } };
+const switchableModel = (m) => Boolean(m) && m !== 'default' && validModel(m);
+// True when `from` (a kept process's key) differs from `to` only by a model, both named (a CLI started on its own default has no model to switch from).
+function modelOnlyDiff(from, to) {
+  const a = keyParts(from);
+  const b = keyParts(to);
+  if (!a || !b || a.length !== b.length || a[2] === b[2] || !switchableModel(a[2]) || !switchableModel(b[2])) return false;
+  return a.every((v, i) => i === 2 || v === b[i]);
+}
+
 // [cc settings] A failure that loading ~/.claude/settings.json may cure: a sign-in, credential, proxy or certificate error
 // (apiKeyHelper, ANTHROPIC_* / proxy env in the user's settings) in a CLI that ran without those settings.
 const SETTINGS_FAILURE = /not logged in|\/login|api key|oauth|authenticat|credential|unauthori[sz]ed|\b40[17]\b|proxy|certificate|ECONNREFUSED|ENOTFOUND|unable to connect|could not connect/i;
@@ -344,7 +358,8 @@ class ClaudeCodeEngine {
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess, userSettings, effort }); };
+    proc.model = model; // (set_model changes it: switchModel)
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model: proc.model, maxTurns, fullAccess, userSettings, effort }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -390,6 +405,7 @@ class ClaudeCodeEngine {
       let p = this.proc;
       if (p?.drain) { emit?.({ type: 'status', text: 'Finishing the stopped step…' }); await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first (said on screen: up to interruptMs)
       if (!fresh && p && !p.exited && !p.spent && !p.turn && p.key === key) { clearTimeout(p.idle); return p; }
+      if (!fresh && p && !p.exited && !p.spent && !p.turn && modelOnlyDiff(p.key, key) && this.switchModel(p, opts.model, key)) { clearTimeout(p.idle); return p; } // [model switch]
       if (p && !p.turn) this.dispose(p);
       const proc = await this.spawnProc({ bin, key, ...opts });
       if (!proc.exited) this.proc = proc;
@@ -397,6 +413,19 @@ class ClaudeCodeEngine {
     });
     this.starting = next;
     return next;
+  }
+
+  // [model switch] Asks a kept CLI to answer its next message with `model` and re-keys it. False when its stdin is gone
+  // (it is then replaced as before). A refusal comes back as a control_response error, which nothing waits for: the
+  // process keeps its old model and the message still gets answered.
+  switchModel(proc, model, key) {
+    try {
+      proc.child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: `lumen-model-${crypto.randomBytes(6).toString('hex')}`, request: { subtype: 'set_model', model } })}
+`);
+    } catch { return false; }
+    proc.model = model;
+    proc.key = key;
+    return true;
   }
 
   // Starts (or keeps) the CLI for the chat's next message ahead of time, so the process start and
@@ -725,8 +754,7 @@ class ClaudeCodeEngine {
       else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining
     } else if (ok && this.keepAlive && !signal.aborted && prestart) {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
-      // Only when the caller knows the next message will want the same process (prestart: a picked model, or
-      // an auto-routed top tier that can't go higher); otherwise it would start for a key that may not match.
+      // Its model may not be the next message's (Auto, routing): take() switches a model-only mismatch in place.
       const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, userSettings, effort };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);
@@ -794,4 +822,4 @@ function dirsInCommand(command) {
   return out;
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
+module.exports = { modelOnlyDiff, ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
