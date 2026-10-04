@@ -172,7 +172,7 @@ async function lumenPart() {
         return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
       } } } });
       const events = [];
-      await agent.run('do it', (e) => {
+      await agent.run('do it with this page', (e) => {
         events.push(e);
         if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, answer), 20);
       });

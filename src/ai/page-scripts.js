@@ -89,7 +89,10 @@ ${PAGE_TEXT}
 `;
 
 // frames: false leaves iframes to frames.js (each read in its own frame); they are only counted.
-function readPage(textOffset, elementOffset, { frames = true } = {}) {
+// list: false returns the text and the element count only (read_page's default: the model works from
+// compact outlines and find, and the 150-element JSON list cost more than the page's text); the registry
+// is built either way, so ids still resolve.
+function readPage(textOffset, elementOffset, { frames = true, list = true } = {}) {
   return `(() => {
     ${HELPERS}
     const selector = [
@@ -117,15 +120,17 @@ function readPage(textOffset, elementOffset, { frames = true } = {}) {
     walk(document, []);
     window.__claudeEls = registry;
 
+    const listing = ${list ? 'true' : 'false'};
     const elements = registry.slice(${elementOffset}, ${elementOffset + ELEMENT_PAGE}).map((entry, i) => {
       const { el, chain } = entry;
       const id = ${elementOffset} + i + 1;
       const label = accessibleName(el).slice(0, 80);
       entry.label = label;
+      if (!listing) return null;
       const item = { id, tag: el.tagName.toLowerCase(), label };
       const kind = el.getAttribute('role') || (el.tagName === 'INPUT' ? el.type : null);
       if (kind) item.kind = kind;
-      if (el.tagName === 'A') item.href = el.href.slice(0, 150);
+      if (el.tagName === 'A') item.href = (el.origin === location.origin ? el.href.slice(el.origin.length) || '/' : el.href).slice(0, 80);
       if ((el.type === 'radio' || el.type === 'checkbox') && el.name) item.group = el.name;
       if ('value' in el && el.tagName !== 'BUTTON' && el.value && !secretField(el) &&
           el.type !== 'radio' && el.type !== 'checkbox' && el.value !== label) item.value = String(el.value).slice(0, 80);
@@ -142,6 +147,20 @@ function readPage(textOffset, elementOffset, { frames = true } = {}) {
     const text = pageText(document).replace(/\\n{3,}/g, '\\n\\n');
     const start = ${textOffset};
     const end = start + ${TEXT_CHUNK};
+    if (!listing) {
+      return {
+        url: location.href,
+        title: document.title,
+        text: text.slice(start, end),
+        textRange: [start, Math.min(end, text.length)],
+        totalTextChars: text.length,
+        moreTextAvailable: text.length > end,
+        scroll: { y: Math.round(scrollY), pageHeight: document.documentElement.scrollHeight, viewportHeight: innerHeight },
+        totalElements: registry.length,
+        elementsNotListed: true,
+        crossOriginFrames,
+      };
+    }
     return {
       url: location.href,
       title: document.title,
@@ -503,4 +522,15 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+// What read_page returns: the page's facts as JSON, then its text.
+function formatFull(page) {
+  const { text, ...rest } = page;
+  return `<untrusted_page_content>
+${JSON.stringify(rest)}
+
+PAGE TEXT:
+${text}
+</untrusted_page_content>`;
+}
+
+module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

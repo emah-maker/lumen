@@ -43,15 +43,19 @@ const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
   const names = await app.evaluate((_e, f) => global.__agentModule?.EXTERNAL_TOOLS?.map((t) => t.name) || ['find', 'batch'], AGENT);
   check('find and batch are exposed to MCP / other providers', names.includes('find') && names.includes('batch'), names.join(','));
 
-  await run('navigate', { url: site });
+  const landed = await run('navigate', { url: site });
+  check('navigate returns the head of the page (no read_page needed)', landed.includes('Loaded ') && landed.includes('Shop') && landed.includes('Checkout') && landed.length < 1200, landed);
+  check('navigate read:false returns just the load line', !(await run('navigate', { url: site, read: false })).includes('Checkout'), '');
   const compact = await run('read_page', { mode: 'compact' });
   check('compact: headings, landmarks, inline links', compact.includes('# Checkout') && compact.includes('[nav: Main]') && /\[\d+\]Contact us/.test(compact), compact);
   check('compact: controls with refs', /\[\d+\] textbox "Name"/.test(compact) && /\[\d+\] select "Size" = "Small"/.test(compact) && /\[\d+\] checkbox "Gift wrap"/.test(compact), compact);
-  const full = await run('read_page', {});
+  const full = await run('read_page', { elements: true });
   check('full mode unchanged (JSON + PAGE TEXT)', JSON.parse(full.split('\n')[1]).elements.length > 5 && full.includes('PAGE TEXT:'), full.slice(0, 200));
   const storyLines = compact.split('\n').filter((l) => /Story (one|two|three) title/.test(l));
   check('compact: a table inside a table cell is walked, one line per row cell', storyLines.length === 3 && ['ada', 'bob', 'cy'].every((n) => compact.includes(`points by ${n}`)), compact);
   check('compact: a list inside a list item is walked', /- Parent item\n- Child item A\n- Child item B/.test(compact), compact);
+  const bare = await run('read_page', {});
+  check('full mode without elements: text and a count, no element list', bare.includes('PAGE TEXT:') && /"totalElements":\d+/.test(bare) && !bare.includes('"elements":[') && bare.length < full.length, bare.slice(0, 300));
   check('compact is much smaller than full', compact.length * 2 < full.length, `${compact.length} vs ${full.length}`);
 
   // batch: fill and submit with refs from the compact outline, one call, diff included.

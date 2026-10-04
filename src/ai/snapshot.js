@@ -63,8 +63,12 @@ function compactOutline(opts) {
   const seen = new Set();
   let size = 0;
   let clipped = false;
+  // Boilerplate every site repeats and no task needs: skip links, "Toggle … subsection" and "Hide Contents"
+  // buttons, a bare "Main menu" / "Appearance" label. (The controls keep their refs: only the lines go.)
+  const NOISE_LINE = /^(- )?(\[\d+\] (link|button) ")?(\[\d+\])?((skip|jump) to [^"]*|toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar|main menu)|main menu|move to sidebar|appearance)"?$/i;
+  const NOISE_INLINE = / ?\[\d+\] button "(toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar))"/gi;
   const push = (line) => {
-    if (!line || seen.has(line)) return;
+    if (!line || seen.has(line) || NOISE_LINE.test(line)) return;
     if (size + line.length > opts.maxChars) { clipped = true; return; }
     seen.add(line);
     lines.push(line);
@@ -125,7 +129,7 @@ function compactOutline(opts) {
       if (node.nodeType === 3) out += node.nodeValue;
       else if (node.nodeType === 1 && !SKIP.has(node.tagName) && visible(node)) walk({ childNodes: [node] });
     }
-    const text = clean(out);
+    const text = clean(out.replace(NOISE_INLINE, ''));
     return text.length > opts.blockChars ? `${text.slice(0, opts.blockChars)}…` : text;
   };
   const inline = (block) => {
@@ -302,6 +306,7 @@ const READ_PAGE_EXTRA = {
   since_last: { type: 'boolean', description: 'compact: only changes since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
   hrefs: { type: 'boolean', description: 'compact: add link URLs.' },
+  elements: { type: 'boolean', description: 'full: list the elements.' },
   extract: { type: 'string', enum: ['tables', 'links', 'lists'] },
   selector: { type: 'string', description: 'CSS scope for extract.' },
 };
@@ -433,6 +438,9 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
     body = added.length || removed
       ? `Changes since your last read (+${added.length} / -${removed} lines):\n${added.join('\n')}`
       : 'No changes since your last read.';
+  } else if (input.head) {
+    // After navigate / open_tab: the title, URL and the top of the page, enough to see where it landed.
+    body = pageHead(result.lines, result.totalLines, result.clipped);
   } else if (input.summary) {
     // After a batch lands on a new page: just its top, the model can read more if it needs to.
     body = `Now on a new page:\n${result.lines.slice(0, 12).join('\n')}\n… (${result.totalLines} lines; use find or read_page mode:"compact")`;
@@ -443,6 +451,20 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
     if (same) body = same;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
+}
+
+// The first ~600 characters of an outline (whole lines), with a pointer to the rest.
+const HEAD_CHARS = 600;
+function pageHead(lines, total, clipped = false) {
+  const out = [];
+  let size = 0;
+  for (const line of lines) {
+    if (out.length && size + line.length + 1 > HEAD_CHARS) break;
+    out.push(line.length > HEAD_CHARS ? `${line.slice(0, HEAD_CHARS)}…` : line);
+    size += line.length + 1;
+  }
+  const more = out.length < total || clipped;
+  return `${out.join('\n')}${more ? '\n… (more: read_page mode:"compact", or find)' : ''}`;
 }
 
 // The embedded frames' outlines, each headed by its label, refs naming the frame (frames.js).
@@ -475,6 +497,14 @@ async function outline(agent, wc, h) {
   if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
   try { return `
 ${await compact(agent, wc, { mode: 'compact', max_chars: 4000 }, h)}`; } catch { return ''; }
+}
+
+// The short head of the page after a navigation ('' when it can't be shown): navigate / open_tab return it by
+// default (read:false opts out), so the model often needs no read_page step to see where it landed.
+async function head(agent, wc, h) {
+  if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
+  try { return `
+${await compact(agent, wc, { mode: 'compact', max_chars: 1500, head: true }, h)}`; } catch { return ''; }
 }
 
 // True when the last compact read of this tab (same URL, few calls ago) is still the baseline for the
@@ -603,4 +633,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };
+module.exports = { OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };

@@ -1585,7 +1585,7 @@ async function fewerCallRuns() {
     check('fewer calls: navigate takes read + wait_for, open_tab read, read_page extract + selector', props.navigate.read && props.navigate.wait_for && props.open_tab.read && props.read_page.extract?.enum.join() === 'tables,links,lists' && props.read_page.selector, '');
     check('fewer calls: click, click_at, type_text and press_key take observe', ['click', 'click_at', 'type_text', 'press_key'].every((n) => props[n].observe && snap.OBSERVE_TOOLS.has(n)), '');
     const agentSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'ai', 'agent.js'), 'utf8');
-    check('fewer calls: navigate / open_tab read:true counts as reading page content (taints the run)', /input\?\.read && \(name === 'navigate' \|\| name === 'open_tab'\)+ this\.markTainted/.test(agentSrc2), '');
+    check('fewer calls: navigate / open_tab return the page head, so they count as reading page content (taint the run) unless read:false', /\(name === 'navigate' \|\| name === 'open_tab'\) && input\?\.read !== false\)+ this\.markTainted/.test(agentSrc2), '');
 
     // read_page extract runs in the page: a fake DOM with one table and some links.
     const cell = (t) => ({ innerText: t });

@@ -38,9 +38,11 @@ const path = require('path');
       } } },
     });
   });
-  const ask = async (text = 'hi') => {
-    await app.evaluate((_e, t) => new Promise((resolve) => global.__agent.run(t, (e) => { if (e.type === 'done') resolve(); })), text);
-    return app.evaluate(() => global.__sent[global.__sent.length - 1]);
+  const ask = async (text = 'hi this page') => {
+    await app.evaluate((_e, t) => new Promise((resolve) => global.__agent.run(t, (e) => { if (e.type === 'error') global.__err = e.text; if (e.type === 'done') resolve(); })), text);
+    const got = await app.evaluate(() => global.__sent[global.__sent.length - 1]);
+    if (got === undefined) console.log('no request was made:', await app.evaluate(() => global.__err));
+    return got ?? '';
   };
   const chip = () => ui.evaluate(() => {
     const el = document.getElementById('page-context');
@@ -60,8 +62,12 @@ const path = require('path');
   check('message carries the page in <untrusted_page_content>', /<untrusted_page_content title="Alpha page" url="http:\/\/127\.0\.0\.1:\d+\/a">[\s\S]*Alpha body text about rockets[\s\S]*<\/untrusted_page_content>/.test(sent), sent.slice(0, 500));
   check('page text cannot close the wrapper early', (sent.match(/<\/untrusted_page_content>/g) || []).length === 1, sent);
   check('the user text follows the page', sent.trim().endsWith('what is this?'), sent.slice(-100));
-  sent = await ask('and again?');
+  sent = await ask('and what is this page again?');
   check('an unchanged page is referenced, not resent', sent.includes('(Same page and text as in the previous message.)') && !sent.includes('rockets'), sent.slice(0, 400));
+  sent = await ask('What is the capital of France?');
+  check('a plain question needs no page: none is sent', !sent.includes('<untrusted_page_content') && !sent.includes('rockets') && sent.trim().endsWith('What is the capital of France?'), sent.slice(0, 300));
+  sent = await ask('what is this page about?');
+  check('the next page question refers back to the page already sent', sent.includes('(Same page and text as in the previous message.)'), sent.slice(0, 300));
 
   // A second tab: the chip follows the switch and so does the context.
   const bId = await app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, `${base}/b`);
