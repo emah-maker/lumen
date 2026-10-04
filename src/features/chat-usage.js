@@ -102,10 +102,15 @@ function contextTokensOf(raw) {
 }
 
 // The window to measure against: what the engine reported (Claude Code's modelUsage, Grok's catalog, the
-// fallback table for API models), else 1M for a `[1m]` model id and 200k for anything else.
+// fallback table for API models), else 1M for a `[1m]` model id, the engine's usual one, and 200k for anything else.
+// Codex's exec stream and Antigravity give tokens but no window: Codex's own session logs name 272k for its GPT-5
+// models, Gemini's models take 1M, and Grok Build's catalog reports its own (256k only before it has).
+const ENGINE_WINDOWS = { 'codex:': 272_000, 'antigravity:': 1_000_000, 'grokbuild:': 256_000 };
 function windowFor(model, reported) {
   if (Number(reported) > 0) return Number(reported);
-  return /\[1m\]/i.test(String(model || '')) ? 1_000_000 : DEFAULT_WINDOW;
+  if (/\[1m\]/i.test(String(model || ''))) return 1_000_000;
+  const prefix = Object.keys(ENGINE_WINDOWS).find((p) => String(model || '').startsWith(p));
+  return prefix ? ENGINE_WINDOWS[prefix] : DEFAULT_WINDOW;
 }
 
 // Records the chat's context on its settings; returns it (null when there is nothing real to record).
@@ -138,4 +143,4 @@ function parseContextReport(text) {
   return tokens != null && window > 0 ? { tokens, window } : null;
 }
 
-module.exports = { PRICES, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW };
+module.exports = { PRICES, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW, ENGINE_WINDOWS };

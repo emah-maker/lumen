@@ -2264,6 +2264,7 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
       const output = Number(u.output_tokens) || 0;
       const logged = this.reportUsage('antigravity', { usage: out.usage ? { inputTokens: input, outputTokens: Math.max(output, (Number(u.total_tokens) || 0) - input), cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: out.model ? [out.model] : [] } : null, model: out.model || (picked === 'default' ? null : picked), limit: out.planLimit || null, ok: !out.failed && !out.stopped });
       if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+      if (input > 0) recordContext(messages, { tokens: input, model: settings.model, estimated: true }, emit); // [context] agy reports no window: windowFor knows Gemini's
     } else if (!out.failed && !out.stopped) this.reportUsage('antigravity', { limit: null, ok: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: [] }, model: picked === 'default' ? null : picked }); // a turn with no counts still happened (last used; clears a past limit)
     let caughtUp = false;
     if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
@@ -2336,6 +2337,7 @@ ${prompt}` : prompt), historyImages: [] };
     recordUsage(messages, { model: settings.model, cost: 0 }, emit);
     const logged = this.reportUsage('codex', { usage: out.usage, rateLimit: out.rateLimit, model: picked === 'default' ? null : picked, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
     if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+    { const u = out.usage; const tokens = u ? (u.inputTokens || 0) + (u.cacheReadTokens || 0) + (u.cacheWriteTokens || 0) : 0; if (tokens > 0) recordContext(messages, { tokens, model: settings.model, estimated: true }, emit); } // [context] Codex reports no window: chat-usage.js windowFor knows its usual one
     let caughtUp = false;
     if (out.sessionId === null) { delete settings.cxSession; delete settings.cxModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.cxSession = out.sessionId; settings.cxModel = settings.model; caughtUp = true; }

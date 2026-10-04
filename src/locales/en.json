@@ -1339,6 +1339,8 @@
   "context.label.estimated": "Context about {percent}% used",
   "context.title": "This chat uses {percent}% of the model’s context window ({used} of {total} tokens).",
   "context.title.estimated": "This chat uses about {percent}% of the model’s context window (about {used} of {total} tokens; the next reply measures it).",
+  "context.strip": "Context {used} / {total}",
+  "context.strip.estimated": "Context ~{used} / {total}",
   "context.more": "Click for the breakdown (/context).",
   "context.compact": "Type /compact to summarize the chat and free up room, or click for the breakdown.",
   "usage.grok.budget": "Budget {percent}%",

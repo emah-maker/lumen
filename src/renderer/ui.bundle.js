@@ -612,6 +612,13 @@ const providerOf = (id) => {
   return m ? m[1] : 'anthropic';
 };
 
+// The provider a picker id belongs to, for a composer meter: 'claudecode:auto' (Auto within one engine) is Claude Code's;
+// only the plain mixed 'auto' (and a "more models" row) belongs to none. A bare Claude model id is Anthropic's.
+const engineOf = (id) => {
+  const v = String(id || '');
+  return !v || v === 'auto' || v.endsWith(':__more') ? '' : providerOf(v);
+};
+
 const clockOf = (ms, now) => {
   const d = new Date(ms);
   const sameDay = d.toDateString() === new Date(now).toDateString();
@@ -746,7 +753,7 @@ function load(force = false) {
   return inflight;
 }
 
-const api = { levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
+const api = { engineOf, levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else {
   root.usageBars = { ...api, state: () => state, load, touch: () => load(false) };
@@ -7940,7 +7947,8 @@ $('agent-stop')?.addEventListener('click', () => {
 // ---- chat-extras.js
 // Shared by the sidebar and the full-page chat (loaded after chat-core.js on both):
 //  - the Claude Code / Grok Build engines' placeholder,
-//  - [usage] the plan meter under the composer's first row while a Claude Code model is picked,
+//  - [usage] the strip right above the textbox: the plan meter (every AI that has plan numbers; Auto of an engine counts as
+//    that engine) and the open chat's context-window use, both in one line,
 //  - [ai controls] "Undo tab changes" under a reply.
 // What only the sidebar has (the "Using: <page>" chip, the toolbar's approval badge) stays in extras.js.
 (() => {
@@ -7979,16 +7987,19 @@ $('agent-stop')?.addEventListener('click', () => {
   meterBar.setAttribute('aria-valuemax', '100');
   const meterText = Object.assign(document.createElement('span'), { className: 'um-text' });
   meter.append(meterBar, meterText);
-  if ($('page-context')) $('page-context').after(meter); // under the sidebar's page chip
-  else $('composer')?.prepend(meter); // the chat page has no chip
+  // One strip right above the textbox holds the plan meter and the context meter (built further down); it is hidden when both are.
+  const strip = Object.assign(document.createElement('div'), { id: 'meter-strip', className: 'meter-strip', hidden: true });
+  strip.append(meter);
+  if ($('prompt')) $('prompt').before(strip);
+  else $('composer')?.prepend(strip);
+  const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
   meter.addEventListener('click', () => extras.openUsage?.());
   let usage = null;
   // Every AI has a bar: the CLIs by their prefix, an API provider by its prefix or (a bare Claude model id) Anthropic; Auto has none.
   const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex', antigravity: 'Antigravity', anthropic: 'Claude', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+  // 'claudecode:auto' (Auto within one engine) is that engine's; only the plain mixed 'auto' has none (renderer/usage-bars.js engineOf).
   const engineKey = () => {
-    const v = String(select?.value || '');
-    if (!v || v === 'auto' || v.endsWith(':auto')) return '';
-    const prefix = v.includes(':') ? v.split(':')[0] : 'anthropic';
+    const prefix = window.usageBars?.engineOf ? window.usageBars.engineOf(select?.value) : '';
     return ENGINE_NAMES[prefix] ? prefix : '';
   };
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -8037,8 +8048,10 @@ $('agent-stop')?.addEventListener('click', () => {
     const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
     clearTimeout(limitTimer);
     // Grok Build, nothing real yet: the bar stays hidden, and a hint says how to get one.
-    const hint = !bar && key === 'grokbuild' && Boolean(usage);
-    meter.hidden = !bar && !hint;
+    const off = usage?.showBars === false; // Settings → Usage → Show usage bars
+    const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
+    meter.hidden = off || (!bar && !hint);
+    syncStrip();
     meter.classList.toggle('hint', hint);
     if (hint) {
       meterBar.hidden = true;
@@ -8048,7 +8061,7 @@ $('agent-stop')?.addEventListener('click', () => {
       meter.title = `${window.t('usage.grok.noplan.title')} ${window.t('usage.more')}`;
       return;
     }
-    if (!bar) return;
+    if (!bar || off) return;
     const engine = ENGINE_NAMES[key];
     const text = [];
     const title = [];
@@ -8103,31 +8116,38 @@ $('agent-stop')?.addEventListener('click', () => {
   setTimeout(() => refreshUsage(false), 1500); // after the model list has loaded
 
   // ---------- [context] how full the open chat's context window is ----------
-  // A ring left of Send, for every AI (features/chat-usage.js contextView: the last request's whole input against
-  // the model's window, kept per chat and saved with it). Its tooltip has the numbers; a click runs /context. Main
-  // pushes it after each request (chats:context); it is read again when another chat opens.
+  // The strip's second part, for every AI (features/chat-usage.js contextView: the last request's whole input against
+  // the model's window, kept per chat and saved with it): "Context 68k / 1M" and a thin bar. Its tooltip has the
+  // numbers; a click runs /context. Main pushes it after each request (chats:context); it is read again when another
+  // chat opens.
   const chatsApi = window.assistant?.chats;
-  const SVG = 'http://www.w3.org/2000/svg';
-  const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'context-meter', hidden: true });
-  const ringSvg = document.createElementNS(SVG, 'svg');
-  ringSvg.setAttribute('viewBox', '0 0 20 20');
-  ringSvg.setAttribute('aria-hidden', 'true');
-  const circle = (cls) => { const c = document.createElementNS(SVG, 'circle'); c.setAttribute('class', cls); c.setAttribute('cx', '10'); c.setAttribute('cy', '10'); c.setAttribute('r', '7.5'); c.setAttribute('pathLength', '100'); return c; };
-  const ringFill = circle('cm-fill');
-  ringSvg.append(circle('cm-track'), ringFill);
-  ring.append(ringSvg);
-  ($('send-bg') || $('send'))?.before(ring);
+  const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'usage-meter context-meter', hidden: true });
+  const ringBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
+  const ringFill = document.createElement('i');
+  ringBar.append(ringFill);
+  ringBar.setAttribute('role', 'progressbar');
+  ringBar.setAttribute('aria-valuemin', '0');
+  ringBar.setAttribute('aria-valuemax', '100');
+  const ringText = Object.assign(document.createElement('span'), { className: 'um-text' });
+  ring.append(ringBar, ringText);
+  strip.append(ring);
+  // "68k", "1M", "200k", "1.5k": whole thousands from 10k up, one decimal below, no trailing ".0".
+  const short = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   function renderContext(view) {
     const show = Boolean(view && view.window > 0 && view.tokens > 0);
     ring.hidden = !show;
+    syncStrip();
     if (!show) return;
     const percent = Math.round(view.percent);
-    ringFill.setAttribute('stroke-dasharray', `${Math.max(view.percent, 1.5)} 100`);
+    ringFill.style.width = `${Math.max(view.percent, 1.5)}%`;
+    ringBar.setAttribute('aria-valuenow', String(percent));
     ring.classList.toggle('warn', percent >= 75 && percent < 90);
     ring.classList.toggle('high', percent >= 90);
     const vars = { percent, used: compact(view.tokens), total: compact(view.window) };
     const label = window.t(view.estimated ? 'context.label.estimated' : 'context.label', vars);
     ring.setAttribute('aria-label', label);
+    ringBar.setAttribute('aria-valuetext', label);
+    ringText.textContent = window.t(view.estimated ? 'context.strip.estimated' : 'context.strip', { used: short(view.tokens), total: short(view.window) });
     ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)} ${window.t(percent >= 75 ? 'context.compact' : 'context.more')}`;
   }
   async function refreshContext() {
