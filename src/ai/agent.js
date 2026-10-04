@@ -1947,7 +1947,7 @@ class Agent {
     // A resumed session is handed the turns other models answered since its last reply here (missedItems).
     const catchUp = () => {
       const missed = handoffTurns(missedItems(messages, settings.ccSeen));
-      return { text: missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt, images };
+      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt), images };
     };
     const first = slash ? { text: slash, images } : spawn.resume ? catchUp() : handoff();
     this.prewarmed = null; // (its session id is this message's now)
@@ -1985,7 +1985,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit, spawn.fullAccess ? { since: startedAt } : {}))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit, spawn.fullAccess ? { since: startedAt } : {}))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2055,7 +2055,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2074,7 +2074,7 @@ class Agent {
     settings.agyFull = fullAccess;
     const resume = Boolean(settings.agySession);
     const picked = engineModel(settings.model);
-    let text = prompt;
+    let text = resume ? interruptedNote(messages) + prompt : prompt;
     let historyImages = [];
     if (!resume && messages.length > 1) {
       // Switched to Antigravity mid-chat: hand it the conversation so far, same as grokBuildTurn.
@@ -2107,7 +2107,7 @@ class Agent {
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -3721,10 +3721,23 @@ function repairHistory(messages) {
 // message doesn't ask a model that has no idea what it just said on screen.
 function keepPartialReply(messages, text, model) {
   if (!text.trim() || messages[messages.length - 1]?.role !== 'user') return;
-  const turn = { role: 'assistant', content: [{ type: 'text', text: `${text.trimEnd()}\n\n[This reply was interrupted.]` }] };
+  const turn = { role: 'assistant', content: [{ type: 'text', text: interrupted(text) }] };
   producedBy.set(turn, model);
   messages.push(turn);
 }
+const INTERRUPTED = '\n\n[This reply was interrupted.]';
+const interrupted = (text) => `${text.trimEnd()}${INTERRUPTED}`;
+// After Stop or Send now cut a CLI reply off, a resumed session may not hold what it said (its process was ended
+// mid-stream), so the next message carries it: the model then knows what the user saw before writing this.
+function interruptedNote(messages) {
+  const prev = messages[messages.length - 2];
+  const text = prev?.role === 'assistant' && Array.isArray(prev.content) ? prev.content.find((b) => b.type === 'text')?.text : '';
+  if (!text || !text.endsWith(INTERRUPTED)) return '';
+  const said = text.slice(0, -INTERRUPTED.length).trim().slice(-4000);
+  return `<interrupted_reply>\nThe user stopped your previous reply partway and sent the message below instead. What you had said so far:\n${said}\n</interrupted_reply>\n\n`;
+}
+// A CLI engine's reply as the history keeps it: one cut off by Stop (or Send now) carries the same marker.
+const cliReplyText = (out) => (out.stopped ? interrupted(out.text) : out.text);
 
 const isJsonError = (err) => !(err instanceof sdk().APIError) && (err instanceof SyntaxError || /\bJSON\b/.test(String(err?.message || '')));
 
