@@ -127,6 +127,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const setSelect = (id, value) => inTab(sid, `(async () => { const el = document.getElementById(${JSON.stringify(id)}); el.value = ${JSON.stringify(String(value))}; el.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 300)); })()`);
   const clickEl = (selector) => inTab(sid, `(async () => { document.querySelector(${JSON.stringify(selector)}).click(); await new Promise((r) => setTimeout(r, 400)); })()`);
 
+  // ---- AI providers: one block per AI, the same rows in each (src/renderer/settings-providers.js)
+  await inTab(sid, "location.hash = '#providers'");
+  await waitFor(() => inTab(sid, "!document.getElementById('sec-ai-providers')?.closest('.pane')?.hidden"));
+  const blocks = await inTab(sid, "[...document.querySelectorAll('#sec-ai-providers .group')].map((g) => ({ title: g.dataset.title, effort: Boolean(g.querySelector('select[id^=provider-effort-]')), usage: [...g.querySelectorAll('.label')].some((l) => l.textContent === 'Usage'), status: Boolean(g.querySelector('[id^=provider-state-]')) }))");
+  check('AI providers: a block per AI, each with state, reasoning effort and usage', Array.isArray(blocks) && blocks.map((b) => b.title).join() === 'Claude Code,Grok Build,Codex CLI,Antigravity,Claude (API key),OpenAI,Grok (API key),Gemini,OpenRouter' && blocks.every((b) => b.effort && b.usage && b.status), JSON.stringify(blocks));
+  await setSelect('provider-effort-openai', 'low');
+  await setSelect('provider-effort-claudecode', 'xhigh');
+  const effRead = await inTab(sid, "window.lumenSettings.get().then((s) => s.prefs.aiEffort)");
+  check('AI providers: a chosen reasoning effort is saved per AI (and only valid levels)', effRead && effRead.openai === 'low' && effRead.claudecode === 'xhigh' && !effRead.gemini, JSON.stringify(effRead));
+  await setSelect('provider-effort-openai', '');
+  check('AI providers: "Default" removes the AI’s entry', !(await inTab(sid, "window.lumenSettings.get().then((s) => 'openai' in s.prefs.aiEffort)")));
+  await clickEl('#provider-menu-claudecode');
+  check('AI providers: "Offer in the model menu" is the claudeCodeSidebar setting (on by default)', (await inTab(sid, "window.lumenSettings.get().then((s) => s.prefs.claudeCodeSidebar)")) === false);
+  await clickEl('#provider-menu-claudecode');
+  if (!(await inTab(sid, "Boolean(document.getElementById('provider-auto-openai'))"))) skip('AI providers: Auto may use follows the Assistant list', 'no provider is connected in this profile, so Auto lists none');
+  else check('AI providers: Auto may use it follows the same setting as the Assistant list, in both rows', await (async () => {
+    await clickEl('#provider-auto-openai');
+    const a = await inTab(sid, "window.lumenSettings.get().then((s) => s.prefs.autoExclude)");
+    const same = await inTab(sid, "document.getElementById('provider-auto-openai').checked === document.getElementById('auto-use-openai')?.checked");
+    await clickEl('#provider-auto-openai');
+    return Array.isArray(a) && a.includes('openai') && same !== false;
+  })());
+  await inTab(sid, "location.hash = '#ai'");
   // ---- AI: full access for the command-line AIs (renderer/cli-access.js) ----
   const accessState = () => inTab(sid, "(() => { const m = document.getElementById('pref-cliFullAccess'); const k = (id) => document.getElementById('pref-' + id).checked; return JSON.stringify({ master: m.indeterminate ? 'mixed' : m.checked ? 'on' : 'off', cc: k('claudeCodeFullAccess'), gb: k('grokBuildFullAccess'), ag: k('antigravityFullAccess'), aria: m.getAttribute('aria-checked') }); })()");
   const accessFile = () => { const p = readPrefsFile(); return JSON.stringify([p.claudeCodeFullAccess === true, p.grokBuildFullAccess === true, p.antigravityFullAccess === true]); };

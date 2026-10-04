@@ -88,7 +88,9 @@ const path = require('path');
 const { exists, lookup, killTree, validModel, fullAccessRejected } = require('./cli-utils');
 const { agyAllowed } = require('./agy-tools'); // the allowlist the hook gate (mcp-http.js agyDecision) shares
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
-const { isLimitText, limitOf } = require('../features/grok-limit');
+const { isLimitText } = require('../features/grok-limit');
+const { antigravityLimit } = require('../features/provider-usage'); // the quota message and its reset time ("Resets in 110h")
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 
 const INSTALL_URL_SH = 'https://antigravity.google/cli/install.sh';
 const INSTALL_URL_PS = 'https://antigravity.google/cli/install.ps1';
@@ -316,12 +318,13 @@ const PROMPT_ARG_MAX = 20000;
 const FULL_FLAGS = ['--dangerously-skip-permissions']; // "Auto-approve all tool permission requests without prompting" (agy --help)
 // A silent shell command prints nothing for a long time: with full access the watchdog waits this long.
 const FULL_WATCHDOG_MS = 15 * 60 * 1000;
-function buildArgs({ prompt, conversation = null, model = 'default', fullAccess = false }) {
+function buildArgs({ prompt, conversation = null, model = 'default', fullAccess = false, effort = '' }) {
   return [
     '-p', prompt,
     '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
     ...(conversation ? ['--conversation', conversation] : []),
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
+    ...effortLib.cliArgs('antigravity', effort), // Settings → AI → AI providers: --effort (agy 1.2.16 --help; none: agy's own default)
     ...(fullAccess ? FULL_FLAGS : ['--sandbox']), // --sandbox: "Run in a sandbox with terminal restrictions enabled" (agy --help)
   ];
 }
@@ -484,7 +487,7 @@ class AntigravityEngine {
 
   // One message. Resolves { text, sessionId (agy's conversation id), stopped?, failed?, planLimit?, usage?, model? }; errors are emitted, not thrown.
   // sessionId: the chat's saved conversation id, null on its first message.
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false, effort = '' }) {
     fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
     const { bin, gate } = await this.prepare();
     if (!bin) {
@@ -532,7 +535,7 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
+      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})));
       // The run's token file. A newer message of the same chat ("Send now") may have written its own already: that one stays.
@@ -652,7 +655,7 @@ class AntigravityEngine {
     const failure = describeFailure(failText, code, { fullAccess });
     if (/not signed in/.test(failure.text)) { this.signedOut = true; this.statusCache = null; }
     emit({ type: 'error', ...failure });
-    return { text, sessionId: /conversation.*not found|unknown conversation|no such conversation/i.test(`${failText}\n${stderr}`) ? null : conversation, failed: true, usage, planLimit: limitOf(failText), model: served };
+    return { text, sessionId: /conversation.*not found|unknown conversation|no such conversation/i.test(`${failText}\n${stderr}`) ? null : conversation, failed: true, usage, planLimit: antigravityLimit(failText), model: served };
   }
 }
 

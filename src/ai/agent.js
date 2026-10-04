@@ -11,6 +11,8 @@ const { engineModel } = require('./cli-utils');
 const modelRoute = require('../features/model-route'); // [model route]
 const autoModel = require('./auto-model'); // [auto model] the picker's "Auto": which model answers each message (docs/auto-model.md)
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
+const providerUsage = require('../features/provider-usage'); // [usage] an API turn's tokens, estimated cost and rate-limit headers
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
@@ -1784,8 +1786,17 @@ class Agent {
 
   // [usage] Each finished turn's tokens (and, for Claude Code, the plan's limits) go to
   // features/usage.js through main.js (agent.onUsage). A failure there never affects the reply.
+  // [usage] An API turn (Claude by key, OpenAI, Grok, Gemini, OpenRouter): its tokens, the price estimate where the table knows the model,
+  // and the rate-limit headers the response carried (read from that response: no request of its own).
+  reportApi(provider, { model, usage, rate = null } = {}, emit = null) {
+    try {
+      const turn = usage ? providerUsage.turnUsage(model, usage) : null;
+      const logged = turn || rate ? this.reportUsage(provider, { ...(turn ? { usage: turn, model } : {}), ...(rate ? { rate } : {}) }) : null;
+      if (logged?.notice && emit) emit({ type: 'notice', text: logged.notice }); // a budget the user set crossed 80% or 100% (Settings → Usage)
+    } catch (err) { console.error('[lumen] usage log failed:', err.message); }
+  }
   reportUsage(engine, data) {
-    if (!this.onUsage || !(data?.usage || data?.limit)) return null;
+    if (!this.onUsage || !(data?.usage || data?.limit || data?.rate)) return null;
     try { return this.onUsage(engine, data) || null; } catch (err) { console.error('[lumen] usage log failed:', err.message); return null; }
   }
 
@@ -1831,7 +1842,7 @@ class Agent {
       return;
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    { const logged = this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model }); if (logged?.notice) emit({ type: 'notice', text: logged.notice }); }
     // (A /context on a chat with no session yet ran in a throwaway one: the chat's first message still hands the
     // conversation over, as a switch to Claude Code mid-chat does.)
     if (out.sessionId === null) delete settings.ccSession;
@@ -1953,7 +1964,7 @@ class Agent {
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2070,7 +2081,7 @@ class Agent {
       out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore() });
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    { const logged = this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model }); if (logged?.notice) emit({ type: 'notice', text: logged.notice }); }
     this.noteCliContext(messages, out, routed.model, emit); // [context]
     let caughtUp = false;
     if (out.sessionId === null) delete settings.ccSession;
@@ -2139,6 +2150,7 @@ class Agent {
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
       systemPrompt: this.grokBuildSystem(settings, fullAccess),
       fullAccess,
+      effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
       emit,
@@ -2207,10 +2219,19 @@ class Agent {
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
+      effort: effortLib.clean('antigravity', this.browser.effort?.('antigravity')), // Settings → AI → AI providers
       signal,
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: 0 }, emit);
+    // [usage] agy's own token counts (no price: Antigravity reports none) and its quota message with the reset time, when a run hit it.
+    if (out.usage || out.planLimit) {
+      const u = out.usage || {};
+      const input = Number(u.input_tokens) || 0;
+      const output = Number(u.output_tokens) || 0;
+      const logged = this.reportUsage('antigravity', { usage: out.usage ? { inputTokens: input, outputTokens: Math.max(output, (Number(u.total_tokens) || 0) - input), cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: out.model ? [out.model] : [] } : null, model: out.model || (picked === 'default' ? null : picked), limit: out.planLimit || null, ok: !out.failed && !out.stopped });
+      if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+    } else if (!out.failed && !out.stopped) this.reportUsage('antigravity', { limit: null, ok: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: [] }, model: picked === 'default' ? null : picked }); // a turn with no counts still happened (last used; clears a past limit)
     let caughtUp = false;
     if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; caughtUp = true; }
@@ -2263,6 +2284,7 @@ ${prompt}` : prompt), historyImages: [] };
       quietExpired: again, // a resumed thread Codex no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or a Codex model id
       systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked),
+      effort: effortLib.clean('codex', this.browser.effort?.('codex')), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
       emit,
     });
@@ -2505,6 +2527,9 @@ ${prompt}` : prompt), historyImages: [] };
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
     const params = requestFor(messages.settings, messages, budget);
+    // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
+    const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
+    if (userEffort) params.output_config = { effort: userEffort };
     const extra = await this.externalToolDefs(emit); // [mcp client]
     if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
     if (noTools) params.tool_choice = { type: 'none' }; // the wrap-up turn: answer in text
@@ -2519,7 +2544,10 @@ ${prompt}` : prompt), historyImages: [] };
     }
     const final = await stream.finalMessage();
     const u = final?.usage;
-    if (u) this.reportUsage('anthropic', { model: final.model, usage: { inputTokens: u.input_tokens, outputTokens: u.output_tokens, cacheReadTokens: u.cache_read_input_tokens, cacheWriteTokens: u.cache_creation_input_tokens } });
+    // The response's anthropic-ratelimit-* headers came with the same request (the stream's connection is already resolved: no call).
+    let rate = null;
+    if (typeof stream.withResponse === 'function') { try { rate = providerUsage.parseRateLimitHeaders('anthropic', (await stream.withResponse()).response?.headers); } catch { rate = null; } }
+    if (u || rate) this.reportApi('anthropic', { model: final?.model, usage: u, rate }, emit);
     return final;
   }
 
@@ -2541,10 +2569,11 @@ ${prompt}` : prompt), historyImages: [] };
       messages.textOnlyNoted = model;
       emit({ type: 'notice', text: chatImages.textOnlyNotice(providers.openRouterName(model) || model, pictures) });
     }
-    return providers.streamTurn({
+    const turn = await providers.streamTurn({
       provider,
       model,
       apiKey,
+      effort: effortLib.clean(provider, this.browser.effort?.(provider)), // Settings → AI → AI providers (only models that take it: ai/effort.js)
       system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
@@ -2555,6 +2584,8 @@ ${prompt}` : prompt), historyImages: [] };
       emit,
       noTools,
     });
+    this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit);
+    return turn;
   }
 
   async loop(messages, signal, emit, fb = { tried: new Set(), calls0: 0 }) {

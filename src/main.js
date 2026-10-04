@@ -4147,8 +4147,9 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
-let lastCodexSidebar = null;
-onSettingsWritten = (s) => { adblock.sync(); if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
+const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
+onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
@@ -6453,6 +6454,7 @@ const agent = new Agent({
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
+  effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
@@ -6704,6 +6706,9 @@ function aiStatusFacts() {
     grokLimit: glance.grokLimit,
     codexLimit: glance.codexLimit,
     codexMeter: glance.codexMeter,
+    agyLimit: glance.agyLimit, // [usage] Antigravity's quota message (its reset time)
+    rate: glance.rate, // [usage] each API provider's tightest rate-limit reading (from reply headers)
+    effort: s.aiEffort || {}, // [ai] the reasoning effort the user chose per AI
     today: glance.today,
     fullAccess: Object.fromEntries(Object.entries(AI_FULL_ACCESS).map(([id, key]) => [id, s[key] === true ? true : s[key] === false ? false : undefined])),
     runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
@@ -6831,6 +6836,7 @@ if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkey
 const settingsBackend = settingsPage.create({
   passkeys, // [passkeys] Settings → Privacy
   usage, // [usage] You and AI → Usage
+  cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI → AI providers: each CLI's version, path and sign-in
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new

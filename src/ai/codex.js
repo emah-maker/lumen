@@ -59,6 +59,7 @@ const { removeDir, removeDirSync } = require('./temp-dirs');
 const locate = require('./codex-locate');
 const codexUsage = require('./codex-usage');
 const codexConfig = require('./codex-config');
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 
 const INSTALL_HINT = `Install it with: ${process.platform === 'win32' ? 'winget install OpenAI.Codex  (or: npm install -g @openai/codex)' : process.platform === 'darwin' ? 'brew install --cask codex  (or: npm install -g @openai/codex)' : 'npm install -g @openai/codex'}, then run codex once and sign in.`;
 const SIGN_IN_HINT = 'Open a terminal, run `codex login` (or run `codex` and choose Sign in with ChatGPT).';
@@ -196,7 +197,7 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
 
 // The argv for one message (exported for tests; never joined into a shell string, and no quote or % in it: a .cmd shim may be run through cmd.exe).
 // The prompt is read from stdin ("-"). imageFiles: attached pictures. conversation: a thread id to resume.
-function buildArgs({ model = 'default', conversation = null, imageFiles = [] } = {}) {
+function buildArgs({ model = 'default', conversation = null, imageFiles = [], effort = '' } = {}) {
   return [
     'exec',
     '--json',
@@ -204,6 +205,7 @@ function buildArgs({ model = 'default', conversation = null, imageFiles = [] } =
     '--color', 'never',
     '--sandbox', 'read-only', // never workspace-write, danger-full-access, --full-auto or --dangerously-bypass-approvals-and-sandbox
     ...(model !== 'default' && validModel(model) ? ['-m', model] : []),
+    ...effortLib.cliArgs('codex', effort), // Settings → AI → AI providers: -c model_reasoning_effort=<level> (none: Codex's own default)
     ...imageFiles.map((f) => `--image=${f}`),
     ...(conversation && SAFE_SESSION.test(conversation) ? ['resume', conversation] : []),
     '-',
@@ -369,7 +371,7 @@ class CodexEngine {
   // One message. Resolves { text, sessionId (Codex's thread id), stopped?, failed?, expired?, planLimit?, usage?, rateLimit?, model? };
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '' }) {
     const { spec, gate } = await this.prepare();
     if (!spec) {
       emit({ type: 'error', text: `Codex isn't installed. ${INSTALL_HINT}` });
@@ -402,7 +404,7 @@ class CodexEngine {
         await fs.promises.writeFile(f, Buffer.from(img.data, 'base64'), { mode: 0o600 });
         imageFiles.push(f);
       }
-      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles });
+      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles, effort });
       return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired });
     } finally {
       gate.close(tag); // (attempt closes it at the end of the process; this covers a failure before it started)
