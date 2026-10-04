@@ -1025,6 +1025,7 @@ class Agent {
     this.controller = null; // the latest run's controller
     this.current = null;
     this.runs = new Map(); // a chat's messages array -> its live run { controller, promise, hosts } (a chat left mid-run keeps going: detach())
+    this.engineRuns = 0; // [parallel CLI chats] CLI engine messages in flight (each on its own leased engine: engineFor)
     this.nextModel = null;
     this.pageContexts = new WeakMap(); // [chat per tab] a chat's messages array -> the page text it was last sent (chats run side by side)
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
@@ -1366,9 +1367,8 @@ class Agent {
   routeAuto(messages, input, emit) {
     const settings = messages.settings;
     if (!settings || !autoModel.isAuto(settings.model)) return;
-    const others = [...this.runs.keys()].filter((m) => m !== messages).length; // CLI engines take turns: not while another chat runs
     const request = this.autoRequest(messages, input);
-    const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: others === 0 && !this.engineRunScope }) || null;
+    const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: true }) || null; // [parallel CLI chats] CLI engines run beside other chats
     if (!decision?.id) throw new Error(decision?.reason ? `${decision.reason}. Pick a model in the model menu, or wait for a limit to reset.` : 'Auto has no model to use. Connect an AI in Settings > AI, or pick a model.');
     settings.autoFrom = autoModel.AUTO;
     settings.autoTier = decision.tier;
@@ -1481,7 +1481,33 @@ class Agent {
   }
   // ---- [/model fallback]
 
-  async runTask(messages, tab, userText, images, controller, emit, extra = {}) {
+  // [parallel CLI chats] The CLI engines this message used (engineFor) are given back when it ends, however it ends
+  // (done, failed, stopped, its tab or window closed): a side engine's process and MCP connection go with it.
+  async runTask(...args) {
+    const scope = taskScope.getStore();
+    const leases = new Map();
+    if (scope) scope.engineLeases = leases;
+    try {
+      return await this.runTaskOnce(...args);
+    } finally {
+      if (scope?.engineLeases === leases) delete scope.engineLeases;
+      for (const lease of leases.values()) { try { lease?.release?.(); } catch { /* already freed */ } }
+    }
+  }
+
+  // The engine of `kind` this message works with, the same one for the whole message: leased from main
+  // (features/ai-agents.js leaseEngine: the sidebar's shared engine when no other chat holds it, else one made for this
+  // message). Outside a message (no task scope) or without leasing (tests): the shared engine.
+  engineFor(kind) {
+    const leases = taskScope.getStore()?.engineLeases;
+    if (!leases || !this.engines?.lease) return this.engines?.[kind];
+    if (!leases.has(kind)) leases.set(kind, this.engines.lease(kind));
+    const lease = leases.get(kind);
+    if (!lease) throw new Error(`${kind === 'antigravity' ? 'Antigravity' : kind === 'grokbuild' ? 'Grok Build' : 'Claude Code'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
+    return lease.engine;
+  }
+
+  async runTaskOnce(messages, tab, userText, images, controller, emit, extra = {}) {
     // [context] "/compact …" and "/context" are commands for this chat, not a message to it.
     const command = images.length || extra.tabs?.length ? null : compactLib.chatCommand(userText);
     if (command) return this.commandTurn(messages, command, controller, emit);
@@ -1520,11 +1546,11 @@ class Agent {
     const wanted = tabsAsk.cleanIds(extra.tabs);
     // Claude Code: its process (or the chat's kept one) is started now, while the page and any "@" tabs
     // are read; the message goes to its stdin once they are (claudeCodeTurn).
-    const ccPlan = viaClaudeCode && !this.engineRunScope ? this.claudeCodePlan(messages, userText, images.length, wanted.length) : null;
-    if (ccPlan) this.engines.claudecode.warm?.(ccPlan.spawn);
+    const ccPlan = viaClaudeCode ? this.claudeCodePlan(messages, userText, images.length, wanted.length) : null;
+    if (ccPlan) this.engineFor('claudecode').warm?.(ccPlan.spawn); // (an engine made for one message keeps no process: warm() does nothing there)
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
-    if (viaGrokBuild && !this.engineRunScope) this.engines.grokbuild.prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
-    if (viaAntigravity && !this.engineRunScope) this.engines.antigravity.prepare?.().catch?.(() => {});
+    if (viaGrokBuild) this.engineFor('grokbuild').prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
+    if (viaAntigravity) this.engineFor('antigravity').prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
     // waits for the same start and reports a failure as before.)
@@ -1537,7 +1563,7 @@ class Agent {
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
       page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) }), controller.signal);
     } catch (err) {
-      if (ccPlan) this.engines.claudecode.release?.(); // stopped or failed before the message was sent: the warm process is of no use
+      if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
     }
     // The attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed).
@@ -1557,7 +1583,8 @@ class Agent {
     if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit)) return;
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
-    // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
+    // Its tool calls arrive over MCP, outside this async context: the engine's run carries this message's task scope
+    // (run({ scope })) and each call finds that run by its own connection's tag, so chats on CLI engines run side by side.
     // ---- [model fallback] One attempt per model. A model out of usage or unreachable hands the turn to the next
     // usable one (failoverFor): an API loop does it in place (loop()), keeping the conversation so far with its
     // tool results, so nothing runs twice; a CLI engine only when no tool ran in the failed attempt and nothing
@@ -1577,10 +1604,8 @@ class Agent {
       }
       // (A switch to another Grok model starts a new session: see above.)
       if (toGrokBuild && messages.settings.gbSession && (messages.settings.gbModel || 'grokbuild:default') !== messages.settings.model) { delete messages.settings.gbSession; delete messages.settings.gbModel; }
-      // One engine run at a time: its MCP tool calls find their run through engineScope().
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
-      if (this.engineRunScope) throw new Error(`${toClaudeCode ? 'Claude Code' : toAntigravity ? 'Antigravity' : 'Grok Build'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
-      this.engineRunScope = taskScope.getStore();
+      this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
       const gate = (event) => {
@@ -1593,22 +1618,23 @@ class Agent {
         else if (toAntigravity) await this.antigravityTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
         else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
       } finally {
-        this.engineRunScope = null;
+        this.engineRuns--;
       }
       plan = null; // (a later attempt plans for its own model)
       if (!held.error) return;
       const quiet = !held.shown && callsNow() === fb.calls0 && !controller.signal.aborted;
       const next = quiet ? (this.escalateFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true }) || this.failoverFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true })) : null;
       if (!next) { emit(held.error); return; }
-      if (toClaudeCode && !next.startsWith('claudecode:')) this.engines.claudecode.release?.();
+      if (toClaudeCode && !next.startsWith('claudecode:')) this.engineFor('claudecode').release?.();
     }
     // ---- [/model fallback]
     // ---- [/claude code engine]
   }
 
-  // The task scope of the sidebar's running Claude Code / Grok Build message, for its MCP tool calls.
+  // The task scope for a CLI engine's MCP tool call whose run carries none of its own. Every sidebar run passes its own
+  // (run({ scope }), features/ai-agents.js mcpCallTool): there is no shared pin, so none here.
   engineScope() {
-    return this.engineRunScope || null;
+    return null;
   }
 
   // Runs fn inside an existing scope object (an engine run's), so pins it moves stay with that run.
@@ -1668,23 +1694,23 @@ class Agent {
   async claudeCodeCommand(messages, command, signal, emit) {
     const settings = messages.settings;
     if (command.name === 'compact' && !settings.ccSession) { emit({ type: 'notice', text: 'Nothing to compact yet: this chat has no Claude Code conversation.' }); return; }
-    if (this.engineRunScope) throw new Error('Claude Code is still working on a task in another chat. Wait for it to finish, then try again.');
+    const engine = this.engineFor('claudecode');
     const had = Boolean(settings.ccSession);
     const { routed, spawn } = this.claudeCodePlan(messages, '', 0, 0);
     let shown = false;
     const gate = (event) => { if (event.type === 'text' && event.text) shown = true; emit(event); };
     emit({ type: 'turn_start' });
     if (command.name === 'compact') emit({ type: 'status', text: 'Compacting the conversation…' });
-    this.engineRunScope = taskScope.getStore();
+    this.engineRuns = (this.engineRuns || 0) + 1;
     this.prewarmed = null;
     let out;
     try {
-      out = await this.engines.claudecode.run({
-        ...spawn, prompt: `/${command.name}${command.args ? ` ${command.args}` : ''}`, images: [], quietExpired: true, signal, emit: gate, prestart: false,
+      out = await engine.run({
+        ...spawn, prompt: `/${command.name}${command.args ? ` ${command.args}` : ''}`, images: [], quietExpired: true, signal, emit: gate, prestart: false, scope: taskScope.getStore(),
         lateUsage: ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); },
       });
     } finally {
-      this.engineRunScope = null;
+      this.engineRuns--;
     }
     if (command.name === 'compact') emit({ type: 'status', text: '' });
     if (out.expired) {
@@ -1826,7 +1852,7 @@ class Agent {
   prewarm(text = '', { retried = false } = {}) {
     const messages = this.messages;
     const settings = messages?.settings;
-    if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
+    if (!settings || !String(settings.model).startsWith('claudecode:') || (this.engines?.leased ? this.engines.leased('claudecode') : this.engineRuns > 0) || this.running) return false;
     const cc = this.engines?.claudecode;
     if (!cc?.warm || cc.canPrewarm?.() === false) return false;
     const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
@@ -1881,7 +1907,9 @@ class Agent {
     const onLateUsage = ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); };
     emit({ type: 'turn_start' });
     const startedAt = Date.now() - 2000; // (pictures written from here on are this run's: enginePictures)
-    let out = await this.engines.claudecode.run({
+    const engine = this.engineFor('claudecode');
+    let out = await engine.run({
+      scope: taskScope.getStore(), // [parallel CLI chats] this message's tab, approvals and signal, for its MCP tool calls
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
       prompt: first.text,
       images: first.images,
@@ -1899,7 +1927,7 @@ class Agent {
       delete settings.ccSession;
       snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
       const again = handoff();
-      out = await this.engines.claudecode.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage });
+      out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore() });
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
@@ -1909,7 +1937,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.claudecode, emit, spawn.fullAccess ? { since: startedAt } : {}))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit, spawn.fullAccess ? { since: startedAt } : {}))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -1938,7 +1966,9 @@ class Agent {
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
     emit({ type: 'turn_start' });
     const sent = this.engineImages('Grok Build', picked, [...historyImages, ...images], emit);
-    const out = await this.engines.grokbuild.run({
+    const engine = this.engineFor('grokbuild');
+    const out = await engine.run({
+      scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: text,
       images: sent,
       sessionId: settings.gbSession || crypto.randomUUID(),
@@ -1964,7 +1994,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.grokbuild, emit))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -1993,7 +2023,9 @@ class Agent {
     }
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
-    const out = await this.engines.antigravity.run({
+    const engine = this.engineFor('antigravity');
+    const out = await engine.run({
+      scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: text,
       images: this.engineImages('Antigravity', picked, [...historyImages, ...images], emit),
       sessionId: settings.agySession || null,
@@ -2008,7 +2040,7 @@ class Agent {
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.antigravity, emit))] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, engine, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }

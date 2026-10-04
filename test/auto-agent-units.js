@@ -115,18 +115,18 @@ const notices = (log) => log.events.filter((e) => e.type === 'notice').map((e) =
     check('no model available: the turn ends with a plain error, nothing ran', Boolean(err) && log.turns.length === 0 && log.ran.length === 0, J(log.events));
   }
 
-  // 5) CLI engines are left out while another chat is running (they take turns)
+  // 5) CLI engines run beside other chats (each run has its own MCP connection): Auto may pick one while another chat runs
   {
     fallback.shared.clear();
     const { agent, log } = makeAgent({ options: OPTS.filter((o) => o.id.startsWith('claudecode:')).concat([OPTS[1]]), home: 'claudecode:sonnet' });
     agent.runs.set(fresh(), { controller: new AbortController() });
     const messages = fresh();
     await once(agent, messages, 'hi', log);
-    check('another chat is running: Auto does not hand this turn to a CLI engine', log.routed[0].allowEngines === false && !log.ran[0].model.startsWith('claudecode:'), J(log.routed));
+    check('another chat is running: Auto may still hand this turn to a CLI engine', log.routed[0].allowEngines === true && log.ran[0].model.startsWith('claudecode:'), J(log.routed));
     agent.runs.clear();
     const m2 = fresh();
     await once(agent, m2, 'hi', log);
-    check('...and does when nothing else is running', log.routed[1].allowEngines === true && log.ran[1].model.startsWith('claudecode:'), J(log.ran));
+    check('...and when nothing else is running', log.routed[1].allowEngines === true && log.ran[1].model.startsWith('claudecode:'), J(log.ran));
   }
 
   // 6) escalation: too long for the cheap model -> the next one, once

@@ -97,6 +97,13 @@ function setupAiAgents(deps) {
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
   const bgEngines = new Set();
+  // [parallel CLI chats] Sidebar chats on the same CLI engine run side by side. The sidebar's own engine (kept process,
+  // pre-warm) goes to one chat at a time (leased); another chat that wants that engine meanwhile gets an engine of its
+  // own for that message (sideEngines: own process, own MCP tag and token, own `active` run), freed when the message
+  // ends (leaseEngine's release). Every tool call finds its run by the tag of the connection it came in on, never by a
+  // shared pin: the run's `active` carries its own task scope (tab, approvals, signal).
+  const sideEngines = new Set();
+  const leased = new Set(); // the sidebar's shared engines now lent to a message
   // Tests run the CLIs as a fake process (test/fixtures/fake-cli.js): its `spawn` stands in for both engines'.
   const cliSpawn = () => (require('../test-mode').isTest() && process.env.LUMEN_TEST_CLI_SPAWN ? require(process.env.LUMEN_TEST_CLI_SPAWN).spawn : undefined);
   // The fake CLI (test/fixtures/fake-cli.js) speaks only the stdio bridge and reads one message to
@@ -130,7 +137,7 @@ function setupAiAgents(deps) {
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
   ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -194,7 +201,7 @@ function setupAiAgents(deps) {
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
   async function onTerminalApproval(tag, command) {
-    const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+    const owner = grokBuild?.owns(tag) ? grokBuild : [...sideEngines, ...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
     const engineRun = owner ? owner.active : null;
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
@@ -228,9 +235,39 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); } };
+  // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
+  // message holds it, else a side engine made for this message. null: Antigravity is busy in another chat (its run's
+  // MCP token goes through one config file in its home folder, so it still works on one chat at a time).
+  // release() frees everything the message held: a side engine's process (and with it its MCP token) is ended.
+  function leaseEngine(kind) {
+    const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : null;
+    if (!shared) return null;
+    let done = false;
+    if (!leased.has(shared)) {
+      leased.add(shared);
+      return { engine: shared, shared: true, release: () => { if (!done) { done = true; leased.delete(shared); } } };
+    }
+    if (kind === 'antigravity') return null;
+    const engine = kind === 'claudecode'
+      ? newClaudeCode({ keepAlive: false }) // one message, then its process ends
+      : new (grokBuildModule().GrokBuildEngine)({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads }); // the sidebar's GROK_HOME: the chat's session resumes there
+    engine.bin = shared.bin;
+    engine.statusCache = shared.statusCache;
+    sideEngines.add(engine);
+    return {
+      engine,
+      shared: false,
+      release: () => {
+        if (done) return;
+        done = true;
+        sideEngines.delete(engine);
+        try { engine.dispose?.(); } catch { /* already gone */ }
+      },
+    };
+  }
+  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size };
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
@@ -279,8 +316,9 @@ function setupAiAgents(deps) {
     const runAgent = engineRun?.agent || agent;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
-    const scope = engineRun && runAgent.engineScope();
+    const scope = engineRun && (engineRun.scope || runAgent.engineScope()); // [parallel CLI chats] the run's own scope, carried by its connection
     if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
+    if (engineRun && !scope) return refuse('No message is in progress in Lumen for this call.'); // (never the tab in front: a sidebar run always brings its own scope)
     // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).

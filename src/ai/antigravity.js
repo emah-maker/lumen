@@ -365,7 +365,7 @@ class AntigravityEngine {
 
   // One message. Resolves { text, sessionId (agy's conversation id), stopped?, failed?, planLimit?, usage?, model? }; errors are emitted, not thrown.
   // sessionId: the chat's saved conversation id, null on its first message.
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, fullAccess = false }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false }) {
     fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
     const { bin, gate } = await this.prepare();
     if (!bin) {
@@ -407,19 +407,19 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, fullAccess });
+      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {}))); // (the run's token file included)
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent, fullAccess = false }) {
+  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun, fullAccess }), cwd: folder });
-    const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     let over = false;
     let stalled = false;

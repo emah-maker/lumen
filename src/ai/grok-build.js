@@ -757,7 +757,7 @@ class GrokBuildEngine {
     return promise;
   }
 
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, shownModel = null, fullAccess = false }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
     const prepared = this.prepare({ fullAccess }); // (the one runTask started, if it is recent)
     this.prep = null; // each message prepares afresh
@@ -771,7 +771,7 @@ class GrokBuildEngine {
     const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, shownModel, authBefore, fullAccess };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, authBefore, fullAccess };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -787,7 +787,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null, authBefore = null, fullAccess = false }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, authBefore = null, fullAccess = false }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
@@ -805,7 +805,7 @@ class GrokBuildEngine {
     emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir, fullAccess }), cwd: workDir });
     // tools / inflight / dog / arm: the inactivity watchdog, as in claude-code.js (callBegin / callEnd pause it).
-    const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     let over = false; // the process has ended (the watchdog stays off)
