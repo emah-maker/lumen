@@ -83,7 +83,7 @@ function agentProfile(gb) {
 
 // JSON-RPC 2.0 over the child's stdio, one message per line. request() always resolves, with the response ({ result } or
 // { error }); onRequest(method, params) answers the agent's own requests (a throw: "Method not found").
-function rpcOver(child, { onNotify, onRequest }) {
+function rpcOver(child, { onNotify, onRequest, name = 'Grok Build' }) {
   let next = 0;
   let closed = false;
   let buf = '';
@@ -121,18 +121,18 @@ function rpcOver(child, { onNotify, onRequest }) {
   return {
     request(method, params, timeoutMs = 0) {
       return new Promise((resolve) => {
-        if (closed) { resolve({ error: { code: -32000, message: 'Grok Build has ended.', exited: true } }); return; }
+        if (closed) { resolve({ error: { code: -32000, message: `${name} has ended.`, exited: true } }); return; }
         const id = ++next;
         const p = { resolve, timer: null };
-        if (timeoutMs) p.timer = setTimeout(() => { pending.delete(id); resolve({ error: { code: -32001, message: `Grok Build did not answer ${method}.`, timeout: true } }); }, timeoutMs);
+        if (timeoutMs) p.timer = setTimeout(() => { pending.delete(id); resolve({ error: { code: -32001, message: `${name} did not answer ${method}.`, timeout: true } }); }, timeoutMs);
         pending.set(id, p);
-        if (!write({ jsonrpc: '2.0', id, method, params })) { pending.delete(id); clearTimeout(p.timer); resolve({ error: { code: -32000, message: 'Grok Build has ended.', exited: true } }); }
+        if (!write({ jsonrpc: '2.0', id, method, params })) { pending.delete(id); clearTimeout(p.timer); resolve({ error: { code: -32000, message: `${name} has ended.`, exited: true } }); }
       });
     },
     notify: (method, params) => write({ jsonrpc: '2.0', method, params }),
     close() {
       closed = true;
-      for (const p of pending.values()) { clearTimeout(p.timer); p.resolve({ error: { code: -32000, message: 'Grok Build has ended.', exited: true } }); }
+      for (const p of pending.values()) { clearTimeout(p.timer); p.resolve({ error: { code: -32000, message: `${name} has ended.`, exited: true } }); }
       pending.clear();
     },
   };

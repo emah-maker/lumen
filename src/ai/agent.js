@@ -2132,6 +2132,17 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
     return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, fullAccess), model: engineModel(settings.model), fullAccess, effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')) };
   }
 
+  // [keep connected] What the open chat's next Codex message will need from its kept process (features/codex-warm.js prewarm):
+  // the chat's id (its Codex home) and its thread (null: a new chat). null when the chat isn't on Codex, has no chat id, or a reply is running.
+  codexWarmSpec() {
+    const settings = this.messages?.settings;
+    if (!settings || !String(settings.model).startsWith('codex:') || this.running) return null;
+    const chatId = this.chatKey(this.messages);
+    if (typeof chatId !== 'string' && typeof chatId !== 'number') return null;
+    const session = settings.cxSession && (settings.cxModel || 'codex:default') === settings.model ? settings.cxSession : null;
+    return { chatId, sessionId: session };
+  }
+
   // ---- [grok build engine] One message through the user's Grok Build CLI. The session id lives in
   // the chat's settings (gbSession), so follow-ups resume it and New chat (reset) starts a fresh one.
   // Images are capped inside grok-build.js's run() (capImages), not here.

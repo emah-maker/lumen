@@ -42,6 +42,11 @@
 // search or another server's tool is reported anyway (offItemOf), the same last line of defence grok-build.js and antigravity.js have.
 // Never --dangerously-bypass-approvals-and-sandbox, --full-auto or a writable sandbox.
 //
+// KEPT PROCESS (features/codex-warm.js, Settings > AI > Keep Codex connected, on by default): the same engine as `codex app-server`
+// (JSON-RPC on stdio: thread/start | thread/resume, turn/start, turn/interrupt, streamed items) stays up per chat between messages, in the
+// same Codex home, with the same config.toml, read-only sandbox, environment and offItemOf check. run() offers each message to it first
+// (this.keepWarm) and does the headless run below when it returns null (no app-server, a thread it can't resume, the setting off).
+//
 // CHECKED against codex-cli 0.160.0 (`--help`, `features list`, `exec --strict-config`, `mcp add`, `debug models`, no sign-in needed):
 // exec's --json, --sandbox read-only, -m, --color, --skip-git-repo-check, -i/--image and `resume [SESSION_ID] [PROMPT|-]`; `url` +
 // `bearer_token_env_var` and default_tools_approval_mode for HTTP servers; sandbox_mode, approval_policy and web_search = "disabled";
@@ -374,6 +379,13 @@ class CodexEngine {
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
   async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '' }) {
+    // [keep connected] The chat's kept `codex app-server` (features/codex-warm.js) takes the message when it can: null means it did not
+    // (setting off, no app-server, a thread it can't resume...), and nothing was sent, so a headless run below does it.
+    if (this.keepWarm && scope?.chatId != null) {
+      const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, effort, signal, emit, runAgent, scope });
+      if (warm) return warm;
+      this.keepWarm.dropChat(scope.chatId); // (the headless run rewrites this chat's config.toml: no kept process may be left on the old one)
+    }
     const { spec, gate } = await this.prepare();
     if (!spec) {
       emit({ type: 'error', text: `Codex isn't installed. ${INSTALL_HINT}` });
@@ -578,4 +590,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { CodexEngine, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
