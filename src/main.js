@@ -6479,6 +6479,7 @@ const agent = new Agent({
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
+  codexFullAccess: () => readSettings().codexFullAccess === true, // [full access] ai/codex.js FULL_ON
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
@@ -6701,7 +6702,7 @@ function refreshNewTabs() {
 // [widgets] What the AI status card is built from (features/aistatus-view.js shapes it): which providers have a key and which CLIs are
 // installed and signed in, the model in use, the models being left alone after a limit, the usage Lumen counted, the chats running, the
 // tabs the AI opened. Names, states and counts only: no key, token or address leaves this function.
-const AI_FULL_ACCESS = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess' }; // read generically: a setting that doesn't exist is simply not shown
+const AI_FULL_ACCESS = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess', codex: 'codexFullAccess' }; // read generically: a setting that doesn't exist is simply not shown
 function aiStatusFacts() {
   const s = readSettings();
   const now = Date.now();
