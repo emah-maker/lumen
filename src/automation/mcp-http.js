@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const http = require('http');
 const { createSession } = require('./mcp');
+const { AGY_LUMEN_PREFIX, agyAllowed } = require('../ai/agy-tools'); // the allowlist antigravity.js (offToolOf) shares
 
 const MAX_BODY = 1024 * 1024;
 const same = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -96,13 +97,11 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   // Antigravity's hooks (antigravity.js hooksFor, agy's hooks.md): PreToolUse posts { toolCall: { name, args } } and reads
   // { decision: allow | deny, reason }, before agy's own permission layer; PreInvocation posts no toolCall and only marks the run as
   // seen. Fail closed, like gateDecision for Grok: only a qualified Lumen MCP tool (AGY_LUMEN_PREFIX + one of Lumen's tool names)
-  // or one of agy's read-only built-ins (AGY_READS) is allowed; every other name (generate_image, invoke_subagent, anything
-  // unknown, a "lumen" that is only part of another server's name) is denied. An Antigravity run has Lumen's tools only.
+  // or a read (view_file, list_dir) of Lumen's own tool descriptor folder in this chat's home is allowed (ai/agy-tools.js, the
+  // allowlist antigravity.js offToolOf shares); every other name (generate_image, invoke_subagent, anything unknown, a "lumen"
+  // that is only part of another server's name) and any read outside that folder is denied.
   // UNVERIFIED: agy's real qualified MCP tool names have not been captured from a signed-in run. Run one signed-in `agy` turn
-  // with LUMEN_AGY_DEBUG set; if Lumen's tools are denied, add the real prefix form to AGY_LUMEN_PREFIX. AGY_READS is the same
-  // kind of list: extend it if a harmless built-in is refused.
-  const AGY_LUMEN_PREFIX = /^(?:mcp[_-]{1,2})?lumen(?:__|_|\/|\.|:)([\w-]+)$/i; // mcp_lumen_click, mcp__lumen__click, lumen__click, lumen/click
-  const AGY_READS = /^(view_file|view_file_outline|view_code_item|view_content_chunk|list_dir|grep_search|find_by_name|command_status|read_terminal|list_resources|read_resource)$/i;
+  // with LUMEN_AGY_DEBUG set; if Lumen's tools are denied, add the real prefix form to AGY_LUMEN_PREFIX in agy-tools.js.
   // [full access] A run the user gave full access (antigravity.js FULL_FLAGS): the CLI's own tools are allowed, but a name
   // in the form of one of Lumen's (AGY_LUMEN_PREFIX) must still be one of Lumen's real tools: the gate stays closed for those.
   function agyDecision(run, msg) {
@@ -110,7 +109,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     const name = String(msg.toolCall.name || '');
     const m = AGY_LUMEN_PREFIX.exec(name);
     if (run.fullAccess && !m && !/^(?:mcp[_-]{1,2})?lumen/i.test(name)) return { decision: 'allow' };
-    if ((m && toolNames().includes(m[1])) || (!run.fullAccess && AGY_READS.test(name))) return { decision: 'allow' };
+    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames() })) return { decision: 'allow' };
     return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
@@ -189,8 +188,8 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       port = server.address().port;
       resolve({
         port,
-        open(tag, chatSessionId = null, { agy = false, fullAccess = false } = {}) {
-          const run = { tag, chatSessionId, agy, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+        open(tag, chatSessionId = null, { agy = false, fullAccess = false, home = null } = {}) {
+          const run = { tag, chatSessionId, agy, home, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },

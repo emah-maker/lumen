@@ -80,12 +80,13 @@
 //    there: agy's own ~/.gemini config (servers, plugins, rules, skills) is not loaded, and a shell command that uses ~ sees
 //    that folder. The note agy gets (agent.js ANTIGRAVITY_FULL_NOTE) names the user's real home folder.
 // The first message of a conversation carries the system note (promptFor), so changing the setting starts a new conversation.
-const { spawn, execFile } = require('child_process');
+const { spawn, spawnSync, execFile } =require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, fullAccessRejected } = require('./cli-utils');
+const { agyAllowed } = require('./agy-tools'); // the allowlist the hook gate (mcp-http.js agyDecision) shares
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { isLimitText, limitOf } = require('../features/grok-limit');
 
@@ -273,9 +274,22 @@ function mcpConfig(run) {
 }
 
 // hooks.json of Lumen's home: Lumen's gate (the curl script) before every tool call and before every model call (hooks.md).
+// Windows: NO quotes. agy runs the command as `cmd /c <command>` through an argv, which escapes every quote as \" and cmd then
+// looks for a program named "\"C:\...\"" (live test: '"\"C:\...\lumen-gate.cmd\""' is not recognized). Unquoted, a path with
+// a space is quoted correctly by the argv escaping itself, and run() passes the 8.3 short path (shortPath) so it has no space at all.
 function hooksFor(gatePath, platform = process.platform) {
-  const command = platform === 'win32' ? `"${gatePath}"` : `'${String(gatePath).replace(/'/g, "'\\''")}'`;
+  const command = platform === 'win32' ? String(gatePath).replace(/"/g, '') : `'${String(gatePath).replace(/'/g, "'\\''")}'`;
   return { 'lumen-gate': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 120 }] }], PreInvocation: [{ type: 'command', command, timeout: 30 }] } };
+}
+
+// The 8.3 short form of an existing Windows path (no spaces when the volume has short names), else the path as it was.
+function shortPath(p, platform = process.platform) {
+  if (platform !== 'win32' || !/\s/.test(p)) return p;
+  try {
+    // verbatim: Node would escape the inner quotes as \" and cmd would choke on them, the very bug hooksFor avoids
+    const out = String(spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${p}") do @echo %~sI"`], { encoding: 'utf8', windowsHide: true, timeout: 5000, windowsVerbatimArguments: true }).stdout || '').trim();
+    return out && !/\s/.test(out) && fs.existsSync(out) ? out : p;
+  } catch { return p; }
 }
 
 // settings.json of Lumen's home (see "WHAT THE MODEL MAY DO" above). `provider`: the user's own modelProvider
@@ -326,7 +340,9 @@ function promptFor({ prompt, systemPrompt, resume, imageFiles = [] }) {
 // Lumen's contain "lumen"): the label to stop the run with, else null. Only used when the user has not allowed more.
 const LUMEN_NAME = /lumen/i;
 const ACTING_NAME = /(command|terminal|shell|bash|exec|run_|write|edit|replace|delete|remove|create|move|rename|file|url|browser)/i;
-const offToolOf = (name) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NAME.test(String(name)) ? String(name).slice(0, 80) : null);
+// args: the step's tool parameters; home: the chat's home. A call agy-tools.js allows (a read of Lumen's own descriptor folder)
+// is never flagged; a read with no path in the stream is left to the hook gate, which checks it.
+const offToolOf = (name, args = null, home = null) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NAME.test(String(name)) && !agyAllowed({ name, args, home, required: false }) ? String(name).slice(0, 80) : null);
 
 // The only variables of Lumen's environment the agy child gets: what a process needs to start and reach the network, plus
 // the API-key sign-in settings. Everything else of the user's shell environment stays behind.
@@ -486,7 +502,7 @@ class AntigravityEngine {
     await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
-    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess });
+    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home });
     const files = []; // everything written for this run, removed after it
     let mcpFile = null;
     let mcpText = null; // what this run wrote there: removed afterwards only if no newer run of the chat has replaced it
@@ -495,7 +511,7 @@ class AntigravityEngine {
       await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
       const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
       await writeIfChanged(gateFile, gateScript(), 0o700);
-      await writeIfChanged(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify(hooksFor(gateFile), null, 2));
+      await writeIfChanged(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify(hooksFor(shortPath(gateFile)), null, 2));
       mcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
       const stdio = process.env.LUMEN_AGY_MCP === 'stdio' && this.bridge; // the fallback if the HTTP form is not accepted (UNVERIFIED 2)
       if (stdio) this.ensureServer?.();
@@ -565,7 +581,7 @@ class AntigravityEngine {
         if (su.usage) usage = su.usage;
         const tool = su.tool_name || su.tool_info?.name || null;
         if (tool || su.step_type === 'tool') {
-          const bad = this.watch && !fullAccess ? offToolOf(tool) : null; // [full access] agy's own tools are expected
+          const bad = this.watch && !fullAccess ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home) : null; // [full access] agy's own tools are expected
           if (bad) { offTool = bad; this.kill(child); return; }
         } else if (su.step_type === 'agent_response' && su.text_delta) {
           // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
@@ -645,4 +661,4 @@ AntigravityEngine.prototype.dispose = function dispose() { if (this.active?.chil
 
 AntigravityEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { AntigravityEngine, chatHomeFor, chatsDirFor, prepareChatHome, migrateConversation, removeChatHome, pruneChatHomes, AUTH_FILES, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, chatHomeFor, chatsDirFor, prepareChatHome, migrateConversation, removeChatHome, pruneChatHomes, AUTH_FILES, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, shortPath, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
