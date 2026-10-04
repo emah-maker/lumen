@@ -56,6 +56,29 @@ function vmpSign(appOutDir) {
   return true;
 }
 
+// koffi (FFI) only calls Windows' webauthn.dll (features/webauthn-windows.js), so a Mac build drops it and its
+// native binaries here, before codesign. Not with build.mac.files: electron-builder turns the top-level
+// build.files into a file set of its own, so ANY platform-level `files` becomes a second matcher that skips both
+// the top-level filters and electron-builder's default excludes (.git, node_modules, ...). That is how 0.5.7's
+// Mac build copied the whole checkout, .git included, and codesign failed on .git's read-only pack files.
+// test/package-files-units.js guards both.
+const WINDOWS_ONLY_MODULES = ['koffi', '@koromix'];
+function pruneWindowsOnlyModules(appOutDir, electronPlatformName) {
+  if (electronPlatformName !== 'darwin' && electronPlatformName !== 'mas') return [];
+  const removed = [];
+  for (const app of fs.readdirSync(appOutDir).filter((name) => name.endsWith('.app'))) {
+    const modules = path.join(appOutDir, app, 'Contents', 'Resources', 'app', 'node_modules');
+    for (const name of WINDOWS_ONLY_MODULES) {
+      const dir = path.join(modules, name);
+      if (!fs.existsSync(dir)) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(path.relative(appOutDir, dir));
+    }
+  }
+  if (removed.length) console.log(`Removed Windows-only modules from the Mac app: ${removed.join(', ')}`);
+  return removed;
+}
+
 // The fuses to flip for a platform, or null to leave the Electron binary untouched.
 function fuses(electronPlatformName) {
   if (electronPlatformName !== 'darwin' && electronPlatformName !== 'mas') return null;
@@ -70,6 +93,7 @@ function fuses(electronPlatformName) {
 exports.default = async (context) => {
   const { appOutDir, electronPlatformName } = context;
   fs.rmSync(path.join(appOutDir, 'resources', 'default_app.asar'), { force: true });
+  pruneWindowsOnlyModules(appOutDir, electronPlatformName);
   const signed = (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
   const config = fuses(electronPlatformName);
   // castlabs refuses to VMP-sign a binary whose fuses were changed, and a change after signing
@@ -78,3 +102,4 @@ exports.default = async (context) => {
   else if (config) await context.packager.addElectronFuses(context, config);
 };
 exports.fuses = fuses;
+exports.pruneWindowsOnlyModules = pruneWindowsOnlyModules;
