@@ -320,7 +320,7 @@ function modelNotice({ picked = 'default', served = null, shown = null } = {}) {
 // start MCP servers; it writes only to that GROK_HOME (its first-run files, the first time: ~2 s).
 // Who `grok models` says is signed in: "You are logged in with grok.com." -> 'grok.com'; "You are using XAI_API_KEY." -> 'XAI_API_KEY'. null otherwise.
 function grokAccountOf(stdout) {
-  const m = /you are logged in with ([^\n.]+)|you are using (XAI_API_KEY)/i.exec(String(stdout || ''));
+  const m = /you are logged in with ([^\n]+?)\.?[ \t]*(?:\n|$)|you are using (XAI_API_KEY)/i.exec(String(stdout || ''));
   return m ? (m[1] || m[2]).trim().slice(0, 60) : null;
 }
 function checkAuthStatus(bin, { env, cwd, exec = execFile }) {

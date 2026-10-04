@@ -7962,8 +7962,14 @@ $('agent-stop')?.addEventListener('click', () => {
   else $('composer')?.prepend(meter); // the chat page has no chip
   meter.addEventListener('click', () => extras.openUsage?.());
   let usage = null;
-  const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' };
-  const engineKey = () => String(select?.value || '').split(':')[0];
+  // Every AI has a bar: the CLIs by their prefix, an API provider by its prefix or (a bare Claude model id) Anthropic; Auto has none.
+  const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex', antigravity: 'Antigravity', anthropic: 'Claude', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+  const engineKey = () => {
+    const v = String(select?.value || '');
+    if (!v || v === 'auto' || v.endsWith(':auto')) return '';
+    const prefix = v.includes(':') ? v.split(':')[0] : 'anthropic';
+    return ENGINE_NAMES[prefix] ? prefix : '';
+  };
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   const pts = (n) => (n < 1 ? '<1' : String(Math.round(n)));
@@ -7973,19 +7979,20 @@ $('agent-stop')?.addEventListener('click', () => {
   let limitTimer = null;
   // What Grok's bar says (features/usage.js barFor, kinds limit | budget | context). Grok publishes
   // no plan limits, so nothing here is "plan remaining": the title says whose use it is.
-  function grokParts(bar, text, title) {
+  function grokParts(bar, text, title, engine = 'Grok') {
+    const grok = engine === 'Grok';
     let head = null;
     if (bar.kind === 'limit') {
-      head = bar.resetsAt ? window.t('usage.grok.limit', { time: when(bar.resetsAt) }) : window.t('usage.grok.limit.unknown');
+      head = grok ? (bar.resetsAt ? window.t('usage.grok.limit', { time: when(bar.resetsAt) }) : window.t('usage.grok.limit.unknown')) : (bar.resetsAt ? window.t('usage.limit', { engine, time: when(bar.resetsAt) }) : window.t('usage.limit.unknown', { engine }));
       text.push(head);
-      title.push(window.t('usage.grok.limit.title'));
+      title.push(grok ? window.t('usage.grok.limit.title') : window.t('usage.limit.title', { engine }));
       if (bar.message) title.push(bar.message);
     } else if (bar.kind === 'budget') {
       const fmt = bar.unit === 'tokens' ? (n) => window.t('usage.tokens', { tokens: compact(n) }) : money;
       const period = window.t(bar.period === 'weekly' ? 'usage.period.weekly' : 'usage.period.daily');
       head = window.t('usage.grok.budget', { percent: Math.round(bar.percent) });
       text.push(head, window.t('usage.grok.budget.of', { used: fmt(bar.used), limit: fmt(bar.limit), period }), window.t('usage.resets', { time: when(bar.resetsAt) }));
-      title.push(window.t('usage.grok.budget.title', { percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }));
+      title.push(grok ? window.t('usage.grok.budget.title', { percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }) : window.t('usage.budget.title', { engine, percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }));
     } else {
       if (bar.percent != null) {
         head = window.t('usage.grok.context', { percent: Math.round(bar.percent) });
@@ -8000,7 +8007,8 @@ $('agent-stop')?.addEventListener('click', () => {
     if (w && w.d7?.turns) {
       title.push(window.t('usage.grok.windows.title', { t5: compact(w.h5.tokens), c5: money(w.h5.costUSD), t7: compact(w.d7.tokens), c7: money(w.d7.costUSD) }));
     }
-    title.push(window.t('usage.grok.noplan.title'));
+    if (bar.rate) text.push(window.t('usage.rate', { label: bar.rate.label, percent: Math.round(bar.rate.percent) }));
+    title.push(grok ? window.t('usage.grok.noplan.title') : window.t('usage.noplan.title', { engine }));
     return head;
   }
   function renderMeter() {
@@ -8031,22 +8039,14 @@ $('agent-stop')?.addEventListener('click', () => {
       if (resets) text.push(window.t('usage.resets', { time: resets }));
       if (bar.weekly) text.push(window.t('usage.week', { percent: Math.round(bar.weekly.percent) }));
       if (bar.lumenPoints != null) text.push(window.t('usage.lumen', { points: pts(bar.lumenPoints) }));
-      title.push(window.t('usage.plan.title', { percent }));
+      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : window.t('usage.plan.title.other', { engine, percent }));
       if (resets) title.push(window.t('usage.resets.title', { time: resets }));
       if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
       if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
       head = text[0];
-    } else if (key === 'grokbuild') {
-      head = grokParts(bar, text, title);
-      if (bar.kind === 'limit' && bar.resetsAt) limitTimer = setTimeout(() => refreshUsage(false), Math.min(2 ** 31 - 1, Math.max(1000, bar.resetsAt - Date.now() + 1000)));
     } else {
-      if (percent != null) {
-        text.push(window.t('usage.context', { percent }));
-        title.push(window.t('usage.context.title', { percent, used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
-        head = text[0];
-      }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }) + (bar.costUSD > 0 ? ` · ~$${bar.costUSD < 0.01 ? bar.costUSD.toFixed(4) : bar.costUSD.toFixed(2)}` : ''));
-      title.push(window.t('usage.tokens.title', { engine }));
+      head = grokParts(bar, text, title, key === 'grokbuild' ? 'Grok' : engine);
+      if (bar.kind === 'limit' && bar.resetsAt) limitTimer = setTimeout(() => refreshUsage(false), Math.min(2 ** 31 - 1, Math.max(1000, bar.resetsAt - Date.now() + 1000)));
     }
     meterBar.hidden = percent == null;
     if (percent != null) {

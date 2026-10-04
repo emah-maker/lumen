@@ -468,6 +468,7 @@ function createUsage(deps) {
     // the newest rate-limit headers a reply carried, the quota message Antigravity printed, the user's budget.
     const others = PU.KEYS.filter((k) => k !== 'grokbuild'); // (Grok keeps its own `grok` block above)
     result.providers = PU.totalsByProvider(records, now);
+    result.notes = Object.fromEntries(PU.KEYS.map((k) => [k, PU.noPlanText(k)]).filter(([, v]) => v)); // why a provider has no plan numbers, in words
     result.rate = Object.fromEntries(others.map((k) => [k, PU.rateView(rates[k], now)]).filter(([, v]) => v));
     result.limits = { ...(agyLimitNow(now) ? { antigravity: agyLimitNow(now) } : {}) };
     result.windows = Object.fromEntries(others.map((k) => [k, engineWindows(records, k, now)]));

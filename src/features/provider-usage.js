@@ -38,7 +38,7 @@ const nameOf = (key) => (PROVIDERS.find((p) => p.key === key) || {}).name || key
 // Why a provider has no plan numbers, in the words the panel uses.
 function noPlanText(key) {
   const p = PROVIDERS.find((x) => x.key === key);
-  if (!p) return '';
+  if (!p || p.plan === 'windows') return ''; // (Claude Code and Codex publish windows: nothing to explain)
   if (key === 'grokbuild') return 'Grok Build publishes no plan limits: no command or field carries them. Lumen shows its own counts, and the limit message with its reset time if Grok reports one.';
   if (key === 'antigravity') return 'Antigravity publishes no plan limits. Lumen shows its own counts, and the quota message with its reset time (for example “Resets in 110h”) when a run hits the limit.';
   if (p.plan === 'headers') return `Plan limits are not available from ${p.name}: an API key has no plan balance Lumen can read. It shows its own counts, and ${p.name}’s per-minute rate limits when a reply carried them.`;

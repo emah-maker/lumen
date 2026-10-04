@@ -18,7 +18,7 @@ const path = require('path');
     global.__agent.getClient = () => ({
       beta: { messages: { stream: (params) => {
         global.__params.push(JSON.parse(JSON.stringify({ ...params, system: undefined })));
-        const message = { role: 'assistant', model: params.model, stop_reason: 'end_turn', content: [
+        const message = { role: 'assistant', model: params.model, stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: 10 }, content: [
           { type: 'thinking', thinking: 'secret-' + params.model, signature: 'sig' },
           { type: 'text', text: 'reply from ' + params.model },
         ] };
@@ -88,6 +88,13 @@ const path = require('path');
   p = await lastParams();
   check('Opus 5.5: a short plain question uses low effort and a small cap', p.model === 'claude-opus-5-5' && p.output_config?.effort === 'low' && p.max_tokens === 8000, JSON.stringify({ ...p, messages: undefined }).slice(0, 300));
 
+  // Settings → AI → AI providers: the user's effort for the Claude API replaces the built-in one, only for a model that already takes one.
+  await app.evaluate(() => global.__patchSettings({ aiEffort: { anthropic: 'medium' } }));
+  await sendFromUi('what is the capital of Spain');
+  p = await lastParams();
+  check('Opus 5.5: the effort chosen in Settings → AI providers is sent (medium), over the built-in low', p.output_config?.effort === 'medium', JSON.stringify(p.output_config));
+  const apiUse = await app.evaluate(() => global.__usage.summary({ cached: true }).then((s) => s.providers.anthropic));
+  check('the Claude API turns are logged per provider with an estimated cost from the price table', apiUse && apiUse.week.turns >= 1 && apiUse.week.tokens >= 110 && apiUse.week.costUSD > 0 && /claude-opus-5-5/.test(apiUse.lastModel || ''), JSON.stringify(apiUse));
   await ui.selectOption('#model', 'claude-sonnet-5');
   await ui.waitForTimeout(300);
   await sendFromUi('sonnet');
