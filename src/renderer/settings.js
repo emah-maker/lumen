@@ -68,6 +68,7 @@ const CLI_ACCESS_EXTRA = {
   claudeCodeFullAccess: ', and use your own MCP servers, skills and slash commands',
   grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
   antigravityFullAccess: ', with its terminal sandbox off',
+  codexFullAccess: ', with its sandbox off and its own shell, patch and web search tools',
 };
 const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Off by default; applies from the next message.`;
 function syncCliAccess() {
@@ -86,7 +87,7 @@ function cliAccessRows() {
     for (const key of CA.KEYS) await save(key, value);
     syncCliAccess();
   });
-  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build, Antigravity and Codex together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);

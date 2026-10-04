@@ -33,19 +33,19 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
 
 (async () => {
   // ---------- settings ----------
-  const KEYS = ['claudeCodeFullAccess', 'grokBuildFullAccess', 'antigravityFullAccess'];
-  check('settings: one key per command-line AI, and the master switch helper knows exactly those', CA.KEYS.join() === KEYS.join() && CA.CLI_ACCESS.map((c) => c.name).join() === 'Claude Code,Grok Build,Antigravity', CA.KEYS.join());
+  const KEYS = ['claudeCodeFullAccess', 'grokBuildFullAccess', 'antigravityFullAccess', 'codexFullAccess'];
+  check('settings: one key per command-line AI, and the master switch helper knows exactly those', CA.KEYS.join() === KEYS.join() && CA.CLI_ACCESS.map((c) => c.name).join() === 'Claude Code,Grok Build,Antigravity,Codex', CA.KEYS.join());
   check('settings: every one is off by default', KEYS.every((k) => DEFAULTS[k] === false), JSON.stringify(KEYS.map((k) => DEFAULTS[k])));
   check('settings: booleans are accepted as they are', KEYS.every((k) => validate(k, true) === true && validate(k, false) === false), '');
   check('settings: anything else is refused, never coerced to "on"', KEYS.every((k) => [1, 'true', 'yes', null, undefined, {}, [], 0, ''].every((v) => validate(k, v) === null)), '');
-  check('settings: an unknown key (a fourth CLI, a typo) has no default and validates to nothing', !('codexFullAccess' in DEFAULTS) && validate('codexFullAccess', true) === null && validate('cliFullAccess', true) === null, '');
+  check('settings: an unknown key (another CLI, a typo) has no default and validates to nothing', !('geminiFullAccess' in DEFAULTS) && validate('geminiFullAccess', true) === null && validate('cliFullAccess', true) === null, '');
   check('settings: the master switch is not a stored setting', !('cliFullAccess' in DEFAULTS), '');
 
   // ---------- the master switch ----------
-  const prefs = (c, g, a) => ({ claudeCodeFullAccess: c, grokBuildFullAccess: g, antigravityFullAccess: a });
-  check('master: none on is off, all on is on', CA.masterState(prefs(false, false, false)) === 'off' && CA.masterState(prefs(true, true, true)) === 'on', '');
+  const prefs = (c, g, a, x = a) => ({ claudeCodeFullAccess: c, grokBuildFullAccess: g, antigravityFullAccess: a, codexFullAccess: x });
+  check('master: none on is off, all on is on', CA.masterState(prefs(false, false, false)) === 'off' && CA.masterState(prefs(true, true, true)) === 'on' && CA.masterState(prefs(true, true, true, false)) === 'mixed', '');
   check('master: any other mix is mixed (indeterminate), whichever one differs', [prefs(true, false, false), prefs(false, true, false), prefs(false, false, true), prefs(true, true, false), prefs(true, false, true), prefs(false, true, true)].every((p) => CA.masterState(p) === 'mixed'), '');
-  check('master: missing or non-boolean values count as off', CA.masterState({}) === 'off' && CA.masterState(null) === 'off' && CA.masterState({ claudeCodeFullAccess: 'true', grokBuildFullAccess: 1, antigravityFullAccess: {} }) === 'off', '');
+  check('master: missing or non-boolean values count as off', CA.masterState({}) === 'off' && CA.masterState(null) === 'off' && CA.masterState({ claudeCodeFullAccess: 'true', grokBuildFullAccess: 1, antigravityFullAccess: {}, codexFullAccess: 'on' }) === 'off', '');
   check('master: a click turns everything on only from off; from on or mixed it clears everything', CA.masterNext('off') === true && CA.masterNext('on') === false && CA.masterNext('mixed') === false, '');
   check('master: what it writes is every CLI set to the same value', JSON.stringify(CA.masterValues(true)) === JSON.stringify(prefs(true, true, true)) && JSON.stringify(CA.masterValues(false)) === JSON.stringify(prefs(false, false, false)), '');
   const mixedClick = CA.masterValues(CA.masterNext(CA.masterState(prefs(true, false, true))));

@@ -53,6 +53,25 @@ const fallback = require('../src/ai/fallback');
   check('config: the stdio form names the run by LUMEN_ENGINE and still has one server', /command = "C:\\\\Lumen\\\\Lumen.exe"/.test(stdio) && /LUMEN_ENGINE = "TAG1"/.test(stdio) && (stdio.match(/^\[mcp_servers\./gm) || []).length === 1 && !/bearer_token_env_var/.test(stdio), stdio);
 }
 
+// ---------- full access (codexFullAccess) ----------
+{
+  const on = cx.buildArgs({ fullAccess: true, model: 'gpt-6-luna' });
+  const off = cx.buildArgs({ model: 'gpt-6-luna' });
+  check('full: argv says --sandbox danger-full-access; off is unchanged (read-only); never a bypass, full-auto or approval flag', on[on.indexOf('--sandbox') + 1] === 'danger-full-access' && !on.includes('read-only') && off[off.indexOf('--sandbox') + 1] === 'read-only' && !on.some((a) => /bypass|dangerously|full-auto|ask-for-approval|yolo/.test(a)), on.join(' '));
+  const t = cx.configFor({ run: { mcpUrl: 'http://127.0.0.1:5123/mcp' }, fullAccess: true });
+  check('full: config.toml has the sandbox off and web search live, approval still never, one MCP server', /sandbox_mode = "danger-full-access"/.test(t) && /approval_policy = "never"/.test(t) && /web_search = "live"/.test(t) && (t.match(/^\[mcp_servers\./gm) || []).length === 1);
+  check('full: shell, unified exec and view_image are back on; plugins, apps, hooks, memories, sub-agents, browser and computer use stay off; the Code Mode host stays on', cx.FULL_ON.join() === 'shell_tool,unified_exec,view_image' && cx.FULL_ON.every((k) => !new RegExp('^' + k + ' = false', 'm').test(t)) && ['plugins', 'apps', 'hooks', 'memories', 'multi_agent', 'browser_use', 'computer_use'].every((k) => new RegExp('^' + k + ' = false', 'm').test(t)) && !/code_mode_host = false/.test(t), t);
+  const base = { PATH: '/bin', MY_TOKEN: 't', ELECTRON_RUN_AS_NODE: '1' };
+  const e = cx.buildEnv({ home: '/h', base, run: { mcpToken: 'TOK' }, fullAccess: true });
+  check('full: the user\'s whole environment (not Electron\'s switch) plus Lumen\'s Codex home and token; off is the short list', e.MY_TOKEN === 't' && !('ELECTRON_RUN_AS_NODE' in e) && e.CODEX_HOME === '/h' && e.LUMEN_MCP_TOKEN === 'TOK' && !('MY_TOKEN' in cx.buildEnv({ home: '/h', base })));
+  const sh = { type: 'command_execution' };
+  check('full: Codex\'s shell, file and web items are not off-tools then; another server\'s tool still is', cx.offItemOf(sh, { fullAccess: true }) === null && cx.offItemOf({ type: 'file_change' }, { fullAccess: true }) === null && cx.offItemOf({ type: 'web_search' }, { fullAccess: true }) === null && cx.offItemOf(sh) && /other\/t/.test(cx.offItemOf({ type: 'mcp_tool_call', server: 'other', tool: 't' }, { fullAccess: true })));
+  check('full: a Codex that rejects the options is told plainly, pointing at the setting', /Nothing ran/.test(cx.describeFailure('error: unexpected argument \'--sandbox\' found', 2, { fullAccess: true }).text) && !/Nothing ran/.test(cx.describeFailure('error: unexpected argument', 2).text));
+  const { codexNote } = require('../src/ai/agent');
+  const note = codexNote(null, new Date(), { fullAccess: true, home: 'C:\\Users\\x' });
+  check('full: the system note names the home folder, says relative paths start in an empty scratch folder, keeps Lumen\'s tools and the untrusted-page warning; off says there is no shell', /C:\\Users\\x/.test(note) && /empty scratch folder/.test(note) && /server named lumen/.test(note) && /untrusted/.test(note) && /no shell/.test(codexNote()) && !/scratch/.test(codexNote()));
+}
+
 // ---------- the child's environment ----------
 {
   const env = cx.buildEnv({ home: '/h', base: { PATH: '/bin', HOME: '/u', OPENAI_API_KEY: 'k', CODEX_API_KEY: 'c', AWS_SECRET_ACCESS_KEY: 'no', GITHUB_TOKEN: 'no', ELECTRON_RUN_AS_NODE: '1', CODEX_HOME: '/user/.codex' }, run: { mcpToken: 'TOK' } });
