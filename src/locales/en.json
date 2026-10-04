@@ -1635,6 +1635,8 @@
   "settings.default.button": "Make default",
   "settings.ai.handsOff": "Don’t let the AI act on my pages",
   "settings.ai.handsOffDesc": "The AI can read pages you share but won’t click, type or navigate in your tabs, and the Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.",
+  "settings.ai.stayOnMyTab": "Never switch away from my tab",
+  "settings.ai.stayOnMyTabDesc": "The AI keeps working in background tabs and never brings one to the front, even when it would show you a page. The tab you are on stays in view.",
   "settings.ai.closeAiTabs": "Close tabs the AI opened when it finishes",
   "settings.ai.closeAiTabsDesc": "Off leaves them open. Ask puts the question under the reply. Always closes them when the AI is done, with Undo. Tabs you used or moved yourself stay.",
   "settings.ai.closeAiTabs.off": "Off",

@@ -40,8 +40,9 @@ async function claudeSuite() {
   const r3 = send(M, `${HEAVY}\nRUN-PA3`, 1, as('pa-A'));
   await Promise.race([r3.done, H.sleep(20000)]);
   const s3 = starts('claude');
-  check('a hard message goes to a stronger model: a new process starts with that --model, the haiku one is not reused', s3.length === 2 && ['opus', 'fable'].includes(s3[1].model) && s3[1].pid !== pid1 && ran('RUN-PA3')?.pid === s3[1].pid, J(s3));
-  check('the process started for haiku ends', Boolean(await until(() => !live.has(pid1), 8000)), J([...live.keys()]));
+  const p3 = ran('RUN-PA3');
+  check('a hard message goes to a stronger model: the same warm process is switched to it (set_model), not replaced', s3.length === 1 && p3?.pid === pid1 && ['opus', 'fable'].includes(p3?.model) && readLog().some((e) => e.ev === 'set_model' && e.pid === pid1 && ['opus', 'fable'].includes(e.model)), J({ s3, p3 }));
+  check('the process is still the one kept for the chat', live.has(pid1), J([...live.keys()]));
   check('the chat is still on the engine\'s Auto after the change of model', M.settings.autoFrom === 'claudecode:auto' && /^claudecode:(opus|fable)$/.test(M.settings.model) && /reply from RUN-PA3/.test(turnText(lastAssistant(M))), J(M.settings));
 
   const N = chat('claudecode:auto');

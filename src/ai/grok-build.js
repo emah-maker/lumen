@@ -844,11 +844,11 @@ class GrokBuildEngine {
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
     // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
-    // long-lived `grok agent stdio` process answers. It returns null when it can't take this message (setting off, images,
-    // full access, a start that failed before anything was sent): then the one-process-per-message run below does.
+    // long-lived `grok agent stdio` process answers (full access and a chosen effort get a process of their own kind, see
+    // grok-warm.js). It returns null when it can't take this message (setting off, images, a start that failed before
+    // anything was sent): then the one-process-per-message run below does.
     if (this.keepWarm) {
-      // (a chosen effort is a flag of the one-process run: a kept `grok agent stdio` keeps the effort it started with)
-      const warm = fullAccess || this.background || effortLib.clean('grokbuild', effort) ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
+      const warm = this.background ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, fullAccess, effort });
       if (warm) return warm;
       this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
     }

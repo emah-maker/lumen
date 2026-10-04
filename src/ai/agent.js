@@ -1669,7 +1669,7 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
     if (ccPlan) this.engineFor('claudecode').warm?.(ccPlan.spawn); // (an engine made for one message keeps no process: warm() does nothing there)
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild) this.engineFor('grokbuild').prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
-    if (viaAntigravity) this.engineFor('antigravity').prepare?.().catch?.(() => {});
+    if (viaAntigravity) this.engineFor('antigravity').prepare?.({ scope: taskScope.getStore(), sessionId: messages.settings.agySession || null, fullAccess: this.browser.antigravityFullAccess?.() === true }).catch?.(() => {}); // (the chat's home and the files in it, while the page is read)
     if (viaCodex) this.engineFor('codex').prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
@@ -1975,7 +1975,11 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    // [model switch] A model that routing or Auto picks per message is not named in the system prompt: the warm-up (prewarm)
+    // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
+    // which would leave a stale name in a prompt that is fixed at spawn. A model the user picked is still named.
+    const autoChosen = routed.auto || Boolean(settings.autoFrom);
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2078,8 +2082,8 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
       quietExpired: true,
       signal,
       emit,
-      // A capped chat's next process starts only when the next message can't want another model: a picked one, or the top tier.
-      prestart: !routed.auto || routed.tier === 'heavy',
+      // A capped chat's next process starts at once: whatever model the next message gets (Auto, routing) is switched in place ([model switch]).
+      prestart: true,
       // Stop: the interrupted turn's usage arrives after this message returned (claude-code.js interrupt).
       lateUsage: onLateUsage,
     });
@@ -2118,13 +2122,14 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
   }
 
   // [keep connected] What the open chat's next Grok Build message will need from its kept process (features/grok-warm.js
-  // prewarm): its Grok session (null: a new chat), system prompt and model. null when the chat isn't on Grok Build, gets
-  // full access (always a one-off process), or a reply is running.
+  // prewarm): its Grok session (null: a new chat), system prompt and model. null when the chat isn't on Grok Build
+  // or a reply is running. fullAccess and effort pick the kind of process (grok-warm.js modeOf).
   grokWarmSpec() {
     const settings = this.messages?.settings;
-    if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running || this.browser.grokBuildFullAccess?.() === true) return null;
+    if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running) return null;
     const session = settings.gbSession && (settings.gbModel || 'grokbuild:default') === settings.model ? settings.gbSession : null;
-    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, false), model: engineModel(settings.model) };
+    const fullAccess = this.browser.grokBuildFullAccess?.() === true;
+    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, fullAccess), model: engineModel(settings.model), fullAccess, effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')) };
   }
 
   // ---- [grok build engine] One message through the user's Grok Build CLI. The session id lives in

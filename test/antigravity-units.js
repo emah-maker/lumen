@@ -227,6 +227,36 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
     check('antigravity chat home: an odd chat id never escapes the chats folder', path.dirname(ag.chatHomeFor(data, '../../etc')) === ag.chatsDirFor(data) && ag.chatHomeFor(data, null) === null);
   }
 
+  // [prepare] The message's setup that needs no message (the chat's home and its settings, gate script and hooks) is done by
+  // prepare() while the page is read; run() takes the same work over instead of repeating it, and writes only the token file.
+  {
+    const data = fs.mkdtempSync(path.join(tmp, 'ud-prep-'));
+    const f = fake([init, done('ok')]);
+    let gates = 0;
+    const g = { open() { return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 'p'.repeat(48), hookUrl: 'http://127.0.0.1:1/hook/x' }; }, close() {} };
+    const engine = new ag.AntigravityEngine({ userData: data, gate: async () => { gates++; return g; }, spawn: f.spawn, kill: f.kill });
+    engine.bin = process.execPath;
+    const scope = { chatId: 'prep-chat' };
+    const home = ag.chatHomeFor(data, 'prep-chat');
+    const early = engine.prepare({ scope, sessionId: null, fullAccess: false });
+    const prepared = await early;
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    const settingsFile = path.join(home, '.gemini', 'antigravity-cli', 'settings.json');
+    check('antigravity prepare: the chat\'s settings, gate script and hooks are in place before any message, the token file is not', prepared.bin === process.execPath && prepared.home === home && fs.existsSync(hooksFile) && fs.existsSync(settingsFile) && fs.existsSync(path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh')) && !fs.existsSync(path.join(home, '.gemini', 'config', 'mcp_config.json')), JSON.stringify(Object.keys(prepared)));
+    check('antigravity prepare: the same message asks again and gets the same work (one gate lookup)', engine.prepare({ scope, sessionId: null, fullAccess: false }) === early && gates === 1, String(gates));
+    const m0 = fs.statSync(settingsFile).mtimeMs;
+    const out = await engine.run({ prompt: 'hi', sessionId: null, systemPrompt: 'S', signal: new AbortController().signal, emit: () => {}, scope });
+    check('antigravity prepare: run() uses it (no second gate lookup, settings not rewritten) and the spawn sees all four files', out.sessionId === 'conv-1' && gates === 1 && fs.statSync(settingsFile).mtimeMs === m0 && f.spawns[0].mcp && f.spawns[0].settings && f.spawns[0].hooks, String(gates));
+    const again = engine.prepare({ scope, sessionId: 'conv-1', fullAccess: false });
+    check('antigravity prepare: used up by that run: the next message looks again (and another conversation or access is another key)', again !== early && engine.prepare({ scope, sessionId: 'conv-1', fullAccess: true }) !== again, '');
+    await again;
+    const none = new ag.AntigravityEngine({ userData: data, gate: async () => g, spawn: f.spawn, kill: f.kill });
+    none.bin = null;
+    process.env.LUMEN_AGY_BIN = path.join(tmp, 'no-such-agy');
+    check('antigravity prepare: no agy installed resolves { bin: null } and writes nothing', (await none.prepare({ scope: { chatId: 'nobin' } })).bin === null && !fs.existsSync(ag.chatHomeFor(data, 'nobin')), '');
+    delete process.env.LUMEN_AGY_BIN;
+  }
+
   const resumed = await runAgy([init, say(1, 'ok'), done('ok')], { run: { sessionId: 'conv-1', model: 'gemini-3.1-pro-high' } });
   const rp = resumed.f.spawns[0];
   check('antigravity run: a later message continues the conversation with --conversation and the model, with a reminder, not the whole system text; the gate run carries the conversation id', flag(rp.argv, '--conversation') === 'conv-1' && flag(rp.argv, '--model') === 'gemini-3.1-pro-high' && !flag(rp.argv, '-p').includes('SYS') && /lumen_reminder/.test(flag(rp.argv, '-p')) && resumed.gate.opened[0].session === 'conv-1', rp.argv.join(' ').slice(0, 300));

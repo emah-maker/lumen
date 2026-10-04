@@ -310,6 +310,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: a group left with no visible tab shows no label', /!aiHiddenTab\(t, state\)/.test(app) && /if \(aiHiddenTab\(tab, state\)\) continue;/.test(app));
 
     const backend = fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('stay on my tab: a saved setting (off by default) that turns show:true off for open_tab and switch_tab', /aiStayOnMyTab: false/.test(backend) && /const stayOnUsersTab = \(\) => readSettings\(\)\.aiStayOnMyTab === true;/.test(mainSrc) && (mainSrc.match(/[sS]how === true && !stayOnUsersTab\(\)/g) || []).length === 2);
     check('hide toggle: it is a saved setting (off by default) and reaches the strip through prefs:ui', /hideAiTabs: false/.test(backend) && /hideAiTabs: p\.hideAiTabs === true/.test(backend) && /'aiHandsOff', 'hideAiTabs'\]\.includes\(key\)/.test(backend));
     const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8').replace(/\r\n/g, '\n');
     const button = /<button[^>]*id="hide-ai-tabs"[^>]*>/.exec(html)?.[0] || '';

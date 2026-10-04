@@ -6234,6 +6234,8 @@ const agentActiveTab = () => {
 // ({ show: true }) and the user is looking at the run's own tab. Opening one never moves the omnibox caret or a field's focus.
 // `ai`: the AI is opening it for its work (marked openedBy the run, so it can be closed again and, in hands-off mode,
 // worked in); Undo reopening a tab it closed is not that.
+// [ai manners] Settings → AI → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
+const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
 const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.tabId ?? activeId) : activeId; };
 const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
 const agentOpenTab = (url, opts = {}) => {
@@ -6244,7 +6246,7 @@ const agentOpenTab = (url, opts = {}) => {
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
-  const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId }) : !rest.background));
+  const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : !rest.background));
   const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: runOf() } : {}) });
   const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
@@ -6254,7 +6256,7 @@ const agentOpenTab = (url, opts = {}) => {
 const agentSwitchTab = (id, opts = {}) => {
   if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
   const fromPage = chatPageRt?.runTarget() != null;
-  if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true, runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
+  if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const aiCall = Boolean(opts && 'show' in opts && agent.currentScope()); // only a run's switch_tab passes `show`
     const ok = aiCall ? asAiSwitch(() => switchTab(id)) : switchTab(id);
     if (ok && aiCall) bindRunChatTo(id);
