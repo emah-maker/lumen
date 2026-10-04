@@ -155,6 +155,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
   }
   {
     // Claude, a CLI engine, or an OpenRouter model without picture output: a clear notice, and the text answer still comes
+    // (Settings > AI > Image generation off: nothing is routed to another provider, so the model's own notice is what shows. Routing: test/image-router-units.js)
+    agent.browser.imageGen = () => 'off';
     for (const [model, who] of [['claude-sonnet-5', 'Claude'], ['claudecode:default', 'Claude Code'], ['grokbuild:default', 'Grok Build'], ['antigravity:default', 'Antigravity']]) {
       const messages = chat(model);
       events.length = 0;
@@ -253,6 +255,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     await grokFull.inTask(null, new AbortController().signal, () => grokFull.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
     check('Grok Build keeps its own behaviour (the notice), whatever Claude Code\'s setting', /Grok Build can't make pictures/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
 
+    delete agent.browser.imageGen;
     // pictures: written during the run under the home folder / a folder the run was pointed at -> shown; the rest -> not
     const home = path.join(tmp, 'home'); fs.mkdirSync(path.join(home, 'Pictures'), { recursive: true });
     const pointed = path.join(tmp, 'pointed-out'); fs.mkdirSync(pointed, { recursive: true });
