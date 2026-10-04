@@ -3733,8 +3733,12 @@ function applyChromeIdentity(wc) {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
     const frame = targetInfo.type === 'iframe';
-    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
-      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const resume = () => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
+    // A worker target (service, shared, dedicated) answers nothing until it runs: its Network/Emulation commands queue behind
+    // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
+    // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
+    if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
+    Promise.all([identify(sessionId, GOOGLE_AUTH.isAuthUrl(targetInfo.url)), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
   // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
