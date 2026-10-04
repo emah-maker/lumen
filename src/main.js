@@ -450,18 +450,22 @@ const fallbackOn = () => readSettings().autoFallback !== false; // Settings > AI
 const autoModel = require('./ai/auto-model');
 const autoDenied = autoModel.createDenied();
 const autoExcluded = () => (Array.isArray(readSettings().autoExclude) ? readSettings().autoExclude : []);
-function autoRoute({ request, last = null, allowEngines = true, apiOnly = false, scope = null } = {}) {
+// scope: a provider's own Auto ('grokbuild:auto' -> 'grokbuild'): only that provider's models. When none of them can answer (all out of
+// usage or unavailable) and "Switch models automatically" is on, it behaves like a picked model that ran out: the same vendor's other
+// route first, then any connected model (decision.outOfScope, said in the chat).
+function autoRoute({ request, last = null, allowEngines = true, apiOnly = false, scope = null, strict = false } = {}) {
   const options = modelOptions().filter((o) => !apiOnly || !aiFallback.isEngine(o.id));
-  return autoModel.route({ options, request, last, prefer: autoModel.preferFrom({ lastId: last, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines, scope });
+  const args = { options, request, last, prefer: autoModel.preferFrom({ lastId: last, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines };
+  return autoModel.routeOrFallBack({ ...args, scope }, { fallbackOn: fallbackOn(), strict, related: scope ? aiFallback.relatedOf(scope) : [] });
 }
-function autoEscalate({ current, failure, request, tried = [], allowEngines = true }) {
-  return autoModel.escalate({ options: modelOptions(), current, failure, request, tried, prefer: autoModel.preferFrom({ lastId: current, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines });
+function autoEscalate({ current, failure, request, tried = [], allowEngines = true, scope = null }) {
+  return autoModel.escalate({ options: modelOptions(), current, failure, request, tried, prefer: autoModel.preferFrom({ lastId: current, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines, scope });
 }
 // A model for a one-shot job outside the chat (topic naming, Organize, translation, a skill's proposal): the open chat's
 // pick when it is a model, else Auto's cheapest fit for `kind`. apiOnly: no CLI engine (translation runs one request per chunk).
 function autoConcrete(id, kind = 'quick', { apiOnly = false } = {}) {
   if (!autoModel.isAuto(id)) return id;
-  const d = autoRoute({ request: { kind, prompt: '' }, last: agent.messages?.settings?.autoLast?.id || null, apiOnly });
+  const d = autoRoute({ request: { kind, prompt: '' }, last: agent.messages?.settings?.autoLast?.id || null, apiOnly, scope: autoModel.scopeOf(id) });
   return d.id || null;
 }
 function modelOptions() {
@@ -511,12 +515,16 @@ function autoProviderList(options = modelOptions()) {
   }
   return [...seen.values()];
 }
-// What every picker lists: Auto first (no heading), then the connected models. modelOptions() stays the real models only: the
-// fallback and the router must never see "auto" as one. The row says what Auto chose last in the open chat ("Auto · Haiku").
+// What every picker lists: Auto first (no heading), then the connected models, each provider's group led by its own Auto (when it has
+// two or more models to choose between, or the open chat is on it). modelOptions() stays the real models only: the fallback and the
+// router must never see an Auto as one. The rows say what Auto chose last in the open chat ("Auto · Haiku").
 function pickerOptions(options = modelOptions()) {
   if (!options.some((o) => !o.more)) return options;
-  const last = agent.messages?.settings?.autoLast || null;
-  return [autoModel.pickerEntry({ last, describe: t('models.auto.detail') }), ...options];
+  const s = agent.messages?.settings;
+  const last = s?.autoLast || null;
+  const pick = chatModelPick() ?? readSettings().model ?? null;
+  const withOwn = autoModel.withProviderAutos(options, { pick, last, exclude: autoExcluded(), describe: (scope) => t('models.auto.providerDetail', { name: autoModel.scopeName(scope) }) });
+  return [autoModel.pickerEntry({ last: last && !last.scope ? last : null, describe: t('models.auto.detail') }), ...withOwn];
 }
 
 let client = null;
@@ -3419,7 +3427,8 @@ function homeAssistant() {
   const modelId = shownModel(options, { forChat: false }).model; // what the sidebar's picker shows right now (a stand-in during a usage limit included)
   const label = autoModel.isAuto(modelId) ? 'Auto' : options.find((o) => o.id === modelId)?.name || String(modelId);
   const named = (name) => ({ name, agentUsable: true, model: modelId, label });
-  if (autoModel.isAuto(modelId)) return named('AI'); // [auto model] the model is chosen per message
+  if (autoModel.scopeOf(modelId) === null) return named('AI'); // [auto model] the model is chosen per message
+  // (a provider's own Auto answers as that provider: 'grokbuild:auto' -> Grok)
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
@@ -6500,7 +6509,7 @@ const bgTasks = require('./features/background-runner').create({
   maxBackgroundTasks: () => perfMode.limits().maxBackgroundTasks, // Performance mode: one at a time
   getClient: (...args) => agent.getClient(...args), getKey: providerKey,
   effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
-  autoRoute: (a) => autoRoute({ ...a, apiOnly: true, allowEngines: false }), autoEscalate: (a) => autoEscalate({ ...a, allowEngines: false }), autoDeny: (id) => autoDenied.add(id), // [auto model] a task on Auto is routed to an API model at each run
+  autoRoute: (a) => { const cli = Boolean(a.scope) && aiFallback.isEngine(`${a.scope}:x`); return autoRoute({ ...a, apiOnly: !cli, allowEngines: cli, strict: cli }); }, autoEscalate: (a) => autoEscalate({ ...a, allowEngines: false }), autoDeny: (id) => autoDenied.add(id), // [auto model] a task on Auto is routed to an API model at each run (a task on a CLI's own Auto, 'claudecode:auto': to that CLI's models: runCli)
   aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
   reportUsage: (engine, data) => agent.onUsage?.(engine, data),
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
@@ -7182,7 +7191,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
   // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
-  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat)
+  const kind = tabChatsLib.slotKind(autoModel.scopeOf(messages.settings?.autoFrom) ? messages.settings.autoFrom : messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat; a provider's own Auto, 'grokbuild:auto', as that provider)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
@@ -7465,7 +7474,9 @@ function effectiveModel(preferred = readSettings().model) {
   preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
   // [auto model] Auto, picked: it stays the pick (settings.json keeps 'auto'); the model that answers is chosen per message.
-  if (autoModel.isAuto(preferred) && options.length) return autoModel.AUTO;
+  if (preferred === autoModel.AUTO && options.length) return autoModel.AUTO;
+  // A provider's own Auto ('grokbuild:auto'): kept while any of that provider's models is listed (or its CLI is still being looked for).
+  if (autoModel.isAuto(preferred) && (options.some((o) => aiFallback.providerOf(o.id) === autoModel.scopeOf(preferred)) || aiAgents.engineDetecting(preferred))) return preferred;
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
   if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
@@ -7728,7 +7739,8 @@ ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
-  if (id === 'openrouter:__more' || (!pickedFromMore && !(autoModel.isAuto(id) && modelOptions().length) && !modelOptions().some((o) => o.id === id))) return false;
+  const validAuto = autoModel.isAuto(id) && (autoModel.scopeOf(id) === null ? modelOptions().length > 0 : modelOptions().some((o) => aiFallback.providerOf(o.id) === autoModel.scopeOf(id) && !o.more)); // (a provider's own Auto: that provider is connected)
+  if (id === 'openrouter:__more' || (!pickedFromMore && !validAuto && !modelOptions().some((o) => o.id === id))) return false;
   const s = readSettings();
   // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
   const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);

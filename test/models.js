@@ -41,7 +41,7 @@ const path = require('path');
   const options = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   // Claude API models, connected via ANTHROPIC_API_KEY above; 'claudecode:default' is added
   // separately when the Claude Code CLI is installed (test/claudecode.js).
-  check('picker lists Auto and 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 6 && options[0] === 'auto', JSON.stringify(options));
+  check('picker lists Auto and 5 models (and one Auto for the Claude API)', options.filter((o) => !o.startsWith('claudecode:') && o !== 'anthropic:auto').length === 6 && options[0] === 'auto' && options.includes('anthropic:auto'), JSON.stringify(options));
   check('Auto is the default on a fresh profile (more than one model is connected)', (await ui.inputValue('#model')) === 'auto', await ui.inputValue('#model'));
 
   // The rest starts from Opus 5 and switches away and back, so pick it first.

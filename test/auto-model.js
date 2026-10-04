@@ -129,6 +129,63 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   u = await send('hi');
   check('too long for the cheap model: the same message goes on another one', u.length === 2 && u[0] !== u[1], JSON.stringify(u));
 
+  // ---- a provider's own Auto ("OpenAI · Auto"): the same router inside one provider
+  {
+    await ui.evaluate(() => document.getElementById('new-chat').click());
+    await sleep(300);
+    const list = (await settings()).models;
+    const ids = list.map((m) => m.id);
+    const at = (id) => ids.indexOf(id);
+    check('each connected provider with two or more models has its own Auto row, first in its group', ['anthropic:auto', 'openai:auto'].every((id) => at(id) > 0 && list[at(id)].auto === true && list[at(id)].group === list[at(id) + 1].group && list[at(id)].autoScope === id.split(':')[0]), JSON.stringify(list.filter((m) => m.auto).map((m) => [m.id, m.group])));
+    check('a provider that is not connected has none, and the global Auto is still the very first row', !ids.includes('xai:auto') && !ids.includes('gemini:auto') && ids[0] === 'auto', JSON.stringify(ids.slice(0, 3)));
+    check('the picker\'s own options carry the rows (flagged as Auto for the composer and the /think command)', await ui.$$eval('#model option[data-auto]', (os) => os.map((o) => o.value)).then((v) => v.includes('openai:auto') && v.includes('anthropic:auto') && v.includes('auto')), '');
+    // the open menu lists it inside its group, after the heading
+    await ui.click('.model-picker .picker-button');
+    const group = await ui.$$eval('.picker-menu .picker-section', (secs) => secs.map((s) => [...s.children].map((c) => (c.classList.contains('picker-group') ? `#${c.textContent}` : c.querySelector('.picker-name')?.textContent || '')).join('|')).find((t) => /^#OpenAI/.test(t)) || '');
+    check('in the open menu the OpenAI group starts with its Auto row', /^#OpenAI\|Auto(\||$)/.test(group), group);
+    await ui.keyboard.press('Escape');
+
+    await ui.selectOption('#model', 'openai:auto');
+    await sleep(300);
+    check('picking it saves it and the picker keeps it selected', (await settings()).model === 'openai:auto' && (await ui.inputValue('#model')) === 'openai:auto', (await settings()).model);
+    check('the composer does not call it a model name', (await ui.getAttribute('#prompt', 'placeholder')) === 'Ask anything…', await ui.getAttribute('#prompt', 'placeholder'));
+    u = await send('hi');
+    check('OpenAI Auto, "hi": only OpenAI answers, with its small model', u.length === 1 && u[0].startsWith('openai:') && A.tierOf(u[0].replace(/^openai:/, '')) === 'fast', JSON.stringify(u));
+    check('the reply is labelled "Auto · OpenAI · …" with the provider named in the tooltip', await waitFor(() => ui.evaluate(() => { const el = [...document.querySelectorAll('.reply-model')].pop(); return Boolean(el) && /^Auto · OpenAI · /.test(el.textContent) && /^Auto \(OpenAI\): /.test(el.title); })), await ui.evaluate(() => [...document.querySelectorAll('.reply-model')].map((e) => `${e.textContent} | ${e.title}`).join(' ; ')));
+    check('the provider\'s row says what it chose last; the global row does not', await waitFor(async () => { const ms = (await settings()).models; return /^Auto · /.test(ms.find((m) => m.id === 'openai:auto').name) && ms.find((m) => m.id === 'auto').name === 'Auto' && ms.find((m) => m.id === 'anthropic:auto').name === 'Auto'; }), JSON.stringify((await settings()).models.filter((m) => m.auto).map((m) => m.name)));
+    u = await send(HEAVY);
+    check('a hard brief: OpenAI\'s flagship, and the chat is still on OpenAI Auto', u.length === 1 && A.tierOf(u[0].replace(/^openai:/, '')) === 'strong' && u[0].startsWith('openai:') && (await ui.inputValue('#model')) === 'openai:auto', JSON.stringify(u));
+    u = await send('/fast ' + HEAVY);
+    check('/fast: OpenAI\'s quickest model, command not sent', u[0].startsWith('openai:') && A.tierOf(u[0].replace(/^openai:/, '')) === 'fast' && !(await prompts()).pop().startsWith('/fast'), JSON.stringify(u));
+    u = await send('/think why is the sky blue');
+    check('/think: OpenAI\'s strongest model (the command works on a provider\'s Auto too)', u[0].startsWith('openai:') && A.tierOf(u[0].replace(/^openai:/, '')) === 'strong', JSON.stringify(u));
+    await app.evaluate(() => global.__settingsFlush());
+    check('settings.json keeps "openai:auto"', JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).model === 'openai:auto');
+    check('no request ever carried "auto" as its model', !(await used()).some((m) => /(^|:)auto$/.test(m)), JSON.stringify((await used()).slice(-6)));
+    // Turned off for the global Auto, a provider is still used by its own Auto
+    await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity'] }));
+    u = await send('hello');
+    check('a provider turned off for Auto (Settings) is still chosen by its own Auto', u[0].startsWith('openai:'), JSON.stringify(u));
+    await app.evaluate((_e, e) => global.__patchSettings({ autoExclude: e }), ENGINES);
+    // Out of usage inside the provider: both models limited, the fallback takes over like for a picked model
+    await app.evaluate(() => { for (const id of ['gpt-5.6', 'gpt-5.6-mini']) global.__aiFallback.shared.mark(`openai:${id}`, { kind: 'limit', scope: 'model', resetsAt: Date.now() + 600000 }); });
+    u = await send('hello again');
+    check('every OpenAI model out of usage: another provider answers (the setting "Switch models automatically" is on)', u.length === 1 && !u[0].startsWith('openai:'), JSON.stringify(u));
+    check('...and the chat says so, staying on OpenAI Auto', await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.notice')].some((n) => /OpenAI is unavailable right now, so Auto uses /.test(n.textContent)))) && (await ui.inputValue('#model')) === 'openai:auto', await ui.evaluate(() => [...document.querySelectorAll('.notice')].map((n) => n.textContent).join(' | ')));
+    await app.evaluate(() => global.__aiFallback.shared.clear());
+    // The Claude API's own Auto: only Claude models
+    await ui.evaluate(() => document.getElementById('new-chat').click());
+    await sleep(300);
+    await ui.selectOption('#model', 'anthropic:auto');
+    await sleep(300);
+    u = await send(HEAVY);
+    check('Claude (API) Auto: a hard brief goes to the Claude model that is strongest', u.length === 1 && u[0].startsWith('anthropic:') && A.tierOf(u[0].replace(/^anthropic:/, '')) === 'strong', JSON.stringify(u));
+    check('an Auto that is not connected cannot be picked', (await ui.evaluate(() => window.assistant.setModel('xai:auto'))) === false);
+    await ui.selectOption('#model', 'auto');
+    await ui.evaluate(() => document.getElementById('new-chat').click());
+    await sleep(300);
+  }
+
   // ---- the picker keeps Auto: a refresh, a picked model, then Auto again
   await app.evaluate(() => global.__modelsChanged());
   await sleep(200);

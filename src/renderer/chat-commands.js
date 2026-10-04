@@ -65,7 +65,7 @@
       hint: tr('slash.auto.hint', 'Your message, then press Enter'),
       takesInput: false,
       run({ input, ask }) {
-        if (document.getElementById('model')?.value !== 'auto') return { ok: false, message: tr('slash.auto.needAuto', 'Pick Auto at the top of the model menu first: /think, /deep and /fast ask Auto for a model.') };
+        if (!document.getElementById('model')?.selectedOptions?.[0]?.dataset.auto) return { ok: false, message: tr('slash.auto.needAuto', 'Pick Auto in the model menu first (the top row, or the Auto row of a provider): /think, /deep and /fast ask Auto for a model.') };
         if (!input) return { ok: false, message: tr('slash.auto.needText', 'Type your message after the command, for example /{name} why is the sky blue', { name }) };
         ask(`/${name} ${input}`);
         return { ok: true };

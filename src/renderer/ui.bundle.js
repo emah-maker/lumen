@@ -1842,6 +1842,7 @@ async function loadModels() {
     if (m.context) option.dataset.context = String(m.context);
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
+    if (m.auto) option.dataset.auto = '1'; // Auto, or a provider's own Auto: the model is chosen per message
     groups.get(m.group).append(option);
   }
   // A single group needs no heading.
@@ -1899,7 +1900,7 @@ $('model').addEventListener('change', async (e) => {
   select.title = select.selectedOptions[0].title;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = select.value === 'auto' ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
+  prompt.placeholder = select.selectedOptions[0].dataset.auto ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
@@ -8721,7 +8722,7 @@ $('agent-stop')?.addEventListener('click', () => {
       hint: tr('slash.auto.hint', 'Your message, then press Enter'),
       takesInput: false,
       run({ input, ask }) {
-        if (document.getElementById('model')?.value !== 'auto') return { ok: false, message: tr('slash.auto.needAuto', 'Pick Auto at the top of the model menu first: /think, /deep and /fast ask Auto for a model.') };
+        if (!document.getElementById('model')?.selectedOptions?.[0]?.dataset.auto) return { ok: false, message: tr('slash.auto.needAuto', 'Pick Auto in the model menu first (the top row, or the Auto row of a provider): /think, /deep and /fast ask Auto for a model.') };
         if (!input) return { ok: false, message: tr('slash.auto.needText', 'Type your message after the command, for example /{name} why is the sky blue', { name }) };
         ask(`/${name} ${input}`);
         return { ok: true };

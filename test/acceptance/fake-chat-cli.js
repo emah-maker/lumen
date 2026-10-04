@@ -38,7 +38,7 @@ function tokenOf() {
 if (role === 'agy') { require('./fake-agy-role').run({ argv, flag, LOG, DIR }); return; } // (a module of its own: see there)
 const token = tokenOf();
 const log = (entry) => fs.appendFileSync(LOG, `${JSON.stringify({ role, pid: process.pid, token, session, resume, t: Date.now(), ...entry })}\n`);
-log({ ev: 'start' });
+log({ ev: 'start', model: flag('--model') || flag('-m') || null }); // (the model the engine asked this process for: Auto's choice reaches the CLI as --model)
 
 let interrupted = null; // resolves the PARTIAL wait of the turn in progress (Claude's control_request interrupt)
 

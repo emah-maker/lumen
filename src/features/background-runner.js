@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const { WebContentsView, Notification, BrowserWindow } = require('electron');
 const { Agent, cliSystemPrompt } = require('../ai/agent');
 const { engineModel } = require('../ai/cli-utils');
+const autoModel = require('../ai/auto-model');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 const routines = require('./routines');
@@ -560,6 +561,13 @@ function create(deps) {
   async function runCli(rt, agent, prompt) {
     const { task } = rt;
     const kind = bg.engineOfModel(task.model);
+    // [auto model] The CLI's own Auto ('claudecode:auto'): this run goes to one of that CLI's models, chosen from the task's words.
+    let model = task.model;
+    if (autoModel.isAuto(model)) {
+      const d = deps.autoRoute?.({ request: { kind: 'agentic', prompt }, scope: autoModel.scopeOf(model), last: null });
+      if (!d?.id || bg.engineOfModel(d.id) !== kind) throw new Error(d?.reason || deps.t('tasks.error.noModel'));
+      model = d.id;
+    }
     const cli = await deps.cliEngine?.(kind);
     if (!cli) throw new Error(deps.t('tasks.error.cliMissing', { name: bg.CLI_ENGINES[kind] }));
     const controller = new AbortController();
@@ -574,18 +582,18 @@ function create(deps) {
         images: [],
         sessionId: crypto.randomUUID(),
         resume: false,
-        model: engineModel(task.model),
+        model: engineModel(model),
         maxTurns: bg.cliMaxTurns(deps.maxSteps?.(), rt.kind),
-        systemPrompt: cliSystemPrompt({ model: task.model, adhdMode: false }, kind, { background: true }),
+        systemPrompt: cliSystemPrompt({ model, adhdMode: false }, kind, { background: true }),
         signal: controller.signal,
         emit,
         runAgent: agent,
       }), agent.messages);
       rt.session = out.sessionId || null;
       if (out.text) rt.turnText = out.text;
-      const usage = bg.cliTaskUsage(task.usage, out, task.model);
+      const usage = bg.cliTaskUsage(task.usage, out, model);
       if (usage) { task.usage = usage; touch(task); }
-      if (out.usage) deps.reportUsage?.(kind, bg.cliUsageReport(out, engineModel(task.model)));
+      if (out.usage) deps.reportUsage?.(kind, bg.cliUsageReport(out, engineModel(model)));
       if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE });
       if (out.failed && !task.error && !rt.stopped) task.error = deps.t('tasks.error.cliFailed', { name: bg.CLI_ENGINES[kind] });
     } finally {

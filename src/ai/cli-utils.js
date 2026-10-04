@@ -28,8 +28,9 @@ function killTree(child) {
 }
 
 // The model part of a local engine's picker id: 'claudecode:opus' -> 'opus', 'grokbuild:default'
-// (or a bare 'claudecode:') -> 'default', meaning the CLI's own default (no model flag at all).
-const engineModel = (id) => String(id || '').split(':').slice(1).join(':') || 'default';
+// (or a bare 'claudecode:') -> 'default', meaning the CLI's own default (no model flag at all). So does the engine's own Auto
+// ('claudecode:auto'): until Auto has chosen a model for a message (agent.js routeAuto) nothing is picked, and never 'auto' as a model name.
+const engineModel = (id) => { const m = String(id || '').split(':').slice(1).join(':'); return !m || m === 'auto' ? 'default' : m; };
 // A model name that is safe to put after --model / -m: never empty, never starting with '-' (the
 // argv never goes through a shell, but a leading dash would still read as another flag).
 const validModel = (model) => /^[a-z0-9][\w.[\]-]*$/i.test(String(model || ''));

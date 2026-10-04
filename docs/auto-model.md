@@ -1,6 +1,6 @@
 # Auto model
 
-**Auto** is the first row of every model picker (the sidebar, the full-page chat, Settings and the skill and background-task pickers). Pick it and Lumen chooses the model for each message, instead of you pinning one. A model you pick yourself is always used exactly as picked.
+**Auto** is the first row of every model picker (the sidebar, the full-page chat, Settings and the skill and background-task pickers). Pick it and Lumen chooses the model for each message, instead of you pinning one. A model you pick yourself is always used exactly as picked. Each provider's group in the picker also has an **Auto** of its own that chooses only among that provider's models: see [Auto for one provider](#auto-for-one-provider).
 
 Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pure function: it makes no model call and no network request, reads no page, and logs nothing about what you wrote. It sees only the shape of a request (how long the message is, whether it holds images, which words it uses, how long the chat is) and the list of models you have connected.
 
@@ -50,23 +50,50 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
   Nothing runs twice: only the failed request is asked again, with the whole history, so tools that already ran are not run again.
 - **Fallback.** A usage limit or an outage is handled by [model fallback](settings.md#ai-and-agents) as before (the failed model is left alone for a while and the turn goes on another). On Auto, the next message is routed afresh and the model that was limited is skipped until its reset.
 
+## Auto for one provider
+
+Each provider's group in a model picker (Claude Code, Grok Build, Antigravity, and Claude, OpenAI, Grok, Gemini and OpenRouter) starts with its own **Auto** row. It is the same router with its choice limited to that provider's models, so you can say "use OpenAI, but pick the model for me".
+
+| Provider | Id | Chooses among |
+|---|---|---|
+| Claude Code | `claudecode:auto` | Haiku, Sonnet, Opus and Fable (passed as `claude --model <alias>`). Its own **Claude Code** row (no model chosen) keeps working as before. |
+| Grok Build | `grokbuild:auto` | the models `grok models` lists (passed as `grok --model <id>`) |
+| Antigravity | `antigravity:auto` | the slugs `agy models` lists (passed as `agy --model <slug>`) |
+| Claude (API) | `anthropic:auto` | the Claude models of the API key |
+| OpenAI | `openai:auto` | the OpenAI models listed for the key (for example GPT-5.6 and GPT-5.6 mini) |
+| Grok (xAI) | `xai:auto` | the Grok API models listed for the key |
+| Gemini | `gemini:auto` | the Gemini models listed for the key (for example Pro and Flash) |
+| OpenRouter | `openrouter:auto` | the OpenRouter models in the short list and your recent picks (not "More models…" and not OpenRouter's own router) |
+
+Codex is not a chat engine (see above), so it has none.
+
+- **How it works.** The pick is saved with the chat and in Settings as `<provider>:auto`, exactly like `auto`; the chat's pick stays that Auto and each message is routed again among that provider's models, with the same rules (tiers, what the message needs, escalation). The model that answers is always concrete: the CLIs and APIs never receive "auto", and the usage log, context bar, history labels ("Grok Build:") and the AI status card name the real model.
+- **The reply.** Labelled like the main Auto (**Auto · OpenAI · GPT-5.6 mini**); the tooltip names the provider and the reason ("Auto (OpenAI): GPT-5.6 mini for a quick question"). The provider's row in the picker says what it chose last in the open chat.
+- **/think, /deep, /fast.** They work with any Auto row selected and pick that provider's strongest or quickest model for that message.
+- **Out of usage.** Models of the provider that are cooling down after a limit or outage, or refused for your plan, are skipped. If none is left, it behaves like a model you picked that ran out: with **Switch models automatically** on, the same vendor's other route answers first (Grok Build then the Grok API, Claude Code then the Claude API, Antigravity then Gemini), then any connected model, and the chat says "OpenAI is unavailable right now, so Auto uses …". The next message tries the provider again. With the setting off the message fails with "Auto: no OpenAI model is available right now".
+- **One model.** A provider that has only one model to choose between (for example only Grok 4 on the xAI key, or a CLI that lists no models) has no Auto row: there is nothing to choose. If a chat is already on it, the row stays and uses the one model (a CLI that lists nothing is left to choose its own default, no `--model`).
+- **Auto may use** (Settings → AI). A provider you turned off there is left out of the main Auto, but its own Auto still uses it (you picked it by name). A single model turned off for Auto (`autoExclude` holds its id) is skipped by both.
+- **Warm processes.** A kept Claude Code process is tied to the model it was started with (and the chat's session): when Auto picks another model for the next message a new process starts with that `--model` and the old one ends, so a process is never used for a different model. A kept Grok Build process is set to the model of each message (and a new Grok session starts when the model changes, as it does when you change the model by hand). A chat that has not been routed yet warms its CLI with no model (Claude Code: with its own guess from the first words).
+- **Background tasks and routines.** The task and routine model lists show each provider's Auto too (API providers, Claude Code and Grok Build; Antigravity has no background tasks). Each run is routed among that provider's models when it starts; a Claude Code or Grok Build run never leaves its CLI.
+
 ## Settings
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|
 | Model | `model` | `auto` on a fresh profile with more than one model connected | The picker's first row is **Auto**. A saved choice is never changed: profiles that already chose a model keep it. A profile with **no** saved choice at all (a new install) starts on Auto once two or more models are connected; with one model it starts on that one, as before. A saved model that has disappeared (a key removed) falls back as before, not to Auto. |
-| Auto may use | `autoExclude` | `[]` | Providers (or single models) Auto never chooses: ids such as `openai`, `claudecode`, `claude-opus-5`. Settings → AI lists a tick per connected provider. |
+| Auto may use | `autoExclude` | `[]` | Providers (or single models) Auto never chooses: ids such as `openai`, `claudecode`, `claude-opus-5`. Settings → AI lists a tick per connected provider. A provider that is ticked off is left out of the main Auto but still used by its own Auto; a single model listed here is skipped by both. |
 | (internal) | `autoHome` | none | The model you were on when you chose Auto; its provider is preferred when two would do. |
 
-The per-chat pick is kept in the chat's settings: `autoFrom: 'auto'` while Auto is the pick (the concrete model of the last message is in `model`, and the label and reason in `autoLast`).
+The per-chat pick is kept in the chat's settings: `autoFrom: 'auto'` (or the provider's own, `'openai:auto'`) while Auto is the pick (the concrete model of the last message is in `model`, and the label and reason in `autoLast`).
 
 ## Where it lives in the code
 
-- `src/ai/auto-model.js`: tiers (`tierOf`), the request's needs (`needFor`), candidate filtering (`candidatesOf`), the choice (`route`), escalation (`escalate`, `failureOf`), the refused-model memory (`createDenied`), `/think` hints (`hintOf`) and the picker row (`pickerEntry`). Pure; tested by `test/auto-model-units.js`.
+- `src/ai/auto-model.js`: tiers (`tierOf`), the request's needs (`needFor`), candidate filtering (`candidatesOf`), the choice (`route`), escalation (`escalate`, `failureOf`), the refused-model memory (`createDenied`), `/think` hints (`hintOf`) and the picker row (`pickerEntry`). Provider Auto: the ids (`scopeOf`, `isAuto`, `autoIdOf`), `route`'s `scope`, the provider's rows (`withProviderAutos`, `routableOf`) and the fallback when the provider has nothing left (`routeOrFallBack`). Pure; tested by `test/auto-model-units.js` and `test/auto-provider-units.js`.
+- `src/ai/cli-utils.js` (`engineModel`): `claudecode:auto` and the like read as "no model" until Auto has chosen, so a CLI is never asked for a model named "auto".
 - `src/ai/agent.js` ("[auto model]"): `routeAuto` at the start of each turn, `escalateFor` in the model loop and the CLI-engine path, and the restore of the pick at the start of the next turn (`autoFrom`).
-- `src/main.js` ("[auto model]"): `autoRoute`, `autoEscalate`, `pickerOptions` (Auto first, no heading), `effectiveModel` (the default rule), `autoConcrete` (one-shot jobs), `autoProviderList` (Settings).
-- `src/features/background-runner.js` and `background-agents.js`: Auto for background tasks (API models only).
-- Tests: `auto-model-units` (router), `auto-engines-units` (what each CLI and provider receives), `auto-agent-units` (the turn, restore, escalation, fallback), `auto-model` (the real app: pickers, persistence, labels, hints).
+- `src/main.js` ("[auto model]"): `autoRoute`, `autoEscalate`, `pickerOptions` (Auto first, no heading, then each provider's own Auto leading its group), `effectiveModel` (the default rule), `autoConcrete` (one-shot jobs), `autoProviderList` (Settings).
+- `src/features/background-runner.js` and `background-agents.js`: Auto for background tasks (the main Auto: API models only; a provider's own Auto, including Claude Code's and Grok Build's, `runCli`).
+- Tests: `auto-model-units` (router), `auto-engines-units` (what each CLI and provider receives), `auto-agent-units` (the turn, restore, escalation, fallback), `auto-provider-units` (provider Auto: ids, router per provider, picker rows, the turn, warm specs, background list), `grok-warm-units` (a kept Grok process and a changed model), `test/acceptance/chat-auto-provider.js` (real Agent and engines with fake CLIs: `--model`, warm Claude Code processes), `auto-model` (the real app: pickers, persistence, labels, hints, provider Auto).
 
 ## Limits
 
