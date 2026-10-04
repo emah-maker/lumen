@@ -17,7 +17,7 @@ const genImages = require('../features/gen-images'); // pictures the AI made or 
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
-const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
+const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
@@ -645,6 +645,12 @@ function withoutImages(messages) {
 const isContextError = (err) => /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length/i.test(String(err?.message || ''));
 
 // settings = { model, adhdMode }; adhdMode is fixed per conversation, the model can change.
+// Once the chat has passed the API's own context-management trigger (loop(): messages.pageStub), the pages
+// attached to earlier messages are stubbed (loop-guard.js stubOldPages). Not before: a request that
+// changed an old message would break the prompt cache on every normal turn. Sticky once set, so the
+// stubbed prefix is the same on every later request and caches again at once.
+const pagesFor = (messages) => (messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
+
 function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
   const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -660,7 +666,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
     tools: cacheLastTool(cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS),
-    messages: historyFor(fitContext(messages, budget), model),
+    messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
   if (cfg.effort) params.output_config = { effort: cfg.effort };
@@ -1185,6 +1191,8 @@ class Agent {
 
   // The tab this task works in: its pinned tab, or the active tab outside a task (or before a task
   // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
+  taskTabUrl() { try { return this.taskTab()?.webContents.getURL() || ''; } catch { return ''; } }
+
   taskTab() {
     const scope = taskScope.getStore();
     // [chat per tab] A run acts on the tab it is bound to, never on whichever one is in front; only a run
@@ -2540,7 +2548,7 @@ ${prompt}` : prompt), historyImages: [] };
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
-      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
+      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
@@ -2553,6 +2561,7 @@ ${prompt}` : prompt), historyImages: [] };
     const repeats = new RepeatDetector(); // a run of the same failing call gets a "change strategy" note
     let budgetScale = 1; // halved once if the model still says the request is too long (see fitContext)
     const budget = new RunBudget({ limit: stepLimit(this.browser.maxSteps?.()) }); // the user's step limit (0: unlimited), run_script count, notes (loop-guard.js)
+    const calls = new ToolCallCache(); // an identical read repeated with nothing done in between gets one line back (loop-guard.js)
     let wrap = null; // 'limit' | 'stalled': the next turn has tools off and must answer in text
 
     for (let step = 0; step < budget.max; step++) {
@@ -2622,6 +2631,9 @@ ${prompt}` : prompt), historyImages: [] };
       }
 
       recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+      calls.nextTurn();
+      if (message.usage && contextTokensOf(message.usage) >= CONTEXT_TRIGGER_TOKENS) messages.pageStub = true; // past the 60k trigger: older attached pages get stubbed (in batches, advancePageStub)
+      if (messages.pageStub) advancePageStub(messages);
       if (message.usage) recordContext(messages, { tokens: contextTokensOf(message.usage), window: fallback.capsOf(model, this.fallbackOptionsList()).context, model }, emit); // [context]
 
       for (const block of message.content) {
@@ -2685,7 +2697,7 @@ ${prompt}` : prompt), historyImages: [] };
           if (problem) throw Object.assign(new Error(problem), { invalid: true });
           await this.ensureAllowed(use.name, emit, signal, { input: use.input, who });
         },
-        exec: (use) => abortable(this.execute(use.name, use.input), signal),
+        exec: (use) => abortable(calls.run(use, this.taskTabUrl(), () => this.execute(use.name, use.input)), signal),
         halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
         onOutcome: (use, o) => {
           if (o.skipped) return;

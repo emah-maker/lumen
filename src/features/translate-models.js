@@ -154,6 +154,7 @@ function createModelStore({
   let indexAt = 0;
   let loading = null;
   const jobs = new Map(); // pair key -> { promise, controller, listeners, holders }
+  let tmpSeq = 0;
   const activeTmp = new Set(); // download folders in use right now (the sweep leaves these alone)
 
   const pairDir = (from, to) => path.join(dir, `${from}-${to}`);
@@ -161,6 +162,15 @@ function createModelStore({
   const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
   const cachePath = path.join(dir, 'registry.json');
   const rmDir = (target) => fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  // Windows: a scanner or indexer may hold the just-written folder for a moment, so the rename fails with EPERM/EBUSY/EACCES; it clears within a few tries.
+  const renameRetrying = (from, to) => {
+    for (let attempt = 0; ; attempt++) {
+      try { return fs.renameSync(from, to); } catch (err) {
+        if (attempt >= 8 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (attempt + 1));
+      }
+    }
+  };
 
   // Leftovers of downloads that were interrupted (a crash, or a file Windows still held): <pair>.part-*.
   function sweepStale() {
@@ -323,7 +333,7 @@ function createModelStore({
         throw fail(`Not enough free disk space: ${formatBytes(need)} needed, ${formatBytes(free)} free.`, 'ENOSPC');
       }
       const final = pairDir(from, to);
-      const tmp = `${final}.part-${process.pid}-${now()}`;
+      const tmp = `${final}.part-${process.pid}-${now()}-${++tmpSeq}`; // (unique per download: a clock tick or a fake clock must never make two jobs share, or delete, one folder)
       activeTmp.add(tmp);
       const total = entry.bytes;
       const got = new Map();
@@ -343,7 +353,7 @@ function createModelStore({
         const manifest = { from, to, version: entry.version, installedAt: now(), files: entry.files.map(({ type, name, hash, size }) => ({ type, name, hash, size })) };
         fs.writeFileSync(path.join(tmp, 'manifest.json'), JSON.stringify(manifest));
         rmDir(final);
-        fs.renameSync(tmp, final);
+        renameRetrying(tmp, final);
         return manifest;
       } catch (err) {
         try { rmDir(tmp); } catch { /* the sweep takes it later; the real error is what matters */ }

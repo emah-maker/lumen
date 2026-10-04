@@ -1034,7 +1034,7 @@ function renderStreaming(el, source) {
 // left in the DOM; each frame replaces only the nodes after them and parses only the tail text.
 function drawTail(el) {
   const source = el.source;
-  const stable = window.markdownStableLength(source);
+  const stable = window.markdownStableLength(source, el.stableMemo || (el.stableMemo = {})); // (resumes where the last frame stopped)
   const done = el.stableLen || 0;
   if (el.headNodes === undefined || stable < done) { el.innerHTML = ''; el.headNodes = 0; el.stableLen = 0; }
   while (el.childNodes.length > el.headNodes) el.lastChild.remove();
