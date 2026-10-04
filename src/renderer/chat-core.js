@@ -1087,6 +1087,7 @@ function endStream() {
   if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
+let earlyEnded = null; // { runId, bubble }: the run whose reply ended on reply_complete, until its 'done' (lateDone)
 let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
@@ -1094,6 +1095,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+  if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1248,30 +1250,56 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'reply_complete': // the engine's reply is whole; its 'done' (cost, undo, label) follows a moment later
+      finishTurn(event, { early: true });
+      break;
     case 'done':
-      settleThinking();
-      finishReply(turn.text, turn.textSource, { latest: true });
-      // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
-      if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
-        const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
-        row.append(regenButton());
-        turn.working.before(row);
-      }
-      if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
-      labelReply(turn.text, event.model, event.auto || turn.auto);
-      scrollToBottom(); // (the reply's copy button and label were added below its end)
-      endStream();
-      for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
-      turn.working.remove();
-      if (event.undo) window.showRunUndo?.(append, event.undo); // [ai controls] extras.js
-      aiTabsRunId = event.runId;
-      if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
-      turn = null;
-      setRunning(false);
-      setTimeout(sendQueued);
+      finishTurn(event, { early: false });
       break;
   }
 });
+
+// The end of the running reply's view: the text finished, the working line gone, the composer free, the next queued
+// message sent. `early`: a Claude Code reply whose text is complete while its process still sends its last line
+// (reply_complete); the run's own 'done' then only adds what it carries (late 'done' in onEvent).
+function finishTurn(event, { early }) {
+  settleThinking();
+  finishReply(turn.text, turn.textSource, { latest: true });
+  // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
+  if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+    const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
+    row.append(regenButton());
+    turn.working.before(row);
+  }
+  if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
+  labelReply(turn.text, event.model, event.auto || turn.auto);
+  scrollToBottom(); // (the reply's copy button and label were added below its end)
+  endStream();
+  for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
+  turn.working.remove();
+  if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
+  else {
+    if (event.undo) window.showRunUndo?.(append, event.undo); // [ai controls] extras.js
+    aiTabsRunId = event.runId;
+    if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
+  }
+  turn = null;
+  setRunning(false);
+  setTimeout(sendQueued);
+}
+
+// The 'done' of a run whose reply ended early (reply_complete): the model label, Undo and the opened-tabs row. A message sent
+// in between has its own turn on screen by now: the label still goes on the earlier reply, but its Undo / tabs row is left out
+// (it would land under the new message), as the chat history keeps what the run did.
+function lateDone(event) {
+  const { bubble } = earlyEnded;
+  earlyEnded = null;
+  labelReply(bubble, event.model, event.auto);
+  if (turn) return;
+  if (event.undo) window.showRunUndo?.(append, event.undo);
+  aiTabsRunId = event.runId;
+  if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId);
+}
 
 // While a reply streams, hold back a trailing link that hasn't finished arriving
 // ("[text](https://…" with no closing parenthesis yet), so raw markdown never flashes.

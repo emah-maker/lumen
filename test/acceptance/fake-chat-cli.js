@@ -76,6 +76,12 @@ async function answer(prompt) {
   const text = `reply from ${marker}`;
   say(text);
   out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  // Claude Code: the model call ends its turn here, and `result` follows a moment later (the real one takes 0.8-1.1 s): Lumen shows the reply as
+  // complete at the end_turn (reply_complete) and finishes its run at the result. FAKE_RESULT_GAP_MS sets the moment (default 120).
+  if (role === 'claude') {
+    out({ type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } } });
+    await sleep(Number(process.env.FAKE_RESULT_GAP_MS ?? 120));
+  }
   out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   log({ ev: 'reply', marker });
 }
