@@ -40,7 +40,8 @@ if (role === 'agy') { require('./fake-agy-role').run({ argv, flag, LOG, DIR }); 
 if (role === 'codex') { require('./fake-codex-role').run({ argv, flag, LOG, DIR }); return; } // (so is Codex)
 const token = tokenOf();
 const log = (entry) => fs.appendFileSync(LOG, `${JSON.stringify({ role, pid: process.pid, token, session, resume, t: Date.now(), ...entry })}\n`);
-log({ ev: 'start', model: flag('--model') || flag('-m') || null }); // (the model the engine asked this process for: Auto's choice reaches the CLI as --model)
+let current = flag('--model') || flag('-m') || null; // (Claude Code can be switched to another model by a set_model control request)
+log({ ev: 'start', model: current }); // (the model the engine asked this process for: Auto's choice reaches the CLI as --model, or later as set_model)
 
 let interrupted = null; // resolves the PARTIAL wait of the turn in progress (Claude's control_request interrupt)
 
@@ -49,7 +50,7 @@ async function answer(prompt) {
   // partial reply carried over, and their directives must not apply again.
   const all = [...prompt.matchAll(/RUN-[A-Za-z0-9]+/g)];
   const marker = all.length ? all[all.length - 1][0] : 'RUN-NONE';
-  log({ ev: 'msg', marker, prompt });
+  log({ ev: 'msg', marker, prompt, model: current });
   prompt = all.length ? prompt.slice(all[all.length - 1].index) : prompt;
   out({ type: 'system', subtype: 'init', session_id: session, model: 'fake-model', mcp_servers: [{ name: 'lumen', status: 'connected' }] });
   const hold = /HOLD-([A-Za-z0-9]+)/.exec(prompt)?.[1];
@@ -103,6 +104,12 @@ if (role === 'grok') {
       if (!line) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.type === 'control_request' && msg.request?.subtype === 'set_model') {
+        current = msg.request.model || current;
+        log({ ev: 'set_model', model: current });
+        out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id } });
+        continue;
+      }
       if (msg.type === 'control_request' && msg.request?.subtype === 'interrupt') {
         out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id } });
         if (interrupted) { const r = interrupted; interrupted = null; r(); }

@@ -322,6 +322,41 @@ async function engineRuns() {
   await sleep(30);
   check('turn cap: prestart false starts no process for the next message', cli.spawned.length === noPreBefore + 1, String(cli.spawned.length - noPreBefore));
   noPre.dispose();
+  // [model switch] Auto routing picks the model after the composer-focus warm-up guessed one: the warm process is switched in place
+  // (a set_model control request), not replaced; anything else differing still starts another process.
+  const ms = make();
+  const msBefore = cli.spawned.length;
+  ms.warm({ sessionId: 'sess-ms', resume: false, systemPrompt: 'SYS', model: 'sonnet', maxTurns: 0 }, { speculative: true });
+  await sleep(20);
+  const msRec = cli.spawned[cli.spawned.length - 1];
+  const rms1 = await ms.run(opts({ sessionId: 'sess-ms', model: 'haiku', prompt: 'm1' }));
+  check('model switch: a warm process for another model takes the message, switched with set_model (no second spawn)', cli.spawned.length === msBefore + 1 && rms1.text === 'reply 1: m1' && msRec.controls.length === 1 && msRec.controls[0].request.subtype === 'set_model' && msRec.controls[0].request.model === 'haiku' && flag(msRec.argv, '--model') === 'sonnet', JSON.stringify({ spawned: cli.spawned.length - msBefore, controls: msRec.controls }));
+  check('model switch: the set_model request and the message both reach the same CLI', msRec.lines.length === 1 && msRec.controls.length === 1, '');
+  await ms.run(opts({ sessionId: 'sess-ms', resume: true, model: 'haiku', prompt: 'm2' }));
+  check('model switch: the next message on the same model needs no switch and no spawn', cli.spawned.length === msBefore + 1 && msRec.controls.length === 1 && msRec.lines.length === 2, String(msRec.controls.length));
+  await ms.run(opts({ sessionId: 'sess-ms', resume: true, model: 'opus', prompt: 'm3' }));
+  check('model switch: a harder message later switches the kept process up in place too', cli.spawned.length === msBefore + 1 && msRec.controls.length === 2 && msRec.controls[1].request.model === 'opus' && ms.warmModel() === 'opus', JSON.stringify(msRec.controls.map((c) => c.request.model)));
+  await ms.run(opts({ sessionId: 'sess-ms', resume: true, model: 'default', prompt: 'm4' }));
+  check('model switch: "default" (no --model) cannot be switched to: a new process', cli.spawned.length === msBefore + 2, String(cli.spawned.length - msBefore));
+  ms.dispose();
+  const ms2 = make();
+  const ms2Before = cli.spawned.length;
+  ms2.warm({ sessionId: 'sess-ms2', resume: false, systemPrompt: 'SYS', model: 'sonnet', maxTurns: 0 });
+  await sleep(20);
+  await ms2.run(opts({ sessionId: 'sess-ms2', model: 'haiku', systemPrompt: 'OTHER' }));
+  check('model switch: a different system prompt (or any other key part) still replaces the process', cli.spawned.length === ms2Before + 2 && cli.spawned[ms2Before].killed, String(cli.spawned.length - ms2Before));
+  ms2.dispose();
+  const ms3 = make();
+  const ms3Before = cli.spawned.length;
+  await ms3.run(opts({ sessionId: 'sess-ms3', maxTurns: 30, model: 'sonnet', prestart: true }));
+  await sleep(30);
+  await ms3.run(opts({ sessionId: 'sess-ms3', resume: true, maxTurns: 30, model: 'haiku', prompt: 'next' }));
+  const ms3Recs = cli.spawned.slice(ms3Before);
+  check('model switch: the pre-started process takes a next message on another model by switching', ms3Recs.length === 2 && ms3Recs[1].controls.length === 1 && ms3Recs[1].controls[0].request.model === 'haiku' && ms3Recs[1].lines.length === 1, JSON.stringify(ms3Recs.map((r) => r.controls.length)));
+  await sleep(30);
+  ms3.dispose();
+  const keyA = cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'sonnet' });
+  check('modelOnlyDiff: true only for a model-only difference to a named model', cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'haiku' })) === true && cc.modelOnlyDiff(keyA, keyA) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'default' })) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's2', systemPrompt: 'p', model: 'haiku' })) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'haiku', effort: 'high' })) === false && cc.modelOnlyDiff(keyA, '{') === false, '');
   // The read cache is reset for a process only when a message takes it, never for one that is merely warm.
   let freshCalls = 0;
   const fr = make({ onFresh: () => { freshCalls++; } });

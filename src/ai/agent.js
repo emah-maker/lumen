@@ -1659,7 +1659,7 @@ class Agent {
     if (ccPlan) this.engineFor('claudecode').warm?.(ccPlan.spawn); // (an engine made for one message keeps no process: warm() does nothing there)
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild) this.engineFor('grokbuild').prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
-    if (viaAntigravity) this.engineFor('antigravity').prepare?.().catch?.(() => {});
+    if (viaAntigravity) this.engineFor('antigravity').prepare?.({ scope: taskScope.getStore(), sessionId: messages.settings.agySession || null, fullAccess: this.browser.antigravityFullAccess?.() === true }).catch?.(() => {}); // (the chat's home and the files in it, while the page is read)
     if (viaCodex) this.engineFor('codex').prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
@@ -1964,7 +1964,11 @@ class Agent {
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    // [model switch] A model that routing or Auto picks per message is not named in the system prompt: the warm-up (prewarm)
+    // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
+    // which would leave a stale name in a prompt that is fixed at spawn. A model the user picked is still named.
+    const autoChosen = routed.auto || Boolean(settings.autoFrom);
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2067,8 +2071,8 @@ class Agent {
       quietExpired: true,
       signal,
       emit,
-      // A capped chat's next process starts only when the next message can't want another model: a picked one, or the top tier.
-      prestart: !routed.auto || routed.tier === 'heavy',
+      // A capped chat's next process starts at once: whatever model the next message gets (Auto, routing) is switched in place ([model switch]).
+      prestart: true,
       // Stop: the interrupted turn's usage arrives after this message returned (claude-code.js interrupt).
       lateUsage: onLateUsage,
     });
