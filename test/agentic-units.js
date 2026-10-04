@@ -357,6 +357,21 @@ async function engineRuns() {
   ms3.dispose();
   const keyA = cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'sonnet' });
   check('modelOnlyDiff: true only for a model-only difference to a named model', cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'haiku' })) === true && cc.modelOnlyDiff(keyA, keyA) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'default' })) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's2', systemPrompt: 'p', model: 'haiku' })) === false && cc.modelOnlyDiff(keyA, cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'haiku', effort: 'high' })) === false && cc.modelOnlyDiff(keyA, '{') === false, '');
+  // [full access] The first turn must not wait out the user's slow MCP servers (CLAUDE_CODE_MCP_STARTUP_WAIT_MS), unless the user set it.
+  {
+    const envOf = async (extra, saved) => {
+      const old = process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS;
+      if (saved === undefined) delete process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS; else process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS = saved;
+      const e = make();
+      const before = cli.spawned.length;
+      await e.run(opts({ sessionId: `sess-env-${before}`, ...extra }));
+      e.dispose();
+      if (old === undefined) delete process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS; else process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS = old;
+      return cli.spawned[before].opts.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS;
+    };
+    check('mcp startup wait: full access caps the first turn\'s wait for the user\'s own MCP servers', await envOf({ fullAccess: true }) === String(cc.MCP_STARTUP_WAIT_MS), '');
+    check('mcp startup wait: not under --strict-mcp-config (Lumen\'s server is the only one), and a value of the user\'s own is kept', await envOf({}) === undefined && await envOf({ fullAccess: true }, '9000') === '9000', '');
+  }
   // The read cache is reset for a process only when a message takes it, never for one that is merely warm.
   let freshCalls = 0;
   const fr = make({ onFresh: () => { freshCalls++; } });
