@@ -2111,13 +2111,14 @@ class Agent {
   }
 
   // [keep connected] What the open chat's next Grok Build message will need from its kept process (features/grok-warm.js
-  // prewarm): its Grok session (null: a new chat), system prompt and model. null when the chat isn't on Grok Build, gets
-  // full access (always a one-off process), or a reply is running.
+  // prewarm): its Grok session (null: a new chat), system prompt and model. null when the chat isn't on Grok Build
+  // or a reply is running. fullAccess and effort pick the kind of process (grok-warm.js modeOf).
   grokWarmSpec() {
     const settings = this.messages?.settings;
-    if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running || this.browser.grokBuildFullAccess?.() === true) return null;
+    if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running) return null;
     const session = settings.gbSession && (settings.gbModel || 'grokbuild:default') === settings.model ? settings.gbSession : null;
-    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, false), model: engineModel(settings.model) };
+    const fullAccess = this.browser.grokBuildFullAccess?.() === true;
+    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, fullAccess), model: engineModel(settings.model), fullAccess, effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')) };
   }
 
   // ---- [grok build engine] One message through the user's Grok Build CLI. The session id lives in

@@ -34,9 +34,16 @@
 //    rejects everything else; an unreadable request is rejected.
 //  - Lumen's stream check: a tool that isn't Lumen's and is reported running or completed (not merely attempted and
 //    refused) kills the process and fails the message, as toolWatch does for a headless run.
-//  - Never for full access or background tasks (grok-build.js keeps those headless), and never with --always-approve.
+//  - Never for background tasks (grok-build.js keeps those headless), and never with --always-approve while locked down.
+// FULL ACCESS (grok-build.js's header) is served too, by a process of its own kind: no agent profile (nothing removed),
+// --always-approve, the config.toml without the deny rules, the user's whole environment and home folder as the working
+// folder, no stream check, the longer watchdog; Lumen's gate (a fullAccess run: Grok's own tools through, `lumen__*` names
+// checked, UserPromptSubmit still required) is what it is headless. A chosen reasoning effort is a flag of the process
+// (--reasoning-effort). Access and effort are the process's `mode` (modeOf): a process is only ever used for its own mode,
+// so a locked-down process never answers a full-access message nor the other way round; a chat whose mode changed has its
+// idle process ended and its session resumed in a new one.
 // Not covered, so these messages go through a headless run instead: images (`grok agent` says promptCapabilities.image is
-// false), full access.
+// false).
 //
 // PARALLEL CHATS (parallel CLI chats): each kept process has its own run tag and MCP token (gate.open), and is itself
 // the owner of that tag (owner(tag), features/ai-agents.js engineForSession) for its whole life, as a warm Claude Code
@@ -48,7 +55,9 @@
 // every other copy-back).
 
 const crypto = require('crypto');
+const os = require('os');
 const path = require('path');
+const effortLib = require('../ai/effort');
 
 const IDLE_MS = 15 * 60 * 1000;
 const SPARE_IDLE_MS = 3 * 60 * 1000; // a process started ahead of a message nobody sent yet
@@ -60,6 +69,10 @@ const QUIT_GRACE_MS = 3000; // stdin closed: time to flush its session before th
 const PROFILE_FILE = 'lumen-sidebar-agent.md';
 const EXTRA_ENV = { GROK_SUBAGENTS: '0', GROK_WORKFLOWS: '0', GROK_WEB_FETCH: '0', GROK_MEMORY: '0' };
 const USD_TICKS = 1e10; // xAI's cost unit (costUsdTicks)
+
+// What a kept process is started for besides the chat's system prompt: access and reasoning effort (both are fixed when
+// the process starts). effort: one of effort.js's levels for Grok Build, '' for Grok's own default.
+const modeOf = (fullAccess, effort) => `${fullAccess === true ? 'full' : 'locked'}${effort ? `:${effort}` : ''}`;
 
 // The agent profile: Lumen's lockdown as `grok agent` takes it (see ISOLATION). The system prompt itself is Lumen's own,
 // sent per process (initialize) and per session (session/new), as headless's --system-prompt-override.
@@ -132,12 +145,13 @@ const toolInput = (tc) => (tc?.rawInput && typeof tc.rawInput === 'object' ? tc.
 // Lumen's answer to session/request_permission: allow once for Lumen's own tools (gb.isLumenTool: lumen__*, search_tool,
 // use_tool naming a lumen__ tool, run_terminal_command, which Lumen's gate has already put to the user), reject anything
 // else. `known`: toolCallId -> { name, input } from the turn's tool_call updates, for a request that names only the id.
-function permissionAnswer(gb, params, known = new Map()) {
+// fullAccess: every request is allowed once (Grok's own tools are the user's to run; Lumen's gate has already ruled).
+function permissionAnswer(gb, params, known = new Map(), fullAccess = false) {
   const tc = params?.toolCall || {};
   const seen = known.get(tc.toolCallId) || {};
   const name = toolName(tc) || seen.name || '';
   const input = toolInput(tc) || seen.input || null;
-  const ok = Boolean(name) && gb.isLumenTool(name, input, true);
+  const ok = fullAccess || (Boolean(name) && gb.isLumenTool(name, input, true));
   const options = Array.isArray(params?.options) ? params.options : [];
   const pick = options.find((o) => (ok ? o?.kind === 'allow_once' : /^reject/.test(String(o?.kind || ''))));
   return { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } };
@@ -200,17 +214,18 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   }
 
   // A new kept process with its session: resumed (sessionId) or new. Resolves the process, or throws (nothing sent).
-  async function start({ systemPrompt, sessionId = null, model = 'default', spare = false }, slot = {}) {
-    const prepared = await engine.prepare({ fullAccess: false }); // the locked-down config.toml (never the full-access one)
+  async function start({ systemPrompt, sessionId = null, model = 'default', spare = false, fullAccess = false, effort = '' }, slot = {}) {
+    const prepared = await engine.prepare({ fullAccess }); // the locked-down config.toml, unless this process is for full access
     engine.prep = null;
     if (!prepared?.bin) throw new Error('not installed');
     const { bin, gate } = prepared;
     // [sign-in lock] From its link on, this process counts as a run in Lumen's GROK_HOME until it ends (see the header).
     const authHold = gb.holdAuth(gb.userGrokHome(), engine.home);
     const profile = path.join(engine.home, PROFILE_FILE);
-    try { await gb.writeIfChanged(profile, agentProfile(gb), 0o600); } catch (err) { authHold(); throw err; }
+    const cwd = fullAccess ? os.homedir() : engine.dir; // [full access] the home folder, as in a terminal
+    if (!fullAccess) { try { await gb.writeIfChanged(profile, agentProfile(gb), 0o600); } catch (err) { authHold(); throw err; } }
     const tag = crypto.randomBytes(18).toString('hex');
-    const p = { tag, gate, key: systemPrompt, sessionId: null, model: null, defaultModel: null, spare, authHold, busy: false, turns: 0, exited: false, disposed: false, idle: null, used: ++used, stderr: '', onUpdate: null, known: new Map(), child: null, rpc: null, owner: null };
+    const p = { tag, gate, key: systemPrompt, mode: modeOf(fullAccess, effort), full: fullAccess, sessionId: null, model: null, defaultModel: null, spare, authHold, busy: false, turns: 0, exited: false, disposed: false, idle: null, used: ++used, stderr: '', onUpdate: null, known: new Map(), child: null, rpc: null, owner: null };
     // The owner of this process's MCP tag (features/ai-agents.js engineForSession / onTerminalApproval): its `active` is
     // the turn in progress (with that message's own task scope), null between turns.
     p.owner = {
@@ -223,10 +238,12 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     };
     slot.proc = p; // (disposeAll can end a start in flight)
     if (slot.cancelled) { releaseAuth(p); throw new Error('cancelled'); }
-    const gateRun = gate.open(tag, sessionId);
+    const gateRun = gate.open(tag, sessionId, { fullAccess });
     try {
-      const env = { ...gb.buildEnv({ userData: engine.userData, run: gateRun, home: engine.home, dir: engine.dir }), ...EXTRA_ENV };
-      p.child = engine.spawn(bin, ['agent', '--agent-profile', profile, 'stdio'], { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: engine.dir });
+      // (full access: the user's own environment, and none of the feature switches that keep a locked-down run small)
+      const env = fullAccess ? gb.buildEnv({ userData: engine.userData, run: gateRun, home: engine.home, dir: engine.dir, fullAccess }) : { ...gb.buildEnv({ userData: engine.userData, run: gateRun, home: engine.home, dir: engine.dir }), ...EXTRA_ENV };
+      const argv = ['agent', ...(fullAccess ? ['--always-approve'] : ['--agent-profile', profile]), ...effortLib.cliArgs('grokbuild', effort), 'stdio'];
+      p.child = engine.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd });
       stats.spawned++;
       if (p.disposed) throw new Error('cancelled');
       p.child.stderr?.setEncoding?.('utf8');
@@ -239,15 +256,15 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       p.rpc = rpcOver(p.child, {
         onNotify: (method, params) => { if (method === 'session/update' && params?.sessionId === p.sessionId) p.onUpdate?.(params.update || {}); },
         onRequest: (method, params) => {
-          if (method === 'session/request_permission') return permissionAnswer(gb, params, p.known);
+          if (method === 'session/request_permission') return permissionAnswer(gb, params, p.known, fullAccess);
           throw new Error('unsupported'); // no fs / terminal capability is offered
         },
       });
       const fail = (r, what) => { if (r?.error) throw new Error(`${what}: ${r.error.message || 'failed'}`); return r.result || {}; };
       fail(await p.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'initialize');
       const created = sessionId
-        ? fail(await p.rpc.request('session/resume', { sessionId, cwd: engine.dir, mcpServers: [] }, startTimeoutMs), 'session/resume')
-        : fail(await p.rpc.request('session/new', { cwd: engine.dir, mcpServers: [], _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'session/new');
+        ? fail(await p.rpc.request('session/resume', { sessionId, cwd, mcpServers: [] }, startTimeoutMs), 'session/resume')
+        : fail(await p.rpc.request('session/new', { cwd, mcpServers: [], _meta: { systemPromptOverride: systemPrompt } }, startTimeoutMs), 'session/new');
       p.sessionId = sessionId || created.sessionId;
       if (!p.sessionId) throw new Error('no session');
       gate.bindChat?.(tag, p.sessionId);
@@ -290,14 +307,14 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   }
 
   // The kept process for this message (claimed: busy), after waiting for a prewarm() start of it still in flight. A process
-  // for this chat made with another system prompt is ended (it would answer with the old one). null: none.
-  async function find({ sessionId, resume, systemPrompt }) {
-    const wait = [...pending].find((s) => (resume ? s.wanted === sessionId : s.spare && s.key === systemPrompt));
+  // for this chat made with another system prompt or mode (access, effort) is ended (it would answer with the old one). null: none.
+  async function find({ sessionId, resume, systemPrompt, mode }) {
+    const wait = [...pending].find((s) => (resume ? s.wanted === sessionId : s.spare && s.key === systemPrompt && s.mode === mode));
     if (wait) { try { await wait.promise; } catch {} }
     for (const p of [...procs]) {
       if (!live(p) || p.busy) continue;
       if (resume ? p.spare || p.sessionId !== sessionId : !p.spare) continue;
-      if (p.key !== systemPrompt) { if (resume) dispose(p); continue; }
+      if (p.key !== systemPrompt || p.mode !== mode) { if (resume) dispose(p); continue; }
       p.busy = true;
       return p;
     }
@@ -306,14 +323,17 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
 
   // One message through the chat's kept process. Resolves grok-build.js run()'s result, or null when this message must go
   // through a headless run instead (nothing was sent to Grok then).
-  async function run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, quietExpired = false }) {
+  async function run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, quietExpired = false, fullAccess = false, effort = '' }) {
     if (!enabled()) { disposeAll(); return null; }
     if (images.length) { stats.fallbacks++; return null; } // `grok agent` takes no images
-    let p = await find({ sessionId, resume, systemPrompt });
+    fullAccess = fullAccess === true;
+    effort = effortLib.clean('grokbuild', effort);
+    const mode = modeOf(fullAccess, effort);
+    let p = await find({ sessionId, resume, systemPrompt, mode });
     if (p) stats.reused++;
     else {
       emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (cleared on the first output)
-      try { p = await starting({ systemPrompt, sessionId: resume ? sessionId : null, model, claimed: true }); } catch { stats.fallbacks++; return null; }
+      try { p = await starting({ systemPrompt, sessionId: resume ? sessionId : null, model, claimed: true, fullAccess, effort }); } catch { stats.fallbacks++; return null; }
     }
     p.spare = false;
     p.used = ++used;
@@ -337,7 +357,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
 
   // start(), recorded while in flight so a run() can wait for a prewarm()'s start of the same chat.
   function starting(opts) {
-    const slot = { wanted: opts.sessionId || null, spare: opts.spare === true, key: opts.systemPrompt, promise: null, proc: null, cancelled: false };
+    const slot = { wanted: opts.sessionId || null, spare: opts.spare === true, key: opts.systemPrompt, mode: modeOf(opts.fullAccess, opts.effort), promise: null, proc: null, cancelled: false };
     slot.promise = start(opts, slot).then((p) => { if (opts.claimed) p.busy = true; return p; }).finally(() => pending.delete(slot));
     pending.add(slot);
     return slot.promise;
@@ -364,7 +384,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     let toolCalls = 0;
     let shown = false;
     const cap = maxTurns > 0 ? maxTurns : gb.DEFAULT_MAX_TURNS;
-    const watchdogMs = engine.watchdogMs;
+    const watchdogMs = p.full && engine.watchdogMs ? Math.max(engine.watchdogMs, gb.FULL_WATCHDOG_MS) : engine.watchdogMs; // [full access] a silent shell command is not a hang
     const stopTurn = () => p.rpc.notify('session/cancel', { sessionId });
     active.arm = () => {
       clearTimeout(active.dog);
@@ -411,8 +431,8 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
           toolCalls++;
           if (toolCalls > cap) { capped = true; stopTurn(); return; }
         }
-        // A tool that isn't Lumen's and actually ran (not one the gate or Grok refused): stop, as toolWatch would.
-        if (/^(in_progress|completed)$/.test(String(u.status || '')) && !gb.isLumenTool(name, input, true)) {
+        // A tool that isn't Lumen's and actually ran (not one the gate or Grok refused): stop, as toolWatch would. (Full access: Grok's own tools are expected.)
+        if (!p.full && /^(in_progress|completed)$/.test(String(u.status || '')) && !gb.isLumenTool(name, input, true)) {
           offTool = name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80);
           kill();
         }
@@ -461,16 +481,19 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     return { text, sessionId, cost: result.total_cost_usd, usage, model: served, keep: true };
   }
 
-  // Start the chat's process ahead of its message. spec: { sessionId (null: a new chat), systemPrompt, model }.
+  // Start the chat's process ahead of its message. spec: { sessionId (null: a new chat), systemPrompt, model, fullAccess, effort }.
   // true when a start began; nothing when the chat already has one (kept or starting).
   function prewarm(spec) {
     if (!enabled() || !spec?.systemPrompt) return false;
     const resume = Boolean(spec.sessionId);
-    const mine = (x) => x.key === spec.systemPrompt && (resume ? (x.sessionId || x.wanted) === spec.sessionId && !x.spare : x.spare);
+    const fullAccess = spec.fullAccess === true;
+    const effort = effortLib.clean('grokbuild', spec.effort);
+    const mode = modeOf(fullAccess, effort);
+    const mine = (x) => x.key === spec.systemPrompt && x.mode === mode && (resume ? (x.sessionId || x.wanted) === spec.sessionId && !x.spare : x.spare);
     const kept = [...procs].find((p) => live(p) && mine(p));
     if (kept || [...pending].some(mine)) { if (kept && !kept.busy) { kept.used = ++used; idleLater(kept, kept.spare ? spareIdleMs : idleMs()); } return false; }
     stats.prewarmed++;
-    starting({ systemPrompt: spec.systemPrompt, sessionId: resume ? spec.sessionId : null, model: spec.model || 'default', spare: !resume })
+    starting({ systemPrompt: spec.systemPrompt, sessionId: resume ? spec.sessionId : null, model: spec.model || 'default', spare: !resume, fullAccess, effort })
       .then((p) => { if (!p.busy) idleLater(p, p.spare ? spareIdleMs : idleMs()); })
       .catch(() => {});
     return true;
@@ -502,4 +525,4 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   return { run, prewarm, drop, disposeAll, count, owner, stats };
 }
 
-module.exports = { createGrokWarm, rpcOver, permissionAnswer, resultOf, agentProfile, PROFILE_FILE, EXTRA_ENV, IDLE_MS, MAX_PROCS };
+module.exports = { createGrokWarm, modeOf, rpcOver, permissionAnswer, resultOf, agentProfile, PROFILE_FILE, EXTRA_ENV, IDLE_MS, MAX_PROCS };
