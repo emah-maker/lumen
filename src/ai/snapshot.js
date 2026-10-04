@@ -269,21 +269,21 @@ const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
 
 const READ_PAGE_EXTRA = {
   mode: { type: 'string', enum: ['compact', 'full'] },
-  since_last: { type: 'boolean', description: 'compact: only what changed since your last read.' },
+  since_last: { type: 'boolean', description: 'compact: only changes since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
-  hrefs: { type: 'boolean', description: 'compact: include link URLs.' },
-  extract: { type: 'string', enum: ['tables', 'links', 'lists'], description: 'Return these as JSON instead of a page read.' },
-  selector: { type: 'string', description: 'extract: limit to this CSS selector.' },
+  hrefs: { type: 'boolean', description: 'compact: add link URLs.' },
+  extract: { type: 'string', enum: ['tables', 'links', 'lists'] },
+  selector: { type: 'string', description: 'CSS scope for extract.' },
 };
 // Tools that can also report what changed on the page after they act (see observe).
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
-  max_width: { type: 'integer', description: 'Width px (default 1024, max 1600).' },
-  quality: { type: 'integer', description: '30-90 (default 60).' },
+  max_width: { type: 'integer', description: 'Default 1024, max 1600.' },
+  quality: { type: 'integer', description: '30-90, default 60.' },
   region: {
     type: 'object',
-    description: 'Crop, in page CSS px (no click_at).',
+    description: 'Crop, page CSS px (no click_at).',
     properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } },
     required: ['x', 'y', 'width', 'height'],
   },
@@ -292,16 +292,16 @@ const SCREENSHOT_EXTRA = {
 const NEW_TOOLS = [
   {
     name: 'find',
-    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Far cheaper than read_page for one field, button or fact.',
+    description: 'Find text in the active tab: [id] refs and snippets.',
     input_schema: {
       type: 'object',
-      properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Max results (default 8).' } },
+      properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Default 8.' } },
       required: ['query'],
     },
   },
   {
     name: 'batch',
-    description: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text} scroll{direction} hover{ref}.',
+    description: 'Several actions in one call, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
@@ -327,23 +327,12 @@ const NEW_TOOLS = [
   },
 ];
 
-// Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
+// Description overrides. The short descriptions (which already name the options added here) now live in
+// agent.js's TOOLS, so there is one copy of each; read_pdf's is shared with features/pdf-text.js.
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const TRIMMED = {
-  read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
-  navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',
-  click: 'Click by [id] from read_page/find, or by visible text. observe:true (also on click_at, type_text, press_key) returns what changed: no follow-up read.',
-  type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
-  fill_form: 'Fill fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved.',
-  read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user\'s own account pages signed in. Returns title + text.',
-  run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when nothing else can do it, in one call. Never to click, type or navigate, or to bypass confirmation rules.',
-  group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
-  click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
-  wait_for: 'Wait until the active tab contains some text, up to a timeout.',
   read_pdf: pdfText.READ_PDF_DESCRIPTION,
-  press_key: 'Press a key or shortcut in the active tab, e.g. "Enter", or "a" with modifiers ["control"].',
-  screenshot: 'Screenshot the active tab (layout, images, charts). read_page/find are far cheaper.',
 };
 
 // Adds the new tools and options to the agent's TOOLS array (called once at load, before the

@@ -383,7 +383,7 @@ const FULL_WATCHDOG_MS = 15 * 60 * 1000;
 // content in it, -p/--prompt-json overflowed Windows' ~32,767-character command line (spawn
 // ENAMETOOLONG). --prompt-file takes the same JSON content blocks as --prompt-json, images included
 // (flat ACP blocks: { type: 'image', data, mimeType }; verified 2026-09-27, a red test image came back
-// "Red"). The system prompt (~4 KB) stays on the command line: there is no file form of it.
+// "Red"). The system prompt (~2-3 KB) stays on the command line: there is no file form of it.
 // model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
 // fullAccess: [full access] ARGS_FULL instead of the lockdown (never for a background task).
 function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0, background = false, fullAccess = false }) {

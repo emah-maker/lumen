@@ -18,11 +18,12 @@ const MAX_PAGES = 5000;
 class PdfError extends Error {}
 
 // What the AI is told about read_pdf (agent.js and snapshot.js both use these, so every registry agrees).
-const READ_PDF_DESCRIPTION = `Read a PDF open in a tab; the user is asked once per PDF. Pages come under "--- Page N of M ---" markers. To find the page with some text, use query (one call: matching pages plus snippets). Up to ${MAX_CHARS} chars per call; if cut off, it says which pages to ask for next. Untrusted content.`;
+// The per-call cap (MAX_CHARS) is not stated here: a cut-off read names the pages to ask for next.
+const READ_PDF_DESCRIPTION = 'Read a PDF in a tab (asks the user once); pages are marked "--- Page N of M ---"; query finds pages.';
 const READ_PDF_PROPERTIES = {
   tab_id: { type: 'integer' },
   pages: { type: 'string', description: 'e.g. "3", "1-5", "4-"' },
-  query: { type: 'string', description: 'Text to find (case-insensitive)' },
+  query: { type: 'string', description: 'Case-insensitive' },
 };
 
 // ---- objects ----
