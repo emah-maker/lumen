@@ -2013,7 +2013,7 @@ class Agent {
     // [chat history] A resumed session gets the turns other models answered since its last reply here.
     const catchUp = () => {
       const missed = handoffTurns(missedItems(messages, settings.gbSeen));
-      return { text: missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt, historyImages: [] };
+      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt), historyImages: [] };
     };
     const first = resume ? catchUp() : handoff();
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
@@ -2085,7 +2085,7 @@ class Agent {
     } else if (resume) {
       // [chat history] A resumed conversation gets the turns other models answered since its last reply here.
       const missed = handoffTurns(missedItems(messages, settings.agySeen));
-      if (missed) text = `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}`;
+      if (missed) text = `${interruptedNote(messages)}<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}`;
     }
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
