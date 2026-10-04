@@ -292,6 +292,7 @@ async function buildAi(card) {
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
     stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Choose Auto at the top of the model menu and Lumen picks the model for each message on this computer. Only the providers ticked here are used.'), autoUseBox),
+    toggle('ccUserSettings', tr('settings.ai.ccUserSettings', 'Use my Claude Code settings in Lumen chats'), tr('settings.ai.ccUserSettingsDesc', 'Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.')),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
   );
@@ -308,6 +309,7 @@ async function buildAi(card) {
     select('maxChatRuns', tr('settings.ai.maxChatRuns', 'Chats working at once'), tr('settings.ai.maxChatRunsDesc', 'Each tab has its own sidebar chat, and chats in different tabs can work at the same time. With a limit, once this many are working the next one waits its turn.'),
       [[0, tr('settings.ai.maxChatRuns.unlimited', 'No limit')], ...[1, 2, 3, 4, 6, 8].map((n) => [n, String(n)])], { number: true }),
     toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
+    toggle('codexSidebar', tr('settings.ai.codexSidebar', 'Offer Codex in the model menu'), tr('settings.ai.codexSidebarDesc', 'Lets the sidebar chat answer with your own Codex sign-in (the Codex CLI), using only Lumen’s browser tools: no shell, no file writes.')),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('grokKeepConnected', tr('settings.ai.grokKeepConnected', 'Keep Grok Build connected'), tr('settings.ai.grokKeepConnectedDesc', 'Each chat that uses Grok Build keeps its own Grok Build running between messages, so replies start sooner. Each one uses about 70 MB of memory while it waits. Messages with images, and Grok Build with full access, still start Grok Build each time.')),
     select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
@@ -478,6 +480,7 @@ async function buildAi(card) {
     // Claude Code's own row also shows install/sign-in state, so "not signed in" doesn't look like
     // a broken Add button (the CLI itself gates sign-in; Lumen only checks, never reads, its status).
     const ccState = snip.id === 'claude' ? status() : null;
+    const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
       S.ai.claudeCodeStatus().then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
@@ -514,7 +517,7 @@ async function buildAi(card) {
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
     if (cxState) refreshCodex(false);
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
-      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), ccState, add, copy),
+      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
       cxActions,
       h('pre', { class: 'mono code', text: snip.text }),
@@ -2147,6 +2150,18 @@ function codexUsageRows(u) {
   rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
   return rows;
 }
+// [usage bars] The provider's plan bar on its row (renderer/usage-bars.js): empty (nothing shown) until there is data, then kept current.
+function usageChip(provider) {
+  const chip = h('span', { class: 'usage-chip' });
+  if (!provider || !window.usageBars) return chip;
+  const draw = () => {
+    const d = window.usageBars.forProvider(provider, window.usageBars.state());
+    chip.replaceChildren(...(d ? [window.usageBars.element(d, { label: `${ENGINE_NAMES[provider] || provider} usage` })] : []));
+  };
+  window.addEventListener('lumen-usage-bars', draw);
+  window.usageBars.load(false).then(draw);
+  return chip;
+}
 async function buildUsage(card) {
   const body = h('div', { class: 'usage' });
   const render = async (refresh) => {
@@ -2189,6 +2204,7 @@ async function buildUsage(card) {
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
     body.replaceChildren(...parts);
   };
+  card.append(toggle('usageBars', tr('settings.usage.bars', 'Show usage bars in pickers'), tr('settings.usage.barsDesc', 'A thin bar beside each provider in the model menus, the AI status card and here under Accounts, with how much of its plan window is used and when it resets. It uses the numbers Lumen already has and never asks the network. Models that are out of usage are marked too.'), () => window.usageBars?.load(true)));
   card.append(row('What counts', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.'), body);
   render(false);
 }

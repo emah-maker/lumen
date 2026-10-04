@@ -2,13 +2,15 @@
 // .app) and fails when it grows past the budget below. CI-friendly: exit code 1 on a breach.
 //   node scripts/check-package.js [folder]      folder defaults to the build folder of scripts/build.js
 //   node scripts/check-package.js --launch      also starts the packaged app and checks its window comes up
-// Budget (Windows, measured 2026-09: 339 MB total, 9 MB app, 12 MB locales, 1752 files): about 6% headroom, so an
-// unrelated dependency or a stray asset shows up here instead of in the installer size.
+// Budget (Windows). The Electron runtime and locales are about 330 MB of the total; resources/app (our src/, assets and the production
+// node_modules, after build.files' filters) is about 19 MB in 1,900 files (0.5.x, estimated 2026-10 from electron-builder's own file
+// matchers: 11 MB ours, 8 MB node_modules). Limits sit about 10-15% above, so an unrelated dependency or a stray asset shows up here
+// instead of in the installer size.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const BUDGET = { totalMB: 360, appMB: 14, localesMB: 16, files: 2400 };
+const BUDGET = { totalMB: 360, appMB: 22, localesMB: 16, files: 2400 };
 
 function outputDir() {
   if (process.env.LUMEN_BUILD_DIR) return path.resolve(process.env.LUMEN_BUILD_DIR);

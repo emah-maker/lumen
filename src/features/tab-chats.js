@@ -188,7 +188,7 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, onError = null, onStale = null
 }
 
 // The engine kind of a model id, for the slots (see createRunSlots): a CLI engine or an API model.
-const slotKind = (model) => (/^(claudecode|grokbuild|antigravity):/.test(String(model || '')) ? 'cli' : 'api');
+const slotKind = (model) => (/^(claudecode|grokbuild|antigravity|codex):/.test(String(model || '')) ? 'cli' : 'api');
 
 // ---- tools
 // The tab a chat's tools act on. `pinned`: the tab the chat's run is bound to (null: none yet).

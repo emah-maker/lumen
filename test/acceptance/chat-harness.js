@@ -23,10 +23,12 @@ const LOG = path.join(tmp, 'cli-log.jsonl');
 fs.writeFileSync(LOG, '');
 const FAKE_AGY = path.join(tmp, process.platform === 'win32' ? 'agy-fake.exe' : 'agy-fake'); // (only its path matters)
 fs.writeFileSync(FAKE_AGY, '');
+const FAKE_CODEX = path.join(tmp, process.platform === 'win32' ? 'codex-fake.exe' : 'codex-fake'); // (only its path matters)
+fs.writeFileSync(FAKE_CODEX, '');
 
 cp.spawn = function spawnHook(bin, argv, opts = {}) {
-  if (bin !== FAKE && bin !== FAKE_AGY) return realSpawn.apply(this, arguments);
-  const role = bin === FAKE_AGY ? { FAKE_ROLE: 'agy' } : {};
+  if (bin !== FAKE && bin !== FAKE_AGY && bin !== FAKE_CODEX) return realSpawn.apply(this, arguments);
+  const role = bin === FAKE_AGY ? { FAKE_ROLE: 'agy' } : bin === FAKE_CODEX ? { FAKE_ROLE: 'codex' } : {};
   const child = realSpawn(process.execPath, [FAKE, ...(argv || [])], { ...opts, env: { ...(opts.env || {}), ...role, ELECTRON_RUN_AS_NODE: '1', FAKE_CHAT_LOG: LOG } });
   live.set(child.pid, child);
   child.on('exit', () => live.delete(child.pid));
@@ -38,6 +40,7 @@ process.env.GROK_HOME = path.join(tmp, 'user-grok');
 process.env.LUMEN_GROK_SIDEBAR = '1';
 process.env.LUMEN_AGY_BIN = FAKE_AGY;
 process.env.LUMEN_AGY_SIDEBAR = '1';
+process.env.LUMEN_CODEX_SIDEBAR = '1';
 fs.mkdirSync(process.env.GROK_HOME, { recursive: true });
 
 // ---- the fake HTTP gate (mcp-http.js startHttp's shape: open/close/armed/listed/port/stop)
@@ -117,6 +120,7 @@ const aiAgents = setupAiAgents({
   readSettings: () => ({ mcpEnabled: false, grokSidebar: true, grokWarmup: false }),
   writeSettings() {},
   ui: () => null,
+  codexLocate: async () => ({ found: true, command: FAKE_CODEX, args: [], path: FAKE_CODEX, kind: 'exe', version: '9.9.9', source: 'test' }), // (the stand-in codex: no `--version` to run)
 });
 // The sidebar's engines: short stop / watchdog timings so the suites stay quick (properties every instance reads).
 const tune = (e) => { if (e) { e.interruptMs = 800; } return e; };
@@ -160,4 +164,4 @@ function finish() {
 // A suite must never hang CI: a hard stop well inside scripts/test-units.js's 120 s.
 const hardStop = (ms = 100000) => setTimeout(() => { console.log(`FAIL  suite timed out after ${ms / 1000}s`); failures++; finish(); }, ms).unref();
 
-module.exports = { aiAgents, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };
+module.exports = { FAKE_CODEX, aiAgents, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };

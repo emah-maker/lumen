@@ -441,7 +441,7 @@
     sites.setAttribute('aria-label', T('tasks.create.sites'));
     let sitesTouched = false;
     sites.addEventListener('input', () => { sitesTouched = true; summarize(); });
-    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === pv.model, disabled: !m.available })));
+    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === pv.model, disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox' });
     const mcp = h('input', { type: 'checkbox' });
     // A Claude Code / Grok Build task has Lumen's browser tools only: the user's MCP tools are for API models.

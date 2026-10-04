@@ -63,6 +63,16 @@ async function appFiles(dir, config, platform) {
       for (const no of ['README.md', 'package-lock.json', 'eslint.config.js']) check(`${platform}: no ${no}`, !files.includes(no), files.join(', '));
       check(`${platform}: node modules still ship (openai)`, moduleShips('node_modules/openai/index.js'), '');
       check(`${platform}: koffi's sources and import libraries never ship`, !moduleShips('node_modules/koffi/doc/a.md') && !moduleShips('node_modules/koffi/src/koffi/src/call.cc') && !moduleShips('node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.lib'), '');
+      // The ES module and browser-bundle copies of the ad blocker, tldts and the extension libraries are never loaded by `require` (main /
+      // exports.require point at the CommonJS build), so they stay out of the app; the CommonJS builds ship.
+      const dupes = ['@ghostery/adblocker/dist/esm/index.js', '@ghostery/adblocker/dist/adblocker.umd.min.js', '@ghostery/url-parser/dist/url-parser.umd.min.js', '@ghostery/adblocker-electron/dist/esm/index.js', '@remusao/small/dist/esm/index.js',
+        'tldts-experimental/dist/es6/index.js', 'tldts-core/dist/es6/index.js', 'tldts-experimental/dist/index.esm.min.js', 'tldts-experimental/dist/index.umd.min.js', 'electron-chrome-extensions/dist/esm/index.mjs', 'electron-chrome-web-store/dist/esm/browser/index.mjs'];
+      check(`${platform}: duplicate module flavors (ESM, UMD, es6) never ship`, dupes.every((d) => !moduleShips(`node_modules/${d}`)), dupes.filter((d) => moduleShips(`node_modules/${d}`)).join(', '));
+      const needed = ['@ghostery/adblocker/dist/commonjs/index.js', '@ghostery/adblocker/dist/commonjs/package.json', '@ghostery/adblocker-electron/dist/commonjs/index.js', '@ghostery/url-parser/dist/commonjs/index.js', '@remusao/small/dist/commonjs/index.js', 'tldts-experimental/dist/cjs/index.js', 'tldts-core/dist/cjs/index.js', 'electron-chrome-extensions/dist/cjs/index.js', 'electron-chrome-extensions/dist/chrome-extension-api.preload.js', 'electron-chrome-web-store/dist/cjs/browser/index.js', 'electron-chrome-web-store/dist/chrome-web-store.preload.js'];
+      check(`${platform}: the CommonJS builds and preload scripts those libraries load still ship`, needed.every((d) => moduleShips(`node_modules/${d}`)), needed.filter((d) => !moduleShips(`node_modules/${d}`)).join(', '));
+      // And what `require` really resolves to (this checkout's node_modules) is a file that ships.
+      const resolved = ['@ghostery/adblocker', '@ghostery/adblocker-electron', '@ghostery/adblocker-extended-selectors', '@ghostery/url-parser', 'tldts-experimental', 'tldts-core', 'electron-chrome-extensions', 'electron-chrome-web-store'].map((m) => { try { const f = require.resolve(m, { paths: [root] }).split(path.sep).join('/'); return f.slice(f.lastIndexOf('/node_modules/') + 1); } catch { return null; } }).filter(Boolean);
+      check(`${platform}: every resolved entry of those libraries ships`, resolved.every((r) => moduleShips(`node_modules/${r}`)), resolved.filter((r) => !moduleShips(`node_modules/${r}`)).join(', '));
       if (platform === 'win') {
         check('win: koffi and its Windows x64 binary ship', moduleShips('node_modules/koffi/index.js') && moduleShips('node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node'), '');
       }

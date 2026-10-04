@@ -38,7 +38,7 @@ const modelRoute = require('../features/model-route');
 const AUTO = 'auto';
 const TIERS = ['fast', 'balanced', 'strong'];
 // Providers and engines that have an Auto of their own ("<key>:auto"), and how they are named in a reason ("Auto (Grok Build): ...").
-const SCOPE_NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const SCOPE_NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
 const SCOPES = Object.keys(SCOPE_NAMES);
 // What a pick id asks for: undefined (not an Auto pick), null (the global 'auto') or a provider key ('grokbuild:auto' -> 'grokbuild').
 function scopeOf(id) {
@@ -140,7 +140,7 @@ function candidatesOf(options, need, { exclude = [], denied = null, cooldowns = 
   // (fallback.usable also drops chat-only models; whether tools are needed is this request's own question, asked below)
   const list = (options || []).filter((o) => o?.id && !isAuto(o.id) && !String(o.id).endsWith(':__more') && !o.more && o.signedIn !== false && !(o.badges || []).includes('sign in'));
   const onlyDefault = new Set(); // engines that list nothing but their own default
-  for (const engine of ['claudecode', 'grokbuild', 'antigravity']) {
+  for (const engine of ['claudecode', 'grokbuild', 'antigravity', 'codex']) {
     if (!list.some((o) => providerOf(o.id) === engine && !/:default$/.test(o.id))) onlyDefault.add(engine);
   }
   return list.filter((o) => {
@@ -192,7 +192,21 @@ function route({ options = [], request = {}, prefer = [], last = null, exclude =
   };
   const ranked = list.map((o, i) => ({ o, s: score(o, i) })).sort((a, b) => a.s - b.s).map((x) => x.o);
   const best = ranked[0];
-  return { id: best.id, tier: tierOf(best), need, why: need.why, scope, label: label(best), reason: reasonOf(shortName(best), need.why, scope), option: best, candidates: ranked.map((o) => o.id) };
+  return { id: best.id, tier: tierOf(best), need, why: need.why, scope, label: label(best), reason: reasonOf(shortName(best), need.why, scope) + skippedNote(options, need, list, { exclude, denied, cooldowns, at, allowEngines, scope }), option: best, candidates: ranked.map((o) => o.id) };
+}
+
+// " (Claude Code skipped: out of usage)": the providers Auto left out only because they hit a usage limit (a cooldown that
+// is a limit, not an outage), so the notice says why a model you might expect was not used. Empty when none was.
+function skippedNote(options, need, list, args) {
+  if (!args.cooldowns) return '';
+  const kept = new Set(list.map((o) => o.id));
+  const names = [];
+  for (const o of candidatesOf(options, need, { ...args, cooldowns: null })) {
+    if (kept.has(o.id) || args.cooldowns.entry?.(o.id, args.at)?.kind !== 'limit') continue;
+    const name = scopeName(providerOf(o.id));
+    if (!names.includes(name)) names.push(name);
+  }
+  return names.length ? ` (${names.join(', ')} skipped: out of usage)` : '';
 }
 
 // route() for a provider's own Auto, with the model fallback behind it: when none of that provider's models can answer (all out of
