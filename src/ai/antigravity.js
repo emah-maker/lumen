@@ -285,8 +285,15 @@ function hooksFor(gatePath, platform = process.platform) {
 }
 
 // The 8.3 short form of an existing Windows path (no spaces when the volume has short names), else the path as it was.
+const shortPaths = new Map(); // (a spawnSync of cmd.exe per message otherwise: tens of ms on the main thread)
 function shortPath(p, platform = process.platform) {
   if (platform !== 'win32' || !/\s/.test(p)) return p;
+  if (shortPaths.has(p)) return shortPaths.get(p);
+  const found = shortPathOf(p);
+  shortPaths.set(p, found);
+  return found;
+}
+function shortPathOf(p) {
   try {
     // verbatim: Node would escape the inner quotes as \" and cmd would choke on them, the very bug hooksFor avoids
     const out = String(spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${p}") do @echo %~sI"`], { encoding: 'utf8', windowsHide: true, timeout: 5000, windowsVerbatimArguments: true }).stdout || '').trim();
@@ -392,6 +399,8 @@ function capImages(images, emit) {
 
 // WATCHDOG: a process silent this long with no Lumen tool call running is hung.
 const WATCHDOG_MS = 90 * 1000;
+// prepare()'s result is reused by the same message's run() for this long.
+const PREP_TTL_MS = 30 * 1000;
 
 class AntigravityEngine {
   // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); spawn / kill / exec: swappable for tests (child_process spawn,
@@ -480,29 +489,59 @@ class AntigravityEngine {
     a.arm?.();
   }
 
-  // The part of a message's setup that does not need the message (agent.js starts it while the page is read).
-  prepare() {
-    return this.ensureBin().then(async (bin) => (bin ? { bin, gate: await this.gate() } : { bin: null }));
+  // The part of a message's setup that does not need the message (agent.js starts it while the page is read, and run() takes
+  // the same work over): the binary, Lumen's MCP server, the chat's home folder and the files in it that do not change from
+  // message to message (settings.json, the gate script, hooks.json; each written only when different). Only the run's token file
+  // (mcp_config.json) and the images wait for run(). The result is shared by the prepare() and run() of one message
+  // (same chat, conversation and access) within PREP_TTL_MS, so the work is not done twice; run() uses it up.
+  // scope: the message's task scope (its chatId picks the chat's home), sessionId: its saved conversation, fullAccess: Settings.
+  prepare({ scope = null, sessionId = null, fullAccess = false } = {}) {
+    fullAccess = fullAccess === true;
+    const chatHome = chatHomeFor(this.userData, scope?.chatId);
+    const key = JSON.stringify([chatHome, sessionId || null, fullAccess]);
+    const hit = this.prepared;
+    if (hit && hit.key === key && Date.now() - hit.at < PREP_TTL_MS) return hit.promise;
+    const entry = { key, at: Date.now(), promise: null };
+    entry.promise = this.prepareOnce({ chatHome, sessionId, fullAccess }).catch((err) => { if (this.prepared === entry) this.prepared = null; throw err; });
+    this.prepared = entry;
+    return entry.promise;
+  }
+
+  async prepareOnce({ chatHome, sessionId, fullAccess }) {
+    const [bin, gate] = await Promise.all([this.ensureBin(), this.gate()]);
+    if (!bin) return { bin: null };
+    const folder = fullAccess ? os.homedir() : this.dir; // [full access] the home folder, as in a terminal
+    // [parallel Antigravity chats] the chat's own home (see prepareChatHome); a run that belongs to no chat uses the main one.
+    const home = chatHome || this.home;
+    await Promise.all([
+      fs.promises.mkdir(this.home, { recursive: true, mode: 0o700 }),
+      fs.promises.mkdir(this.dir, { recursive: true }),
+    ]);
+    if (chatHome) await prepareChatHome({ mainHome: this.home, home, sessionId });
+    const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
+    const config = path.join(home, '.gemini', 'config');
+    await fs.promises.mkdir(config, { recursive: true, mode: 0o700 }); // (also makes home and home/.gemini)
+    await Promise.all([
+      writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider(), fullAccess }), null, 2)),
+      writeIfChanged(gateFile, gateScript(), 0o700),
+      writeIfChanged(path.join(config, 'hooks.json'), JSON.stringify(hooksFor(shortPath(gateFile)), null, 2)),
+    ]);
+    return { bin, gate, home, folder };
   }
 
   // One message. Resolves { text, sessionId (agy's conversation id), stopped?, failed?, planLimit?, usage?, model? }; errors are emitted, not thrown.
   // sessionId: the chat's saved conversation id, null on its first message.
   async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false, effort = '' }) {
     fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
-    const { bin, gate } = await this.prepare();
+    const prepared = this.prepare({ scope, sessionId, fullAccess });
+    const { bin, gate, home, folder } = await prepared;
+    if (this.prepared?.promise === prepared) this.prepared = null; // (shared by one message only: the next one looks again)
     if (!bin) {
       emit({ type: 'error', text: `Antigravity isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: '', sessionId, stopped: true };
-    const folder = fullAccess ? os.homedir() : this.dir; // [full access] the home folder, as in a terminal
-    // [parallel Antigravity chats] the chat's own home (see prepareChatHome); a run that belongs to no chat uses the main one.
     const chatHome = chatHomeFor(this.userData, scope?.chatId);
-    const home = chatHome || this.home;
-    await fs.promises.mkdir(this.home, { recursive: true, mode: 0o700 });
-    if (chatHome) await prepareChatHome({ mainHome: this.home, home, sessionId });
-    await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
-    await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
     const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home });
@@ -510,11 +549,6 @@ class AntigravityEngine {
     let mcpFile = null;
     let mcpText = null; // what this run wrote there: removed afterwards only if no newer run of the chat has replaced it
     try {
-      await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider(), fullAccess }), null, 2));
-      await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
-      const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
-      await writeIfChanged(gateFile, gateScript(), 0o700);
-      await writeIfChanged(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify(hooksFor(shortPath(gateFile)), null, 2));
       mcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
       const stdio = process.env.LUMEN_AGY_MCP === 'stdio' && this.bridge; // the fallback if the HTTP form is not accepted (UNVERIFIED 2)
       if (stdio) this.ensureServer?.();

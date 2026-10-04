@@ -252,6 +252,17 @@ const notices = (log) => log.events.filter((e) => e.type === 'notice').map((e) =
     check('Claude Code: a warm process is kept only for the model it was started with (the key has the model: haiku != sonnet != opus)', key('haiku') !== key('sonnet') && key('sonnet') !== key('opus') && key('haiku') === key('haiku'));
     const warm = (model) => { const m = []; m.settings = { model, adhdMode: false, ccSession: 'cc-1', autoFrom: 'claudecode:auto', autoTier: 'heavy' }; return agent.claudeCodePlan(m, 'hi', 0, 0).spawn; };
     check('Claude Code: the plan for the model Auto chose carries exactly that alias (so a different choice is a different process)', warm('claudecode:haiku').model === 'haiku' && warm('claudecode:opus').model === 'opus' && claude.procKey({ bin: 'c', ...warm('claudecode:haiku') }) !== claude.procKey({ bin: 'c', ...warm('claudecode:opus') }));
+    // [model switch] Under Auto the prewarm guess and the model chosen at send must give the same system prompt (the model is switched in place, claude-code.js), so Auto's plans name no model.
+    const fresh2 = []; fresh2.settings = { model: 'claudecode:auto', adhdMode: false };
+    const guess = agent.claudeCodePlan(fresh2, 'open a page', 0, 0).spawn;
+    const sent = (model) => { const m = []; m.settings = { model, adhdMode: false, autoFrom: 'claudecode:auto', autoTier: 'balanced' }; return agent.claudeCodePlan(m, 'fix the login bug', 0, 0).spawn; };
+    const sentSonnet = sent('claudecode:sonnet');
+    const sentOpus = sent('claudecode:opus');
+    const pickedPlan = (() => { const m = []; m.settings = { model: 'claudecode:sonnet', adhdMode: false }; return agent.claudeCodePlan(m, 'hi', 0, 0).spawn; })();
+    const keyOf = (spawn) => claude.procKey({ bin: 'c', ...spawn, sessionId: 's', model: 'x' });
+    check('Claude Code Auto: the guess, and the plans for sonnet and opus, share one system prompt that names no model', !/model answering/.test(guess.systemPrompt) && keyOf(guess) === keyOf(sentSonnet) && keyOf(sentSonnet) === keyOf(sentOpus) && sentSonnet.model === 'sonnet' && sentOpus.model === 'opus', J({ guess: guess.systemPrompt.slice(-80), a: sentSonnet.systemPrompt.slice(-80) }));
+    check('Claude Code Auto: a model the user picked is still named in the prompt', /model answering is Claude Sonnet/.test(pickedPlan.systemPrompt), pickedPlan.systemPrompt.slice(-120));
+    check('Claude Code Auto: the models differ only in the key\'s model, so a warm process can be switched (modelOnlyDiff)', claude.modelOnlyDiff(claude.procKey({ bin: 'c', ...guess, sessionId: 's', model: 'haiku' }), claude.procKey({ bin: 'c', ...sentOpus, sessionId: 's' })), '');
     const gbAgent = Object.assign(Object.create(Agent.prototype), { messages: [], browser: { grokBuildFullAccess: () => false }, runs: new Map(), engines: { grokbuild: { statusCache: {} } } });
     gbAgent.messages.settings = { model: 'grokbuild:auto', adhdMode: false };
     const spec = gbAgent.grokWarmSpec();
