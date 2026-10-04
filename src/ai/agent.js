@@ -73,7 +73,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline with [id] refs (start here); "full": raw text. extract: tables|links|lists as JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -327,7 +327,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -1669,7 +1669,8 @@ class Agent {
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
+      // A plain question that needs neither the page nor a tool (isSimpleQuestion) is sent without the page's text.
+      page = wanted.includes(tab?.id) || isSimpleQuestion(userText, images.length + wanted.length) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -2845,7 +2846,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
-    if (READING_TOOLS.has(name) || (input?.read && (name === 'navigate' || name === 'open_tab'))) this.markTainted(run); // navigate/open_tab read:true returns page content
+    if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -3401,7 +3402,8 @@ ${out.text}${note}
   // frame, inFrame), their text follows the page's under each frame's label, and `frames` lists them.
   async readFrames(wc, page) {
     const { frames: list, aiOff } = await frames.list(wc, { allow: this.frameAllow() });
-    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false }), 5000);
+    const listing = Array.isArray(page.elements);
+    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false, list: listing }), 5000);
     delete page.crossOriginFrames; // (every frame is read in its own frame now)
     if (aiOff) page.framesNotRead = `${aiOff} embedded frame${aiOff === 1 ? '' : 's'} on a site where the user turned AI off`;
     if (!read.length) return;
@@ -3409,14 +3411,15 @@ ${out.text}${note}
     let slots = FRAME_ELEMENTS;
     page.frames = [];
     for (const { frame, value } of read) {
-      if (!value || !Array.isArray(value.elements)) continue;
+      if (!value || (listing && !Array.isArray(value.elements))) continue;
       const label = frames.labelOf(frame, value.title);
-      const elements = value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n }));
+      const elements = listing ? value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n })) : [];
       slots -= elements.length;
-      page.elements.push(...elements);
+      if (listing) page.elements.push(...elements);
       const text = String(value.text || '').trim().slice(0, Math.min(frames.FRAME_CHARS, room));
       room -= text.length;
       page.frames.push({ frame: frame.n, label, url: frame.url.slice(0, 150), box: [frame.x, frame.y, frame.w, frame.h], totalElements: value.totalElements, elementsShown: elements.length, totalTextChars: value.totalTextChars });
+      if (!listing) page.totalElements += value.totalElements || 0;
       if (text) page.text += `\n\n${label}\n${frames.defang(text)}`;
     }
   }
@@ -3603,15 +3606,16 @@ ${out.text}${note}
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
-        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own }));
+        const list = input.elements === true || elementOffset > 0; // the element list only when asked for (compact outline and find give the ids)
+        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own, list }));
         if (!own && !textOffset && !elementOffset) await this.readFrames(wc, page); // with the first page of a read
         const { text, ...rest } = page;
-        const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
+        const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}|${list}`, `${JSON.stringify(rest)}
 ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}
 </untrusted_page_content>`;
-        return `<untrusted_page_content>\n${JSON.stringify(rest)}\n\nPAGE TEXT:\n${text}\n</untrusted_page_content>`;
+        return scripts.formatFull(page);
       }
       case 'screenshot': {
         const wc = this.requireTab();
@@ -3638,6 +3642,7 @@ ${same}
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
         if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts });
+        else if (input.read !== false) loaded += await snapshot.head(this, wc, { runScript, scripts });
         return loaded;
       }
       case 'click': {
@@ -3907,7 +3912,7 @@ ${same}
         } finally {
           redirects?.release();
         }
-        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : ''}`;
+        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : input.read === false ? '' : await snapshot.head(this, tab.webContents, { runScript, scripts })}`;
       }
       case 'switch_tab': {
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.

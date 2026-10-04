@@ -27,6 +27,40 @@ const TEXT_CHUNK = 12000; // as read_page's first chunk (page-scripts.js)
 const PARSE_WAIT_MS = 1500;
 const WORLD_NAME = 'lumen-page-text';
 
+// The text worth sending: the page's <main> (or [role=main], else its longest <article>) when it holds most of
+// the page's words, so menus, sidebars and footers stay out of the 7k; and the boilerplate lines every site
+// repeats ("Jump to content", "Main menu", "Toggle ... subsection") dropped. A page with web components keeps
+// the whole text (its main's innerText would miss their shadow roots).
+const READABLE = String.raw`
+  const readable = (doc, text) => {
+    let out = text;
+    try {
+      let shadowed = false;
+      for (const el of doc.querySelectorAll('*')) if (el.shadowRoot) { shadowed = true; break; }
+      if (!shadowed) {
+        const shown = (el) => el.getClientRects().length > 0;
+        let main = [...doc.querySelectorAll('main, [role=main]')].find(shown);
+        if (!main) main = [...doc.querySelectorAll('article')].filter(shown).sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
+        const inner = main ? (main.innerText || '').replace(/\n{3,}/g, '\n\n').trim() : '';
+        if (inner.length >= 500 && inner.length * 4 >= out.length) out = inner;
+      }
+    } catch {}
+    const lines = out.split('\n');
+    const top = /^(main menu|move to sidebar|hide|appearance|tools)$/i;
+    const anywhere = /^(toggle .+ subsection|(skip|jump) to (the )?(main |primary )?(content|navigation|search|footer))$/i;
+    // A site's display-settings menu (Wikipedia: "Appearance", Text Small/Standard/Large, Width, Color) is a run of short option lines.
+    const options = /^(appearance( hide)?|text|small|standard|large|width|wide|color( \(beta\))?|automatic|light|dark)$/i;
+    const kept = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (/^appearance( hide)?$/i.test(t) && /^text$/i.test((lines[i + 1] || '').trim())) { while (i + 1 < lines.length && options.test(lines[i + 1].trim())) i++; continue; }
+      if (anywhere.test(t) || (i < 40 && top.test(t))) continue;
+      kept.push(lines[i]);
+    }
+    return kept.join('\n');
+  };
+`;
+
 // The script: { url, title, text (the first `chars` characters), totalTextChars }.
 function textScript(chars = TEXT_CHUNK) {
   const n = Math.max(0, Math.floor(Number(chars) || 0));
@@ -35,7 +69,8 @@ function textScript(chars = TEXT_CHUNK) {
       await new Promise((done) => { document.addEventListener('DOMContentLoaded', done, { once: true }); setTimeout(done, ${PARSE_WAIT_MS}); });
     }
     ${PAGE_TEXT}
-    const text = pageText(document).replace(/\\n{3,}/g, '\\n\\n');
+    ${READABLE}
+    const text = readable(document, pageText(document)).replace(/\\n{3,}/g, '\\n\\n');
     return { url: location.href, title: document.title, text: text.slice(0, ${n}), totalTextChars: text.length };
   })()`;
 }
