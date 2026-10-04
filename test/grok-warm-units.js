@@ -388,6 +388,30 @@ const fakeGate = {
       check('prewarm: the same spec again starts nothing', pre.pool.prewarm({ sessionId: null, systemPrompt: 'SYS-FULL' }) === false);
     }
 
+    // ---- the model sentence of the system prompt does not end the chat's process
+    {
+      const { fake, engine } = setup();
+      const note = (m) => `SYS The model answering is ${m} (xAI's Grok).`;
+      const m1 = await send(engine, { systemPrompt: 'SYS' });
+      const m2 = await send(engine, { sessionId: m1.out.sessionId, resume: true, systemPrompt: note('grok-4.7') });
+      const m3 = await send(engine, { sessionId: m1.out.sessionId, resume: true, systemPrompt: note('grok-4.8') });
+      check('keep: the model sentence of the system prompt changing (guessed, then reported) reuses the process', m3.out.text === 'warm reply 3' && m2.out.text === 'warm reply 2' && fake.agents().length === 1 && warmLib.keyOf(note('x')) === 'SYS', JSON.stringify(fake.agents().length));
+      const m4 = await send(engine, { sessionId: m1.out.sessionId, resume: true, systemPrompt: 'OTHER' });
+      check('keep: any other change of the system prompt still replaces it', fake.agents().length === 2 && m4.out.text === 'warm reply 1');
+    }
+
+    // ---- the PreToolUse hook is asked about everything but Lumen's own tools (config.toml matcher)
+    {
+      const re = new RegExp(gb.PRE_TOOL_MATCHER);
+      const asked = (n) => re.test(n);
+      check('hook matcher: Lumen\'s own tools and search_tool are not asked', !asked('lumen__navigate') && !asked('lumen__read_page') && !asked('lumen__x_y') && !asked('search_tool'));
+      check('hook matcher: built-ins, look-alikes and anything unknown are asked', ['run_terminal_command', 'write', 'read_file', 'use_tool', 'spawn_subagent', 'lumen_', 'lumen', 'lume', 'Lumen__x', 'mcp__lumen__x', 'other__ping', 'search_tool2', 'search_', '', 'x'].every(asked), JSON.stringify(['run_terminal_command', 'use_tool', 'lumen_', 'Lumen__x', 'search_tool2'].map((n) => [n, asked(n)])));
+      for (const fullAccess of [false, true]) {
+        const cfg = gb.grokConfig({ gate: 'g.cmd', fullAccess });
+        check(`config.toml (${fullAccess ? 'full access' : 'locked down'}): PreToolUse carries the matcher, UserPromptSubmit has none (it must run every message)`, /\[\[hooks\.PreToolUse\]\]\r?\nmatcher = ".*"\r?\nhooks = /.test(cfg) && /\[\[hooks\.UserPromptSubmit\]\]\r?\nhooks = /.test(cfg) && cfg.includes(JSON.stringify(gb.PRE_TOOL_MATCHER)));
+      }
+    }
+
     // ---- lifetime: idle timeout, cap, drop, setting off
     {
       const idle = setup({ idleMs: 60 });

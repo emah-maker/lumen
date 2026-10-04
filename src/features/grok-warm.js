@@ -71,6 +71,11 @@ const USD_TICKS = 1e10; // xAI's cost unit (costUsdTicks)
 
 // What a kept process is started for besides the chat's system prompt: access and reasoning effort (both are fixed when
 // the process starts). effort: one of effort.js's levels for Grok Build, '' for Grok's own default.
+// A process is only kept for the system prompt it started with (it would answer with the old one), but the sentence naming the
+// model answering (agent.js grokBuildNote) changes after the first reply (the model Grok reports vs the one Lumen guessed): it
+// is no reason to end the process and resume the session in a new one, which cost the second message a cold start.
+const keyOf = (systemPrompt) => String(systemPrompt || '').replace(/ The model answering is \S+ \(xAI's Grok\)\.$/, '');
+
 const modeOf = (fullAccess, effort) => `${fullAccess === true ? 'full' : 'locked'}${effort ? `:${effort}` : ''}`;
 
 // The agent profile: Lumen's lockdown as `grok agent` takes it (see ISOLATION). The system prompt itself is Lumen's own,
@@ -223,7 +228,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     const profile = path.join(engine.home, PROFILE_FILE);
     if (!fullAccess) { try { await gb.writeIfChanged(profile, agentProfile(gb), 0o600); } catch (err) { authHold(); throw err; } }
     const tag = crypto.randomBytes(18).toString('hex');
-    const p = { tag, gate, key: systemPrompt, mode: modeOf(fullAccess, effort), full: fullAccess, sessionId: null, model: null, defaultModel: null, spare, authHold, busy: false, turns: 0, exited: false, disposed: false, idle: null, used: ++used, stderr: '', onUpdate: null, known: new Map(), child: null, rpc: null, owner: null };
+    const p = { tag, gate, key: keyOf(systemPrompt), mode: modeOf(fullAccess, effort), full: fullAccess, sessionId: null, model: null, defaultModel: null, spare, authHold, busy: false, turns: 0, exited: false, disposed: false, idle: null, used: ++used, stderr: '', onUpdate: null, known: new Map(), child: null, rpc: null, owner: null };
     // The owner of this process's MCP tag (features/ai-agents.js engineForSession / onTerminalApproval): its `active` is
     // the turn in progress (with that message's own task scope), null between turns.
     p.owner = {
@@ -307,12 +312,12 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   // The kept process for this message (claimed: busy), after waiting for a prewarm() start of it still in flight. A process
   // for this chat made with another system prompt or mode (access, effort) is ended (it would answer with the old one). null: none.
   async function find({ sessionId, resume, systemPrompt, mode }) {
-    const wait = [...pending].find((s) => (resume ? s.wanted === sessionId : s.spare && s.key === systemPrompt && s.mode === mode));
+    const wait = [...pending].find((s) => (resume ? s.wanted === sessionId : s.spare && s.key === keyOf(systemPrompt) && s.mode === mode));
     if (wait) { try { await wait.promise; } catch {} }
     for (const p of [...procs]) {
       if (!live(p) || p.busy) continue;
       if (resume ? p.spare || p.sessionId !== sessionId : !p.spare) continue;
-      if (p.key !== systemPrompt || p.mode !== mode) { if (resume) dispose(p); continue; }
+      if (p.key !== keyOf(systemPrompt) || p.mode !== mode) { if (resume) dispose(p); continue; }
       p.busy = true;
       return p;
     }
@@ -355,7 +360,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
 
   // start(), recorded while in flight so a run() can wait for a prewarm()'s start of the same chat.
   function starting(opts) {
-    const slot = { wanted: opts.sessionId || null, spare: opts.spare === true, key: opts.systemPrompt, mode: modeOf(opts.fullAccess, opts.effort), promise: null, proc: null, cancelled: false };
+    const slot = { wanted: opts.sessionId || null, spare: opts.spare === true, key: keyOf(opts.systemPrompt), mode: modeOf(opts.fullAccess, opts.effort), promise: null, proc: null, cancelled: false };
     slot.promise = start(opts, slot).then((p) => { if (opts.claimed) p.busy = true; return p; }).finally(() => pending.delete(slot));
     pending.add(slot);
     return slot.promise;
@@ -487,7 +492,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     const fullAccess = spec.fullAccess === true;
     const effort = effortLib.clean('grokbuild', spec.effort);
     const mode = modeOf(fullAccess, effort);
-    const mine = (x) => x.key === spec.systemPrompt && x.mode === mode && (resume ? (x.sessionId || x.wanted) === spec.sessionId && !x.spare : x.spare);
+    const mine = (x) => x.key === keyOf(spec.systemPrompt) && x.mode === mode && (resume ? (x.sessionId || x.wanted) === spec.sessionId && !x.spare : x.spare);
     const kept = [...procs].find((p) => live(p) && mine(p));
     if (kept || [...pending].some(mine)) { if (kept && !kept.busy) { kept.used = ++used; idleLater(kept, kept.spare ? spareIdleMs : idleMs()); } return false; }
     stats.prewarmed++;
@@ -523,4 +528,4 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   return { run, prewarm, drop, disposeAll, count, owner, stats };
 }
 
-module.exports = { createGrokWarm, modeOf, rpcOver, permissionAnswer, resultOf, agentProfile, PROFILE_FILE, EXTRA_ENV, IDLE_MS, MAX_PROCS };
+module.exports = { createGrokWarm, modeOf, keyOf, rpcOver, permissionAnswer, resultOf, agentProfile, PROFILE_FILE, EXTRA_ENV, IDLE_MS, MAX_PROCS };
