@@ -4117,7 +4117,7 @@ function openForApproval(tab) {
 ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
+const waitingText = () => t('agent.waiting'); // (only the "Chats working at once" cap makes a chat wait)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -4219,11 +4219,31 @@ function bindOpenChatHere(sender) {
   pushAttention();
   refreshSidebars();
 }
+// [keep connected] A chat's tab closed: once no tab shows the chat (a few seconds later: another tab may adopt it) and it
+// isn't working, its kept Grok Build process ends (features/grok-warm.js). Nothing is read unless a process is kept.
+function grokChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const sessionOf = () => (chatRuns.get(chat)?.messages || (chat === chatId ? agent.messages : chats().load(chat)))?.settings?.gbSession || null;
+  if (now) { aiAgents.grokChatGone(sessionOf); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat) && !chatRuns.has(chat)) aiAgents.grokChatGone(sessionOf); }, 5000);
+  t.unref?.();
+}
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
+// [warm per chat] A chat left Lumen's tabs or was deleted: its own warm Claude Code process ends (features/warm-chats.js).
+// After a tab close, only once no tab shows the chat a few seconds later (another tab may adopt it).
+function warmChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const gone = () => { try { aiAgents.chatGone(chat); } catch { /* not set up yet */ } };
+  if (now) { gone(); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat)) gone(); }, 5000); // (a chat still working is freed when its message ends)
+  t.unref?.();
+}
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
+  warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
+  grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
@@ -6354,6 +6374,7 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
@@ -6412,7 +6433,8 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null,
+// Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
+const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
@@ -7108,10 +7130,11 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
-  // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
-  // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
+  // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
+  // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
+  // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
-  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat: Auto leaves a CLI engine out while another chat is running, see agent.routeAuto)
+  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
@@ -7246,6 +7269,8 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 // Deleting the open chat leaves an empty one in its place.
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
+  warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
+  grokChatLeft(id, { now: true }); // [keep connected] (read before the chat is removed)
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
@@ -7255,6 +7280,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
+  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
@@ -7331,6 +7357,9 @@ Object.defineProperty(agent, 'imageStore', { get: imageStore, set() {}, configur
 if (TEST) global.__imageStore = imageStore;
 setTimeout(() => {
   try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
+  // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
+  // empty list: a history that could not be read must not cost every chat its conversation.)
+  try { if (chats().list().length) require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean))).catch(() => {}); } catch { /* nothing to prune */ }
 }, 30000).unref?.();
 // The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
 ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
@@ -7697,6 +7726,10 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
+  maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
+  // [warm per chat] how long a chat's idle Claude Code process is kept: the same setting as a kept Grok Build's
+  // (grokKeepIdleMinutes; 0: never, Infinity), read when the chat's engine is made.
+  warmIdleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? (m === 0 ? Infinity : m * 60000) : null; },
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),

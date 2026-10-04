@@ -191,7 +191,7 @@ const path = require('path');
     agent.messages.settings = { model: 'claudecode:default', adhdMode: true };
     agent.claudeCodeTurn = async (_m, _t, _i, signal, emit) => {
       const session = { engine: 'tag-1', approvedHosts: new Set(), clientName: 'Claude', controller: new AbortController() };
-      global.__fakeEngine = { owns: (t) => t === 'tag-1', active: { emit, signal } };
+      global.__fakeEngine = { owns: (t) => t === 'tag-1', active: { emit, signal, scope: agent.runScope } }; // (a sidebar run carries its own task scope: agent.js claudeCodeTurn)
       const found = await agent.execute('find', { query: 'Go' });
       const id = Number(/\[(\d+)\]/.exec(found)?.[1]);
       agent.browser.switchTab(ids[1]); // the user goes elsewhere mid-run

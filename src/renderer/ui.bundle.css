@@ -812,6 +812,15 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .send:disabled { background: var(--field); color: var(--faint); box-shadow: none; transform: scale(0.92); }
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
+/* Send now: beside Stop while a reply runs and something is typed (it stops the reply and sends this next). */
+.send-now {
+  height: 26px; flex: none; padding: 0 10px; border: none; border-radius: 13px;
+  background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer;
+  animation: pop-in var(--t-snappy) var(--spring-bouncy);
+  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
+}
+.send-now:hover { background: var(--accent); color: var(--on-accent); }
+.send-now[hidden] { display: none; }
 
 /* ---------- "@" tabs: chips above the composer, the picker, the once-per-chat confirm ---------- */
 .tab-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px; }

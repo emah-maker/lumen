@@ -20,6 +20,7 @@
 //    rolling windows, a budget the user sets (a real progress bar toward that), and the limit-reached
 //    state with the reset time Grok's own message named.
 const { spawn } = require('child_process');
+const { killTree } = require('../ai/cli-utils');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -204,6 +205,7 @@ function createUsage(deps) {
   let latestInfo = null; // the latest rate_limit_event info (status, overage)
   let plan = null; // { at, data } from /usage
   let planRun = null;
+  let planChild = null; // the `claude -p /usage` process while it runs
   let codexSnap = null; // the last Codex reading, numbers only: { at, scan } (scan: codexSummary's input, no text)
   let grokLimit = null; // Grok said the plan's limit was reached: { at, resetsAt (ms | null), text }
   let budget = { ...DEFAULT_BUDGET }; // the user's Grok budget (Settings → Usage); 0 = none
@@ -334,11 +336,15 @@ function createUsage(deps) {
         let stdout = '';
         let stderr = '';
         const child = spawn(bin, ['-p', '/usage', '--output-format', 'json', '--no-session-persistence'], { shell: false, windowsHide: true, cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
-        const timer = setTimeout(() => child.kill(), 30000);
+        planChild = child;
+        // The CLI starts the user's own MCP servers (npx, node, ...): a stuck one would outlive a plain kill of
+        // claude itself, so the whole process tree goes (cli-utils killTree), on the timeout and when Lumen quits.
+        const timer = setTimeout(() => killTree(child), 30000);
+        const ended = () => { clearTimeout(timer); if (planChild === child) planChild = null; };
         child.stdout.on('data', (d) => { stdout += d; });
         child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-        child.on('error', (err) => { clearTimeout(timer); resolve({ error: err.message }); });
-        child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+        child.on('error', (err) => { ended(); resolve({ error: err.message }); });
+        child.on('close', (code) => { ended(); resolve({ code, stdout, stderr }); });
       });
       fs.rm(dir, { recursive: true, force: true }, () => {});
       if (out.error) return { available: false, reason: out.error };
@@ -444,7 +450,12 @@ function createUsage(deps) {
   function clear() { records = []; codexSnap = null; codexAt = 0; save(); }
   function setBudget(next) { budget = normalizeBudget(next); save(); return budget; }
 
-  return { load, record, summary, planUsage, glance, clear, setBudget, budget: () => budget, meter: () => meter };
+  // Lumen quitting ends a `claude -p /usage` still running, with everything it started: left behind, those
+  // processes keep running, and on Windows they hold handles inherited from Lumen (a test's pipe to it).
+  function shutdown() { if (planChild) killTree(planChild); planChild = null; }
+  deps.app?.on?.('will-quit', shutdown);
+
+  return { load, record, summary, planUsage, glance, clear, setBudget, shutdown, budget: () => budget, meter: () => meter };
 }
 
 module.exports = { createUsage, codexSummary, parsePlan, fiveHourOf, barFor, otherClaudeActivity, normalizeBudget, periodStart, periodEnd, grokWindows, budgetStatus };

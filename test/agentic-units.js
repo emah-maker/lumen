@@ -874,6 +874,61 @@ async function toolCallRuns() {
   fakeAgent.execute = async (name) => { calls.push(`execute:${name}`); return 'ok'; };
   describe = async () => null;
 
+  // [parallel CLI chats] Two chats on Claude Code at once: the second gets an engine of its own, and each MCP call
+  // reaches its own run (its own task scope, its own chat's events) by the tag of the connection it came in on.
+  {
+    eng.active = null;
+    const leaseA = fakeAgent.engines.lease('claudecode');
+    const leaseB = fakeAgent.engines.lease('claudecode');
+    const leaseC = fakeAgent.engines.lease('grokbuild');
+    const leaseD = fakeAgent.engines.lease('grokbuild');
+    check('parallel: the first chat gets the sidebar\'s engine, the next one an engine of its own', leaseA.engine === eng && leaseA.shared && !leaseB.shared && leaseB.engine !== eng && leaseB.engine.keepAlive === false && fakeAgent.engines.leased('claudecode') && fakeAgent.engines.sideCount() === 2 && leaseC.shared && !leaseD.shared && leaseD.engine.home === leaseC.engine.home, String(fakeAgent.engines.sideCount()));
+    const runs = {};
+    const scoped = [];
+    fakeAgent.inScope = (scope, fn) => { scoped.push(scope.id); return fn(); };
+    const ctlA = new AbortController();
+    const ctlB = new AbortController();
+    for (const [id, lease, ctl, tagChar] of [['A', leaseA, ctlA, 'a'], ['B', leaseB, ctlB, 'b'], ['C', leaseC, new AbortController(), 'c'], ['D', leaseD, new AbortController(), 'd']]) {
+      runs[id] = { tag: tagChar.repeat(36), events: [] };
+      lease.engine.active = { tag: runs[id].tag, emit: (e) => runs[id].events.push(e), signal: ctl.signal, agent: null, scope: { id, hosts: new Set() }, tools: 0, inflight: 0, dog: null, arm: () => {} };
+    }
+    calls.length = 0;
+    const both = await Promise.all(['A', 'B', 'C', 'D', 'B', 'A'].map((id) => callTool('read_page', {}, { engine: runs[id].tag, clientName: 'claude', controller: new AbortController() })));
+    const rows = (id) => runs[id].events.filter((e) => e.type === 'tool_done' && e.ok).length;
+    check('parallel: every call runs in its own run\'s scope, and shows in its own chat', both.every((r) => !r.isError) && JSON.stringify([...new Set(scoped)].sort()) === JSON.stringify(['A', 'B', 'C', 'D']) && scoped.filter((s) => s === 'A').length === scoped.filter((s) => s === 'B').length && scoped.filter((s) => s === 'A').length === 2 * scoped.filter((s) => s === 'C').length && rows('A') === 2 && rows('B') === 2 && rows('C') === 1 && rows('D') === 1, JSON.stringify({ scoped, a: rows('A'), b: rows('B') }));
+    // Stop in one chat ends only that chat's call.
+    fakeAgent.execute = async () => { await sleep(80); return 'ok'; };
+    const slowA = callTool('read_page', {}, { engine: runs.A.tag, clientName: 'claude', controller: new AbortController() });
+    const slowB = callTool('read_page', {}, { engine: runs.B.tag, clientName: 'claude', controller: new AbortController() });
+    ctlA.abort();
+    const [outA, outB] = await Promise.all([slowA, slowB]);
+    check('parallel: Stop in one chat stops only its own tool call', outA.isError && /Stopped by the user/.test(outA.content[0].text) && !outB.isError, JSON.stringify({ outA, outB }));
+    fakeAgent.execute = async (name) => { calls.push(`execute:${name}`); return 'ok'; };
+    // The side engine and its connection go when its message ends; the shared one is free for the next chat.
+    leaseB.engine.active = null;
+    leaseD.engine.active = null;
+    leaseB.release(); leaseB.release(); // (twice: harmless)
+    leaseD.release();
+    check('parallel: a finished message frees its own engine (nothing left to own its tag)', fakeAgent.engines.sideCount() === 0 && !leaseB.engine.owns(runs.B.tag), String(fakeAgent.engines.sideCount()));
+    leaseA.release(); leaseC.release();
+    eng.active = null;
+    const again = fakeAgent.engines.lease('claudecode');
+    check('parallel: once given back, the sidebar\'s engine goes to the next chat again', again.shared && again.engine === eng && fakeAgent.engines.sideCount() === 0);
+    again.release();
+    check('parallel: nothing is left leased', !fakeAgent.engines.leased('claudecode') && !fakeAgent.engines.leased('grokbuild'));
+    // Many at once: no fixed cap on CLI connections, and every one is freed.
+    const many = Array.from({ length: 12 }, () => fakeAgent.engines.lease('claudecode'));
+    check('parallel: twelve Claude Code chats at once each get an engine (one shared, eleven of their own)', new Set(many.map((l) => l.engine)).size === 12 && fakeAgent.engines.sideCount() === 11);
+    many.forEach((l) => l.release());
+    check('parallel: ...all freed when they end', fakeAgent.engines.sideCount() === 0 && !fakeAgent.engines.leased('claudecode'));
+    const agyA = fakeAgent.engines.lease('antigravity');
+    const agyB = fakeAgent.engines.lease('antigravity');
+    check('parallel: a second Antigravity chat gets an engine of its own (each chat has its own home folder)', agyA.shared && agyB && !agyB.shared && agyB.engine !== agyA.engine && agyB.engine.kind === 'antigravity' && fakeAgent.engines.sideCount() === 1, String(fakeAgent.engines.sideCount()));
+    agyB.release(); agyA.release();
+    check('parallel: ...and it is freed when its message ends', fakeAgent.engines.sideCount() === 0 && !fakeAgent.engines.leased('antigravity'));
+    fakeAgent.inScope = (_scope, fn) => fn();
+  }
+
   // Pre-warm: a no-op unless this chat's engine is Claude Code; cheap when repeated.
   const { Agent } = require('../src/ai/agent');
   let warms = [];
@@ -881,14 +936,14 @@ async function toolCallRuns() {
   const chat = (model) => Object.assign(Object.create(Agent.prototype), {
     messages: { settings: { model } },
     engines: { claudecode: { warm: (o) => warms.push(o), isWarm: () => warms.length > 0 }, grokbuild: { warm: (o) => warms.push(o) } },
-    engineRunScope: null,
+    engineRuns: 0,
     runs: new Set(),
     browser: { autoModel: () => true, maxSteps: () => 0 },
     claudeCodePlan(m, text) { const p = Agent.prototype.claudeCodePlan.call(this, m, text, 0, 0); plans.push(p); return p; },
   });
   check('prewarm: an API model or Grok warms nothing', chat('claude-sonnet-4').prewarm() === false && chat('grokbuild:default').prewarm() === false && warms.length === 0, JSON.stringify(warms));
   const busy = chat('claudecode:default');
-  busy.engineRunScope = {};
+  busy.engineRuns = 1;
   check('prewarm: nothing while a Claude Code message is running', busy.prewarm() === false && warms.length === 0, '');
   const c = chat('claudecode:default');
   const started = c.prewarm();
