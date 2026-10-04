@@ -1353,10 +1353,12 @@ class Agent {
   run(userText, emit, images = [], extra = {}, skill = null) {
     const messages = extra.messages || this.messages;
     const previous = this.runs.get(messages);
-    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts };
+    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts, settling: false };
     const next = (async () => {
       if (previous) {
-        previous.controller.abort();
+        // A run whose reply the screen already has whole (an engine's 'reply_complete', see claudeCodeTurn) is only waiting
+        // for its CLI's last line (cost, session id): a message sent in that moment waits for it, never cuts it short.
+        if (!previous.settling) previous.controller.abort();
         await previous.promise.catch(() => {});
       }
       await this.runOnce(userText, emit, images, extra, skill, messages, rec);
@@ -1939,7 +1941,7 @@ class Agent {
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2031,6 +2033,9 @@ class Agent {
     emit({ type: 'turn_start' });
     const startedAt = Date.now() - 2000; // (pictures written from here on are this run's: enginePictures)
     const engine = this.engineFor('claudecode');
+    const rec = this.runs.get(messages);
+    const sidebarEmit = emit;
+    emit = (event) => { if (event.type === 'reply_complete' && rec) rec.settling = true; sidebarEmit(event); }; // (run(): a settling run is waited for)
     let out = await engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] this message's tab, approvals and signal, for its MCP tool calls
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
@@ -3615,7 +3620,7 @@ ${same}
       case 'wait_for': {
         const wc = this.requireTab();
         const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
-        const probe = `(document.body ? document.body.innerText : '').toLowerCase().includes(${JSON.stringify(input.text.toLowerCase())})`;
+        const probe = scripts.textProbe(input.text);
         while (Date.now() < deadline && !this.signalAborted()) {
           if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;

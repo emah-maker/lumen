@@ -36,9 +36,10 @@ const path = require('path');
 const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
-const { ElectronChromeExtensions } = require('electron-chrome-extensions');
-const { installChromeWebStore, installExtension, uninstallExtension, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
-const { extensionPermissionLines } = require('./browser/extension-permissions');
+// The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
+// after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
+const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
+const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
@@ -47,12 +48,14 @@ const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
+cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
 const cliAuth = lazy(() => require('./ai/cli-auth'));
+const spotifyRedirectPort = () => require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 // The SDK needs `new`, which the plain get-trap `lazy()` proxy above can't forward, so it gets its
 // own tiny cached accessor instead. Only the Claude API path (getClient, organizeTabsWithAi's catch)
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
@@ -82,9 +85,7 @@ const chatRunsLib = require('./features/chat-runs'); // [background chats] when 
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
-const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
-const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -565,10 +566,10 @@ if (TEST) {
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
 // ---------- what's new after an update (features/whats-new.js): once, over the first window ----------
-const whatsNew = require('./features/whats-new').createWhatsNew({
+const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   app, readSettings, writeSettings, t, test: TEST,
   showNotes: (opts) => dialogs.showNotes(opts),
-});
+}));
 if (TEST) global.__whatsNew = whatsNew;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
@@ -661,7 +662,7 @@ function togglePictureInPicture(wc) {
 }
 
 // The lock (or "Not secure") next to the address opens the site's page info (features/page-info.js).
-const pageInfo = require('./features/page-info').createPageInfo({
+const pageInfo = lazy(() => require('./features/page-info').createPageInfo({
   t,
   decisions: () => permissionDecisions, // (declared further down)
   savePermissions: () => settingsBackend.savePermissions(permissionDecisions),
@@ -674,7 +675,7 @@ const pageInfo = require('./features/page-info').createPageInfo({
     if (!win || win.isDestroyed() || (TEST && global.__pageInfoNoPopup)) return;
     Menu.buildFromTemplate(template).popup({ window: win, ...(point && Number.isFinite(point.x) ? { x: Math.round(point.x), y: Math.round(point.y) } : {}) });
   },
-});
+}));
 function openPageInfo(point = null) {
   const wc = activeTab()?.webContents;
   if (!wc || wc.isDestroyed()) return Promise.resolve(null);
@@ -683,7 +684,7 @@ function openPageInfo(point = null) {
 ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point === 'object' ? point : null)); // (UI-only: UI_ONLY_IPC)
 
 // Keyboard Shortcuts (⋯ menu, Help menu, Ctrl+Shift+/): the list in Lumen's own dialog (features/shortcuts-help.js).
-const shortcutsHelp = require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) });
+const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) }));
 
 // "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
@@ -1097,6 +1098,9 @@ function isContentBlocker(manifest = {}, name = '') {
 
 async function setupExtensions() {
   const ses = session.defaultSession;
+  const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+  const { installChromeWebStore, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
+  const { extensionPermissionLines } = require('./browser/extension-permissions');
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
@@ -3739,8 +3743,12 @@ function applyChromeIdentity(wc) {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
     const frame = targetInfo.type === 'iframe';
-    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
-      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const resume = () => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
+    // A worker target (service, shared, dedicated) answers nothing until it runs: its Network/Emulation commands queue behind
+    // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
+    // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
+    if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
+    Promise.all([identify(sessionId, GOOGLE_AUTH.isAuthUrl(targetInfo.url)), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
   // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
   // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
@@ -4972,7 +4980,7 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // browser/window-merge.js plans it (the order, pinned tabs, groups, which windows may take part); this carries it
 // out with moveTabBetween, so every page keeps running (media included) and a sleeping tab stays asleep. Private
 // windows never take part (they are not in winRecs, and their sessions stay apart by design).
-const windowMerge = require('./browser/window-merge');
+const windowMerge = lazy(() => require('./browser/window-merge'));
 let mergeUndo = null; // { dstId, entries, at }: what the toast's Undo puts back, for as long as that toast is up (windowMerge.undoValid)
 let mergePending = false; // a merge waiting for an organize to stop
 const MERGE_ACCELERATOR = 'CmdOrCtrl+Shift+M'; // handled in handleShortcut (so it works without a menu bar); the menus only show it
@@ -5134,7 +5142,7 @@ function mergeWindowItems(src) {
 // where the card was. Escape puts the card away and changes nothing. A window's only tab drags the window
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
-const tabDragMath = require('./features/tab-drag-math');
+const tabDragMath = lazy(() => require('./features/tab-drag-math'));
 let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
@@ -6445,6 +6453,7 @@ const agent = new Agent({
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
@@ -6744,7 +6753,7 @@ if (TEST) global.__widgets = widgets;
 // it answers for the account signed in on tradingview.com in Lumen. No redirects, answer capped at 1 MB.
 function tradingviewAccountLists() {
   return new Promise((resolve, reject) => {
-    const req = net.request({ url: TVW_ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
+    const req = net.request({ url: require('./features/tradingview-view').ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
     req.setHeader('Accept', 'application/json');
     const timer = setTimeout(() => { req.abort(); reject(new Error('TradingView took too long')); }, 15e3);
     const done = (fn, v) => { clearTimeout(timer); fn(v); };
@@ -7704,8 +7713,8 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
     }
   });
   const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
-  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
-  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
+  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: spotifyRedirectPort() }) }));
+  server.listen(spotifyRedirectPort(), '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
