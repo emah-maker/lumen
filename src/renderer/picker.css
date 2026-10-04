@@ -83,3 +83,21 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* [usage bars] renderer/usage-bars.js: a thin bar and its percent, in a provider heading or on a model row. The percent is always
+   written beside the bar and "out" replaces it at the limit, so the colour is never the only signal; the amber and red are the sidebar meter's. */
+.ubar { --ubar-fill: var(--accent, #007aff); display: inline-flex; flex: none; align-items: center; gap: 5px; margin-left: auto; padding-left: 8px; font-size: 10.5px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--text, currentColor) 70%, transparent); }
+.ubar-track { display: block; width: 34px; height: 4px; border-radius: 2px; background: rgb(127 127 127 / 0.22); overflow: hidden; }
+.ubar-track i { display: block; height: 100%; border-radius: 2px; background: var(--ubar-fill); transition: width var(--t-smooth, 0.2s) cubic-bezier(0.16, 1, 0.3, 1); }
+.ubar[data-level="warn"] { --ubar-fill: #ff9f0a; }
+.ubar[data-level="warn"] .ubar-text { color: color-mix(in srgb, #ff9f0a 68%, var(--text, currentColor)); }
+.ubar[data-level="high"] { --ubar-fill: #ff453a; }
+.ubar[data-level="high"] .ubar-track i { background: repeating-linear-gradient(135deg, #ff453a 0 4px, color-mix(in srgb, #ff453a 55%, transparent) 4px 7px); } /* a pattern at the limit as well as the colour */
+.ubar[data-level="high"] .ubar-text { color: color-mix(in srgb, #ff453a 72%, var(--text, currentColor)); font-weight: 600; }
+.picker-group .ubar { font-weight: 500; letter-spacing: 0; }
+.picker-group.has-ubar { gap: 8px; }
+.picker-group.has-ubar > span:first-child { flex: 1 1 auto; min-width: 0; }
+.picker-line .ubar { margin-left: auto; }
+.picker-item.picker-out .picker-name { opacity: 0.62; }
+.pref-lite .ubar-track i, .pref-reduce-motion .ubar-track i { transition: none; }
+@media (forced-colors: active) { .ubar-track { border: 1px solid CanvasText; background: Canvas; } .ubar-track i { background: Highlight !important; } }

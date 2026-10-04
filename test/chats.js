@@ -85,6 +85,8 @@ const fakeClient = (app) => app.evaluate(() => {
   const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
   const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
   check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 200\.0k tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
+  // [usage bars] A chat on a Claude API key has the context ring and the tokens line but no plan bar: there are no plan numbers to show.
+  check('usage bars: an API-key chat shows its context ring and tokens, and no made-up plan bar', await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return (!m || m.hidden) && document.querySelectorAll('.model-picker .ubar, #composer .ubar').length === 0; }), 'a plan bar is showing');
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
   check('usage is saved with the chat', saved?.input === 2000 && saved?.output === 400 && saved?.turns === 2, JSON.stringify(saved));
 
