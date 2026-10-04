@@ -280,7 +280,7 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
   let sum = await usage.summary();
   check('summary() carries Codex\'s section and its bar, scanning the logs once per 20 seconds', sum.codex.fiveHour.percent === 41.6 && sum.bars.codex.kind === 'plan' && (await usage.summary(), scanCalls === 1), JSON.stringify(sum.codex));
   check('the home status card\'s glance has the Codex 5-hour reading, and a limit when one is reached', usage.glance(NOWMS).codexMeter.percent === 41.6 && usage.glance(NOWMS).codexLimit === null, '');
-  await new Promise((res) => setTimeout(res, 900));
+  for (let i = 0; i < 600 && !fs.existsSync(path.join(ud, 'usage.json')); i++) await new Promise((res) => setTimeout(res, 50)); // (the atomic save is async: wait for the file, however slow the disk)
   const saved = JSON.parse(fs.readFileSync(path.join(ud, 'usage.json'), 'utf8'));
   check('persisted in usage.json as numbers only (same store, same privacy)', saved.codex && saved.codex.scan.limits.primary.percent === 41.6 && !JSON.stringify(saved).includes('PRIVATE') && !JSON.stringify(saved).includes('secret') && !/[A-Za-z]:\\\\/.test(JSON.stringify(saved.codex)), JSON.stringify(saved.codex).slice(0, 400));
   const reloaded = mk();
