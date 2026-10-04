@@ -4,8 +4,6 @@
 // million tokens). A model not in the table still counts tokens; its cost shows as unknown. OpenRouter
 // and the CLI engines report their own cost, which is used as is.
 
-const PRICES_UPDATED = '2026-09-28';
-
 // $ per 1M tokens: input, output, cache write, cache read.
 const PRICES = {
   'claude-fable-5-1': { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 },
@@ -140,4 +138,4 @@ function parseContextReport(text) {
   return tokens != null && window > 0 ? { tokens, window } : null;
 }
 
-module.exports = { PRICES, PRICES_UPDATED, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW };
+module.exports = { PRICES, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW };

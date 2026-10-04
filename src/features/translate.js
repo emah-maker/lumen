@@ -17,7 +17,7 @@
 //
 // The first half of this file is pure logic (the unit tests load it in plain Node); the second half
 // is the per-tab machinery.
-const MODELS = require('./translate-models'); // registry, routes, formatBytes (plain Node, no wasm: loading it is cheap)
+const MODELS = { sourceModelCode: (...a) => require('./translate-models').sourceModelCode(...a), modelCode: (...a) => require('./translate-models').modelCode(...a), formatBytes: (...a) => require('./translate-models').formatBytes(...a) }; // (translate-models.js, loaded on first use)
 const WORLD = 1010; // isolated world for the translator (1001 AI reader, 1002 reader mode)
 const CHUNK_CHARS = 3500;
 const MAX_CHARS = 250000; // most page text handled in one pass; the rest is left as written

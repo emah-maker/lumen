@@ -64,7 +64,7 @@ function terminalCommand(msg) {
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
 // Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
 // armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
-function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000 }) {
+function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
   const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
   let port = 0;
@@ -117,17 +117,21 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   function mcpSession(run) {
     if (run.session) return run.session;
     const pending = new Map();
-    const s = createSession({ tools, callTool, enabled, onEvent, engine: run.tag, send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
+    const s = createSession({ tools, callTool, enabled, onEvent, engine: run.tag, onListed: () => wake(run), send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
     run.session = { ...s, pending };
     return run.session;
   }
 
   // UserPromptSubmit: hold the answer (up to holdMs) until Grok has listed Lumen's tools, so the
   // model call that follows has them.
+  // Event-driven: woken when the session lists the tools (onListed) or the run closes, else after holdMs.
+  const wake = (run) => { const waiting = run.waiters; run.waiters = new Set(); for (const w of waiting) w(); };
   async function armed(run) {
     run.armed = true;
-    const until = Date.now() + holdMs;
-    while (!run.session?.session.listed && Date.now() < until && runs.has(run.tag)) await new Promise((r) => setTimeout(r, 50));
+    if (run.session?.session.listed || !runs.has(run.tag)) return {};
+    let timer;
+    await new Promise((resolve) => { run.waiters.add(resolve); timer = setTimeout(resolve, holdMs); });
+    clearTimeout(timer);
     return {};
   }
 
@@ -175,12 +179,18 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       const session = mcpSession(run);
       const isRequest = msg.id !== undefined && msg.id !== null;
       if (!isRequest) { session.handle(msg); return json(202); }
-      const answer = new Promise((resolve) => session.pending.set(msg.id, resolve));
+      // handle() replies (through send) before it returns, so nothing needs to wait for the answer afterwards.
+      let answer = null;
+      session.pending.set(msg.id, (m) => { answer = m; });
       await session.handle(msg);
-      const out = await Promise.race([answer, new Promise((r) => setTimeout(() => r(null), 10))]) || (session.pending.delete(msg.id), { jsonrpc: '2.0', id: msg.id, result: {} });
-      return json(200, out);
+      session.pending.delete(msg.id);
+      return json(200, answer || { jsonrpc: '2.0', id: msg.id, result: {} });
     }
   });
+  // Node's default keep-alive (5 s) closes a socket the CLI reuses after the model has thought for longer: the next tool
+  // call hit ECONNRESET. Answers are plain JSON (no SSE), so the per-request limits stay at their defaults.
+  server.keepAliveTimeout = keepAliveMs;
+  server.headersTimeout = keepAliveMs + 5000; // must exceed keepAliveTimeout
   server.on('clientError', (_err, socket) => socket.destroy());
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -189,13 +199,14 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       resolve({
         port,
         open(tag, chatSessionId = null, { agy = false, fullAccess = false, home = null } = {}) {
-          const run = { tag, chatSessionId, agy, home, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+          const run = { tag, chatSessionId, agy, home, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, waiters: new Set(), allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },
         close(tag) {
           const run = runs.get(tag);
           runs.delete(tag);
+          if (run) wake(run);
           if (run?.session) { run.session.close(); onEvent({ type: 'session', active: false, clientName: run.session.session.clientName, engine: tag }); }
         },
         armed: (tag) => Boolean(runs.get(tag)?.armed),

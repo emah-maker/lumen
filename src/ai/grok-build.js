@@ -364,6 +364,10 @@ const WATCHDOG_MS = 90 * 1000;
 // Before a chat's first message's first stdout line, Grok may legitimately wait for Lumen's MCP tools (its own wait,
 // logged on stderr): the pre-output phase gets this much on top of the watchdog.
 const FIRST_WAIT_EXTRA_MS = 60 * 1000;
+// A process whose turn is answered is waited for this long to go down (exitLater), then let go of: a message is never stuck behind it.
+const EXIT_WAIT_MS = 5000;
+const exitRegistry = new Map(); // path.resolve(home) -> Set of exit promises
+const exitsOf = (home) => { const key = path.resolve(home); let set = exitRegistry.get(key); if (!set) { set = new Set(); exitRegistry.set(key, set); } return set; };
 // A background task's grok (features/background-runner.js) has nobody to ask in the moment and gets no
 // shell at all: run_terminal_command is denied like the other three, and not allowed.
 const argsBase = (background = false) => [
@@ -711,6 +715,7 @@ class GrokBuildEngine {
     this.onFresh = onFresh;
     this.prep = null; // { at, promise } from prepare(): the setup a message's run() takes over
     this.settling = null; // the last run's settleAuthAsync, awaited before the next link
+    this.exits = exitsOf(home); // this GROK_HOME's processes whose turn is answered but that are still going down (exitLater); the next one waits for them (any engine on the home: a message's own engine too)
     this.background = background;
     this.home = home;
     this.dir = dir;
@@ -822,6 +827,20 @@ class GrokBuildEngine {
     return promise;
   }
 
+  // A process whose turn is answered but that has not exited yet: its tree is ended now, and `this.exits` holds a promise for its
+  // end (run / runReady / attempt wait on it: sign-in copy-back, prompt file, the next process). Never rejects; a process that
+  // won't go is let go of after EXIT_WAIT_MS so a message is never stuck behind it.
+  exitLater(child, closed) {
+    let release;
+    const gone = new Promise((resolve) => { release = resolve; });
+    const timer = setTimeout(release, EXIT_WAIT_MS);
+    timer.unref?.();
+    this.exits.add(gone);
+    closed.then(() => {}, () => {}).then(() => { clearTimeout(timer); release(); });
+    gone.then(() => this.exits.delete(gone));
+    try { this.kill(child); } catch { /* already gone */ }
+  }
+
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
     // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
@@ -842,7 +861,10 @@ class GrokBuildEngine {
     try {
       return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort });
     } finally {
-      this.settling = releaseAuth(); // not awaited: the reply doesn't wait on it (the next link does)
+      // Not awaited: the reply doesn't wait on it (the next link does). A process still going down (the turn was answered on its
+      // `result` line, see attempt) may refresh the token as it ends, so the copy-back comes only after it has gone.
+      const going = [...this.exits];
+      this.settling = going.length ? Promise.all(going).then(() => releaseAuth()) : releaseAuth();
     }
   }
 
@@ -864,7 +886,10 @@ class GrokBuildEngine {
       const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume });
       return out.retry ? await this.attempt({ ...args, sessionId: crypto.randomUUID(), waitForLumen: false }) : out;
     } finally {
-      fs.promises.rm(promptFile, { force: true }).catch(() => {}); // (dir itself is kept: the fixed sidebar folder, see above)
+      // (dir itself is kept: the fixed sidebar folder, see above.) The prompt file goes once its process has: Windows won't remove an open file.
+      const going = [...this.exits];
+      const rm = () => fs.promises.rm(promptFile, { force: true }).catch(() => {});
+      if (going.length) Promise.all(going).then(rm); else rm();
     }
   }
 
@@ -874,6 +899,8 @@ class GrokBuildEngine {
   // { retry: true } comes back instead.
   async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
+    // The last message's process is still going down (see exitLater): it may hold the session's files, so it is gone before this one starts.
+    if (this.exits.size) { await Promise.all([...this.exits]); if (signal.aborted) return { text: '', sessionId, stopped: true }; }
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -977,8 +1004,12 @@ class GrokBuildEngine {
       } else if (msg.type === 'result') {
         result = msg;
         newSession = msg.session_id || newSession;
+        // A successful turn is answered now: the process takes 0.3-0.5 s more to exit, which the reply need not wait for.
+        if (!msg.is_error && msg.subtype === 'success' && !held && !early && !offTool && !unguarded) resultSeen();
       }
     };
+    let resultSeen;
+    const answered = new Promise((resolve) => { resultSeen = () => resolve('result'); });
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       started = true;
@@ -1011,10 +1042,17 @@ class GrokBuildEngine {
       if (errBuffer.length > 4000) { stderr = (stderr + errBuffer).slice(-4000); errBuffer = ''; }
     });
 
-    const code = await new Promise((resolve) => {
+    const closed = new Promise((resolve) => {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
       child.on('close', (c) => resolve(c));
     });
+    let code = await Promise.race([closed, answered]);
+    if (code === 'result') {
+      // The `result` line is the turn's end. The process tree goes down in the background (exitLater): the next message, the
+      // prompt file and the sign-in copy-back wait for that, the reply doesn't.
+      code = null;
+      this.exitLater(child, closed);
+    }
     over = true;
     clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);

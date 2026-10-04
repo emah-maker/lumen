@@ -81,6 +81,8 @@ const ARGS_FULL = [
   '--permission-mode', 'bypassPermissions',
 ];
 
+const SETTING_SOURCES_PROJECT = ['--setting-sources', 'project'];
+
 // The picker's Claude Code choices (the part after 'claudecode:'). 'default' passes no --model, so
 // the CLI's own choice applies (its /model setting, else the plan's default); the rest are the family
 // aliases `claude --model` accepts (claude --help, 2.1.283), each following that family's latest model.
@@ -98,9 +100,14 @@ const MODELS = [
 // prompt plus CLAUDE_CODE_NOTE (agent.js) names the mcp__lumen__ tools. Tool use itself needs no
 // prompt: the tool definitions come from the MCP server.
 // [full access] Claude Code keeps its own system prompt (its tools, CLAUDE.md, skills): Lumen's is appended.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '' }) {
+// [cc settings] userSettings (Settings > AI > "Use my Claude Code settings in Lumen chats", off by default): off, the CLI loads
+// only project settings (--setting-sources project; the cwd is an empty folder, so none), which skips the user's CLAUDE.md, rules,
+// memory and hooks (about 1.9k tokens and a few hundred ms of SessionStart hooks per chat) while the OAuth login still works.
+// [full access] always loads them: it runs as in a terminal.
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '' }) {
   return [
     ...(fullAccess ? ARGS_FULL : ARGS_BASE),
+    ...(!fullAccess && !userSettings ? SETTING_SOURCES_PROJECT : []),
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     ...effortLib.cliArgs('claudecode', effort), // Settings → AI → AI providers: --effort (none: the CLI's own default)
@@ -137,7 +144,14 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // turn cap and system prompt (a new chat, a model or settings change starts another one). Today's date
 // (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
 // started with rather than respawning, and a warm start made before midnight stays usable after it.
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), effortLib.clean('claudecode', effort), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
+// [cc settings] userSettings is part of the key too (last, so warmModel's index holds): changing the setting ends a warm process.
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex'), Boolean(userSettings), effortLib.clean('claudecode', effort)]); // (effort last too, so warmModel's index holds)
+
+// [cc settings] A failure that loading ~/.claude/settings.json may cure: a sign-in, credential, proxy or certificate error
+// (apiKeyHelper, ANTHROPIC_* / proxy env in the user's settings) in a CLI that ran without those settings.
+const SETTINGS_FAILURE = /not logged in|\/login|api key|oauth|authenticat|credential|unauthori[sz]ed|\b40[17]\b|proxy|certificate|ECONNREFUSED|ENOTFOUND|unable to connect|could not connect/i;
+const settingsRetryable = (text) => SETTINGS_FAILURE.test(String(text || ''));
+let settingsNoticeShown = false; // the suggestion is shown once per Lumen run
 
 // A step row shown while the model is still writing a tool call's input (a long fill_form or batch):
 // it appears after EARLY_STEP_MS, and Lumen's MCP side takes it over when the call arrives
@@ -300,7 +314,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, effort = '' }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '' }) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -318,7 +332,7 @@ class ClaudeCodeEngine {
       this.workDirs.delete(dir);
       throw err;
     }
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, effort });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
@@ -330,7 +344,7 @@ class ClaudeCodeEngine {
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess, effort }); };
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess, userSettings, effort }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -371,6 +385,7 @@ class ClaudeCodeEngine {
     const next = (this.starting || Promise.resolve()).catch(() => {}).then(async () => {
       const bin = await this.ensureBin();
       if (!bin) return null;
+      if (this.needUserSettings && !opts.userSettings) opts = { ...opts, userSettings: true }; // [cc settings] this engine's CLI needed them (turn's fallback)
       const key = procKey({ bin, ...opts });
       let p = this.proc;
       if (p?.drain) { emit?.({ type: 'status', text: 'Finishing the stopped step…' }); await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first (said on screen: up to interruptMs)
@@ -567,13 +582,14 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, effort = '', signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '' }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, effort }, { fresh, emit });
+    userSettings = userSettings || Boolean(this.needUserSettings);
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -611,6 +627,16 @@ class ClaudeCodeEngine {
       if (!this.watchdogMs || over || active.inflight > 0) return;
       active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, this.watchdogMs);
     };
+    // "Reply complete" (once per message): the screen clears its working state and takes the next message now. This run
+    // goes on to `result` for its cost, usage and session id (`done`), and a message sent meanwhile waits for it
+    // (agent.js run: a run that is settling is waited for, not aborted). Never while a tool call is in flight, in a
+    // subagent's own turn, or while compacting.
+    let early = false;
+    const replyComplete = (msg) => {
+      if (early || msg.parent_tool_use_id || active.inflight > 0 || active.builtin.size || compacting || over || signal.aborted) return;
+      early = true;
+      emit({ type: 'reply_complete' });
+    };
     const handle = (msg) => {
       active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
@@ -629,6 +655,9 @@ class ClaudeCodeEngine {
         emit({ type: 'status', text: compacting ? 'Compacting the conversation…' : '' });
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
+        // The reply's last model call ended its turn (message_delta end_turn, no tool call of this turn still running): the
+        // text is complete. `result` follows 0.8-1.1 s later (post_turn_summary in between); the screen need not wait for it.
+        if (e.type === 'message_delta' && e.delta?.stop_reason === 'end_turn') replyComplete(msg);
         // Each text block (one per turn around a tool call) starts a new paragraph, on screen and in
         // the saved reply alike; joined bare they ran together ("I'll check.The price is…").
         if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
@@ -638,6 +667,7 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
+        if (msg.message?.stop_reason === 'end_turn') replyComplete(msg); // (a CLI that puts it on the message itself)
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
@@ -697,7 +727,7 @@ class ClaudeCodeEngine {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
       // Only when the caller knows the next message will want the same process (prestart: a picked model, or
       // an auto-routed top tier that can't go higher); otherwise it would start for a key that may not match.
-      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, effort };
+      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, userSettings, effort };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);
     }
@@ -722,7 +752,20 @@ class ClaudeCodeEngine {
       // A resumed session that no longer exists: forget it so the next message starts fresh.
       const expired = /no conversation found|session.*not found/i.test(`${result?.result || ''}${(result?.errors || []).join('\n')}${proc.stderr}`);
       if (expired && resume && quietExpired && !text) return { text: '', sessionId: null, failed: true, expired: true, usage, rateLimit };
-      emit({ type: 'error', ...describeFailure(result?.result || (result?.errors || []).join('\n') || proc.stderr, code) });
+      const failure = result?.result || (result?.errors || []).join('\n') || proc.stderr;
+      // [cc settings] Nothing ran, and the CLI had none of the user's settings: they may hold the credentials or proxy it needs.
+      // Retried once with them; this engine keeps them from then on (needUserSettings), and the user is told which setting that is.
+      if (!userSettings && !fullAccess && !expired && !text && !finalText && active.tools === 0 && settingsRetryable(failure)) {
+        this.needUserSettings = true;
+        const again = await this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings: true }, { fresh: true });
+        if (again.failed) this.needUserSettings = false; // it did not help: the next message tries the lean start again
+        else if (!settingsNoticeShown) {
+          settingsNoticeShown = true;
+          emit({ type: 'notice', text: 'Claude Code needed your own Claude Code settings (~/.claude/settings.json) to connect, so Lumen loaded them for this chat. To always load them, turn on Settings → AI → Use my Claude Code settings in Lumen chats.' });
+        }
+        return again;
+      }
+      emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
     }
     return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0 };
@@ -751,4 +794,4 @@ function dirsInCommand(command) {
   return out;
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };

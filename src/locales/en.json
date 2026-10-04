@@ -845,6 +845,8 @@
   "settings.ai.autoCompactDesc": "When a chat nears the model’s limit, its earlier part is summarized instead of dropped. Your messages stay on screen. Type /compact to do it yourself.",
   "settings.ai.cliFullAccess": "Give all command-line AIs full access to this computer",
   "settings.ai.cliFullAccessDesc": "Sets all three together. Only turn this on if you trust them with your computer: a page they read could try to trick them. Half-way means only some are on. Off by default.",
+  "settings.ai.ccUserSettings": "Use my Claude Code settings in Lumen chats",
+  "settings.ai.ccUserSettingsDesc": "Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.",
   "settings.ai.claudeCodeFullAccess": "Give Claude Code full access to this computer",
   "settings.ai.claudeCodeFullAccessDesc": "Runs commands and edits files without asking first. Lumen’s approval cards don’t cover Claude Code’s own tools.",
   "settings.ai.grokBuildFullAccess": "Give Grok Build full access to this computer",

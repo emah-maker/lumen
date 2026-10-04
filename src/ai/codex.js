@@ -263,6 +263,14 @@ function parseEvent(obj) {
 
 // WATCHDOG: Codex prints an item only when it is finished (no streaming), so a long reasoning step is silent for a while.
 const WATCHDOG_MS = 5 * 60 * 1000;
+// A Codex whose turn is answered is left this long to exit by itself (exitLater), then ended; one that won't go is let go of after EXIT_WAIT_MS.
+const EXIT_GRACE_MS = 4000;
+const EXIT_WAIT_MS = 8000;
+const exitRegistry = new Map(); // path.resolve(home) -> Set of exit promises (processes whose turn is answered but that are still going down)
+const cleanRegistry = new Map(); // path.resolve(home) -> Set of cleanups waiting for those
+const registryOf = (map, home) => { const key = path.resolve(home); let set = map.get(key); if (!set) { set = new Set(); map.set(key, set); } return set; };
+const exitsOf = (home) => registryOf(exitRegistry, home);
+const cleaningOf = (home) => registryOf(cleanRegistry, home);
 
 class CodexEngine {
   // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); locate(): the Codex spec (codex-locate.locateCodex's result, or
@@ -373,6 +381,10 @@ class CodexEngine {
     const userHome = this.userHome();
     const chatHome = chatHomeFor(this.userData, scope?.chatId);
     const home = chatHome || this.home;
+    // The last message's Codex may still be exiting (its turn was answered on turn.completed, see attempt): its thread files and
+    // sign-in copy-back come first.
+    await this.afterLast(home);
+    if (signal.aborted) return { text: '', sessionId, stopped: true };
     await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
     await pullAuth({ userHome, home });
     const resume = Boolean(sessionId) && SAFE_SESSION.test(sessionId);
@@ -396,10 +408,38 @@ class CodexEngine {
       return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired });
     } finally {
       gate.close(tag); // (attempt closes it at the end of the process; this covers a failure before it started)
-      this.workDirs.delete(dir);
-      removeDir(dir);
-      await returnAuth({ userHome, home });
+      const cleanup = async () => {
+        this.workDirs.delete(dir);
+        removeDir(dir);
+        await returnAuth({ userHome, home });
+      };
+      const going = [...exitsOf(home)];
+      if (going.length) { // its process is still exiting: its folder and the sign-in copy-back wait for that, the reply doesn't
+        const after = Promise.all(going).then(cleanup).catch(() => {});
+        cleaningOf(home).add(after);
+        after.then(() => cleaningOf(home).delete(after));
+      } else await cleanup();
     }
+  }
+
+  // Everything the earlier messages left running in this Codex home (processes still exiting, then their cleanup).
+  async afterLast(home) {
+    for (let i = 0; i < 3 && (exitsOf(home).size || cleaningOf(home).size); i++) await Promise.all([...exitsOf(home), ...cleaningOf(home)]);
+  }
+
+  // A Codex whose turn is answered (turn.completed) but that has not exited: it ends by itself (it finishes its own files); one that
+  // is still there after EXIT_GRACE_MS is ended, and one that won't go is let go of after EXIT_WAIT_MS. Never rejects.
+  exitLater(home, child, closed) {
+    const set = exitsOf(home);
+    let release;
+    const gone = new Promise((resolve) => { release = resolve; });
+    const grace = setTimeout(() => { try { this.kill(child); } catch { /* gone */ } }, EXIT_GRACE_MS);
+    const give = setTimeout(release, EXIT_WAIT_MS);
+    grace.unref?.();
+    give.unref?.();
+    set.add(gone);
+    closed.then(() => {}, () => {}).then(() => { clearTimeout(grace); clearTimeout(give); release(); });
+    gone.then(() => set.delete(gone));
   }
 
   async attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input, sessionId, resume, model, signal, emit, runAgent, scope = null, quietExpired = false }) {
@@ -453,10 +493,12 @@ class CodexEngine {
       else if (ev.kind === 'item') {
         const bad = offItemOf(ev.item);
         if (bad) { offItem = bad; this.kill(child); }
-      } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; }
+      } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; if (!failedMsg && !offItem) turnDone(); }
       else if (ev.kind === 'failed') failedMsg = ev.error || 'The turn failed.';
       else if (ev.kind === 'error') lastError = ev.error;
     };
+    let turnDone;
+    const answered = new Promise((resolve) => { turnDone = () => resolve('done'); });
     let buffer = '';
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
@@ -476,10 +518,13 @@ class CodexEngine {
     child.stdin.on('error', () => {}); // the CLI exiting early closes the pipe
     try { child.stdin.end(input); } catch { /* gone */ }
 
-    const code = await new Promise((resolve) => {
+    const closed = new Promise((resolve) => {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
       child.on('close', (c) => resolve(c));
     });
+    // `turn.completed` is the last event of a turn: the reply is answered then, without waiting for the process to exit.
+    let code = await Promise.race([closed, answered]);
+    if (code === 'done') { code = null; this.exitLater(home, child, closed); }
     over = true;
     clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
