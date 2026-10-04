@@ -3,8 +3,8 @@
 // This file is the pure part:
 //   createBindings()   which chat each tab shows in the sidebar (many tabs may show one chat; its home
 //                      tab is the one it was last moved or started in)
-//   createRunSlots()   how many chats may work at once (no cap at all when the setting says so), the waiting
-//                      line behind them, and the rule that Antigravity runs one chat at a time
+//   createRunSlots()   how many chats may work at once (no cap at all when the setting says so) and the waiting
+//                      line behind them
 //   resolveToolTab()   which tab a chat's browser tools act on: its own, never "whichever is in front"
 //   tabStatus()        the little mark a tab shows: working, waiting its turn, or done and not viewed
 //   followPlan()       what the sidebar shows when a tab comes to the front
@@ -106,21 +106,19 @@ function createBindings() {
 }
 
 // ---- running chats: the cap and the waiting line
-// slot kinds: 'api' (a model reached over its API), 'cli' (Claude Code, Grok Build: each run reaches Lumen's tools over
-// a connection of its own, found by its own tag, so they run side by side like any other chat), or 'solo'
-// (Antigravity: its run's MCP token goes through one config file in its home folder, so only one of its chats works
-// at a time; others wait, reason 'cli': a CLI engine taking turns).
+// slot kinds: 'api' (a model reached over its API) or 'cli' (Claude Code, Grok Build, Antigravity: each run reaches
+// Lumen's tools over a connection of its own, found by its own tag, so they run side by side like any other chat;
+// Antigravity's runs each use their chat's own home folder for the token file). Only the cap makes a chat wait.
 //   onError(chatId, err)  a start() that throws: the slot is given back and the chat is told (an error and a done), so it
 //                         is never left showing "running" for ever
 //   onStale(chatId)       sweep() found a slot whose run is gone without ever saying done (an engine process that exited
 //                         without reaching "done"): the slot is released and the chat is told
-function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, onStale = null, misses = 2 } = {}) {
+function createRunSlots({ max = DEFAULT_MAX_RUNS, onError = null, onStale = null, misses = 2 } = {}) {
   let limit = clampRuns(max);
   const running = new Map(); // chat id -> { kind, alive, missed }
   const waiting = []; // { chatId, kind, start, alive }
-  const soloBusy = () => [...running.values()].filter((r) => r.kind === 'solo').length;
-  const fits = (kind) => running.size < limit && (kind !== 'solo' || soloBusy() < cliMax);
-  const why = (kind) => (running.size >= limit ? 'limit' : kind === 'solo' && soloBusy() >= cliMax ? 'cli' : null);
+  const fits = () => running.size < limit;
+  const why = () => (running.size >= limit ? 'limit' : null);
 
   const begin = (chatId, kind, alive, start) => {
     running.set(chatId, { kind, alive, missed: 0 });
@@ -134,7 +132,7 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
   function pump() {
     for (let i = 0; i < waiting.length;) {
       const w = waiting[i];
-      if (!fits(w.kind)) { i++; continue; }
+      if (!fits()) { i++; continue; }
       waiting.splice(i, 1);
       begin(w.chatId, w.kind, w.alive, w.start);
       i = 0; // (the line is looked at again from the front: a slot may have been taken)
@@ -179,11 +177,9 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
       return true;
     },
     state: (chatId) => (running.has(chatId) ? 'running' : waiting.some((w) => w.chatId === chatId) ? 'queued' : null),
-    // Why a queued chat waits: 'limit' (the cap), 'cli' (Antigravity is busy in another chat), or null.
+    // Why a queued chat waits: 'limit' (the cap), or null.
     reason(chatId) {
-      const w = waiting.find((x) => x.chatId === chatId);
-      if (!w) return null;
-      return why(w.kind);
+      return waiting.some((x) => x.chatId === chatId) ? why() : null;
     },
     runningIds: () => [...running.keys()],
     waitingIds: () => waiting.map((w) => w.chatId),
@@ -191,8 +187,8 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
   };
 }
 
-// The engine kind of a model id, for the slots: only Antigravity still takes turns (see createRunSlots).
-const slotKind = (model) => { const m = String(model || ''); return /^antigravity:/.test(m) ? 'solo' : /^(claudecode|grokbuild):/.test(m) ? 'cli' : 'api'; };
+// The engine kind of a model id, for the slots (see createRunSlots): a CLI engine or an API model.
+const slotKind = (model) => (/^(claudecode|grokbuild|antigravity):/.test(String(model || '')) ? 'cli' : 'api');
 
 // ---- tools
 // The tab a chat's tools act on. `pinned`: the tab the chat's run is bound to (null: none yet).

@@ -188,11 +188,11 @@ function setupAiAgents(deps) {
   const antigravityModule = () => require('../ai/antigravity');
   // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI), or with LUMEN_AGY_SIDEBAR=1.
   const antigravitySidebar = () => process.env.LUMEN_AGY_SIDEBAR === '1' || (process.env.LUMEN_AGY_SIDEBAR !== '0' && readSettings().antigravitySidebar === true);
+  // [parallel Antigravity chats] Each chat runs agy in a home folder of its own (antigravity.js chatHomeFor), so a message's
+  // own engine (leaseEngine) can run beside the sidebar's with its own MCP token file, and the chat still resumes there.
+  const newAntigravity = () => new (antigravityModule().AntigravityEngine)({ userData: app.getPath('userData'), gate: startGrokGate, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
   const antigravityEngine = () => {
-    if (!antigravity) {
-      const { AntigravityEngine } = antigravityModule();
-      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
-    }
+    antigravity ||= newAntigravity();
     return antigravity;
   };
 
@@ -238,8 +238,8 @@ function setupAiAgents(deps) {
   const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
-  // message holds it, else a side engine made for this message. null: Antigravity is busy in another chat (its run's
-  // MCP token goes through one config file in its home folder, so it still works on one chat at a time).
+  // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
+  // own, so its MCP token file is never another chat's).
   // release() frees everything the message held: a side engine's process (and with it its MCP token) is ended.
   function leaseEngine(kind) {
     const shared = kind === 'claudecode' ? claudeCodeEngine() : kind === 'grokbuild' ? grokBuildEngine() : kind === 'antigravity' ? antigravityEngine() : null;
@@ -249,9 +249,10 @@ function setupAiAgents(deps) {
       leased.add(shared);
       return { engine: shared, shared: true, release: () => { if (!done) { done = true; leased.delete(shared); } } };
     }
-    if (kind === 'antigravity') return null;
     const engine = kind === 'claudecode'
       ? newClaudeCode({ keepAlive: false }) // one message, then its process ends
+      : kind === 'antigravity'
+      ? newAntigravity() // the chat's own home folder: its conversation resumes there
       : new (grokBuildModule().GrokBuildEngine)({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads }); // the sidebar's GROK_HOME: the chat's session resumes there
     engine.bin = shared.bin;
     engine.statusCache = shared.statusCache;

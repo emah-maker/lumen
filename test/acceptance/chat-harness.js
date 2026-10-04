@@ -6,6 +6,7 @@
 //  - child_process.spawn is wrapped BEFORE any engine module loads, so every engine instance (the sidebar's, or any
 //    per-chat / per-run one a later design makes) that spawns the fake binary runs fake-chat-cli.js under Node.
 //  - LUMEN_CLAUDE_BIN / LUMEN_GROK_BIN name the fake script (findClaude / findGrok honour them), GROK_HOME a temp folder.
+//    LUMEN_AGY_BIN names a stand-in file (FAKE_AGY) that the spawn hook runs as the same script in its agy role.
 //  - Lumen's local HTTP MCP server (automation/mcp-http.js startHttp) is replaced by a recording fake gate: it hands
 //    out one token per run (the token IS the run's tag), records open / close, and keeps the `callTool` it was given,
 //    which the tests call the way a CLI's MCP request would arrive (session.engine = the run's tag).
@@ -20,10 +21,13 @@ const live = new Map(); // pid -> child, for fake CLI processes still running
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chat-accept-'));
 const LOG = path.join(tmp, 'cli-log.jsonl');
 fs.writeFileSync(LOG, '');
+const FAKE_AGY = path.join(tmp, process.platform === 'win32' ? 'agy-fake.exe' : 'agy-fake'); // (only its path matters)
+fs.writeFileSync(FAKE_AGY, '');
 
 cp.spawn = function spawnHook(bin, argv, opts = {}) {
-  if (bin !== FAKE) return realSpawn.apply(this, arguments);
-  const child = realSpawn(process.execPath, [FAKE, ...(argv || [])], { ...opts, env: { ...(opts.env || {}), ELECTRON_RUN_AS_NODE: '1', FAKE_CHAT_LOG: LOG } });
+  if (bin !== FAKE && bin !== FAKE_AGY) return realSpawn.apply(this, arguments);
+  const role = bin === FAKE_AGY ? { FAKE_ROLE: 'agy' } : {};
+  const child = realSpawn(process.execPath, [FAKE, ...(argv || [])], { ...opts, env: { ...(opts.env || {}), ...role, ELECTRON_RUN_AS_NODE: '1', FAKE_CHAT_LOG: LOG } });
   live.set(child.pid, child);
   child.on('exit', () => live.delete(child.pid));
   return child;
@@ -32,6 +36,8 @@ process.env.LUMEN_CLAUDE_BIN = FAKE;
 process.env.LUMEN_GROK_BIN = FAKE;
 process.env.GROK_HOME = path.join(tmp, 'user-grok');
 process.env.LUMEN_GROK_SIDEBAR = '1';
+process.env.LUMEN_AGY_BIN = FAKE_AGY;
+process.env.LUMEN_AGY_SIDEBAR = '1';
 fs.mkdirSync(process.env.GROK_HOME, { recursive: true });
 
 // ---- the fake HTTP gate (mcp-http.js startHttp's shape: open/close/armed/listed/port/stop)

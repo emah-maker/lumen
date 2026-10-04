@@ -1,8 +1,11 @@
-// A fake `claude` / `grok` CLI for the chat acceptance suites (test/acceptance/chat-harness.js): no login, no model.
+// A fake `claude` / `grok` / `agy` CLI for the chat acceptance suites (test/acceptance/chat-harness.js): no login, no model.
 // Run as a Node script by the harness's spawn hook, with the exact argv, env and cwd the engine built.
 //
-// Role: Grok when the argv has --prompt-file (one message per process, then exit), else Claude Code (stream-json
-// user messages on stdin, one turn per line, the process stays up between messages until stdin ends).
+// Role: Antigravity when the harness says so (FAKE_ROLE=agy: one -p message per process, stream-json events, its MCP token
+// read from $HOME/.gemini/config/mcp_config.json a moment after start the way a real CLI reads its config, and its
+// conversations kept under $HOME like agy's: --conversation <id> fails unless $HOME has that conversation); Grok when the
+// argv has --prompt-file (one message per process, then exit), else Claude Code (stream-json user messages on stdin, one
+// turn per line, the process stays up between messages until stdin ends).
 //
 // Each message's text is looked at for a marker and directives:
 //   RUN-<id>        the run's name: echoed back as "reply from RUN-<id>" and logged
@@ -16,7 +19,7 @@ const path = require('path');
 
 const argv = process.argv.slice(2);
 const flag = (f) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : undefined);
-const role = argv.includes('--prompt-file') ? 'grok' : 'claude';
+const role = process.env.FAKE_ROLE === 'agy' ? 'agy' : argv.includes('--prompt-file') ? 'grok' : 'claude';
 const LOG = process.env.FAKE_CHAT_LOG;
 const DIR = path.dirname(LOG);
 const session = flag('--session-id') || flag('--resume');
@@ -32,6 +35,7 @@ function tokenOf() {
     return lumen.env?.LUMEN_ENGINE || null;
   } catch { return null; }
 }
+if (role === 'agy') { require('./fake-agy-role').run({ argv, flag, LOG, DIR }); return; } // (a module of its own: see there)
 const token = tokenOf();
 const log = (entry) => fs.appendFileSync(LOG, `${JSON.stringify({ role, pid: process.pid, token, session, resume, t: Date.now(), ...entry })}\n`);
 log({ ev: 'start' });
