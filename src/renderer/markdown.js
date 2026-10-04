@@ -85,8 +85,9 @@
   // A lone $ is a formula only when it reads like one (Pandoc's rule): "$x$" and "$\alpha + 1$" are; "$5 and $10",
   // "costs $5-$10" and "$ 5" are money. Its content is on one line.
   function dollarEnd(s, i) {
-    // It opens on something a formula starts with (a letter, digit, \, {, (, [, |, a sign): "($)" is a price tier.
-    if (!/[A-Za-z0-9\\{([|+\-_^]/.test(s[i + 1] || '')) return -1;
+    // It opens on something a formula starts with (a letter, digit, \, {, (, [, |, a sign, or a relation that carries an
+    // equation on: "Work $= 2\pi N\tau$"): "($)" is a price tier.
+    if (!/[A-Za-z0-9\\{([|+\-_^=<>]/.test(s[i + 1] || '')) return -1;
     for (let j = i + 1; j < s.length; j++) {
       const c = s[j];
       if (c === '\n') return -1;
