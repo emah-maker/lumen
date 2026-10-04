@@ -628,6 +628,7 @@ function tabStripRoom() {
   let count = 0;
   for (const el of bar.children) {
     if (el === strip) { count++; continue; }
+    if (el.classList.contains('drag-gutter')) { others += parseFloat(getComputedStyle(el).minWidth) || 0; count++; continue; } // (its room is reserved, not what it grows to)
     if (el.getBoundingClientRect().width > 0) { others += el.getBoundingClientRect().width; count++; }
   }
   return Math.max(80, bar.clientWidth - pad - others - gap * Math.max(0, count - 1));
