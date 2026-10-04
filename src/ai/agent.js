@@ -798,8 +798,10 @@ function webUrl(raw) {
   return parsed.href;
 }
 
+// Waits for a navigation the caller has just started: until the page stops loading, then until its DOM has
+// had a short quiet spell (hydration, a late render), capped. No fixed sleeps: a static page returns as soon
+// as it has loaded; a page that keeps mutating costs at most the cap.
 async function waitForLoad(wc, timeoutMs = 8000) {
-  await sleep(150);
   if (!wc.isDestroyed() && wc.isLoading()) {
     await new Promise((resolve) => {
       const done = () => {
@@ -813,7 +815,7 @@ async function waitForLoad(wc, timeoutMs = 8000) {
       wc.once('destroyed', done); // a tab closed mid-load: don't sit out the whole timeout
     });
   }
-  await sleep(400);
+  await quietWait(wc);
   if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
 }
 
@@ -858,7 +860,17 @@ function domQuiet({ quietMs, capMs, extendMs = 700 }) {
     cap = setTimeout(() => done('busy'), capMs);
   });
 }
-const DOM_QUIET = `(${domQuiet.toString()})({ quietMs: 100, capMs: 650 })`;
+const domQuietScript = (quietMs = 100, capMs = 650, extendMs = 700) => `(${domQuiet.toString()})({ quietMs: ${quietMs}, capMs: ${capMs}, extendMs: ${extendMs} })`;
+const DOM_QUIET = domQuietScript(100, 650);
+
+// Waits (in the page) for the DOM to go quiet, at most ~capMs. Never throws: a page that is mid-navigation,
+// has no document yet, or does not answer just ends the wait.
+// Defaults for waiting after a page load: worst case (a page that never goes quiet, or shows a spinner) ~400 ms,
+// no more than the fixed sleep this replaced.
+async function quietWait(wc, quietMs = 100, capMs = 300, extendMs = 100) {
+  if (wc.isDestroyed()) return;
+  await runScript(wc, domQuietScript(quietMs, capMs, extendMs), capMs + extendMs + 1500).catch(() => {});
+}
 
 // After an input (click, key, Enter, form submit): a navigation it starts is waited for as
 // waitForLoad does; otherwise only until the page's DOM goes quiet (~100 ms, at most ~650 ms), not a
@@ -937,7 +949,7 @@ async function readInBackground(url, guard = () => null) {
   try {
     await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]);
     await redirects?.settle();
-    await sleep(500);
+    await quietWait(wc);
     const page = await runScript(wc, scripts.readPage(0, 0), 8000);
     const more = page.totalTextChars > 8000 ? `
 [first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
@@ -3297,7 +3309,7 @@ ${out.text}${note}
     try {
       await Promise.race([waitForLoad(wc, 15000), sleep(15000)]);
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
-      await sleep(500);
+      await quietWait(wc); // (waitForLoad already waited for quiet; this covers the sleep(15000) race winning)
       if (away()) return fallBack();
       const page = await runScript(wc, scripts.readPage(0, 0), 8000);
       if (away()) return fallBack(); // it moved while being read
@@ -3595,7 +3607,7 @@ ${same}
         if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
         else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseMove(wc, target.x, target.y)).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
-        await sleep(500);
+        await quietWait(wc, 80, 250, 50); // a menu opening on hover
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;
       }
       case 'go_forward': {
@@ -3637,8 +3649,7 @@ ${same}
       case 'scroll': {
         const wc = this.requireTab();
         const screens = Math.min(Math.max(input.screens || 1, 0.25), 10);
-        const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens));
-        await sleep(300);
+        const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens)); // (resolves once the scroll position is stable)
         return JSON.stringify(result);
       }
       case 'go_back': {

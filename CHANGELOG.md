@@ -9,6 +9,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 - **Organize Tabs shows its groups sooner and groups a little better.** With AI on, the groups used to wait for Lumen to check how to reach the model (a signed-in Claude Code check can take a second or more); now they appear at once and the check runs alongside. The model still only refines them. Better grouping: a story three sites all cover ("earthquake") is a group, a news wire's name (Reuters) no longer pulls an unrelated story into a Finance group, a quarter's name (Q3) groups its docs, chat and spreadsheet, and a project's home page titled by its name alone goes with the project's other pages. Undo, pinned tabs and your own groups work as before.
 
+- **Faster page actions for the AI.** Navigating, going back or forward, reloading, scrolling, hovering and reading several pages at once no longer sit out fixed pauses. After a page loads, Lumen waits only until the page stops changing (at most about 0.4 s), and a scroll returns as soon as the page has stopped moving. A simple page now opens in about 0.2 s instead of 0.65 s, a scroll takes about 0.05 s instead of 0.3 s, and a hover about 0.1 s instead of 0.5 s.
+
 ## 0.5.8 (2026-10-04)
 
 - **Chats in different tabs now all work at once,** Claude Code, Grok Build and Antigravity included. Before, these took turns ("Waiting for the other chat to finish"). Each chat's tools act on its own tab. **Settings → AI → Chats working at once** now has **No limit**, and that's the new default.
