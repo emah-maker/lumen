@@ -56,6 +56,63 @@ const os = require('os');
   check('clicking again does not add a second entry', (again.match(/\[mcp_servers\.lumen\]/g) || []).length === first && first === 1, again);
   check('connecting turned "Allow AI agents to connect" on', await inSettings("document.getElementById('ai-mcp')?.checked === true"), '');
 
+  const withTimeouts = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+  check('the entry Codex\'s `mcp add` wrote got Lumen\'s timeouts (startup 30 s, tool call 600 s: Codex\'s own are 10 s and 60 s)', /startup_timeout_sec = 30/.test(withTimeouts) && /tool_timeout_sec = 600/.test(withTimeouts) && (withTimeouts.match(/\[mcp_servers\.lumen\]/g) || []).length === 1, withTimeouts);
+
+  // ---- Part 1, end to end: a Codex-style client starts the server exactly as config.toml says, in the restricted environment Codex
+  // gives an MCP server (its default variables plus the entry's own `env`), and lists and calls Lumen's tools on this running Lumen.
+  {
+    const cfg = require('../src/ai/codex-config');
+    const http = require('http');
+    const { spawn } = require('child_process');
+    const page = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Codex fixture page</title><body><h1>Hello from the fixture</h1></body>'); });
+    await new Promise((r) => page.listen(0, '127.0.0.1', r));
+    const entry = cfg.inspect(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8'), { command: '', args: [], env: {} });
+    const keep = ['PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'SYSTEMDRIVE', 'USERNAME', 'USERDOMAIN', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'PROGRAMFILES', 'PROGRAMDATA', 'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'TERM', 'TZ'];
+    const codexEnv = { ...Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), ...entry.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile }; // (the last two only point the test build at the throwaway profile)
+    const child = spawn(entry.command, entry.args, { env: codexEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    let buf = '';
+    let err = '';
+    const waiting = new Map();
+    child.stderr.on('data', (d) => { err += d; });
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (c) => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue; try { const m = JSON.parse(line); waiting.get(m.id)?.(m); waiting.delete(m.id); } catch { /* a log line */ } } });
+    let nextId = 0;
+    const ask = (method, params, ms = 30000) => new Promise((resolve, reject) => { const id = nextId++; waiting.set(id, resolve); child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`); setTimeout(() => reject(new Error(`timeout: ${method}; stderr: ${err}`)), ms); });
+    try {
+      const init = await ask('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex-mcp-client', version: '0.130.0' } }, 40000);
+      check('Codex-style start: the command from config.toml runs in Codex\'s restricted environment, finds the running Lumen and initializes', init.result?.serverInfo?.name === 'lumen' && init.result.protocolVersion === '2025-06-18', JSON.stringify(init).slice(0, 300) + err);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+      const list = await ask('tools/list', {});
+      const tools = list.result?.tools || [];
+      check('Codex lists Lumen\'s tools (navigate, read_page, ...), each with a plain object schema Codex can pass on', ['navigate', 'read_page', 'click', 'list_tabs', 'screenshot'].every((n) => tools.some((t) => t.name === n)) && tools.every((t) => t.inputSchema?.type === 'object' && !JSON.stringify(t.inputSchema).includes('$ref')), JSON.stringify(tools.map((t) => t.name)));
+      check('read-only tools carry readOnlyHint, so Codex does not ask before each; acting tools do not', tools.find((t) => t.name === 'read_page')?.annotations?.readOnlyHint === true && !tools.find((t) => t.name === 'click')?.annotations, '');
+      const url = `http://127.0.0.1:${page.address().port}/`;
+      const nav = await ask('tools/call', { name: 'navigate', arguments: { url } }, 60000);
+      const navText = (nav.result?.content || []).map((c) => c.text || '').join('\n');
+      check('Codex calls navigate on Lumen', !nav.result?.isError && /Codex fixture page|Hello from the fixture/.test(navText), JSON.stringify(nav).slice(0, 300));
+      const read = await ask('tools/call', { name: 'read_page', arguments: {} }, 60000);
+      const readText = (read.result?.content || []).map((c) => c.text || '').join('\n');
+      check('Codex calls read_page and reads the page', !read.result?.isError && /Hello from the fixture/.test(readText), readText.slice(0, 300));
+      const pill = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent }));
+      check('the "driven by" pill names Codex', pill.active && pill.text === 'Lumen is being driven by Codex', JSON.stringify(pill));
+      const steps = await ui.$$eval('.mcp-step', (els) => els.map((e) => e.textContent));
+      check('the calls show in the sidebar as Codex\'s steps', steps.some((x) => x.startsWith('Codex:')), JSON.stringify(steps));
+    } catch (e) {
+      check('Codex-style session against the running Lumen', false, e.message);
+    } finally {
+      try { child.kill(); } catch { /* gone */ }
+      page.close();
+    }
+    // The gate: with "Allow AI agents to connect" off, Codex gets a startup error that names the setting.
+    await ui.evaluate(() => window.assistant.setMcpEnabled(false));
+    const off = spawn(entry.command, entry.args, { env: codexEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    const offReply = await new Promise((resolve) => { let o = ''; off.stdout.on('data', (d) => { o += d; if (/\n/.test(o)) resolve(o); }); off.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex-mcp-client' } } })}\n`); setTimeout(() => resolve(o || 'timeout'), 30000); });
+    check('with "Allow AI agents to connect" off, Codex\'s connection is refused with the setting named', /Allow AI agents to connect|turned off/.test(offReply), offReply);
+    try { off.kill(); } catch { /* gone */ }
+    await ui.evaluate(() => window.assistant.setMcpEnabled(true));
+  }
+
   // Not found: nothing on this fake machine
   await closeApp(app);
   const env2 = { ...env, LUMEN_CODEX_BIN: path.join(dir, 'missing', 'codex.exe') };

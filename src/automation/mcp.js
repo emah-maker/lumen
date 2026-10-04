@@ -45,11 +45,25 @@ function onLines(stream, handler, maxLine = MAX_LINE) {
 
 // ---------------------------------------------------------------- app side
 
+// What an MCP client calls itself, as a name for the "driven by" pill and the agent's window. Codex sends name
+// "codex-mcp-client" (title "Codex" in current builds, none in older ones), `codex exec` "codex-exec"; Claude Code "claude-code".
+const KNOWN_CLIENTS = [[/^codex(?:[-_ ]|$)/i, 'Codex'], [/^claude[-_ ]?code(?:[-_ ]|$)/i, 'Claude Code'], [/^grok(?:[-_ ]|$)/i, 'Grok Build'], [/^(?:agy|antigravity)(?:[-_ ]|$)/i, 'Antigravity']];
+function clientLabel(info = {}) {
+  const raw = String(info.title || info.name || '').trim();
+  const known = KNOWN_CLIENTS.find(([re]) => re.test(String(info.name || '')) || re.test(raw));
+  return (known ? known[1] : raw || 'An AI agent').slice(0, 60);
+}
+
+// Tools that only read: MCP clients may run them without asking the user (Codex asks before every call of a tool that is not
+// marked read-only). Lumen's own approval card for sites and for acting tools is unchanged: it is in callTool.
+const READ_ONLY_TOOLS = new Set(['read_page', 'read_tabs', 'read_urls', 'read_pdf', 'list_tabs', 'find', 'screenshot', 'web_search', 'wait', 'wait_for']);
+const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? { readOnlyHint: true, destructiveHint: false, openWorldHint: name === 'web_search' || name === 'read_urls' || name === 'read_pdf' } : undefined);
+
 // One MCP session (one connected agent). `tools` are Lumen's tool definitions
 // ({ name, description, input_schema }); `callTool(name, args, session)` runs one and returns
 // { content, isError }. `enabled()` reflects the "Allow AI agents to connect" setting.
 // `engine`: the tag a bridge started by Lumen's own Claude Code engine carries (claude-code.js).
-function createSession({ tools, callTool, enabled, onEvent, send, engine = null }) {
+function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null }) {
   const session = { clientName: 'An AI agent', initialized: false, controller: new AbortController(), engine };
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
@@ -62,7 +76,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
         case 'initialize': {
           if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → AI and agents → Allow AI agents to connect).');
           const info = params.clientInfo || {};
-          session.clientName = String(info.title || info.name || 'An AI agent').slice(0, 60);
+          session.clientName = clientLabel(info);
           const requested = params.protocolVersion;
           reply(id, {
             protocolVersion: SUPPORTED_VERSIONS.includes(requested) ? requested : LATEST_VERSION,
@@ -79,9 +93,9 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
         case 'ping':
           return reply(id, {});
         case 'tools/list':
-          session.listed = true; // the agent now has Lumen's tools (grok-build.js waits for this)
+          if (!session.listed) { session.listed = true; try { onListed?.(session); } catch {} } // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
-            tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema })),
+            tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema, ...(annotationsFor(t.name) ? { annotations: annotationsFor(t.name) } : {}) })),
           });
         case 'tools/call': {
           if (!enabled(session)) return reply(id, { content: [{ type: 'text', text: 'AI agent connections are turned off in Lumen settings.' }], isError: true });
@@ -102,7 +116,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, callTool, enabled, onEvent, onClose = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
+function startServer({ userData, tools, callTool, enabled, onEvent, onClose = null, onListed = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -138,7 +152,7 @@ function startServer({ userData, tools, callTool, enabled, onEvent, onClose = nu
         }
         authed = true;
         clearTimeout(authTimer);
-        current = createSession({ tools, callTool, enabled, onEvent, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current = createSession({ tools, callTool, enabled, onEvent, onListed, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
         sessions.add(current);
         send({ lumenAuth: 'ok' });
         return;
@@ -305,4 +319,4 @@ function runBridge({ app }) {
 
 if (require.main === module) relay();
 
-module.exports = { MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
+module.exports = { clientLabel, annotationsFor, MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it

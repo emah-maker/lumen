@@ -172,6 +172,8 @@ claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Lum
 command = 'C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe'
 args = ['C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js']
 env = { ELECTRON_RUN_AS_NODE = "1" }
+startup_timeout_sec = 30   # Codex's own 10 s start and 60 s tool-call limits are too short for Lumen's approval cards
+tool_timeout_sec = 600
 ```
 
 ```json

@@ -13,7 +13,7 @@ const path = require('path');
 const crypto = require('crypto');
 const tlds = require('../browser/tlds');
 const { describeUsage, addUsage } = require('./chat-usage');
-const routines = require('./routines');
+const routines = new Proxy({}, { get: (_t, key) => require('./routines')[key] }); // (loaded when the first routine is scheduled or run)
 const autoModel = require('../ai/auto-model');
 
 const LIMITS = { tasks: 50, steps: 200, runs: 10, result: 24000, title: 80, prompt: 8000, condition: 300, sites: 20, pages: 20, resumeSteps: 15 };
@@ -53,7 +53,7 @@ const backgroundStepLimit = (setting) => (Number.isInteger(setting) && setting >
 
 // ---- models and engines. A task runs on an API model, or on the user's own Claude Code / Grok Build CLI.
 
-const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' }; // (Antigravity is for sidebar chats only: a background task has nobody to answer its approvals)
+const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' }; // (Antigravity and Codex are for sidebar chats only: a background task has nobody to answer its approvals)
 const engineOfModel = (model) => /^claudecode:/.test(String(model)) ? 'claudecode' : /^grokbuild:/.test(String(model)) ? 'grokbuild' : 'api';
 const isCliModel = (model) => engineOfModel(model) !== 'api';
 // The provider or engine key of a picker id ('openai:gpt-5.6' -> 'openai', a bare Claude id -> 'anthropic'), when it has an Auto of its own.
@@ -62,7 +62,7 @@ const providerKeyOf = (id) => { const p = /^([a-z][a-z0-9]*):/.exec(String(id))?
 // The models a task may use, from the picker's options: every connected API model (chat-only ones can't
 // act, so no) and each CLI model. A CLI model of a CLI that is not signed in is listed but not available.
 function taskModels(options) {
-  const list = (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/chat only/i.test(o.label || '')).map((o) => {
+  const list = (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/^codex:/.test(o.id) && !/chat only/i.test(o.label || '')).map((o) => {
     const engine = engineOfModel(o.id);
     return { id: o.id, label: o.label || o.id, group: o.group || '', engine, available: engine === 'api' || o.signedIn !== false };
   });

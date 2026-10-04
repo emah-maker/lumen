@@ -14,7 +14,7 @@ Lumen.exe (main process: main.js)
 │   └── dialog view: Lumen's own alert/confirm/permission cards (src/renderer/dialog.html)
 ├── hidden reader views: background reading and web search for the AI, in a separate in-memory session
 ├── Chromium's GPU, network and utility processes
-└── optional children: the Claude Code, Grok Build or Antigravity CLI when that engine is chosen
+└── optional children: the Claude Code, Grok Build, Antigravity or Codex CLI when that engine is chosen
 ```
 
 - **`src/main.js`** owns the window, the tabs array, sessions, menus, IPC and the startup order. Larger areas live in `src/features/` and in top-level modules (`src/ai/agent.js`, `src/browser/tab-groups.js`, `src/settings/settings-backend.js`, …) that `src/main.js` wires up with small dependency objects.
@@ -32,7 +32,7 @@ Lumen.exe (main process: main.js)
 ## The AI in the sidebar
 
 - **`src/ai/agent.js`** runs the agent loop in the main process: it sends the chat to the chosen model, runs the tools it asks for, and streams events to the sidebar.
-- **Engines.** Claude through Anthropic's SDK; OpenAI, Grok, Gemini and OpenRouter through `src/ai/providers.js`, which converts the conversation to and from Chat Completions. "Your account" engines run the user's own CLI headless and let it call Lumen's tools over MCP: `src/ai/claude-code.js` (Claude Code) `src/ai/grok-build.js` (Grok Build, experimental) and `src/ai/antigravity.js` (Google Antigravity's `agy`, which replaces Gemini CLI; experimental). Each is launched with Lumen's tools only (see [settings](settings.md#antigravity-in-the-sidebar)).
+- **Engines.** Claude through Anthropic's SDK; OpenAI, Grok, Gemini and OpenRouter through `src/ai/providers.js`, which converts the conversation to and from Chat Completions. "Your account" engines (Claude Code, Grok Build, Antigravity, Codex: `src/ai/codex.js`) run the user's own CLI headless and let it call Lumen's tools over MCP: `src/ai/claude-code.js` (Claude Code) `src/ai/grok-build.js` (Grok Build, experimental) and `src/ai/antigravity.js` (Google Antigravity's `agy`, which replaces Gemini CLI; experimental). Each is launched with Lumen's tools only (see [settings](settings.md#antigravity-in-the-sidebar)).
 - **Auto model.** The picker's first row, **Auto**, lets Lumen choose the model per message with a pure, local router (`src/ai/auto-model.js`): tiers, availability, escalation. See [auto-model.md](auto-model.md).
 - **Tools** are defined once in `src/ai/agent.js` (`TOOLS`) and shared with every engine and with MCP clients. Page scripts live in `src/ai/page-scripts.js`; the token-efficient tools (`compact` reads, diffs, `find`, `batch`) are in `src/ai/snapshot.js`. Embedded frames (iframes, out-of-process ones included) are read and acted on in `src/ai/frames.js`: each in a named isolated world created through the tab's DevTools session (the frame's own session for an out-of-process frame), with element ids that name the frame (frame n's element k is `n * 100000 + k`). The full list is in the [MCP tool reference](mcp-tools.md).
 - **Approval gate.** The first time the AI acts on a site in a chat, the sidebar shows an approval card. Once the AI has read page content, opening, fetching or searching a site not yet approved in that chat asks too. Approvals last for the chat. Content from pages is treated as untrusted data. What is asked and when: [Asking before it acts](../README.md#asking-before-it-acts).

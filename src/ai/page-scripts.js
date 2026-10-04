@@ -384,13 +384,25 @@ function clickProbeRead(done = false) {
   })()`;
 }
 
-// Scrolls the window, or the largest scrollable container if the window does not move.
+// Scrolls the window, or the largest scrollable container if the window does not move. Resolves (a promise)
+// once the position has held still for two 50 ms samples (smooth scrolling, scroll-linked loading), at most ~400 ms.
 function scroll(pages) {
   return `(() => {
     const dy = Math.round(innerHeight * 0.85 * ${pages});
+    const settle = (read, result) => new Promise((resolve) => {
+      let last = read();
+      const began = Date.now();
+      const tick = () => {
+        const now = read();
+        if (now === last || Date.now() - began >= 400) return resolve(result(now));
+        last = now;
+        setTimeout(tick, 50);
+      };
+      setTimeout(tick, 50);
+    });
     const before = scrollY;
     window.scrollBy(0, dy);
-    if (scrollY !== before) return { scrolled: 'window', y: Math.round(scrollY) };
+    if (scrollY !== before) return settle(() => Math.round(scrollY), (y) => ({ scrolled: 'window', y }));
     let best = null, bestArea = 0;
     for (const el of document.querySelectorAll('*')) {
       const s = getComputedStyle(el);
@@ -400,7 +412,17 @@ function scroll(pages) {
     }
     if (!best) return { scrolled: 'none' };
     best.scrollBy(0, dy);
-    return { scrolled: 'container', y: Math.round(best.scrollTop) };
+    return settle(() => Math.round(best.scrollTop), (y) => ({ scrolled: 'container', y }));
+  })()`;
+}
+
+// wait_for's page check: does the page's visible text contain `text`? Case-insensitive, and whitespace-insensitive on both
+// sides (a heading split by a line break or a non-breaking space still matches its multi-word text).
+function textProbe(text) {
+  return `(() => {
+    const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const want = norm(${JSON.stringify(text)});
+    return norm(document.body ? document.body.innerText : '').includes(want);
   })()`;
 }
 
@@ -491,4 +513,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, textProbe, findTarget, findToggle, toggleState, submitForm };

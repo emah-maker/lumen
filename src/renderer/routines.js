@@ -121,7 +121,7 @@
     const sites = h('input', { type: 'text', spellcheck: false, value: task ? task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', ') : pv.sites.join(', ') });
     let sitesTouched = Boolean(task);
     sites.addEventListener('input', () => { sitesTouched = true; });
-    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === (task?.model || pv.model), disabled: !m.available })));
+    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === (task?.model || pv.model), disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });

@@ -1,6 +1,6 @@
 # Auto model
 
-**Auto** is the first row of every model picker (the sidebar, the full-page chat, Settings and the skill and background-task pickers). Pick it and Lumen chooses the model for each message, instead of you pinning one. A model you pick yourself is always used exactly as picked. Each provider's group in the picker also has an **Auto** of its own that chooses only among that provider's models: see [Auto for one provider](#auto-for-one-provider).
+**Auto** is the first row of every model picker (the sidebar, the full-page chat, Settings and the skill and background-task pickers). Pick it and Lumen chooses the model for each message, instead of you pinning one. A model you pick yourself is always used exactly as picked. Each provider's group in the picker (Codex's too) also has an **Auto** of its own that chooses only among that provider's models: see [Auto for one provider](#auto-for-one-provider).
 
 Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pure function: it makes no model call and no network request, reads no page, and logs nothing about what you wrote. It sees only the shape of a request (how long the message is, whether it holds images, which words it uses, how long the chat is) and the list of models you have connected.
 
@@ -12,7 +12,7 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
 | Claude Code | Routes to `claudecode:haiku` / `sonnet` / `opus` / `fable`, passed as `claude --model <alias>`. The engine's own **Claude Code** row (no model chosen) already did this per message (`src/features/model-route.js`, Settings → "Pick the Claude Code model for me"); both use the same scoring. |
 | Grok Build | Routes among the models `grok models` lists, passed as `grok --model <id>`. With no list, its own `default` row is used (no flag: Grok chooses). |
 | Antigravity | Routes among the slugs `agy models` lists, passed as `agy --model <slug>`. With no list, its `default` (no flag). |
-| Codex CLI | Not a sidebar engine today: Lumen only adds itself to Codex over MCP (Codex connect), and Codex has no model list in the picker, so there is nothing to route. If its models are ever listed in the picker's options they join Auto with no change (an option's `tier` wins over the name-based tier; `gated: true` keeps a plan-gated model out), as tested in `auto-model-units`. |
+| Codex | Routes among the models Codex lists for your account (`codex exec -m <id>`), (`codex debug models`, else its cached list), or the documented ones (GPT-6.1 Sol, GPT-6 Astra, GPT-6 Luna, GPT-5.6 Sol) when it lists none. With no list, its `default` row is used (no flag: Codex chooses). |
 | API providers: Anthropic, OpenAI, Grok (xAI), Gemini, OpenRouter (and any model reached through it) | Routes among the models listed for each key. The request carries the concrete model id. |
 | Background tasks and routines | "Auto" is offered first in the task and routine model pickers. Each run is routed to one of the connected **API** models (a CLI engine's tools differ, so a CLI is picked by hand). |
 | Page translation, tab-group naming, Organize, "create a skill from this chat" | These one-shot jobs use the cheapest fit (the `classification` / `quick` kind) when your pick is Auto. |
@@ -52,25 +52,24 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
 
 ## Auto for one provider
 
-Each provider's group in a model picker (Claude Code, Grok Build, Antigravity, and Claude, OpenAI, Grok, Gemini and OpenRouter) starts with its own **Auto** row. It is the same router with its choice limited to that provider's models, so you can say "use OpenAI, but pick the model for me".
+Each provider's group in a model picker (Claude Code, Grok Build, Antigravity, Codex, and Claude, OpenAI, Grok, Gemini and OpenRouter) starts with its own **Auto** row. It is the same router with its choice limited to that provider's models, so you can say "use OpenAI, but pick the model for me".
 
 | Provider | Id | Chooses among |
 |---|---|---|
 | Claude Code | `claudecode:auto` | Haiku, Sonnet, Opus and Fable (passed as `claude --model <alias>`). Its own **Claude Code** row (no model chosen) keeps working as before. |
 | Grok Build | `grokbuild:auto` | the models `grok models` lists (passed as `grok --model <id>`) |
 | Antigravity | `antigravity:auto` | the slugs `agy models` lists (passed as `agy --model <slug>`) |
+| Codex | `codex:auto` | the models Codex lists for your account (passed as `codex exec -m <id>`): Luna (fast), Sol (balanced), Astra (strong) by default. Its tiers come from the vendor's own size words; `/think` picks the strongest, `/fast` the quickest. |
 | Claude (API) | `anthropic:auto` | the Claude models of the API key |
 | OpenAI | `openai:auto` | the OpenAI models listed for the key (for example GPT-5.6 and GPT-5.6 mini) |
 | Grok (xAI) | `xai:auto` | the Grok API models listed for the key |
 | Gemini | `gemini:auto` | the Gemini models listed for the key (for example Pro and Flash) |
 | OpenRouter | `openrouter:auto` | the OpenRouter models in the short list and your recent picks (not "More models…" and not OpenRouter's own router) |
 
-Codex is not a chat engine (see above), so it has none.
-
 - **How it works.** The pick is saved with the chat and in Settings as `<provider>:auto`, exactly like `auto`; the chat's pick stays that Auto and each message is routed again among that provider's models, with the same rules (tiers, what the message needs, escalation). The model that answers is always concrete: the CLIs and APIs never receive "auto", and the usage log, context bar, history labels ("Grok Build:") and the AI status card name the real model.
 - **The reply.** Labelled like the main Auto (**Auto · OpenAI · GPT-5.6 mini**); the tooltip names the provider and the reason ("Auto (OpenAI): GPT-5.6 mini for a quick question"). The provider's row in the picker says what it chose last in the open chat.
 - **/think, /deep, /fast.** They work with any Auto row selected and pick that provider's strongest or quickest model for that message.
-- **Out of usage.** Models of the provider that are cooling down after a limit or outage, or refused for your plan, are skipped. If none is left, it behaves like a model you picked that ran out: with **Switch models automatically** on, the same vendor's other route answers first (Grok Build then the Grok API, Claude Code then the Claude API, Antigravity then Gemini), then any connected model, and the chat says "OpenAI is unavailable right now, so Auto uses …". The next message tries the provider again. With the setting off the message fails with "Auto: no OpenAI model is available right now".
+- **Out of usage.** Models of the provider that are cooling down after a limit or outage, or refused for your plan, are skipped. If none is left, it behaves like a model you picked that ran out: with **Switch models automatically** on, the same vendor's other route answers first (Grok Build then the Grok API, Claude Code then the Claude API, Antigravity then Gemini, Codex then the OpenAI API when a key is set), then any connected model, and the chat says "OpenAI is unavailable right now, so Auto uses …". The next message tries the provider again. With the setting off the message fails with "Auto: no OpenAI model is available right now".
 - **One model.** A provider that has only one model to choose between (for example only Grok 4 on the xAI key, or a CLI that lists no models) has no Auto row: there is nothing to choose. If a chat is already on it, the row stays and uses the one model (a CLI that lists nothing is left to choose its own default, no `--model`).
 - **Auto may use** (Settings → AI). A provider you turned off there is left out of the main Auto, but its own Auto still uses it (you picked it by name). A single model turned off for Auto (`autoExclude` holds its id) is skipped by both.
 - **Warm processes.** A kept Claude Code process is tied to the model it was started with (and the chat's session): when Auto picks another model for the next message a new process starts with that `--model` and the old one ends, so a process is never used for a different model. A kept Grok Build process is set to the model of each message (and a new Grok session starts when the model changes, as it does when you change the model by hand). A chat that has not been routed yet warms its CLI with no model (Claude Code: with its own guess from the first words).

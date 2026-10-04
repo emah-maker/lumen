@@ -1180,6 +1180,24 @@ const WIDGET_RENDERERS = {
     const name = (a) => text(a.name, 40);
     const stateOf = (a) => (STATES.includes(a.state) ? a.state : 'missing');
     const full = (a) => `${name(a)}: ${text(a.stateText, 40)}`;
+    // [usage bars] the plan's 5-hour window as a thin bar (the percent is in the words beside it too, so colour is never the only signal)
+    const ubar = (a, cls) => {
+      const u = a.usage;
+      if (!u || !Number.isFinite(u.percent)) return null;
+      const p = Math.max(0, Math.min(100, Math.round(u.percent)));
+      const b = el('span', `ai-ubar ${cls}`);
+      b.dataset.level = ['ok', 'warn', 'high'].includes(u.level) ? u.level : 'ok';
+      b.setAttribute('role', 'progressbar');
+      b.setAttribute('aria-valuemin', '0');
+      b.setAttribute('aria-valuemax', '100');
+      b.setAttribute('aria-valuenow', String(p));
+      b.setAttribute('aria-valuetext', `${p}% of the 5-hour limit used`);
+      b.setAttribute('aria-label', `${name(a)} usage`);
+      const fill = el('i');
+      fill.style.width = `${p}%`; // through the CSSOM: the page's CSP drops inline style attributes
+      b.append(fill);
+      return b;
+    };
     const mark = (a) => { const m = el('i', 'ai-mark'); m.setAttribute('aria-hidden', 'true'); return m; };
     // The compact view: one line of words, a dot per AI (each with its name and state as text for a screen reader), a note.
     const compact = el('div', 'ai-compact');
@@ -1193,6 +1211,8 @@ const WIDGET_RENDERERS = {
       lab.setAttribute('aria-hidden', 'true');
       if (a.fact) { const f = el('span', 'ai-fact', `· ${text(a.fact, 14)}`); lab.append(' ', f); }
       li.append(aiLogo(a.brand), mark(a), lab, el('span', 'ai-sr', whole));
+      const dotBar = ubar(a, 'ai-ubar-dot');
+      if (dotBar) li.append(dotBar);
       dots.append(li);
     }
     const sum = el('p', 'ai-sum');
@@ -1207,6 +1227,8 @@ const WIDGET_RENDERERS = {
       const detail = [a.model ? `Using ${text(a.model, 60)}` : '', text(a.note, 140), a.fullAccess ? 'Full access on' : ''].filter(Boolean).join(' · ');
       li.append(mark(a), el('span', 'ai-name', name(a)), el('span', 'ai-state', text(a.stateText, 40)));
       if (detail) li.append(el('span', 'ai-detail', detail));
+      const rowBar = ubar(a, 'ai-ubar-row');
+      if (rowBar) li.append(rowBar);
       rows.append(li);
     }
     const live = el('p', 'ai-live');
