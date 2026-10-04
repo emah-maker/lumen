@@ -5,7 +5,7 @@ const bench = require('./topics-bench');
 const { sessions } = require('./topics-sessions');
 
 function runSession(mod, s, verbose) {
-  const h = bench.harness(mod, { withText: false });
+  const h = bench.harness(mod, { withText: s.tabs.some((t) => t.text) });
   const added = s.tabs.map((t) => h.addTab(t));
   h.tg.groupLoose();
   const labelOf = (id) => s.tabs[added.findIndex((t) => t.id === id)].group;
