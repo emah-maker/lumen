@@ -174,7 +174,7 @@ const fakeModel = (app) => app.evaluate(() => {
   await tc(() => { global.__release('P'); global.__release('Q'); });
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
   // A run's own switch_tab to a tab that shows another chat (with history) leaves that tab alone...
-  const tabS1 = await openTab(`${base}/s1`); await waitFor(async () => (await active()) === tabS1);
+  const tabS1 = await openTab(`${base}/sw1`); await waitFor(async () => (await active()) === tabS1);
   const chatQ = await chatOfTab(tabQ);
   await tc((_e, q) => { global.__switchTarget.SW1 = q; }, tabQ);
   await send('chat-SW1: go');
@@ -186,7 +186,7 @@ const fakeModel = (app) => app.evaluate(() => {
   // ...while a switch to a tab with no chat of its own yet still binds it to the run's chat, as designed.
   const tabR = await tc(() => global.__agent.browser.openTab('about:blank', { background: true }).id);
   await tc((_e, r) => { global.__switchTarget.SW2 = r; }, tabR);
-  const tabS2 = await openTab(`${base}/s2`); await waitFor(async () => (await active()) === tabS2);
+  const tabS2 = await openTab(`${base}/sw2`); await waitFor(async () => (await active()) === tabS2);
   await send('chat-SW2: go');
   await waitFor(() => tc(() => global.__seen.SW2 !== undefined));
   await sleep(300);
@@ -194,7 +194,7 @@ const fakeModel = (app) => app.evaluate(() => {
   const boundR = await chatOfTab(tabR);
   check('a run own switch_tab to a fresh tab still binds that tab to the run chat', Boolean(chatS2) && boundR === chatS2, JSON.stringify({ boundR, chatS2, seen: await tc(() => global.__seen) }));
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
-  // ---- 3b. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
+  // ---- 3c. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
   const tX = await openTab(`${base}/s`); await waitFor(async () => (await active()) === tX);
   await send('chat-QA: go'); await inflight('QA');
   const tY = await openTab(`${base}/u`); await waitFor(async () => (await active()) === tY);
