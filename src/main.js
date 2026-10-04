@@ -4099,6 +4099,7 @@ function runView(run) {
     sidebarOpen: Boolean((uiWc && sidebarShown.get(uiWc)) || chatPageRt?.chatTabs().some((t) => t.id === activeIdOf(rec || curRec))),
     chatOpen: run.chatId === chatId,
     onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
+    chatHere: chatBind.chatOf(activeIdOf(rec || curRec)) === run.chatId, // [chat per tab] the user is on the chat's own tab (the AI may be working in another)
   };
 }
 // [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.

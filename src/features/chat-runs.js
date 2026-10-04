@@ -32,9 +32,10 @@ function outcome({ error = null, stopped = false } = {}) {
   return 'done';
 }
 
-// Can the user see this chat's reply right now? Only with Lumen focused, the sidebar (or the chat page)
-// showing this chat, and the tab the AI works in on screen. `chatOpen`: it is the chat the sidebar shows.
-const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTab = true } = {}) => Boolean(focused && sidebarOpen && chatOpen && onRunTab);
+// Can the user see this chat's reply right now? Only with Lumen focused, and either on the chat's own tab (`chatHere`:
+// the tab the chat lives in is in front, whichever tab the AI worked in) or with the sidebar (or the chat page) showing
+// this chat and the tab the AI works in on screen. `chatOpen`: it is the chat the sidebar shows.
+const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTab = true, chatHere = false } = {}) => Boolean(focused && (chatHere || (sidebarOpen && chatOpen && onRunTab)));
 
 // What to do about an event of a run (kind: done, failed, approval, stopped):
 //   os      show a system notification
