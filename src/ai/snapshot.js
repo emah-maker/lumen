@@ -108,8 +108,7 @@ function compactOutline(opts) {
   const TEXT_BLOCKS = new Set(['P', 'LI', 'TD', 'TH', 'DD', 'DT', 'BLOCKQUOTE', 'FIGCAPTION', 'CAPTION', 'LABEL', 'LEGEND', 'PRE']);
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'svg', 'HEAD', 'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO', 'PICTURE']);
   // Running text with inline refs: "Turing was an English [812]mathematician and …"
-  const inline = (block) => {
-    if (block.tagName === 'PRE') { const t = String(block.innerText || '').trim(); return t.length > 2000 ? `${t.slice(0, 2000)}…` : t; }
+  const inlineOf = (nodes) => {
     let out = '';
     const walk = (node) => {
       for (const child of node.childNodes) {
@@ -122,9 +121,16 @@ function compactOutline(opts) {
         }
       }
     };
-    walk(block);
+    for (const node of nodes) {
+      if (node.nodeType === 3) out += node.nodeValue;
+      else if (node.nodeType === 1 && !SKIP.has(node.tagName) && visible(node)) walk({ childNodes: [node] });
+    }
     const text = clean(out);
     return text.length > opts.blockChars ? `${text.slice(0, opts.blockChars)}…` : text;
+  };
+  const inline = (block) => {
+    if (block.tagName === 'PRE') { const t = String(block.innerText || '').trim(); return t.length > 2000 ? `${t.slice(0, 2000)}…` : t; }
+    return inlineOf(block.childNodes);
   };
   const landmark = (el) => {
     const role = el.getAttribute('role');
@@ -140,30 +146,54 @@ function compactOutline(opts) {
     if (el.tagName === 'SLOT') { const assigned = el.assignedElements({ flatten: true }); if (assigned.length) return assigned; }
     return el.children;
   };
-  const walk = (el) => {
-    for (const child of kids(el)) {
-      if (clipped) return;
-      if (SKIP.has(child.tagName) || !visible(child)) continue;
-      const id = idOf.get(child);
-      if (id) { push(describe(id, child)); continue; }
-      const h = /^H([1-6])$/.exec(child.tagName);
-      if (h) { push(`${'#'.repeat(Number(h[1]))} ${clean(child.innerText).slice(0, 120)}`); continue; }
-      const mark = landmark(child);
-      if (mark) push(mark);
-      if (TEXT_BLOCKS.has(child.tagName)) {
-        const text = inline(child);
-        if (text.length > 1) push(child.tagName === 'LI' ? `- ${text}` : text);
-        continue;
-      }
-      // A div/span that holds its own text (not just other blocks) is a text block too.
-      const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
-      if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
-        const text = inline(child);
-        if (text.length > 1) push(text);
-        continue;
-      }
-      walk(child);
+  // A cell or list item that holds a table, list, heading or form is a layout container (Hacker News: the
+  // whole page is one table cell, each story a row of a table inside it), not a text block: its own
+  // text is one line, what it holds is walked as usual.
+  const NESTED = 'table,ul,ol,dl,h1,h2,h3,h4,h5,h6,form';
+  const CELLS = new Set(['LI', 'TD', 'TH', 'DD', 'DT']);
+  const holdsStructure = (n) => n.nodeType === 1 && (n.matches(NESTED) || Boolean(n.querySelector(NESTED)));
+  const visit = (child) => {
+    if (clipped) return;
+    if (SKIP.has(child.tagName) || !visible(child)) return;
+    const id = idOf.get(child);
+    if (id) { push(describe(id, child)); return; }
+    const h = /^H([1-6])$/.exec(child.tagName);
+    if (h) { push(`${'#'.repeat(Number(h[1]))} ${clean(child.innerText).slice(0, 120)}`); return; }
+    const mark = landmark(child);
+    if (mark) push(mark);
+    if (TEXT_BLOCKS.has(child.tagName)) {
+      if (CELLS.has(child.tagName) && !child.shadowRoot && child.querySelector(NESTED)) { mixed(child); return; }
+      const text = inline(child);
+      if (text.length > 1) push(child.tagName === 'LI' ? `- ${text}` : text);
+      return;
     }
+    // A div/span that holds its own text (not just other blocks) is a text block too.
+    const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
+    if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
+      const text = inline(child);
+      if (text.length > 1) push(text);
+      return;
+    }
+    walk(child);
+  };
+  // The inline runs of a container cell become lines (the first of an LI is a bullet); what holds a table
+  // or list is visited in its place.
+  const mixed = (cell) => {
+    let run = [];
+    let first = true;
+    const flush = () => {
+      if (!run.length) return;
+      const text = inlineOf(run);
+      run = [];
+      if (text.length > 1) { push(first && cell.tagName === 'LI' ? `- ${text}` : text); first = false; }
+    };
+    for (const n of cell.childNodes) {
+      if (holdsStructure(n)) { flush(); visit(n); } else run.push(n);
+    }
+    flush();
+  };
+  const walk = (el) => {
+    for (const child of kids(el)) visit(child);
   };
   if (!opts.frame) push(`${clean(document.title)} (${location.href.slice(0, 150)})`);
   walk(document.body || document.documentElement);
