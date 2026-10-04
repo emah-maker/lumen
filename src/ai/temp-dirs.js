@@ -13,7 +13,9 @@ function removeDir(dir, cb = () => {}) {
   try { fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }, () => cb()); } catch { cb(); }
 }
 function removeDirSync(dir) {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* busy: the next start's sweep */ }
+  // maxRetries: an async removeDir may be mid-way through the same folder (quit right after a dispose), and a scanner can hold a
+  // just-written file for a moment; both clear within a few tries. Still best effort: a stubborn one is the next start's sweep.
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); } catch { /* busy: the next start's sweep */ }
 }
 
 // Deletes lumen-cc-* (and the sibling prefixes above) folders older than maxAgeMs in `tmp`, skipping `live` (a Set of absolute

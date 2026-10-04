@@ -10,6 +10,14 @@ const { PassThrough, Writable } = require('stream');
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Wait for a condition (generous 30 s deadline) instead of sleeping a guessed time: removal is async with retries.
+async function until(cond, label = 'condition') {
+  const deadline = Date.now() + 30000;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for ' + label);
+    await sleep(10);
+  }
+}
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc-cleanup-test-'));
 const scratch = path.join(base, 'tmp');
@@ -61,7 +69,7 @@ const optsFor = (id) => ({ sessionId: id, resume: false, systemPrompt: 'SYS', mo
 
     // exit on its own
     cli.spawned[0].exit(0);
-    await sleep(150);
+    await until(() => ccDirs().length === 0 && e.workDirs.size === 0, 'the exited process folder to go');
     check('process exits: folder removed', !fs.existsSync(dir) && ccDirs().length === 0, ccDirs().join());
     check('workDirs forgets the folder', e.workDirs.size === 0, String(e.workDirs.size));
   }
@@ -73,19 +81,19 @@ const optsFor = (id) => ({ sessionId: id, resume: false, systemPrompt: 'SYS', mo
     await e.take(optsFor('s2'));
     const dir = path.dirname(cli.spawned[0].cfg);
     e.dispose();
-    await sleep(150);
+    await until(() => !fs.existsSync(dir), 'the disposed folder to go');
     check('dispose/kill: folder removed', !fs.existsSync(dir), dir);
   }
 
   // ---- idle timeout
   {
     const cli = fakeCli();
-    const e = engine(cli, { idleMs: 40 });
+    const e = engine(cli, { idleMs: 1500 }); // (long enough that the in-window check below is not racing a slow machine)
     e.warm(optsFor('s3'));
-    await sleep(20);
+    await until(() => cli.spawned.length === 1, 'the warm process to start');
     const dir = path.dirname(cli.spawned[0].cfg);
     check('warm process within idle window: folder kept', fs.existsSync(dir), '');
-    await sleep(250);
+    await until(() => cli.spawned[0].child.done && !fs.existsSync(dir), 'the idle kill and folder removal');
     check('idle timeout: process killed, folder removed', cli.spawned[0].child.done && !fs.existsSync(dir), `exit=${cli.spawned[0].child.exitCode}`);
   }
 
@@ -93,7 +101,7 @@ const optsFor = (id) => ({ sessionId: id, resume: false, systemPrompt: 'SYS', mo
   {
     const e = engine(fakeCli(), { spawn: () => { const err = new Error('nope'); err.code = 'ENOENT'; throw err; } });
     await e.take(optsFor('s4'));
-    await sleep(150);
+    await until(() => ccDirs().length === 0, 'the failed spawn folder to go');
     check('spawn failure: folder removed', ccDirs().length === 0, ccDirs().join());
   }
 
@@ -102,14 +110,14 @@ const optsFor = (id) => ({ sessionId: id, resume: false, systemPrompt: 'SYS', mo
     const cli = fakeCli();
     let t = 0;
     const pool = createWarmChats({ make: () => engine(cli), maxIdle: () => 1, idleMs: () => 600000, now: () => ++t });
-    const a = pool.peek('chat-a'); a.warm(optsFor('a')); await sleep(30); pool.warmed();
-    const b = pool.peek('chat-b'); b.warm(optsFor('b')); await sleep(30); pool.warmed();
-    await sleep(200);
+    const a = pool.peek('chat-a'); a.warm(optsFor('a')); await until(() => cli.spawned.length === 1, 'a to start'); pool.warmed();
+    const b = pool.peek('chat-b'); b.warm(optsFor('b')); await until(() => cli.spawned.length === 2, 'b to start'); pool.warmed();
+    await until(() => cli.spawned[0].child.exitCode !== null && !fs.existsSync(path.dirname(cli.spawned[0].cfg)), 'the evicted chat to be killed and cleaned up');
     const [ra, rb] = cli.spawned;
     check('eviction: the evicted chat\'s process is killed and its folder removed', ra.child.exitCode !== null && !fs.existsSync(path.dirname(ra.cfg)), `exit=${ra.child.exitCode}`);
     check('eviction: the other chat\'s warm process keeps its folder', rb.child.exitCode === null && fs.existsSync(rb.cfg), '');
     pool.disposeAll();
-    await sleep(150);
+    await until(() => ccDirs().length === 0, 'every folder to go');
     check('disposeAll: every folder removed', ccDirs().length === 0, ccDirs().join());
   }
 
