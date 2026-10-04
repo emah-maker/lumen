@@ -73,7 +73,17 @@ function languageList(langs) {
     const base = l.split('-')[0];
     if (base !== l && !given.includes(base) && !out.includes(base)) out.push(base);
   }
-  return out.length ? out : ['en-US', 'en'];
+  // Chromium only treats Accept-Language as a simple (no-preflight) header up to 128 bytes: a Mac with 40 system
+  // languages sent ~400, every cross-origin script/font load became a preflight, and CDNs that refuse OPTIONS
+  // (Canvas's CloudFront) failed them all. The header and navigator.languages are both cut to the first entries that fit.
+  const fits = [];
+  let length = 0;
+  for (const [i, l] of out.entries()) {
+    length += (i === 0 ? 0 : 1) + l.length + (i === 0 ? 0 : `;q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`.length);
+    if (length > 128) break;
+    fits.push(l);
+  }
+  return fits.length ? fits : ['en-US', 'en'];
 }
 // "en-US,en;q=0.9": the q-weighted form Chrome sends.
 const acceptLanguageHeader = (langs) => languageList(langs).map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
