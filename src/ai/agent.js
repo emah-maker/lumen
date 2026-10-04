@@ -11,6 +11,8 @@ const { engineModel } = require('./cli-utils');
 const modelRoute = require('../features/model-route'); // [model route]
 const autoModel = require('./auto-model'); // [auto model] the picker's "Auto": which model answers each message (docs/auto-model.md)
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
+const providerUsage = require('../features/provider-usage'); // [usage] an API turn's tokens, estimated cost and rate-limit headers
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
@@ -73,7 +75,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline with [id] refs (start here); "full": raw text. extract: tables|links|lists as JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -327,7 +329,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -1669,7 +1671,8 @@ class Agent {
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
+      // A plain question that needs neither the page nor a tool (isSimpleQuestion) is sent without the page's text.
+      page = wanted.includes(tab?.id) || isSimpleQuestion(userText, images.length + wanted.length) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -1783,8 +1786,17 @@ class Agent {
 
   // [usage] Each finished turn's tokens (and, for Claude Code, the plan's limits) go to
   // features/usage.js through main.js (agent.onUsage). A failure there never affects the reply.
+  // [usage] An API turn (Claude by key, OpenAI, Grok, Gemini, OpenRouter): its tokens, the price estimate where the table knows the model,
+  // and the rate-limit headers the response carried (read from that response: no request of its own).
+  reportApi(provider, { model, usage, rate = null } = {}, emit = null) {
+    try {
+      const turn = usage ? providerUsage.turnUsage(model, usage) : null;
+      const logged = turn || rate ? this.reportUsage(provider, { ...(turn ? { usage: turn, model } : {}), ...(rate ? { rate } : {}) }) : null;
+      if (logged?.notice && emit) emit({ type: 'notice', text: logged.notice }); // a budget the user set crossed 80% or 100% (Settings → Usage)
+    } catch (err) { console.error('[lumen] usage log failed:', err.message); }
+  }
   reportUsage(engine, data) {
-    if (!this.onUsage || !(data?.usage || data?.limit)) return null;
+    if (!this.onUsage || !(data?.usage || data?.limit || data?.rate)) return null;
     try { return this.onUsage(engine, data) || null; } catch (err) { console.error('[lumen] usage log failed:', err.message); return null; }
   }
 
@@ -1830,7 +1842,7 @@ class Agent {
       return;
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    { const logged = this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model }); if (logged?.notice) emit({ type: 'notice', text: logged.notice }); }
     // (A /context on a chat with no session yet ran in a throwaway one: the chat's first message still hands the
     // conversation over, as a switch to Claude Code mid-chat does.)
     if (out.sessionId === null) delete settings.ccSession;
@@ -1952,7 +1964,7 @@ class Agent {
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2069,7 +2081,7 @@ class Agent {
       out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore() });
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    { const logged = this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model }); if (logged?.notice) emit({ type: 'notice', text: logged.notice }); }
     this.noteCliContext(messages, out, routed.model, emit); // [context]
     let caughtUp = false;
     if (out.sessionId === null) delete settings.ccSession;
@@ -2138,6 +2150,7 @@ class Agent {
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
       systemPrompt: this.grokBuildSystem(settings, fullAccess),
       fullAccess,
+      effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
       emit,
@@ -2206,10 +2219,19 @@ class Agent {
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
+      effort: effortLib.clean('antigravity', this.browser.effort?.('antigravity')), // Settings → AI → AI providers
       signal,
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: 0 }, emit);
+    // [usage] agy's own token counts (no price: Antigravity reports none) and its quota message with the reset time, when a run hit it.
+    if (out.usage || out.planLimit) {
+      const u = out.usage || {};
+      const input = Number(u.input_tokens) || 0;
+      const output = Number(u.output_tokens) || 0;
+      const logged = this.reportUsage('antigravity', { usage: out.usage ? { inputTokens: input, outputTokens: Math.max(output, (Number(u.total_tokens) || 0) - input), cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: out.model ? [out.model] : [] } : null, model: out.model || (picked === 'default' ? null : picked), limit: out.planLimit || null, ok: !out.failed && !out.stopped });
+      if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+    } else if (!out.failed && !out.stopped) this.reportUsage('antigravity', { limit: null, ok: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: [] }, model: picked === 'default' ? null : picked }); // a turn with no counts still happened (last used; clears a past limit)
     let caughtUp = false;
     if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; caughtUp = true; }
@@ -2262,6 +2284,7 @@ ${prompt}` : prompt), historyImages: [] };
       quietExpired: again, // a resumed thread Codex no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or a Codex model id
       systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked),
+      effort: effortLib.clean('codex', this.browser.effort?.('codex')), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
       emit,
     });
@@ -2504,6 +2527,9 @@ ${prompt}` : prompt), historyImages: [] };
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
     const params = requestFor(messages.settings, messages, budget);
+    // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
+    const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
+    if (userEffort) params.output_config = { effort: userEffort };
     const extra = await this.externalToolDefs(emit); // [mcp client]
     if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
     if (noTools) params.tool_choice = { type: 'none' }; // the wrap-up turn: answer in text
@@ -2518,7 +2544,10 @@ ${prompt}` : prompt), historyImages: [] };
     }
     const final = await stream.finalMessage();
     const u = final?.usage;
-    if (u) this.reportUsage('anthropic', { model: final.model, usage: { inputTokens: u.input_tokens, outputTokens: u.output_tokens, cacheReadTokens: u.cache_read_input_tokens, cacheWriteTokens: u.cache_creation_input_tokens } });
+    // The response's anthropic-ratelimit-* headers came with the same request (the stream's connection is already resolved: no call).
+    let rate = null;
+    if (typeof stream.withResponse === 'function') { try { rate = providerUsage.parseRateLimitHeaders('anthropic', (await stream.withResponse()).response?.headers); } catch { rate = null; } }
+    if (u || rate) this.reportApi('anthropic', { model: final?.model, usage: u, rate }, emit);
     return final;
   }
 
@@ -2540,10 +2569,11 @@ ${prompt}` : prompt), historyImages: [] };
       messages.textOnlyNoted = model;
       emit({ type: 'notice', text: chatImages.textOnlyNotice(providers.openRouterName(model) || model, pictures) });
     }
-    return providers.streamTurn({
+    const turn = await providers.streamTurn({
       provider,
       model,
       apiKey,
+      effort: effortLib.clean(provider, this.browser.effort?.(provider)), // Settings → AI → AI providers (only models that take it: ai/effort.js)
       system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
@@ -2554,6 +2584,8 @@ ${prompt}` : prompt), historyImages: [] };
       emit,
       noTools,
     });
+    this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit);
+    return turn;
   }
 
   async loop(messages, signal, emit, fb = { tried: new Set(), calls0: 0 }) {
@@ -2845,7 +2877,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
-    if (READING_TOOLS.has(name) || (input?.read && (name === 'navigate' || name === 'open_tab'))) this.markTainted(run); // navigate/open_tab read:true returns page content
+    if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -3401,7 +3433,8 @@ ${out.text}${note}
   // frame, inFrame), their text follows the page's under each frame's label, and `frames` lists them.
   async readFrames(wc, page) {
     const { frames: list, aiOff } = await frames.list(wc, { allow: this.frameAllow() });
-    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false }), 5000);
+    const listing = Array.isArray(page.elements);
+    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false, list: listing }), 5000);
     delete page.crossOriginFrames; // (every frame is read in its own frame now)
     if (aiOff) page.framesNotRead = `${aiOff} embedded frame${aiOff === 1 ? '' : 's'} on a site where the user turned AI off`;
     if (!read.length) return;
@@ -3409,14 +3442,15 @@ ${out.text}${note}
     let slots = FRAME_ELEMENTS;
     page.frames = [];
     for (const { frame, value } of read) {
-      if (!value || !Array.isArray(value.elements)) continue;
+      if (!value || (listing && !Array.isArray(value.elements))) continue;
       const label = frames.labelOf(frame, value.title);
-      const elements = value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n }));
+      const elements = listing ? value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n })) : [];
       slots -= elements.length;
-      page.elements.push(...elements);
+      if (listing) page.elements.push(...elements);
       const text = String(value.text || '').trim().slice(0, Math.min(frames.FRAME_CHARS, room));
       room -= text.length;
       page.frames.push({ frame: frame.n, label, url: frame.url.slice(0, 150), box: [frame.x, frame.y, frame.w, frame.h], totalElements: value.totalElements, elementsShown: elements.length, totalTextChars: value.totalTextChars });
+      if (!listing) page.totalElements += value.totalElements || 0;
       if (text) page.text += `\n\n${label}\n${frames.defang(text)}`;
     }
   }
@@ -3603,15 +3637,16 @@ ${out.text}${note}
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
-        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own }));
+        const list = input.elements === true || elementOffset > 0; // the element list only when asked for (compact outline and find give the ids)
+        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own, list }));
         if (!own && !textOffset && !elementOffset) await this.readFrames(wc, page); // with the first page of a read
         const { text, ...rest } = page;
-        const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
+        const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}|${list}`, `${JSON.stringify(rest)}
 ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}
 </untrusted_page_content>`;
-        return `<untrusted_page_content>\n${JSON.stringify(rest)}\n\nPAGE TEXT:\n${text}\n</untrusted_page_content>`;
+        return scripts.formatFull(page);
       }
       case 'screenshot': {
         const wc = this.requireTab();
@@ -3638,6 +3673,7 @@ ${same}
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
         if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts });
+        else if (input.read !== false) loaded += await snapshot.head(this, wc, { runScript, scripts });
         return loaded;
       }
       case 'click': {
@@ -3907,7 +3943,7 @@ ${same}
         } finally {
           redirects?.release();
         }
-        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : ''}`;
+        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : input.read === false ? '' : await snapshot.head(this, tab.webContents, { runScript, scripts })}`;
       }
       case 'switch_tab': {
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.

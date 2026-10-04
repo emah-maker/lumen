@@ -29,6 +29,7 @@ const tr = (key, english, vars) => {
 async function save(key, value) {
   try {
     st = await S.set(key, value);
+    window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); // another row for the same setting (Settings → AI → AI providers) follows
     applyPageClasses();
     refreshRestartNotes();
   } catch (err) {
@@ -52,9 +53,10 @@ function stackRow(label, desc, ...content) {
   el.append(...content);
   return el;
 }
-function toggle(key, label, desc, after) {
-  const input = h('input', { type: 'checkbox', class: 'switch', id: `pref-${key}`, role: 'switch', 'aria-label': label });
-  input.checked = Boolean(st.prefs[key]);
+function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false } = {}) {
+  const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
+  input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]);
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]); });
   input.addEventListener('change', async () => { await save(key, input.checked); after?.(input.checked); });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
@@ -92,10 +94,11 @@ function cliAccessRows() {
   master.classList.add('warn');
   return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows)];
 }
-function select(key, label, desc, options, { number = false, after } = {}) {
-  const el = h('select', { id: `pref-${key}`, 'aria-label': label },
+function select(key, label, desc, options, { number = false, after, id = `pref-${key}` } = {}) {
+  const el = h('select', { id, 'aria-label': label },
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) el.value = String(st.prefs[key]); });
   el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
   const r = row(label, desc, el);
   r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase(); // "dark" finds Theme (the names of its choices)
@@ -156,7 +159,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -2094,7 +2097,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', anthropic: 'Claude (API key)' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -2199,8 +2202,7 @@ async function buildUsage(card) {
         h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
       : [h('span', { class: 'note', text: 'Nothing yet.' })]);
     parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
-    parts.push(...grokUsageRows(u, () => render(false)));
-    parts.push(...codexUsageRows(u));
+    parts.push(...providerUsageRows(u, () => render(false)));
     parts.push(row('', null,
       h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
@@ -2686,12 +2688,13 @@ async function init() {
   // Sub-pages that are whole builders of their own.
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
-  mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok codex cost');
+  mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
+  mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['ai-providers', buildProviders], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],

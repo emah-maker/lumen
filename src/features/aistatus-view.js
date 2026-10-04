@@ -52,6 +52,7 @@ function clockText(at, now) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 const money = (v) => (v > 0 ? (v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`) : '');
+const tokenText = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
 // One AI: { id, name, kind: 'api' | 'cli', state, stateText, note, current, model, fullAccess }.
 function describe(id, raw, now) {
@@ -69,7 +70,7 @@ function describe(id, raw, now) {
   const notes = [];
   let meterBar = null; // [usage bars] { percent, level } of the plan's 5-hour window, drawn as a thin bar; none without a real reading
   let fact = ''; // the one extra thing a small card has room for: when it is back, or the 5-hour reading, or today's cost
-  const own = id === 'grokbuild' ? raw.grokLimit : id === 'codex' ? raw.codexLimit : null; // a limit the CLI itself reported (Grok's message, Codex's rate_limits)
+  const own = id === 'grokbuild' ? raw.grokLimit : id === 'codex' ? raw.codexLimit : id === 'antigravity' ? raw.agyLimit : null; // a limit the CLI itself reported (Grok's message, Antigravity's quota text, Codex's rate_limits)
   const grok = own ? { until: Number.isFinite(own.resetsAt) ? own.resetsAt : null, kind: 'limit', exact: Number.isFinite(own.resetsAt), scope: 'provider' } : null;
   const lim = grok || cool;
   const active = Boolean(lim) && (lim.until === null || Number(lim.until) > now);
@@ -90,6 +91,12 @@ function describe(id, raw, now) {
     if (m) { const p = Math.max(0, Math.min(100, m.percent)); meterBar = { percent: Math.round(p), level: p >= 100 ? 'high' : p >= 80 ? 'warn' : 'ok' }; notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
     const t = raw.today && raw.today[id];
     if (t && money(t.costUSD)) { notes.push(`${money(t.costUSD)} today`); if (!fact) fact = money(t.costUSD); }
+    else if (t && int(t.tokens) > 0) { notes.push(`${tokenText(int(t.tokens, 1e12))} tokens today`); if (!fact) fact = `${tokenText(int(t.tokens, 1e12))} tok`; } // no price known (Antigravity, a model not in the table): the count is still real
+    // An API provider's per-minute rate limit, from the headers of its last reply (never a plan balance): said only once it is getting tight.
+    const rate = raw.rate && raw.rate[id];
+    if (rate && Number.isFinite(rate.percent) && rate.percent >= 50 && !(Number(rate.resetsAt) <= now)) notes.push(`${str(rate.label, 40) || 'Rate limit'} ${Math.round(Math.min(100, rate.percent))}% used`);
+    const effort = raw.effort && raw.effort[id];
+    if (effort) notes.push(`Effort: ${str(effort, 12)}`);
   } else if (state === 'out') notes.push('Sign in under Settings');
   else if (state === 'missing') notes.push('Install it to use your own account');
   else if (state === 'off') notes.push('Turn it on under Settings');

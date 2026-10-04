@@ -122,4 +122,5 @@ const sessions = [
     ],
   },
 ];
-module.exports = { sessions };
+const more = require("./organize-eval-more");
+module.exports = { sessions: [...sessions, ...more.sessions], base: sessions };

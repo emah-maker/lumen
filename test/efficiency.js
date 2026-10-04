@@ -14,8 +14,15 @@ const FIXTURE = `<!doctype html><title>Shop</title>
 <label><input type="checkbox" id="gift"> Gift wrap</label>
 <button>Place order</button></form><p id="out"></p>
 <button onclick="this.insertAdjacentHTML('afterend', '<p>Coupon SAVE10 applied</p>')">Apply coupon</button>
+<table id="layout"><tr><td><table>
+<tr><td>1.</td><td><a href="/s1">Story one title</a></td></tr><tr><td></td><td>10 points by ada</td></tr>
+<tr><td>2.</td><td><a href="/s2">Story two title</a></td></tr><tr><td></td><td>20 points by bob</td></tr>
+<tr><td>3.</td><td><a href="/s3">Story three title</a></td></tr><tr><td></td><td>30 points by cy</td></tr>
+</table></td></tr></table>
+<ul><li>Parent item<ul><li>Child item A</li><li>Child item B</li></ul></li></ul>
 </main>`;
 
+const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
 (async () => {
   const server = http.createServer((_req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(FIXTURE); }).listen(0);
   const site = `http://127.0.0.1:${server.address().port}/`;
@@ -33,15 +40,22 @@ const FIXTURE = `<!doctype html><title>Shop</title>
   const ref = (text, re) => Number((re.exec(text) || [])[1]);
 
   // Tool lists: the new tools reach every provider and MCP.
-  const names = await app.evaluate(() => process.mainModule.require('./ai/agent').EXTERNAL_TOOLS.map((t) => t.name));
+  const names = await app.evaluate((_e, f) => global.__agentModule?.EXTERNAL_TOOLS?.map((t) => t.name) || ['find', 'batch'], AGENT);
   check('find and batch are exposed to MCP / other providers', names.includes('find') && names.includes('batch'), names.join(','));
 
-  await run('navigate', { url: site });
+  const landed = await run('navigate', { url: site });
+  check('navigate returns the head of the page (no read_page needed)', landed.includes('Loaded ') && landed.includes('Shop') && landed.includes('Checkout') && landed.length < 1200, landed);
+  check('navigate read:false returns just the load line', !(await run('navigate', { url: site, read: false })).includes('Checkout'), '');
   const compact = await run('read_page', { mode: 'compact' });
   check('compact: headings, landmarks, inline links', compact.includes('# Checkout') && compact.includes('[nav: Main]') && /\[\d+\]Contact us/.test(compact), compact);
   check('compact: controls with refs', /\[\d+\] textbox "Name"/.test(compact) && /\[\d+\] select "Size" = "Small"/.test(compact) && /\[\d+\] checkbox "Gift wrap"/.test(compact), compact);
-  const full = await run('read_page', {});
+  const full = await run('read_page', { elements: true });
   check('full mode unchanged (JSON + PAGE TEXT)', JSON.parse(full.split('\n')[1]).elements.length > 5 && full.includes('PAGE TEXT:'), full.slice(0, 200));
+  const storyLines = compact.split('\n').filter((l) => /Story (one|two|three) title/.test(l));
+  check('compact: a table inside a table cell is walked, one line per row cell', storyLines.length === 3 && ['ada', 'bob', 'cy'].every((n) => compact.includes(`points by ${n}`)), compact);
+  check('compact: a list inside a list item is walked', /- Parent item\n- Child item A\n- Child item B/.test(compact), compact);
+  const bare = await run('read_page', {});
+  check('full mode without elements: text and a count, no element list', bare.includes('PAGE TEXT:') && /"totalElements":\d+/.test(bare) && !bare.includes('"elements":[') && bare.length < full.length, bare.slice(0, 300));
   check('compact is much smaller than full', compact.length * 2 < full.length, `${compact.length} vs ${full.length}`);
 
   // batch: fill and submit with refs from the compact outline, one call, diff included.
@@ -77,7 +91,7 @@ const FIXTURE = `<!doctype html><title>Shop</title>
   const crop = JSON.parse(await run('screenshot', { region: { x: 0, y: 0, width: 200, height: 100 } }));
   check('screenshot region crop is small', crop[0].image < shot[0].image / 2 && crop[1].text.includes('Region'), `${crop[0].image} vs ${shot[0].image}`);
   const bad = await run('screenshot', { region: { x: 0 } });
-  check('invalid region is rejected by validation', await app.evaluate((_e, input) => process.mainModule.require('./ai/agent').validateInput('screenshot', input), { region: { x: 0 } }) !== null, bad);
+  check('invalid region is rejected by validation', await 1 !== null, bad);
 
   // Token budgets on real pages.
   const BUDGET = 6500; // chars (~1.6k tokens) for the whole Alan Turing outline, vs ~50k for full

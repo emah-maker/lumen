@@ -27,7 +27,7 @@ const path = require('path');
 
   let r = await run('navigate', { url: fixture });
   check('navigate over http', r.includes('Fixture'), r);
-  const page = await run('read_page', {});
+  const page = await run('read_page', { elements: true });
   const elements = JSON.parse(page.split('\n')[1]).elements;
   const id = (label) => elements.find((e) => e.label === label)?.id;
   check('<label for> names input', id('Full name'), JSON.stringify(elements));
@@ -63,7 +63,7 @@ const path = require('path');
 
   // New control tools.
   await run('navigate', { url: fixture });
-  let els = JSON.parse((await run('read_page', {})).split(String.fromCharCode(10))[1]).elements;
+  let els = JSON.parse((await run('read_page', { elements: true })).split(String.fromCharCode(10))[1]).elements;
   await run('hover', { element_id: els.find((e) => e.label === 'Hover me').id });
   check('hover', (await title()) === 'hovered', await title());
   await run('type_text', { element_id: els.find((e) => e.label === 'Full name').id, text: 'Grace' });
@@ -139,7 +139,7 @@ const path = require('path');
   // Zoomed page: clicks must still land.
   await run('navigate', { url: fixture });
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.setZoomLevel(2));
-  const zp = JSON.parse((await run('read_page', {})).split('\n')[1]).elements;
+  const zp = JSON.parse((await run('read_page', { elements: true })).split('\n')[1]).elements;
   await run('click', { element_id: zp.find((e) => e.label === 'Submit').id });
   const zafter = await run('read_page', {});
   check('click lands on zoomed page', zafter.includes('clicked:'), zafter.slice(-300));

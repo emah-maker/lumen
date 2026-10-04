@@ -53,7 +53,7 @@ const PLACES = {
 // concept -> words (lower case; matched after stemming, so plurals and -ing forms count). Travel and housing also carry the same errands in
 // German, Spanish, Portuguese, French and Italian, and Japanese and Korean as the two-character pieces tab-groups reads those scripts in.
 const CONCEPTS = {
-  travel: 'amtrak flixbus megabus greyhound ryanair easyjet jet2 flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover attractions honeymoon hilton marriott hyatt sheraton wyndham hampton ihg museum museums flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
+  travel: 'amtrak flixbus megabus greyhound ryanair easyjet jet2 flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover attractions honeymoon hilton marriott hyatt sheraton wyndham hampton ihg museum museums flug flüge flughafen bahn zug reise reisen urlaub sehenswürdigkeiten sehenswuerdigkeiten ausflugsziele unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
   education: 'bsn dnp fnp tuition anatomy physiology flashcards flashcard lecture homework syllabus assignment textbook exam midterm semester professor course quiz lab tutor gradebook teacher teachers teaching rubric rubrics curriculum classroom turnitin kahoot',
   shopping: 'price buy deal discount coupon cart checkout shipping warranty unboxing',
   entertainment: 'movie movies film films cinema trailer trailers imdb letterboxd goodreads rotten tomatoes tomato book books novel novels author series season episode episodes tv sitcom documentary actor director',
@@ -102,8 +102,24 @@ const CONCEPTS = {
   // (Phrases that say it beside these words are PHRASE_CONCEPTS and BRAND_PHRASES: travel nursing, shift differential, compression socks, Epic.)
   nursing: 'nursing nurse nurses enfermería enfermeria enfermera enfermero nclex acls bls pals ceu ceus kronos cerner medscape uptodate scrubs stethoscope nurseslabs',
   // A game developer's tools and craft: engines, pixel and audio tools, devlogs, the stores' developer pages.
+  // Elections and government, what a news window about one vote is made of (in English, French, Spanish and German).
+  politics: 'election elections elección elecciones élection élections législatives legislative présidentielle presidentielle macron parlement assemblée bundestag bundestagswahl wahl wahlen senate parliament ballot ballots candidate candidates democrat democrats republican republicans gop gobierno congreso sondages umfrage',
+  // Motor racing, and PC hardware: the two vocabularies a magazine's reviews and a fan's tabs share across many sites.
+  motorsport: 'f1 formula1 verstappen leclerc norris ferrari mclaren motogp nascar indycar grandprix qualifying',
+  hardware: 'rtx geforce radeon ryzen cpus psu motherboard motherboards nvidia pcpartpicker buildapc ssd nvme ddr5 ddr4 overclock overclocking graphics',
+  // Biology class: the cell and what it does.
+  biology: 'photosynthesis chloroplast chloroplasts chlorophyll mitochondria mitochondrion ribosome ribosomes organelle organelles cytoplasm meiosis mitosis glycolysis stomata biology',
   gamedev: 'lospec fmod wwise freesound gdc godot unreal aseprite sprite sprites devlog devlogs steamworks gamedev gamedeveloper playtest playtesting tilemap tilemaps cinemachine metroidvania unity3d shader shaders',
 };
+// Words that mean one another, so that two titles saying different ones still share a word: "coffee after noon" and "caffeine and sleep". Each list is a set
+// (every word stands for every other); a name beside "->" stands for the ones it points to, not the other way round (a MacBook is a laptop, a laptop is no MacBook).
+// Small and curated on purpose: a stand-in is a weaker word than the one the title says (tab-groups.js tabWords), and one shared word never links tabs alone anyway.
+const RELATED = [
+  'coffee caffeine caffeinated espresso', 'sleep insomnia', 'postgres postgresql', 'kubernetes k8s', 'kids children child kid', 'bike bicycle bicycles bikes cycling', 'rome roman romans',
+  'tv television', 'lawyer attorney', 'car cars automobile', 'pup puppy puppies', 'meds medication medications',
+  'macbook thinkpad chromebook -> laptop', 'iphone pixel galaxy -> phone', 'caesar augustus gladiator gladiators colosseum -> roman rome',
+  'verstappen -> f1 formula', 'formula1 -> f1 formula', 'pganalyze pgadmin psql -> postgres',
+];
 // Words that say a second concept besides the one they are listed under (tab-groups.js CONCEPTS_OF): buying a home is housing and a loan is finance.
 const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing', pediatrician: 'baby', pediatricians: 'baby' };
 // Phrases that say a concept where their words alone would not ("closing costs", "Western blot"), and the ones that must not be read as the words they
@@ -117,6 +133,10 @@ const PHRASE_CONCEPTS = [
   [/\b(hand planes?|(block|jack|smoothing|jointer|low[- ]angle) planes?|router tables?|wood glue|fine woodworking|table saw|band saw|pocket[- ]holes?|glue-?ups?|wood ?(finish|finishing|stain)|hand (cut|tools?)|sharpening (chisels?|stones?|plane)|lie-?nielsen)\b/i, 'woodworking'],
   [/\b(buyer'?s? (representation|agency) agreements?|listing agreements?|open houses?|mls (listings?|numbers?|search|data|id)|(home|house) staging|staging (a )?(home|house|listing)|(sales |market )?comps|comparable sales|zillow (premier )?agent|follow up boss|(negotiat\w+|agent|realtor|buyer'?s?|seller'?s?|listing) commissions?|nar settlement|real estate (agents?|license|continuing education|ce)|(home|house)s? (that )?sell|staging tips)\b/i, 'realestate'],
   [/\b(pre-?approval|closing costs?|down payments?|first-?time home ?buyers?|mortgage rates?|home ?owner(ship)?)\b/i, 'housing'],
+  [/\b(formula (one|1)|grand prix|pole position|pit stops?)\b/i, 'motorsport'],
+  [/\b(pc builds?|gaming pc|graphics cards?|power supply|gpu benchmarks?|cpu cooler)\b/i, 'hardware'],
+  [/\b(tuition|financial aid|fafsa|bursar|student loans?|scholarships?|work-?study)\b/i, 'studentaid'],
+  [/\b(calvin cycle|krebs cycle|cell (membrane|division|biology)|natural selection)\b/i, 'biology'],
   [/\b(social security|required minimum distributions?|rmd)\b/i, 'finance'],
   [/\b(western blots?|gibson assembly|prime editing|base editing|cell culture|flow cytometry|gel electrophoresis|protocols\.io)\b/i, 'research'],
   [/\b(spelling bee|nyt games|nyt connections|steam (deck|store|sale|library)|chess\.com)\b/i, 'games'],
@@ -187,7 +207,7 @@ const PORTAL_BRANDS = { naver: '네이버', yahoo: 'ヤフー', rakuten: '楽天
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
 // Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
 // stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
-const CONCEPT_GROUPS = { restaurant: 'Restaurant', collegeapp: 'College applications', thruhike: 'Thru-hike', kpop: 'K-pop', crypto: 'Crypto', finance: 'Finance', baby: 'Baby', woodworking: 'Woodworking', realestate: 'Real estate', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', health: 'Health', birding: 'Birding', games: 'Games', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports', trucking: 'Trucking', design: 'Design', freelance: 'Freelance', events: 'Events', nursing: 'Nursing', gamedev: 'Game dev' };
+const CONCEPT_GROUPS = { restaurant: 'Restaurant', studentaid: 'Financial aid', collegeapp: 'College applications', thruhike: 'Thru-hike', kpop: 'K-pop', crypto: 'Crypto', finance: 'Finance', baby: 'Baby', woodworking: 'Woodworking', realestate: 'Real estate', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', health: 'Health', birding: 'Birding', games: 'Games', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports', trucking: 'Trucking', design: 'Design', freelance: 'Freelance', events: 'Events', nursing: 'Nursing', gamedev: 'Game dev', politics: 'Politics', motorsport: 'Motorsport', hardware: 'PC hardware', biology: 'Biology' };
 // Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
 // project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
 const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4, devops: 3 };
@@ -362,4 +382,4 @@ const FALLBACK_CATEGORIES = [
   { name: 'News & social', kind: true, weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { AMBIGUOUS_WORDS, CODE_AMBIGUOUS, CODE_CONTEXT, CONCEPT_EXCLUDES, ORDINARY_WORDS, STATE_EDU_HOST, CONCEPT_ALSO, PHRASE_CONCEPTS, BRAND_PHRASES, URL_CATEGORIES, COMMON_CAPS, NOT_SCHOOL_OR_GOV, GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { RELATED, AMBIGUOUS_WORDS, CODE_AMBIGUOUS, CODE_CONTEXT, CONCEPT_EXCLUDES, ORDINARY_WORDS, STATE_EDU_HOST, CONCEPT_ALSO, PHRASE_CONCEPTS, BRAND_PHRASES, URL_CATEGORIES, COMMON_CAPS, NOT_SCHOOL_OR_GOV, GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

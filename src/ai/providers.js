@@ -8,6 +8,8 @@ let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
 const { netFetch } = require('../browser/net-fetch');
 const genImages = require('../features/gen-images');
+const effortLib = require('./effort');
+const providerUsage = require('../features/provider-usage');
 
 const PROVIDERS = {
   openai: {
@@ -232,11 +234,20 @@ function usageOptions(provider) {
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null }) {
-  const stream = await (client || clientFor(provider, apiKey)).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
+// effort: the user's reasoning-effort choice for this provider ('' = its default; ai/effort.js decides whether this model takes it).
+async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
+  const request = (client || clientFor(provider, apiKey)).chat.completions.create(
+    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
     { signal },
   );
+  // The response's rate-limit headers come with the same request (no extra call): x-ratelimit-* for OpenAI, xAI and OpenRouter.
+  let rate = null;
+  let stream;
+  if (typeof request.withResponse === 'function') {
+    const got = await request.withResponse();
+    stream = got.data;
+    try { rate = providerUsage.parseRateLimitHeaders(provider, got.response?.headers); } catch { rate = null; }
+  } else stream = await request;
   let text = '';
   let finish = null;
   const calls = [];
@@ -275,7 +286,7 @@ async function streamTurn({ provider, model, apiKey, system, messages, tools, si
   }
   if (!content.length && !pictures.length) content.push({ type: 'text', text: '(no reply)' });
   const stopReason = calls.length ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';
-  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage, ...(pictures.length ? { pictures } : {}) };
+  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage, ...(rate ? { rate } : {}), ...(pictures.length ? { pictures } : {}) };
 }
 
 // One non-streaming request that must answer with a JSON object.
