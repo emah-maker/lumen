@@ -32,6 +32,13 @@ const providerOf = (id) => {
   return m ? m[1] : 'anthropic';
 };
 
+// The provider a picker id belongs to, for a composer meter: 'claudecode:auto' (Auto within one engine) is Claude Code's;
+// only the plain mixed 'auto' (and a "more models" row) belongs to none. A bare Claude model id is Anthropic's.
+const engineOf = (id) => {
+  const v = String(id || '');
+  return !v || v === 'auto' || v.endsWith(':__more') ? '' : providerOf(v);
+};
+
 const clockOf = (ms, now) => {
   const d = new Date(ms);
   const sameDay = d.toDateString() === new Date(now).toDateString();
@@ -166,7 +173,7 @@ function load(force = false) {
   return inflight;
 }
 
-const api = { levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
+const api = { engineOf, levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else {
   root.usageBars = { ...api, state: () => state, load, touch: () => load(false) };
