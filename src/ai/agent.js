@@ -3513,7 +3513,7 @@ ${same}
       case 'wait_for': {
         const wc = this.requireTab();
         const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
-        const probe = `(document.body ? document.body.innerText : '').toLowerCase().includes(${JSON.stringify(input.text.toLowerCase())})`;
+        const probe = scripts.textProbe(input.text);
         while (Date.now() < deadline && !this.signalAborted()) {
           if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;

@@ -463,6 +463,13 @@ function setupAiAgents(deps) {
       // tag is refused, never treated as an outside agent.
       enabled: (session) => (session.engine ? ownsSession(session) : mcpEnabled()),
       onEvent: mcpEvent,
+      // An outside agent's own window is made as it lists the tools, so its first navigate does not pay for it (~1 s).
+      // Behind the user's window (agent-windows open), only while agents may connect; the sidebar's engines use the user's tabs.
+      onListed: (session) => {
+        if (session.engine || !mcpEnabled() || session.controller.signal.aborted) return;
+        if (global.__mcpSharedWindow && require('../test-mode').isTest()) return;
+        deps.agentWindows?.windows.ensure(session, session.clientName).catch(() => {});
+      },
       onClose: (session) => { if (!session.engine) deps.agentWindows?.windows.release(session); }, // its window closes after a grace period
     });
   }
