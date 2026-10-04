@@ -2426,6 +2426,14 @@ function guardFirstLoadFocus(tab, url) {
   });
 }
 
+// True only while a run's own tab tool (open_tab / switch_tab) is switching, synchronously: set by asAiSwitch. Not derived from the
+// ambient task scope, so a switch by the user, the window or the test hooks while a reply runs is never taken for the AI's.
+let aiToolSwitch = false;
+function asAiSwitch(fn) {
+  const before = aiToolSwitch;
+  aiToolSwitch = true;
+  try { return fn(); } finally { aiToolSwitch = before; }
+}
 function switchTab(id, { wake = true } = {}) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return false;
@@ -2451,7 +2459,7 @@ function switchTab(id, { wake = true } = {}) {
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
-  if (!agent.currentScope()) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat (a tool's own tab change moves the run, not the sidebar)
+  if (!aiToolSwitch) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat. Only a run's own tool call (aiToolSwitch: agentOpenTab / agentSwitchTab) moves the run instead; any other switch is the user's, whatever async scope it happens to run in
   sendTabs();
   return true;
 }
@@ -4297,10 +4305,15 @@ function runHomeTab(run) {
   return id;
 }
 // The tab the user was watching the run in now shows the tab the run moved to: that tab shows this chat too.
+// Never takes a tab that shows another chat which has content (another run's, or one with history): the run still works in the tab
+// it switched to (its task scope pins it), the tab just keeps its own chat.
 function bindRunChatTo(tabId) {
   const s = agent.currentScope();
   const id = s?.chat ? [...chatRuns.values()].find((r) => r.messages === s.chat)?.chatId : null;
-  if (id) chatBind.bind(tabId, id);
+  if (!id) return;
+  const other = chatBind.chatOf(tabId);
+  if (other && other !== id && chatNotEmpty(other)) return;
+  chatBind.bind(tabId, id);
 }
 if (TEST) global.__tabChats = { setSidebar: (id, open) => setTabSidebar(id, open), sidebar: (id) => { const hit = tabAnywhere(id); return hit ? tabSidebarOpen(hit.t) : null; }, viewBounds: (id) => tabAnywhere(id)?.t.view?.getBounds?.() || null, bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
 
@@ -6171,7 +6184,8 @@ const agentOpenTab = (url, opts = {}) => {
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
   const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId }) : !rest.background));
-  const tab = openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: runOf() } : {}) });
+  const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: runOf() } : {}) });
+  const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
   else if (show && !mcp) bindRunChatTo(tab.id);
   return tab;
@@ -6180,8 +6194,9 @@ const agentSwitchTab = (id, opts = {}) => {
   if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
   const fromPage = chatPageRt?.runTarget() != null;
   if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true, runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
-    const ok = switchTab(id);
-    if (ok) bindRunChatTo(id);
+    const aiCall = Boolean(opts && 'show' in opts && agent.currentScope()); // only a run's switch_tab passes `show`
+    const ok = aiCall ? asAiSwitch(() => switchTab(id)) : switchTab(id);
+    if (ok && aiCall) bindRunChatTo(id);
     return ok;
   }
   const t = tabs.find((x) => x.id === id);
