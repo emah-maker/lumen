@@ -62,7 +62,7 @@ const path = require('path');
   await ui.evaluate(() => { document.getElementById('toggle-sidebar').click(); });
   await ui.waitForTimeout(600);
   const groups = await ui.$$eval('#model optgroup', (gs) => gs.map((g) => `${g.label}:${[...g.children].map((o) => o.value).join('|')}`));
-  check('OpenAI models appear in the picker (from the key)', groups.some((g) => g === 'OpenAI:openai:gpt-5.6|openai:gpt-5.6-mini'), JSON.stringify(groups));
+  check('OpenAI models appear in the picker (from the key)', groups.some((g) => g === 'OpenAI:openai:auto|openai:gpt-5.6|openai:gpt-5.6-mini'), JSON.stringify(groups));
   check('non-chat models are filtered out', !groups.join().includes('embedding'), JSON.stringify(groups));
   const saved = await ui.evaluate(async () => (await window.assistant.getSettings()).providerKeys.openai.stored);
   check('key is stored (encrypted)', saved === true, saved);
