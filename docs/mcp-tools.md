@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 28 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 29 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
@@ -273,3 +273,12 @@ Search the web and get the top results (title, URL, snippet). Use it for current
 | Parameter | Type | Required |
 |---|---|---|
 | `query` | string | yes |
+
+### `generate_image`
+
+Make a picture, or edit the chat's latest one with `edit: true`; it is shown in the chat with a "Made with <provider · model>" line. Lumen sends the request to a provider you have already connected that makes pictures, whatever model the chat is on (see [Image generation](image-generation.md)). Only in Lumen's own sidebar chat: an outside MCP agent has nowhere to show a picture and is refused, so it can't spend your providers.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `prompt` | string | yes | What to draw. Style and size go in the words. |
+| `edit` | boolean |  | Edit the latest picture in this chat (OpenAI, Gemini, OpenRouter and Grok Build can; Grok's API can't). |

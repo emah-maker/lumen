@@ -386,6 +386,9 @@ function setupAiAgents(deps) {
       if (early) engineRun.emit({ type: 'tool_done', id: early, ok: false, error: text });
       return { content: [{ type: 'text', text }], isError: true };
     };
+    // read_page with no mode gives an MCP client the compact outline (about a third of a full read's size), as the sidebar's models
+    // are told to start with; "full" and extract stay one argument away.
+    if (name === 'read_page' && !args.mode && !args.extract && !args.since_last && !args.elements && !args.text_offset && !args.element_offset) args = { ...args, mode: 'compact' };
     const problem = deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
     // An outside agent works in a window of its own, made on its first call that needs a tab (features/agent-windows.js):

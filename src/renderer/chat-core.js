@@ -1034,7 +1034,7 @@ function renderStreaming(el, source) {
 // left in the DOM; each frame replaces only the nodes after them and parses only the tail text.
 function drawTail(el) {
   const source = el.source;
-  const stable = window.markdownStableLength(source);
+  const stable = window.markdownStableLength(source, el.stableMemo || (el.stableMemo = {})); // (resumes where the last frame stopped)
   const done = el.stableLen || 0;
   if (el.headNodes === undefined || stable < done) { el.innerHTML = ''; el.headNodes = 0; el.stableLen = 0; }
   while (el.childNodes.length > el.headNodes) el.lastChild.remove();
@@ -1130,7 +1130,7 @@ window.assistant.onEvent((event) => {
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
-      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '' }));
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}) }));
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));

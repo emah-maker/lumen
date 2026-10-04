@@ -109,6 +109,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
+  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
@@ -189,6 +190,7 @@ function validate(key, value) {
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
@@ -229,7 +231,8 @@ function validate(key, value) {
 }
 
 // q-weighted Accept-Language: en-US,en;q=0.9,fr;q=0.8
-const acceptLanguage = (langs) => require('../browser/chrome-identity').acceptLanguageHeader(langs); // (the one list navigator.languages uses too)
+const acceptLanguage = (langs) => require('../browser/chrome-identity').acceptLanguageHeader(langs);
+const languageList = (langs) => require('../browser/chrome-identity').languageList(langs); // (the one list navigator.languages uses too)
 
 const isLocalHost = (host) => host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]'
   || /^(10|192\.168)\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || !host.includes('.');
@@ -410,7 +413,8 @@ function create(deps) {
   }
   const hintOrigins = new Set(); // origins whose responses asked for Sec-CH-Prefers-Color-Scheme
   const originOf = (url) => { try { return new URL(url).origin; } catch { return ''; } };
-  const wantsColorHint = (url) => hintOrigins.has(originOf(url)) || /^https:\/\/([a-z0-9-]+\.)*google\.[a-z.]+$/i.test(originOf(url));
+  const GOOGLE_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*google\.[a-z.]+$/i;
+  const wantsColorHint = (origin) => hintOrigins.has(origin) || GOOGLE_ORIGIN.test(origin);
   // Called with every response's headers (from the ad blocker's onHeadersReceived wrapper in main.js).
   const uaHintOrigins = new Map(); // origin -> the user-agent hints (Sec-CH-UA-Arch…) its responses asked for
   function noteResponseHeaders(details) {
@@ -432,13 +436,8 @@ function create(deps) {
     }
   }
   // Chrome sends client hints only to secure origins: https, and http on localhost.
-  function sendsClientHints(url) {
-    try {
-      const u = new URL(url);
-      return u.protocol === 'https:' || u.protocol === 'wss:' || (/^(http|ws):$/.test(u.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname));
-    } catch {
-      return false;
-    }
+  function sendsClientHints(u) {
+    return u.protocol === 'https:' || u.protocol === 'wss:' || (/^(http|ws):$/.test(u.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname));
   }
   // Every request asks: the prefs are worked out again only when the settings change (a new cache object).
   let hot = null;
@@ -450,28 +449,42 @@ function create(deps) {
   };
   const googleAuth = require('../browser/google-auth-identity'); // Google sign-in is Firefox's identity, not Chrome's
   const firefoxProfile = googleAuth.firefoxProfile(process.platform);
+  // Accept-Language is not a per-request job: Chrome sends the q-weighted list of the browser's languages (Electron's
+  // default is the bare "en-US"), and Chromium builds that header itself from the session's list, so it is set once
+  // here and again when Settings → Languages changes. The list is the one navigator.languages uses (and is cut to the
+  // 128 bytes that keep the header a CORS-safelisted one, chrome-identity.js); Chromium adds the same q-weights.
+  function applyAcceptLanguage(target) {
+    const p = prefs();
+    const list = p.languages.length ? p.languages : deps.systemLanguages ? deps.systemLanguages() : null;
+    if (!list) return;
+    try { target.setUserAgent(target.getUserAgent(), languageList(list).join(',')); } catch (err) { console.error('Accept-Language:', err.message); }
+  }
+  // The one onBeforeSendHeaders listener of a session. It stays registered for every request because Chrome's own
+  // Sec-CH-UA hints, the color-scheme hint and Google sign-in's Firefox headers are all added here; the work per
+  // request is a single parse of the address and nothing else unless a setting or a rule above applies.
   function setupHeaders(target = ses()) {
+    applyAcceptLanguage(target);
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = hotPrefs();
       let headers = details.requestHeaders;
-      if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
+      let u = null;
+      try { u = new URL(details.url); } catch { /* not a URL: no hints, no origin */ }
+      const origin = u ? u.origin : '';
+      if (deps.chromeHintHeaders && u && sendsClientHints(u)) {
         // Every Sec-CH-UA* hint is ours (Chromium's own list names no "Google Chrome"), first in the list as in Chrome.
-        const asked = deps.chromeHighEntropy && uaHintOrigins.get(originOf(details.url));
+        const asked = deps.chromeHighEntropy && uaHintOrigins.get(origin);
         headers = withHints(headers, asked ? { ...deps.chromeHintHeaders, ...deps.chromeHighEntropy(asked) } : deps.chromeHintHeaders);
       }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
-      // Chrome always sends the q-weighted list of the browser's languages (Electron's default is the bare "en-US").
-      if (p.languages.length) headers['Accept-Language'] = acceptLanguage(p.languages);
-      else if (deps.systemLanguages) headers['Accept-Language'] = acceptLanguage(deps.systemLanguages());
       // Electron has no client-hints store, so Chromium never sends this hint itself; Google (which
       // renders its theme on the server) and sites that asked for it get it from here.
-      if (wantsColorHint(details.url)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
+      if (wantsColorHint(origin)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
       if (p.blockThirdPartyCookies && isThirdParty(details)) {
         for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie') delete headers[name];
       }
       // Google's sign-in hosts see Firefox (Firefox's User-Agent, no client hints), last so nothing above adds one back.
-      if (googleAuth.isAuthUrl(details.url)) headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile);
+      if (u && (u.protocol === 'https:' || u.protocol === 'wss:') && googleAuth.isAuthHost(u.hostname)) headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile);
       callback({ requestHeaders: headers });
     });
   }
@@ -615,6 +628,7 @@ function create(deps) {
       case 'theme': applyTheme(); reloadGoogleTabs(); break;
       case 'defaultZoom': for (const wc of deps.tabContents()) applyDefaultZoom(wc); break;
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
+      case 'languages': for (const target of [ses(), ...mirrored]) applyAcceptLanguage(target); break;
       case 'proxy': return applyProxy();
       // The blocker reads these on every request, so the change applies to whatever loads next.
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
