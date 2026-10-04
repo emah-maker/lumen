@@ -2810,15 +2810,18 @@ async function organizeTabs() {
   const groupsBefore = back(() => tabGroups.layoutSignature().groups); // groups that exist before this click (automatic grouping may have made some)
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
-    await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
-    if (organizeAbort.signal.aborted) return 0;
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
     // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
     // The model is asked only when "Use AI to name and group topics" is on and a route to one exists (a key, or a signed-in CLI); the
     // route is worked out once per click. Otherwise this stays on this computer: nothing is sent and there is nothing to complain about.
     const aiOn = readSettings().topicAi === true || (TEST && global.__organizeAlwaysAsk === true);
-    const route = aiOn ? await groupingRoute(String(cheapTopicModel())).catch(() => null) : null;
-    const timeoutMs = organizeAi.timeoutFor(route);
+    // Worked out AFTER the local groups are on screen (organizeProgressive's `prepare`): a CLI engine's sign-in check and the wait for a
+    // stopped CLI to be gone used to hold up the first change by a second or more.
+    const prepare = aiOn ? async () => {
+      await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
+      const route = await groupingRoute(String(cheapTopicModel())).catch(() => null);
+      return { ask: organizeAi.askIfEnabled({ enabled: true, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }), timeoutMs: organizeAi.timeoutFor(route) };
+    } : null;
     const stats = await organizeAi.organizeProgressive({
       tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
@@ -2826,8 +2829,7 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      timeoutMs,
-      ask: organizeAi.askIfEnabled({ enabled: aiOn, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }),
+      prepare,
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
