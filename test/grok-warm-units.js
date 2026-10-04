@@ -207,6 +207,22 @@ const fakeGate = {
       check('prewarm: an existing chat\'s session is resumed ahead (session/resume) and then used', pre3.fake.spawned.length === 1 && pre3.fake.agents()[0].requests.some((m) => m.method === 'session/resume') && r3.out.sessionId === 'known-session' && r3.ttft < STARTUP_MS / 3, JSON.stringify(r3.out));
     }
 
+    // ---- Grok Build's own Auto (docs/auto-model.md): the model changes from one message to the next. A kept process serves a chat's
+    // session only for the model that session runs; the model asked for is always the one the process is set to before the turn.
+    {
+      const { fake, engine } = setup();
+      const a = await send(engine, { model: 'grok-4.7-build-fast' });
+      const rec = fake.agents()[0];
+      check('auto: a first message on the fast model sets the kept process to it (set_model, never "auto")', rec.model === 'grok-4.7-build-fast' && a.out.text === 'warm reply 1', String(rec.model));
+      const b = await send(engine, { sessionId: a.out.sessionId, resume: true, model: 'grok-4.7' });
+      check('auto: the next message on another model: the same chat\'s process is set to that model before the turn', fake.spawned.length === 1 && rec.model === 'grok-4.7' && rec.requests.filter((m) => m.method === 'session/set_model').length === 2 && b.out.text === 'warm reply 2', JSON.stringify({ model: rec.model, spawned: fake.spawned.length }));
+      // The agent starts a new session when the model changes (a Grok session stays on its model): that is a new chat's process, never the old session's.
+      const c = await send(engine, { sessionId: 'auto-new-session', resume: false, model: 'grok-4.7-build-fast' });
+      const recs = fake.agents();
+      check('auto: a new session for the model Auto chose is not served by the process of the old one', recs.length === 2 && recs[1].model === 'grok-4.7-build-fast' && recs[1].session !== rec.session && recs[0].prompts.length === 2 && c.out.sessionId === recs[1].session, JSON.stringify({ n: recs.length, models: recs.map((r) => r.model) }));
+      check('auto: no request ever named a model "auto"', fake.agents().every((r) => r.requests.every((m) => !(m.method === 'session/set_model' && m.params?.modelId === 'auto'))));
+    }
+
     // ---- two chats never share a process
     {
       const { fake, engine } = setup();

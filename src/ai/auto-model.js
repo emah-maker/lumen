@@ -25,6 +25,10 @@
 //                     tools) is replaced once by the next candidate: one with a larger context window when the
 //                     request was too long, else a stronger tier, or the same tier on another model for an
 //                     "not available on your plan" refusal.
+//   provider Auto     "<provider>:auto" ('grokbuild:auto', 'openai:auto', 'claudecode:auto', ...): the same router limited to one
+//                     provider's models (route's `scope`). A provider's group in the picker gets one when it has two or more models
+//                     to choose between. The pick id is kept in the chat (autoFrom) like 'auto'; the model that answers is concrete.
+//                     A provider turned off for Auto (Settings) is still used by its own Auto; a single model turned off is not.
 //   native default    an engine's own 'default' row (Claude Code's, Grok Build's, Antigravity's) is left to the CLI
 //                     when the engine lists no models to choose from: Auto then defers to what the CLI picks.
 
@@ -33,7 +37,18 @@ const modelRoute = require('../features/model-route');
 
 const AUTO = 'auto';
 const TIERS = ['fast', 'balanced', 'strong'];
-const isAuto = (id) => id === AUTO;
+// Providers and engines that have an Auto of their own ("<key>:auto"), and how they are named in a reason ("Auto (Grok Build): ...").
+const SCOPE_NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const SCOPES = Object.keys(SCOPE_NAMES);
+// What a pick id asks for: undefined (not an Auto pick), null (the global 'auto') or a provider key ('grokbuild:auto' -> 'grokbuild').
+function scopeOf(id) {
+  if (id === AUTO) return null;
+  const m = /^([a-z][a-z0-9]*):auto$/.exec(String(id || ''));
+  return m && SCOPES.includes(m[1]) ? m[1] : undefined;
+}
+const isAuto = (id) => scopeOf(id) !== undefined;
+const autoIdOf = (scope) => (scope ? `${scope}:auto` : AUTO);
+const scopeName = (scope) => SCOPE_NAMES[scope] || scope;
 
 // Task kinds a caller may name. Each is held to a tier ('chat' and 'agentic' are scored from the prompt).
 const KIND_TIER = { quick: 'fast', lookup: 'fast', summary: 'fast', translation: 'fast', classification: 'fast', title: 'fast', code: 'balanced', reasoning: 'strong' };
@@ -130,7 +145,8 @@ function candidatesOf(options, need, { exclude = [], denied = null, cooldowns = 
   }
   return list.filter((o) => {
     const p = providerOf(o.id);
-    if (off.has(o.id) || off.has(p) || (denied && denied.has(o.id)) || o.gated === true || o.available === false) return false;
+    // (a provider turned off for Auto is still chosen by its own Auto: that is asking for it by name)
+    if (off.has(o.id) || (off.has(p) && scope !== p) || (denied && denied.has(o.id)) || o.gated === true || o.available === false) return false;
     if (scope && p !== scope) return false;
     if (cooldowns?.cooling(o.id, at)) return false;
     const engine = fallback.isEngine(o.id);
@@ -152,7 +168,7 @@ const label = (option) => {
   const raw = option.name || option.label || bareOf(option.id);
   return `Auto · ${String(raw).replace(/^Claude Code · /, '').replace(/^Claude\s+/, '')}`;
 };
-const reasonOf = (name, why) => `Auto: ${name} for ${why}`;
+const reasonOf = (name, why, scope = null) => `Auto${scope ? ` (${scopeName(scope)})` : ''}: ${name} for ${why}`;
 const shortName = (option) => String(option?.name || option?.label || bareOf(option?.id)).replace(/^Claude Code · /, '').replace(/^Claude\s+/, '');
 
 // How far a candidate's tier is from the need. Stronger than needed costs a little, weaker than needed costs more:
@@ -166,7 +182,7 @@ const tierCost = (have, want) => { const d = TIERS.indexOf(have) - TIERS.indexOf
 function route({ options = [], request = {}, prefer = [], last = null, exclude = [], denied = null, cooldowns = null, at = Date.now(), allowEngines = true, scope = null, need = null } = {}) {
   need = need || needFor(request);
   const list = candidatesOf(options, need, { exclude, denied, cooldowns, at, allowEngines, scope });
-  if (!list.length) return { id: null, tier: need.tier, need, why: need.why, label: 'Auto', reason: 'Auto: no model is available right now', candidates: [] };
+  if (!list.length) return { id: null, tier: need.tier, need, why: need.why, label: 'Auto', scope, reason: scope ? `Auto: no ${scopeName(scope)} model is available right now` : 'Auto: no model is available right now', candidates: [] };
   const home = (prefer || []).filter(Boolean);
   const score = (o, index) => {
     const p = providerOf(o.id);
@@ -176,7 +192,23 @@ function route({ options = [], request = {}, prefer = [], last = null, exclude =
   };
   const ranked = list.map((o, i) => ({ o, s: score(o, i) })).sort((a, b) => a.s - b.s).map((x) => x.o);
   const best = ranked[0];
-  return { id: best.id, tier: tierOf(best), need, why: need.why, label: label(best), reason: reasonOf(shortName(best), need.why), option: best, candidates: ranked.map((o) => o.id) };
+  return { id: best.id, tier: tierOf(best), need, why: need.why, scope, label: label(best), reason: reasonOf(shortName(best), need.why, scope), option: best, candidates: ranked.map((o) => o.id) };
+}
+
+// route() for a provider's own Auto, with the model fallback behind it: when none of that provider's models can answer (all out of
+// usage, unreachable, not on the plan) and `fallbackOn` ("Switch models automatically" in Settings), it behaves like a picked model that
+// ran out: the same vendor's other route first (`related`: ['xai'] for 'grokbuild'), then any connected model, said in the reason
+// and marked `outOfScope`. `strict` (a background run on a CLI's own Auto, which can only use that CLI) never leaves the provider.
+function routeOrFallBack(args = {}, { fallbackOn = false, strict = false, related = [] } = {}) {
+  const decision = route(args);
+  const scope = args.scope || null;
+  if (decision.id || !scope || strict || !fallbackOn) return decision;
+  // (the vendor's other route is tried as a whole first, like a picked model's stand-in: a tier mismatch does not send the turn elsewhere)
+  let out = null;
+  for (const p of related) { const d = route({ ...args, scope: p }); if (d.id) { out = d; break; } }
+  out ||= route({ ...args, scope: null, prefer: [...related, ...(args.prefer || [])] });
+  if (!out.id) return decision;
+  return { ...out, scope, outOfScope: true, reason: `${scopeName(scope)} is unavailable right now, so Auto uses ${label(out.option).replace(/^Auto · /, '')}` };
 }
 
 // What to try when `current` failed in a way another model may get past. failure: { kind: 'context' | 'tools' | 'denied' | 'refused' }.
@@ -210,7 +242,7 @@ function escalate({ options = [], current, failure = {}, request = {}, tried = [
   const decision = route({ options: use, request, prefer: [providerOf(current), ...prefer], exclude, denied, cooldowns, at, allowEngines, scope, need });
   if (!decision.id) return null;
   const why = { context: 'a longer conversation than the last model could take', tools: 'a model that can use tools', denied: 'a model your account can use', refused: 'a second try on a stronger model', empty: 'a second try on a stronger model' }[kind] || 'a second try';
-  return { ...decision, escalated: true, why, reason: reasonOf(shortName(decision.option), why), label: label(decision.option) };
+  return { ...decision, escalated: true, why, reason: reasonOf(shortName(decision.option), why, scope), label: label(decision.option) };
 }
 
 // What kind of failure an error is, for escalate(): 'context' (the request is too long for the model), 'tools' (the
@@ -250,6 +282,43 @@ function hintOf(text) {
   return { hint: HINTS[m[1].toLowerCase()], text: (m[2] || '').trim() };
 }
 
+// ---------- provider Auto ----------
+
+// The models a provider's own Auto could choose between (ignoring what a request needs): connected, signed in, usable on this
+// account, not an engine's own default (which stands for "let the CLI choose"). The picker offers the provider's Auto when
+// there are two or more: with one there is nothing to choose.
+function routableOf(options, scope, { exclude = [], denied = null } = {}) {
+  const off = new Set((exclude || []).map(String));
+  return (options || []).filter((o) => o?.id && !isAuto(o.id) && !o.more && !String(o.id).endsWith(':__more') && providerOf(o.id) === scope
+    && o.signedIn !== false && !(o.badges || []).includes('sign in') && o.gated !== true && o.available !== false
+    && !(fallback.isEngine(o.id) && /:default$/.test(o.id)) && !off.has(o.id) && !(denied && denied.has(o.id)));
+}
+
+// The picker's list with each provider's own Auto first in that provider's group. `pick`: the open chat's pick (its Auto row is kept
+// even when the provider has since shrunk to one model, so the picker never shows nothing selected); `last`: the chat's latest
+// decision ({ label, reason, scope }), shown on the row of the Auto the chat is on.
+function withProviderAutos(options, { pick = null, last = null, exclude = [], describe = () => '' } = {}) {
+  const out = [];
+  const done = new Set();
+  for (const o of options || []) {
+    const scope = providerOf(o.id);
+    if (!done.has(scope) && SCOPES.includes(scope) && !isAuto(o.id) && !o.more) {
+      done.add(scope);
+      const here = scopeOf(pick) === scope;
+      if (here || routableOf(options, scope, { exclude }).length >= 2) {
+        const mine = here && last && last.scope === scope ? last : null;
+        const text = mine?.reason || describe(scope) || `Lumen picks between ${scopeName(scope)}'s models for each message`;
+        out.push({
+          id: autoIdOf(scope), label: fallback.isEngine(o.id) ? `${scopeName(scope)} · Auto` : 'Auto', name: mine?.label || 'Auto', provider: o.provider || scopeName(scope), group: o.group || scopeName(scope),
+          auto: true, autoScope: scope, signedIn: o.signedIn, detail: text, title: text,
+        });
+      }
+    }
+    out.push(o);
+  }
+  return out;
+}
+
 // The id the picker's own "Auto" row carries, and what it says. `last` is the chat's latest decision ({ label, reason }).
 function pickerEntry({ last = null, describe = '' } = {}) {
   return {
@@ -267,4 +336,4 @@ function pickerEntry({ last = null, describe = '' } = {}) {
 // The provider keys Auto may stay with, from the chat's last Auto choice and the pick the user made before Auto.
 const preferFrom = ({ lastId = null, home = null } = {}) => [lastId ? providerOf(lastId) : null, home ? providerOf(home) : null].filter(Boolean);
 
-module.exports = { hintOf, HINTS, AUTO, TIERS, KINDS, KIND_TIER, isAuto, tierOf, costOf, needFor, candidatesOf, route, escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };
+module.exports = { hintOf, HINTS, AUTO, TIERS, KINDS, KIND_TIER, SCOPES, SCOPE_NAMES, isAuto, scopeOf, autoIdOf, scopeName, routableOf, withProviderAutos, tierOf, costOf, needFor, candidatesOf, route, routeOrFallBack,escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };

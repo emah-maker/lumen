@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const tlds = require('../browser/tlds');
 const { describeUsage, addUsage } = require('./chat-usage');
 const routines = require('./routines');
+const autoModel = require('../ai/auto-model');
 
 const LIMITS = { tasks: 50, steps: 200, runs: 10, result: 24000, title: 80, prompt: 8000, condition: 300, sites: 20, pages: 20, resumeSteps: 15 };
 const STATUSES = ['scheduled', 'queued', 'running', 'waiting-approval', 'done', 'failed', 'stopped', 'interrupted'];
@@ -55,6 +56,8 @@ const backgroundStepLimit = (setting) => (Number.isInteger(setting) && setting >
 const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' }; // (Antigravity is for sidebar chats only: a background task has nobody to answer its approvals)
 const engineOfModel = (model) => /^claudecode:/.test(String(model)) ? 'claudecode' : /^grokbuild:/.test(String(model)) ? 'grokbuild' : 'api';
 const isCliModel = (model) => engineOfModel(model) !== 'api';
+// The provider or engine key of a picker id ('openai:gpt-5.6' -> 'openai', a bare Claude id -> 'anthropic'), when it has an Auto of its own.
+const providerKeyOf = (id) => { const p = /^([a-z][a-z0-9]*):/.exec(String(id))?.[1] || 'anthropic'; return autoModel.SCOPES.includes(p) ? p : null; };
 
 // The models a task may use, from the picker's options: every connected API model (chat-only ones can't
 // act, so no) and each CLI model. A CLI model of a CLI that is not signed in is listed but not available.
@@ -63,8 +66,21 @@ function taskModels(options) {
     const engine = engineOfModel(o.id);
     return { id: o.id, label: o.label || o.id, group: o.group || '', engine, available: engine === 'api' || o.signedIn !== false };
   });
-  // [auto model] "Auto" first: each run of the task is routed to one of the connected API models (a task's tools differ per engine, so a CLI is picked by hand).
-  return list.some((o) => o.engine === 'api') ? [{ id: 'auto', label: 'Auto', group: '', engine: 'api', available: true }, ...list] : list;
+  // [auto model] A provider's own Auto ('openai:auto', 'claudecode:auto') leads its group: each run is routed among that provider's models
+  // (Claude Code and Grok Build too: the run asks for the model first, runCli). Antigravity has no background tasks.
+  const withOwn = [];
+  const done = new Set();
+  for (const o of list) {
+    const scope = providerKeyOf(o.id);
+    if (scope && !done.has(scope) && scope !== 'antigravity') {
+      done.add(scope);
+      const usable = list.filter((x) => providerKeyOf(x.id) === scope && x.available && !/:default$/.test(x.id));
+      if (usable.length >= 2) withOwn.push({ id: autoModel.autoIdOf(scope), label: 'Auto', group: o.group, engine: engineOfModel(autoModel.autoIdOf(scope)), available: true });
+    }
+    withOwn.push(o);
+  }
+  // "Auto" first: each run of the task is routed to one of the connected API models (a task's tools differ per engine, so a CLI is picked by hand, or by its own Auto).
+  return withOwn.some((o) => o.engine === 'api') ? [{ id: 'auto', label: 'Auto', group: '', engine: 'api', available: true }, ...withOwn] : withOwn;
 }
 
 // Why a CLI model can't run a task right now, or null. cli: aiAgents.cliStatus(). The key is a locale

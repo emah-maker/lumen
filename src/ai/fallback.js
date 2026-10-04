@@ -204,6 +204,7 @@ const familyOf = (id) => /fable|opus|sonnet|haiku/i.exec(String(id || '').replac
 const isDefaultEngineModel = (id) => /^(claudecode|grokbuild|antigravity):default$/.test(String(id || ''));
 // Antigravity runs Google's models (and Claude through Google), so the Gemini API key is its same-vendor route.
 const RELATED = { anthropic: ['claudecode'], claudecode: ['anthropic'], xai: ['grokbuild'], grokbuild: ['xai'], gemini: ['antigravity'], antigravity: ['gemini'] };
+const relatedOf = (provider) => RELATED[provider] || [];
 
 // Models a turn can be handed to: connected (the picker only lists those), signed in, and able to use tools.
 function usable(options) {
@@ -377,7 +378,7 @@ function pick(args) { return choose(args)?.id || null; }
 // What a turn starts on. `preferred` is the model the user picked; while it cools down, its stand-in.
 // { model, from: preferred | null, until }. With the setting off, or nothing else to use, the pick as is.
 function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = true, allowEngines = true, need = null }) {
-  if (!enabled || !preferred || preferred === 'auto' || !cooldowns?.cooling(preferred, at)) return { model: preferred, from: null, until: 0 }; // ('auto' is the picker's Auto, chosen per message: ai/auto-model.js)
+  if (!enabled || !preferred || /^(auto|[a-z][a-z0-9]*:auto)$/.test(preferred) || !cooldowns?.cooling(preferred, at)) return { model: preferred, from: null, until: 0 }; // ('auto' and 'openai:auto' are the picker's Autos, chosen per message: ai/auto-model.js)
   const next = choose({ current: preferred, options, cooldowns, at, allowEngines, need });
   return next ? { model: next.id, from: preferred, until: cooldowns.until(preferred, at), trim: next.trim, noImages: next.noImages } : { model: preferred, from: null, until: 0 };
 }
@@ -428,4 +429,4 @@ const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, providerOf, familyOf, isEngine, COOLDOWN, MAX_HOPS };
+module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, providerOf, familyOf, isEngine, relatedOf, COOLDOWN, MAX_HOPS };

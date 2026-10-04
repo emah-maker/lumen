@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Auto for each AI.** Every provider's group in the model picker now starts with its own **Auto**: **Claude Code · Auto**, **Grok Build · Auto**, **Antigravity · Auto**, and **Auto** under Claude, OpenAI, Grok, Gemini and OpenRouter. It works like the main Auto but picks only among that provider's models: a quick question goes to its small, fast model, a hard one to its strongest, and a model that is out of usage or not on your plan is skipped. Each reply says which model answered and why ("Auto (Grok Build): …"), and **/think**, **/deep** and **/fast** work there too, picking that provider's strongest or quickest model. If every model of the provider is out of usage, Lumen switches to another AI as it does for a model you picked (when **Switch models automatically** is on), and says so. A provider with only one model has no Auto row, since there is nothing to choose between. It is also in the background task and routine model lists (Claude Code and Grok Build included).
+
 ## 0.5.8 (2026-10-04)
 
 - **Chats in different tabs now all work at once,** Claude Code, Grok Build and Antigravity included. Before, these took turns ("Waiting for the other chat to finish"). Each chat's tools act on its own tab. **Settings → AI → Chats working at once** now has **No limit**, and that's the new default.

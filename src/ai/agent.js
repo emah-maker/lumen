@@ -1420,13 +1420,16 @@ class Agent {
     const settings = messages.settings;
     if (!settings || !autoModel.isAuto(settings.model)) return;
     const request = this.autoRequest(messages, input);
-    const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: true }) || null; // [parallel CLI chats] CLI engines run beside other chats
+    const scope = autoModel.scopeOf(settings.model); // a provider's own Auto ('grokbuild:auto'): only that provider's models; null: every connected one
+    const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: true, scope }) || null; // [parallel CLI chats] CLI engines run beside other chats
     if (!decision?.id) throw new Error(decision?.reason ? `${decision.reason}. Pick a model in the model menu, or wait for a limit to reset.` : 'Auto has no model to use. Connect an AI in Settings > AI, or pick a model.');
-    settings.autoFrom = autoModel.AUTO;
+    settings.autoFrom = settings.model; // the chat's pick ('auto', or the provider's own 'openai:auto'), restored at the start of the next turn
     settings.autoTier = decision.tier;
-    settings.autoLast = { id: decision.id, label: decision.label, reason: decision.reason };
+    settings.autoLast = { id: decision.id, label: decision.label, reason: decision.reason, ...(scope ? { scope } : {}), ...(decision.outOfScope ? { outOfScope: true } : {}) };
     settings.model = decision.id;
     this.browser.onAuto?.(decision); // the picker's row says "Auto · Haiku" (main refreshes every picker)
+    // The provider's own Auto found none of its models free and the fallback setting is on: another provider's model answers, and it is said.
+    if (decision.outOfScope) emit({ type: 'notice', text: `${decision.reason}.`, auto: { from: autoModel.autoIdOf(scope), to: decision.id } });
     emit({ type: 'auto', model: decision.id, label: decision.label, reason: decision.reason });
   }
 
@@ -1440,14 +1443,15 @@ class Agent {
     if (!failure || tried.has(`auto:${failure.kind}`) || tried.size >= fallback.MAX_HOPS) return null;
     const current = settings.model;
     const request = this.autoRequest(messages, {});
-    const next = this.browser.autoEscalate({ current, failure: { ...failure, chars: historyChars(messages) }, request, tried: [...tried].filter((t) => !String(t).startsWith('auto:')), allowEngines });
+    const scope = autoModel.scopeOf(settings.autoFrom) || null; // (a provider's own Auto escalates within that provider; one that went outside it, to another provider's model, stays global)
+    const next = this.browser.autoEscalate({ current, failure: { ...failure, chars: historyChars(messages) }, request, tried: [...tried].filter((t) => !String(t).startsWith('auto:')), allowEngines, scope: settings.autoLast?.outOfScope ? null : scope });
     if (failure.kind === 'denied') this.browser.autoDeny?.(current); // (remembered even when nothing else is left)
     if (!next?.id) return null;
     tried.add(`auto:${failure.kind}`);
     tried.add(current);
     settings.model = next.id;
     settings.autoTier = next.tier;
-    settings.autoLast = { id: next.id, label: next.label, reason: next.reason };
+    settings.autoLast = { id: next.id, label: next.label, reason: next.reason, ...(settings.autoLast?.scope ? { scope: settings.autoLast.scope } : {}), ...(settings.autoLast?.outOfScope ? { outOfScope: true } : {}) };
     emit({ type: 'notice', text: `${next.reason}.`, auto: { from: current, to: next.id } });
     emit({ type: 'auto', model: next.id, label: next.label, reason: next.reason });
     this.browser.onAuto?.(next);
