@@ -217,6 +217,7 @@ try {
 // line; a function in it runs instead, e.g. to bring Lumen's tools up), or a list of those, one per
 // spawn; a kill ends it (close with no exit code), as taskkill would. Resolves the run's result, the
 // events it emitted, the kills and the spawn calls. Nothing touches the user's own ~/.grok.
+// A successful turn ends the process tree at its `result` line (grok-build.js exitLater), so a clean run has exactly one kill: the others are Lumen's own.
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
@@ -376,7 +377,7 @@ async function grokRuns() {
     // terminalDecision) is what judges it now, per call, before it ever runs -- this stream-level
     // check (the last-resort layer) just needs to leave it alone once it's been reported.
     const { out, events, kills } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Running it.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, ' Done.'), gbDone('Running it. Done.')]);
-    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 0 && out.failed !== true && out.text === 'Running it.\n\n Done.', JSON.stringify({ out, events, kills }));
+    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 1 && out.failed !== true && out.text === 'Running it.\n\n Done.', JSON.stringify({ out, events, kills }));
   }
   {
     const { out, spawned, gate } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')]);
@@ -398,7 +399,7 @@ async function grokRuns() {
   }
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'lumen__read_page'), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c0', content: 'ok' }] } }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), gbDone('The page says hi.')]);
-    check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 0 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
+    check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 1 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
   }
 
   // A chat's first message waits for Lumen's tools. Grok's own log line about its MCP wait decides
@@ -415,7 +416,7 @@ async function grokRuns() {
       [{ stderr: late }, () => { ready = true; }, gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'Lumen is still connecting'), ...gbText(1, 'BLIND'), gbDone('BLIND')],
       [{ stderr: onTime }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }],
     ], { engine: { lumenReady: () => ready } });
-    check('Grok Build first message: grok\'s log saying lumen was late means a retry, even if the bridge came up since', spawns.length === 2 && kills.length === 1 && out.text === 'The page says hi.' && out.sessionId === 'id-2' && !events.some((e) => /BLIND|still connecting/.test(e.text || '')), JSON.stringify({ out, events, n: spawns.length }));
+    check('Grok Build first message: grok\'s log saying lumen was late means a retry, even if the bridge came up since', spawns.length === 2 && kills.length === 2 && out.text === 'The page says hi.' && out.sessionId === 'id-2' && !events.some((e) => /BLIND|still connecting/.test(e.text || '')), JSON.stringify({ out, events, n: spawns.length }));
   }
   {
     const { out, events, spawns } = await fakeGrokRun([{ stderr: onTime }, gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')], { engine: { lumenReady: () => false } });
@@ -426,7 +427,7 @@ async function grokRuns() {
     const blind = [gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'no tools?'), ...gbText(1, 'BLIND: I cannot see your page.'), gbDone('BLIND')];
     const warm = [() => { ready = true; }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }];
     const { out, events, kills, spawns } = await fakeGrokRun([blind, warm], { engine: { lumenReady: () => ready } });
-    check('Grok Build first message: a reply begun before Lumen\'s tools are up is stopped and sent again', spawns.length === 2 && kills.length === 1 && kills[0] === spawns[0].child.pid && out.text === 'The page says hi.' && !out.failed, JSON.stringify({ out, kills, n: spawns.length }));
+    check('Grok Build first message: a reply begun before Lumen\'s tools are up is stopped and sent again', spawns.length === 2 && kills.length === 2 && kills[0] === spawns[0].child.pid && out.text === 'The page says hi.' && !out.failed, JSON.stringify({ out, kills, n: spawns.length }));
     check('Grok Build first message: nothing of the stopped try reaches the sidebar', !events.some((e) => /BLIND|no tools/.test(e.text || '')) && !events.some((e) => e.type === 'error' || e.type === 'notice'), JSON.stringify(events));
     check('Grok Build first message: the second try is a new session with the same prompt file', flag(spawns[0].argv, '--session-id') === 'id-1' && flag(spawns[1].argv, '--session-id') !== 'id-1' && /^[0-9a-f-]{36}$/.test(flag(spawns[1].argv, '--session-id')) && flag(spawns[1].argv, '--prompt-file') === flag(spawns[0].argv, '--prompt-file') && out.sessionId === 'id-2', JSON.stringify(spawns.map((s) => s.argv.slice(-4))));
   }
@@ -434,7 +435,7 @@ async function grokRuns() {
     let ready = false;
     const { out, events, kills, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'first thought'), () => { ready = true; }, gbEv({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: ' then more' } }), ...gbText(1, 'Hello.'), gbDone('Hello.')], { engine: { lumenReady: () => ready } });
     const shown = events.filter((e) => e.type === 'thinking' || e.type === 'text').map((e) => e.text);
-    check('Grok Build first message: held thinking is shown, in order, once Lumen\'s tools are up', spawns.length === 1 && kills.length === 0 && JSON.stringify(shown) === '["first thought"," then more","Hello."]' && out.text === 'Hello.', JSON.stringify({ shown, kills }));
+    check('Grok Build first message: held thinking is shown, in order, once Lumen\'s tools are up', spawns.length === 1 && kills.length === 1 && JSON.stringify(shown) === '["first thought"," then more","Hello."]' && out.text === 'Hello.', JSON.stringify({ shown, kills }));
   }
   {
     const { out, events, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Resumed.'), gbDone('Resumed.')], { run: { resume: true }, engine: { lumenReady: () => false } });
@@ -1585,7 +1586,7 @@ async function fewerCallRuns() {
     check('fewer calls: navigate takes read + wait_for, open_tab read, read_page extract + selector', props.navigate.read && props.navigate.wait_for && props.open_tab.read && props.read_page.extract?.enum.join() === 'tables,links,lists' && props.read_page.selector, '');
     check('fewer calls: click, click_at, type_text and press_key take observe', ['click', 'click_at', 'type_text', 'press_key'].every((n) => props[n].observe && snap.OBSERVE_TOOLS.has(n)), '');
     const agentSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'ai', 'agent.js'), 'utf8');
-    check('fewer calls: navigate / open_tab read:true counts as reading page content (taints the run)', /input\?\.read && \(name === 'navigate' \|\| name === 'open_tab'\)+ this\.markTainted/.test(agentSrc2), '');
+    check('fewer calls: navigate / open_tab return the page head, so they count as reading page content (taint the run) unless read:false', /\(name === 'navigate' \|\| name === 'open_tab'\) && input\?\.read !== false\)+ this\.markTainted/.test(agentSrc2), '');
 
     // read_page extract runs in the page: a fake DOM with one table and some links.
     const cell = (t) => ({ innerText: t });
@@ -3405,7 +3406,7 @@ async function bgCliRuns() {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
     const sidebar = await fakeGrokRun(terminalStream);
-    check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 0 && !sidebar.out.failed, JSON.stringify(sidebar.out));
+    check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 1 && !sidebar.out.failed, JSON.stringify(sidebar.out));
   }
 
   // Engines made per run share no live state: their own active run, so the same MCP tag never belongs to two.

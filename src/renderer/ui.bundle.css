@@ -60,6 +60,7 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --tabstrip-h: 38px;
+  --drag-gutter: 56px; /* the strip's always-there window-drag area (.drag-gutter) */
   --toolbar-h: 44px;
   --chrome-h: calc(var(--tabstrip-h) + var(--toolbar-h)); /* where the page area starts (main.js gets the measured rect from the renderer) */
   --t-press: 90ms;
@@ -139,6 +140,16 @@ button:active:not(:disabled) { transform: scale(0.94); }
   -webkit-app-region: drag;
 }
 .tabstrip button, .tab { -webkit-app-region: no-drag; }
+/* Window drag (title bar): everything in the strip that is not a tab or button drags the window, and
+   double-click on it maximizes / restores (native, from the drag region). The gutter is the part that
+   never goes away: it is the last thing in the strip, never shrinks below --drag-gutter, so even a
+   strip full of tabs has room to grab (the tabs scroll instead). On Windows the 140px or so beyond it
+   is the caption buttons' own room (padding above). */
+.drag-gutter { flex: 1 1 var(--drag-gutter); min-width: var(--drag-gutter); align-self: stretch; -webkit-app-region: drag; }
+/* The toolbar too: the gaps around the nav buttons, beside the address field and left of the right-hand
+   buttons drag; every control in it stays clickable. */
+.toolbar { -webkit-app-region: drag; }
+.toolbar-start > *, .toolbar-end > *, .toolbar .omnibox, .toolbar button, .toolbar input, .toolbar browser-action-list { -webkit-app-region: no-drag; }
 .tabs { position: relative; display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; padding: 1px 0; scroll-padding-inline: 28px; } /* = the fade width (.more-left/.more-right): a scrolled-to tab clears the faded edge */
 .tabs::-webkit-scrollbar { display: none; }
 /* One surface glides between tabs instead of each tab lighting up on its own. */
@@ -885,6 +896,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .gen-img-btn:disabled { opacity: 0.5; }
 .gen-img-status { min-height: 0; font-size: 12px; color: var(--muted); }
 .gen-img-status:empty { display: none; }
+.gen-img-credit { font-size: 12px; color: var(--muted); }
 .gen-img-remote { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .gen-img-remote-alt { color: var(--muted); font-size: 12px; }
 .md-img { display: block; max-width: 100%; max-height: min(420px, 60vh); border-radius: 10px; cursor: zoom-in; }

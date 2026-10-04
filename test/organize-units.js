@@ -5,6 +5,7 @@ const path = require('path');
 const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../src/browser/tab-groups');
 
 let failed = 0;
+const cpuMs = (from) => { const u = process.cpuUsage(from); return (u.user + u.system) / 1000; }; // CPU time, not wall time: a loaded machine stretches the latter without the code doing more work
 const check = (name, ok, detail = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ` ${detail}`}`); };
 
 const isWebUrl = (u) => /^https?:\/\//i.test(u);
@@ -457,9 +458,9 @@ const en = require('../src/locales/en.json');
   const words = ['alpha', 'river', 'budget', 'garden', 'python', 'recipe', 'ticket', 'guide', 'review', 'news', 'match', 'course', 'notes', 'price', 'plan'];
   const specs = Array.from({ length: 300 }, (_, i) => { const [a, b] = pool[i % pool.length]; return [`${a} ${words[(i * 7) % 15]} ${words[(i * 3 + Math.floor(i / pool.length)) % 15]}`, `${b}${b.includes('?') ? '&' : '?'}n=${i}`]; });
   const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
-  const t0 = Date.now();
+  const cpuStart = process.cpuUsage();
   const made = w.g.organizeByTopic();
-  const ms = Date.now() - t0;
+  const ms = Math.round(cpuMs(cpuStart));
   check('perf: 300 realistic tabs organize in under 1.5 s', made >= 5 && ms < 1500, `${ms} ms, ${made} groups`);
 }
 {
@@ -982,9 +983,9 @@ let asked = 0;
     const runs = [];
     for (let k = 0; k < 3; k++) {
       const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
-      const t0 = Date.now();
+      const cpuStart = process.cpuUsage();
       w.g.organizeByTopic();
-      runs.push(Date.now() - t0);
+      runs.push(Math.round(cpuMs(cpuStart)));
     }
     const best = Math.min(...runs);
     check('organize: 300 tabs stay fast (best of three under 1500 ms)', best < 1500, `${runs.join(', ')} ms`);

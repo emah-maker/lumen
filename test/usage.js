@@ -330,6 +330,37 @@ const USAGE_TEXT = [
   check('Settings → Usage: turning it off is the setting the bars follow', off && off.showBars === false, JSON.stringify(off && off.showBars));
   await app.evaluate(() => global.__patchSettings({ usageBars: true }));
 
+  // ---- every other AI has the same sections (provider-usage.js): fake numbers only, no provider is called
+  await app.evaluate(() => {
+    const u = global.__usage;
+    u.clear();
+    const hdr = { provider: 'openai', at: Date.now(), buckets: [{ kind: 'requests', limit: 500, remaining: 450, resetsAt: Date.now() + 60e3, percent: 10 }, { kind: 'tokens', limit: 30000, remaining: 3000, resetsAt: Date.now() + 60e3, percent: 90 }] };
+    u.record('openai', { usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: 0.02, models: ['openai:gpt-5.6'] }, model: 'openai:gpt-5.6', rate: hdr });
+    u.record('openai', { usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: null, models: ['openai:gpt-9'] }, model: 'openai:gpt-9' });
+    u.record('gemini', { usage: { inputTokens: 50, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: 0.001, models: ['gemini:gemini-2.5-flash'] }, model: 'gemini:gemini-2.5-flash' });
+    u.record('antigravity', { limit: { text: 'RESOURCE_EXHAUSTED: quota exceeded. Resets in 110h', resetsAt: Date.now() + 110 * 3600e3, model: 'gemini-3.1-pro' }, ok: false });
+  });
+  await app.evaluate(() => global.__settings.open('usage'));
+  await sleep(600);
+  await app.evaluate(async () => { const t = global.__settings.tabs().find((x) => x.settings); await global.__settings.contents(t.id).executeJavaScript("document.getElementById('usage-refresh')?.click()"); }); // (the page was built before these numbers)
+  let prov = null;
+  for (let i = 0; i < 40 && !(prov && /OpenAI/.test(prov.text) && /Antigravity limit reached/.test(prov.text)); i++) {
+    await sleep(250);
+    prov = await app.evaluate(async () => {
+      const t = global.__settings.tabs().find((x) => x.settings);
+      const wc = t && global.__settings.contents(t.id);
+      return wc ? wc.executeJavaScript("(() => { const sec = document.getElementById('sec-usage'); const q = (s) => sec && sec.querySelector(s); return sec && { text: sec.textContent, heads: [...sec.querySelectorAll('.usage-head')].map((x) => x.dataset.provider), days: q('#usage-days-openai')?.textContent, models: q('#usage-models-openai')?.textContent, rateMeters: [...sec.querySelectorAll('.meter')].map((m) => m.getAttribute('aria-label')), budgetId: Boolean(q('#usage-budget-openai-save')) }; })()") : null;
+    });
+  }
+  check('Settings → Usage: a section per AI in the same order', prov && ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter'].join() === prov.heads.join(), JSON.stringify(prov?.heads));
+  check('Settings → Usage: OpenAI shows its per-minute rate limits (from reply headers), Lumen’s counts per day and per model, and a budget', prov && /Requests per minute/.test(prov.rateMeters.join()) && /Tokens per minute/.test(prov.rateMeters.join()) && /Last 7 days: 2 turns/.test(prov.text) && /gpt-5\.6/.test(prov.models) && /gpt-9/.test(prov.models) && /some turns have no known price/.test(prov.text) && prov.budgetId && /not a plan balance/.test(prov.text), JSON.stringify([prov?.rateMeters, prov?.models]));
+  check('Settings → Usage: a provider with no plan API says so instead of showing a number; Gemini says it sends no headers; Antigravity shows its quota reset', prov && /Plan limits are not available from OpenAI/.test(prov.text) && /sends no rate-limit headers/.test(prov.text) && /Antigravity limit reached/.test(prov.text) && /gemini-3\.1-pro/.test(prov.text) && /Resets/.test(prov.text), prov?.text.slice(-1200));
+  // a budget for OpenAI through the page
+  await app.evaluate(async () => { const t = global.__settings.tabs().find((x) => x.settings); await global.__settings.contents(t.id).executeJavaScript("(() => { const set = (id, v) => { const i = document.getElementById(id); i.value = v; }; set('usage-budget-openai-unit', 'tokens'); set('usage-budget-openai-daily', '1000'); document.getElementById('usage-budget-openai-save').click(); })()"); });
+  let ob = null;
+  for (let i = 0; i < 20 && !(ob && ob.budgets.openai.config.daily === 1000); i++) { await sleep(200); ob = await app.evaluate(() => global.__usage.summary({ cached: true })); }
+  check('Settings → Usage: an OpenAI budget set on the page is the provider’s budget, and its bar is a budget bar', ob && ob.budgets.openai.config.unit === 'tokens' && ob.bars.openai?.kind === 'budget' && ob.budgets.grokbuild === undefined, JSON.stringify(ob && ob.budgets.openai));
+
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');

@@ -469,3 +469,7 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 /* [usage bars] the bar from renderer/usage-bars.js, here on a row: its rules are picker.css's, which settings.html also loads. */
 .usage-chip { display: inline-flex; align-items: center; }
 .usage-chip .ubar { margin-left: 0; }
+
+/* Settings → Usage: each AI's section starts with its name (same structure for every AI). */
+.usage-head { margin-top: 10px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25)); }
+.usage-head .label { font-size: 15px; font-weight: 650; }

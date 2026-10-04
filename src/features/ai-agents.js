@@ -386,6 +386,9 @@ function setupAiAgents(deps) {
       if (early) engineRun.emit({ type: 'tool_done', id: early, ok: false, error: text });
       return { content: [{ type: 'text', text }], isError: true };
     };
+    // read_page with no mode gives an MCP client the compact outline (about a third of a full read's size), as the sidebar's models
+    // are told to start with; "full" and extract stay one argument away.
+    if (name === 'read_page' && !args.mode && !args.extract && !args.since_last && !args.elements && !args.text_offset && !args.element_offset) args = { ...args, mode: 'compact' };
     const problem = deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
     // An outside agent works in a window of its own, made on its first call that needs a tab (features/agent-windows.js):
@@ -482,6 +485,13 @@ function setupAiAgents(deps) {
       // tag is refused, never treated as an outside agent.
       enabled: (session) => (session.engine ? ownsSession(session) : mcpEnabled()),
       onEvent: mcpEvent,
+      // An outside agent's own window is made as it lists the tools, so its first navigate does not pay for it (~1 s).
+      // Behind the user's window (agent-windows open), only while agents may connect; the sidebar's engines use the user's tabs.
+      onListed: (session) => {
+        if (session.engine || !mcpEnabled() || session.controller.signal.aborted) return;
+        if (global.__mcpSharedWindow && require('../test-mode').isTest()) return;
+        deps.agentWindows?.windows.ensure(session, session.clientName).catch(() => {});
+      },
       onClose: (session) => { if (!session.engine) deps.agentWindows?.windows.release(session); }, // its window closes after a grace period
     });
   }
@@ -737,6 +747,34 @@ function setupAiAgents(deps) {
     return { ok: out.ok && Boolean(s.installed), installed: Boolean(s.installed), output: out.output };
   });
 
+  // `<bin> --version` once per binary (a local command: no sign-in, no model). The first dotted number in what it prints.
+  const versions = new Map();
+  function binVersion(bin) {
+    if (!bin) return Promise.resolve(null);
+    if (!versions.has(bin)) {
+      versions.set(bin, new Promise((resolve) => {
+        try {
+          execFile(bin, ['--version'], { shell: false, windowsHide: true, timeout: 8000, cwd: os.homedir() }, (err, stdout) => resolve(err ? null : (/(\d+\.\d+\.\d+[\w.+-]*)/.exec(String(stdout)) || [])[1] || null));
+        } catch { resolve(null); }
+      }).then((v) => { if (!v) versions.delete(bin); return v; })); // (a failure is tried again next time)
+    }
+    return versions.get(bin);
+  }
+  const claudePlan = (s) => (s.signedIn !== true ? null : s.accountType === 'apiKey' ? 'API key (billed per token)' : s.detail ? `${String(s.detail).replace(/^./, (c) => c.toUpperCase())} plan` : s.accountType === 'subscription' ? 'Claude subscription' : null);
+  async function cliInfo() {
+    const safe = (p) => Promise.resolve(p).catch(() => null);
+    const [cc, gb, ag, cx] = await Promise.all([safe(claudeCodeEngine().status(false)), safe(grokBuildEngine().status(false)), safe(antigravityEngine().status(false)), safe(codexEngine().status(false))]);
+    const s = readSettings();
+    const row = (id, name, st, extra) => ({ id, name, installed: Boolean(st?.installed), signedIn: st?.installed ? st.signedIn ?? 'unknown' : false, ...extra });
+    const [ccV, gbV, agV] = await Promise.all([binVersion(claudeCodeEngine().bin), binVersion(grokBuildEngine().bin), binVersion(antigravityEngine().bin)]);
+    return [
+      row('claudecode', 'Claude Code', cc, { path: claudeCodeEngine().bin || null, version: ccV, account: cc ? claudePlan(cc) : null, offered: s.claudeCodeSidebar !== false }),
+      row('grokbuild', 'Grok Build', gb, { path: grokBuildEngine().bin || null, version: gbV, account: gb?.account || null, offered: grokSidebar() }),
+      row('codex', 'Codex CLI', cx, { path: codexEngine().spec?.path || null, version: cx?.version || null, account: cx?.signedIn === true ? (cx.method === 'chatgpt' ? 'ChatGPT account' : cx.method === 'apikey' ? 'API key' : 'Signed in') : null, offered: codexSidebar() }),
+      row('antigravity', 'Antigravity', ag, { path: antigravityEngine().bin || null, version: agV, account: null, offered: antigravitySidebar() }), // agy has no sign-in or account command: the state stays unknown until a message runs
+    ];
+  }
+
   // Until the first look for the CLIs has finished, a saved "Claude Code" / "Grok Build" pick is kept
   // as it is (see effectiveModel in main.js) instead of looking like it isn't set up.
   let detecting = true;
@@ -793,6 +831,9 @@ function setupAiAgents(deps) {
       modelsChanged();
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
+    // Settings → AI → AI providers: one row of facts per CLI, the same layout for each: installed, where, which version, signed in as
+    // what, offered in the menu. Only local, free commands (`--version`, the status checks the engines already cache for 30 s).
+    cliInfo,
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
     cliStatus: () => ({
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
@@ -825,7 +866,7 @@ function setupAiAgents(deps) {
     // silently failing on the first message. Alphabetical, after modelOptions() sorts everything
     // else: Claude Code before Grok Build, same as any other equally-treated pair of entries.
     modelOptions: () => [
-      ...(claudeCodeFound ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
+      ...(claudeCodeFound && readSettings().claudeCodeSidebar !== false ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
       ...(grokSidebar() && grokBuildFound ? grokBuildOptions({ signedIn: grokBuildSignedIn, accountDetail: grokBuildDetail, models: grokBuildModels, saved: readSettings().model }) : []),
       ...(codexSidebar() && codexFound ? codexOptions({ signedIn: codexSignedIn, models: codexModels, saved: readSettings().model }) : []),
       ...(antigravitySidebar() && antigravityFound ? antigravityOptions({ signedIn: antigravitySignedIn, models: antigravityModels, names: antigravityNames, saved: readSettings().model }) : []),

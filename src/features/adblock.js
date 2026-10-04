@@ -17,6 +17,7 @@ const electron = require('electron');
 const { t } = require('./i18n');
 const lists = require('./adblock-lists');
 const youtube = require('./adblock-youtube');
+const googleAuth = require('../browser/google-auth-identity');
 
 // Must be registered before the app is ready, and Electron keeps only the last call's list:
 // electron-chrome-extensions registers crx (it loads earlier in main.js), so it is repeated here.
@@ -29,7 +30,7 @@ if (electron.protocol?.registerSchemesAsPrivileged && !electron.app.isReady()) {
 }
 
 // A blocked request with no $redirect in the lists: the stand-in that makes it "succeed" quietly.
-// Other types (media, websockets, pings, fonts…) are cancelled; pages rarely watch those.
+// Other types (media, websockets, pings, fontsâ€¦) are cancelled; pages rarely watch those.
 const STAND_IN = { script: 'noop.js', image: '1x1.gif', xhr: 'noop.txt', subFrame: 'noop.html' };
 // Ad libraries whose absence anti-adblock checks look for: stand-ins that define their API.
 const LIBRARIES = [
@@ -38,6 +39,18 @@ const LIBRARIES = [
   [/\/\/www\.google-analytics\.com\/analytics\.js/, 'google-analytics_analytics.js'],
   [/\/\/www\.googletagmanager\.com\/gtm\.js/, 'googletagmanager_gtm.js'],
 ];
+
+// What the network hook is asked about. Every request that reaches a main-process webRequest listener costs
+// ~0.06 ms of IPC, so the loopback server a developer is working on never does (nothing there is an ad), and the
+// private schemes (lumen-res:, extensions, data:, file:) are left out of the include list.
+const REQUEST_URLS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'];
+const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
+const NOT_LOOPBACK = ['http', 'https', 'ws', 'wss'].flatMap((scheme) => LOOPBACK.map((host) => `${scheme}://${host}/*`));
+// Ad blocker on: every web request. Off: only pages (Safe Browsing's check), the one thing left that needs them.
+const FILTER_ALL = { urls: REQUEST_URLS, excludeUrls: NOT_LOOPBACK };
+const FILTER_PAGES = { urls: ['http://*/*', 'https://*/*'], types: ['mainFrame'], excludeUrls: NOT_LOOPBACK };
+// Response headers matter on documents only: the CSP rules and the Accept-CH hints a page asks for.
+const FILTER_DOCUMENTS = { urls: REQUEST_URLS, types: ['mainFrame', 'subFrame'] };
 
 const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -191,9 +204,9 @@ function createAdblock(deps) {
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
-      // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
+      // Google's own sign-in pages (accounts.google.comâ€¦) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
-      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || require('../browser/google-auth-identity').isAuthUrl(page)) return callback({});
+      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || googleAuth.isAuthUrl(page)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = engine.match(request);
@@ -246,6 +259,7 @@ function createAdblock(deps) {
     };
     serveStubs(deps.session.defaultSession);
     blocker.enableBlockingInSession(deps.session.defaultSession);
+    wireRequests(deps.session.defaultSession); // (replaces the library's all-URLs listeners with the narrow ones)
     deps.session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'adblock-preload.js') });
     for (const ses of extraSessions) enableIn(ses);
   }
@@ -253,12 +267,25 @@ function createAdblock(deps) {
   // Another session that should be filtered like the default one (the research tabs' isolated session).
   // Before the engine has loaded it waits in the list; setup() then attaches it.
   const extraSessions = new Set();
+  // The two network listeners of a session (Electron keeps one per event, so they are replaced, not added to).
+  // Requests: all of them while the blocker is on, only pages while it is off. Response headers: documents.
+  let requestsOn = null; // what wireRequests last set up
+  function wireRequests(ses) {
+    const enabled = settings().enabled;
+    requestsOn = enabled;
+    ses.webRequest.onHeadersReceived(FILTER_DOCUMENTS, (details, callback) => blocker.onHeadersReceived(details, callback));
+    ses.webRequest.onBeforeRequest(enabled ? FILTER_ALL : FILTER_PAGES, (details, callback) => blocker.onBeforeRequest(details, callback));
+  }
+  // The blocker was switched on or off: the listeners follow (called when settings are written).
+  function sync() {
+    if (!blocker || requestsOn === settings().enabled) return;
+    for (const ses of [deps.session.defaultSession, ...extraSessions]) wireRequests(ses);
+  }
   function enableIn(ses) {
     serveStubs(ses);
     // Not blocker.enableBlockingInSession(): a second call registers the library's ipcMain handlers again (they are
     // global, and already answer every session), which throws. The session-level parts are wired here instead.
-    ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (details, callback) => blocker.onHeadersReceived(details, callback));
-    ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => blocker.onBeforeRequest(details, callback));
+    wireRequests(ses);
     try { ses.registerPreloadScript({ type: 'frame', filePath: require.resolve('@ghostery/adblocker-electron-preload') }); } catch { /* cosmetic CSS only */ }
     ses.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'adblock-preload.js') });
   }
@@ -305,6 +332,7 @@ function createAdblock(deps) {
     setup,
     attachSession,
     detachSession,
+    sync,
     menu,
     ready: () => blocker !== null,
     blocked: (id) => blockedCount.get(id) || 0,

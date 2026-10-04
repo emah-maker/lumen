@@ -186,6 +186,7 @@ const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { isLimitText, limitOf } = require('../features/grok-limit');
 
 const INSTALL_HINT = process.platform === 'win32'
@@ -317,11 +318,16 @@ function modelNotice({ picked = 'default', served = null, shown = null } = {}) {
 // default model it reports is the one runs get. The user's own ~/.grok (config.toml, GROK_DEFAULT_MODEL
 // in their environment, ...) can name another default, which runs never see. `grok models` doesn't
 // start MCP servers; it writes only to that GROK_HOME (its first-run files, the first time: ~2 s).
+// Who `grok models` says is signed in: "You are logged in with grok.com." -> 'grok.com'; "You are using XAI_API_KEY." -> 'XAI_API_KEY'. null otherwise.
+function grokAccountOf(stdout) {
+  const m = /you are logged in with ([^\n]+?)\.?[ \t]*(?:\n|$)|you are using (XAI_API_KEY)/i.exec(String(stdout || ''));
+  return m ? (m[1] || m[2]).trim().slice(0, 60) : null;
+}
 function checkAuthStatus(bin, { env, cwd, exec = execFile }) {
   return new Promise((resolve) => {
     try {
       exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd, env }, (err, stdout) => {
-        resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : parseGrokModels(stdout));
+        resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : { ...parseGrokModels(stdout), account: grokAccountOf(stdout) });
       });
     } catch { resolve({ signedIn: 'unknown', detail: null, models: [] }); } // a file that can't be executed at all (spawn EFTYPE)
   });
@@ -358,6 +364,10 @@ const WATCHDOG_MS = 90 * 1000;
 // Before a chat's first message's first stdout line, Grok may legitimately wait for Lumen's MCP tools (its own wait,
 // logged on stderr): the pre-output phase gets this much on top of the watchdog.
 const FIRST_WAIT_EXTRA_MS = 60 * 1000;
+// A process whose turn is answered is waited for this long to go down (exitLater), then let go of: a message is never stuck behind it.
+const EXIT_WAIT_MS = 5000;
+const exitRegistry = new Map(); // path.resolve(home) -> Set of exit promises
+const exitsOf = (home) => { const key = path.resolve(home); let set = exitRegistry.get(key); if (!set) { set = new Set(); exitRegistry.set(key, set); } return set; };
 // A background task's grok (features/background-runner.js) has nobody to ask in the moment and gets no
 // shell at all: run_terminal_command is denied like the other three, and not allowed.
 const argsBase = (background = false) => [
@@ -386,11 +396,12 @@ const FULL_WATCHDOG_MS = 15 * 60 * 1000;
 // "Red"). The system prompt (~2-3 KB) stays on the command line: there is no file form of it.
 // model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
 // fullAccess: [full access] ARGS_FULL instead of the lockdown (never for a background task).
-function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0, background = false, fullAccess = false }) {
+function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0, background = false, fullAccess = false, effort = '' }) {
   return [
     ...(background ? argsBase(true) : fullAccess ? ARGS_FULL : ARGS_BASE),
     '--max-turns', String(maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS), // hitting it ends in a "continue" notice (turnLimitHit), not an error
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
+    ...effortLib.cliArgs('grokbuild', effort), // Settings → AI → AI providers: --reasoning-effort (none: Grok's own default)
     '--cwd', cwd,
     '--system-prompt-override', systemPrompt, // full replace: Grok Build has no --append-system-prompt
     resume ? '--resume' : '--session-id', sessionId,
@@ -704,6 +715,7 @@ class GrokBuildEngine {
     this.onFresh = onFresh;
     this.prep = null; // { at, promise } from prepare(): the setup a message's run() takes over
     this.settling = null; // the last run's settleAuthAsync, awaited before the next link
+    this.exits = exitsOf(home); // this GROK_HOME's processes whose turn is answered but that are still going down (exitLater); the next one waits for them (any engine on the home: a message's own engine too)
     this.background = background;
     this.home = home;
     this.dir = dir;
@@ -815,13 +827,28 @@ class GrokBuildEngine {
     return promise;
   }
 
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
+  // A process whose turn is answered but that has not exited yet: its tree is ended now, and `this.exits` holds a promise for its
+  // end (run / runReady / attempt wait on it: sign-in copy-back, prompt file, the next process). Never rejects; a process that
+  // won't go is let go of after EXIT_WAIT_MS so a message is never stuck behind it.
+  exitLater(child, closed) {
+    let release;
+    const gone = new Promise((resolve) => { release = resolve; });
+    const timer = setTimeout(release, EXIT_WAIT_MS);
+    timer.unref?.();
+    this.exits.add(gone);
+    closed.then(() => {}, () => {}).then(() => { clearTimeout(timer); release(); });
+    gone.then(() => this.exits.delete(gone));
+    try { this.kill(child); } catch { /* already gone */ }
+  }
+
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
     // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
     // long-lived `grok agent stdio` process answers. It returns null when it can't take this message (setting off, images,
     // full access, a start that failed before anything was sent): then the one-process-per-message run below does.
     if (this.keepWarm) {
-      const warm = fullAccess || this.background ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
+      // (a chosen effort is a flag of the one-process run: a kept `grok agent stdio` keeps the effort it started with)
+      const warm = fullAccess || this.background || effortLib.clean('grokbuild', effort) ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
       if (warm) return warm;
       this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
     }
@@ -832,13 +859,16 @@ class GrokBuildEngine {
     // ends; the last run there to end copies a refreshed token back.
     const releaseAuth = holdAuth(userGrokHome(), this.home);
     try {
-      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired });
+      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort });
     } finally {
-      this.settling = releaseAuth(); // not awaited: the reply doesn't wait on it (the next link does)
+      // Not awaited: the reply doesn't wait on it (the next link does). A process still going down (the turn was answered on its
+      // `result` line, see attempt) may refresh the token as it ends, so the copy-back comes only after it has gone.
+      const going = [...this.exits];
+      this.settling = going.length ? Promise.all(going).then(() => releaseAuth()) : releaseAuth();
     }
   }
 
-  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
+  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -848,7 +878,7 @@ class GrokBuildEngine {
     const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -856,7 +886,10 @@ class GrokBuildEngine {
       const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume });
       return out.retry ? await this.attempt({ ...args, sessionId: crypto.randomUUID(), waitForLumen: false }) : out;
     } finally {
-      fs.promises.rm(promptFile, { force: true }).catch(() => {}); // (dir itself is kept: the fixed sidebar folder, see above)
+      // (dir itself is kept: the fixed sidebar folder, see above.) The prompt file goes once its process has: Windows won't remove an open file.
+      const going = [...this.exits];
+      const rm = () => fs.promises.rm(promptFile, { force: true }).catch(() => {});
+      if (going.length) Promise.all(going).then(rm); else rm();
     }
   }
 
@@ -864,8 +897,10 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
+    // The last message's process is still going down (see exitLater): it may hold the session's files, so it is gone before this one starts.
+    if (this.exits.size) { await Promise.all([...this.exits]); if (signal.aborted) return { text: '', sessionId, stopped: true }; }
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -875,7 +910,7 @@ class GrokBuildEngine {
     const gateRun = gate.open(tag, sessionId, { fullAccess });
     try { this.onFresh?.({ sessionId, resume }); } catch {}
     const workDir = fullAccess ? os.homedir() : dir; // [full access] the home folder, as in a terminal
-    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: workDir, model, maxTurns, background: this.background, fullAccess });
+    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: workDir, model, maxTurns, background: this.background, fullAccess, effort });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
     emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
@@ -969,8 +1004,12 @@ class GrokBuildEngine {
       } else if (msg.type === 'result') {
         result = msg;
         newSession = msg.session_id || newSession;
+        // A successful turn is answered now: the process takes 0.3-0.5 s more to exit, which the reply need not wait for.
+        if (!msg.is_error && msg.subtype === 'success' && !held && !early && !offTool && !unguarded) resultSeen();
       }
     };
+    let resultSeen;
+    const answered = new Promise((resolve) => { resultSeen = () => resolve('result'); });
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       started = true;
@@ -1003,10 +1042,17 @@ class GrokBuildEngine {
       if (errBuffer.length > 4000) { stderr = (stderr + errBuffer).slice(-4000); errBuffer = ''; }
     });
 
-    const code = await new Promise((resolve) => {
+    const closed = new Promise((resolve) => {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
       child.on('close', (c) => resolve(c));
     });
+    let code = await Promise.race([closed, answered]);
+    if (code === 'result') {
+      // The `result` line is the turn's end. The process tree goes down in the background (exitLater): the next message, the
+      // prompt file and the sign-in copy-back wait for that, the reply doesn't.
+      code = null;
+      this.exitLater(child, closed);
+    }
     over = true;
     clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
@@ -1059,4 +1105,4 @@ class GrokBuildEngine {
 
 GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };

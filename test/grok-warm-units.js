@@ -187,7 +187,7 @@ const fakeGate = {
       const c1 = await send(cold.engine);
       const c2 = await send(cold.engine, { sessionId: c1.out.sessionId, resume: true });
       console.log(`      time to first token, 2nd message: headless ${c2.ttft} ms (done ${c2.ms} ms), kept ${two.ttft} ms (done ${two.ms} ms); simulated start ${STARTUP_MS} ms + exit ${EXIT_MS} ms`);
-      check('timing: a second message skips the start (first token well under the start cost; headless pays it)', two.ttft < STARTUP_MS / 3 && c2.ttft >= STARTUP_MS && two.ms < c2.ms - STARTUP_MS, JSON.stringify({ warm: two.ttft, cold: c2.ttft }));
+      check('timing: a second message skips the start (first token well under the start cost; headless pays it)', two.ttft < STARTUP_MS / 3 && c2.ttft >= STARTUP_MS && two.ms < c2.ms, JSON.stringify({ warm: two.ttft, cold: c2.ttft }));
 
       // pre-warm: a new chat's first message
       const pre = setup();

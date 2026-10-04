@@ -29,6 +29,7 @@ const tr = (key, english, vars) => {
 async function save(key, value) {
   try {
     st = await S.set(key, value);
+    window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); // another row for the same setting (Settings → AI → AI providers) follows
     applyPageClasses();
     refreshRestartNotes();
   } catch (err) {
@@ -52,9 +53,10 @@ function stackRow(label, desc, ...content) {
   el.append(...content);
   return el;
 }
-function toggle(key, label, desc, after) {
-  const input = h('input', { type: 'checkbox', class: 'switch', id: `pref-${key}`, role: 'switch', 'aria-label': label });
-  input.checked = Boolean(st.prefs[key]);
+function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false } = {}) {
+  const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
+  input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]);
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]); });
   input.addEventListener('change', async () => { await save(key, input.checked); after?.(input.checked); });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
@@ -92,10 +94,11 @@ function cliAccessRows() {
   master.classList.add('warn');
   return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows)];
 }
-function select(key, label, desc, options, { number = false, after } = {}) {
-  const el = h('select', { id: `pref-${key}`, 'aria-label': label },
+function select(key, label, desc, options, { number = false, after, id = `pref-${key}` } = {}) {
+  const el = h('select', { id, 'aria-label': label },
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) el.value = String(st.prefs[key]); });
   el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
   const r = row(label, desc, el);
   r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase(); // "dark" finds Theme (the names of its choices)
@@ -156,7 +159,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -292,6 +295,9 @@ async function buildAi(card) {
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
     stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Choose Auto at the top of the model menu and Lumen picks the model for each message on this computer. Only the providers ticked here are used.'), autoUseBox),
+    toggle('ccUserSettings', tr('settings.ai.ccUserSettings', 'Use my Claude Code settings in Lumen chats'), tr('settings.ai.ccUserSettingsDesc', 'Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.')),
+    select('imageGen', tr('settings.ai.imageGen', 'Image generation'), tr('settings.ai.imageGenDesc', 'When you or the AI ask for a picture, Lumen sends the request to a provider you have already connected that makes pictures, even if the chat is on a model that can’t (Claude, Claude Code, Antigravity, Codex). Automatic tries the chat’s own provider first, then your other connected ones, and moves on if one is out of usage or down; a provider that refuses the picture on content grounds is not retried elsewhere. The picture says which provider made it. Your prompt goes to that provider, and it may count against its usage or your API key’s billing. Lumen never uses a provider you haven’t connected.'),
+      ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].map((v) => [v, tr(`settings.ai.imageGen.${v}`, { auto: 'Automatic', off: 'Off', grokbuild: 'Grok Build only', xai: 'Grok (API) only', gemini: 'Gemini only', openai: 'OpenAI only', openrouter: 'OpenRouter only' }[v])])),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
   );
@@ -2091,7 +2097,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', anthropic: 'Claude (API key)' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -2196,8 +2202,7 @@ async function buildUsage(card) {
         h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
       : [h('span', { class: 'note', text: 'Nothing yet.' })]);
     parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
-    parts.push(...grokUsageRows(u, () => render(false)));
-    parts.push(...codexUsageRows(u));
+    parts.push(...providerUsageRows(u, () => render(false)));
     parts.push(row('', null,
       h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
@@ -2683,12 +2688,13 @@ async function init() {
   // Sub-pages that are whole builders of their own.
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
-  mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok codex cost');
+  mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
+  mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['ai-providers', buildProviders], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],

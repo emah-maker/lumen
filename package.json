@@ -73,7 +73,12 @@
       "!**/node_modules/koffi/src/koffi/src/**/*.{cc,hh,inc,def,S,asm}",
       "!**/node_modules/koffi/src/koffi/CMakeLists.txt",
       "!**/node_modules/koffi/cnoke.cjs",
-      "!**/node_modules/@koromix/koffi-*/*/*.lib"
+      "!**/node_modules/@koromix/koffi-*/*/*.lib",
+      "!**/node_modules/{@ghostery,@remusao}/*/dist/esm/**",
+      "!**/node_modules/@ghostery/*/dist/*.umd.min.js",
+      "!**/node_modules/{tldts-core,tldts-experimental}/dist/es6/**",
+      "!**/node_modules/tldts-experimental/dist/index.{esm,umd}.min.js",
+      "!**/node_modules/{electron-chrome-extensions,electron-chrome-web-store}/dist/esm/**"
     ],
     "electronLanguages": [
       "en-US",
