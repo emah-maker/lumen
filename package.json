@@ -54,6 +54,7 @@
       "CHANGELOG.md",
       "!build/**",
       "!.impeccable/**",
+      "!.claude/**",
       "!**/.impeccable/**",
       "!scripts/**",
       "!.github/**",
@@ -196,10 +197,6 @@
         }
       ],
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
-      "files": [
-        "!**/node_modules/koffi/**",
-        "!**/node_modules/@koromix/**"
-      ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
