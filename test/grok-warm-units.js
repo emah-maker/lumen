@@ -5,7 +5,8 @@
 // Covers: off by default (today's behaviour, no agent process, no pre-warm), one process per chat kept between messages
 // and never shared, pre-warm before the first message, Stop / Send now cancelling the turn and keeping the process (and a
 // process that ignores the cancel being killed), Lumen's checks (gate re-armed each message, permission answers, a tool
-// that isn't Lumen's running, the turn cap, the watchdog), the fallbacks to a headless run (images, full access, a session
+// that isn't Lumen's running, the turn cap, the watchdog), full access and a chosen effort served by a kept process of their
+// own kind (never shared with the locked-down one), the fallbacks to a headless run (images, a session
 // Grok doesn't know), idle timeout, the process cap, drop / disposeAll, the agent profile and environment.
 const fs = require('fs');
 const os = require('os');
@@ -118,7 +119,7 @@ function fakeGrok() {
 // A stand-in for Lumen's HTTP gate (mcp-http.js startHttp's API): armed per run, re-armed per message.
 const fakeGate = {
   runs: new Map(),
-  open(tag, chat) { this.runs.set(tag, { armed: false, chat }); return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: `m-${tag}`, hookUrl: `http://127.0.0.1:1/hook/${tag}` }; },
+  open(tag, chat, opts = {}) { this.runs.set(tag, { armed: false, chat, opts }); this.lastOpen = { tag, chat, opts }; return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: `m-${tag}`, hookUrl: `http://127.0.0.1:1/hook/${tag}` }; },
   close(tag) { this.runs.delete(tag); },
   armed(tag) { return Boolean(this.runs.get(tag)?.armed); },
   rearm(tag) { const r = this.runs.get(tag); if (r) r.armed = false; },
@@ -145,11 +146,11 @@ const fakeGate = {
     engine.keepWarm = warmLib.createGrokWarm({ engine, enabled: () => state.on, idleMs: () => idleMs, maxProcs, cancelWaitMs, listedWaitMs: 50 });
     return { fake, engine, state, pool: engine.keepWarm };
   };
-  const send = async (engine, { prompt = 'hi', sessionId = 'new-chat', resume = false, systemPrompt = 'SYS', model = 'default', images = [], fullAccess = false, maxTurns = 0, signal = new AbortController().signal } = {}) => {
+  const send = async (engine, { prompt = 'hi', sessionId = 'new-chat', resume = false, systemPrompt = 'SYS', model = 'default', images = [], fullAccess = false, effort = '', maxTurns = 0, signal = new AbortController().signal } = {}) => {
     const events = [];
     const t0 = Date.now();
     let ttft = null;
-    const out = await engine.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
+    const out = await engine.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, effort, signal, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
     return { out, events, ttft, ms: Date.now() - t0 };
   };
 
@@ -328,14 +329,63 @@ const fakeGate = {
       const first = await send(engine);
       const img = await send(engine, { sessionId: first.out.sessionId, resume: true, images: [{ data: 'aGk=', media_type: 'image/png' }] });
       check('fallback: a message with images goes headless, and the kept process (stale after it) is ended', img.out.text === 'cold reply' && fake.headless().length === 1 && await until(() => fake.agents()[0].ended || fake.agents()[0].killed), JSON.stringify(img.out));
-      const full = await send(engine, { sessionId: first.out.sessionId, resume: true, fullAccess: true });
-      check('fallback: full access always goes headless', full.out.text === 'cold reply' && fake.headless().length === 2 && fake.agents().length === 1);
       const unknown = await send(engine, { sessionId: 'gone-session', resume: true });
-      check('fallback: a session Grok doesn\'t know (resume fails before anything is sent) goes headless', unknown.out.text === 'cold reply' && fake.headless().length === 3, JSON.stringify(unknown.out));
+      check('fallback: a session Grok doesn\'t know (resume fails before anything is sent) goes headless', unknown.out.text === 'cold reply' && fake.headless().length === 2, JSON.stringify(unknown.out));
       const prompt2 = setup();
       const q1 = await send(prompt2.engine, { systemPrompt: 'A' });
       await send(prompt2.engine, { sessionId: q1.out.sessionId, resume: true, systemPrompt: 'B' });
       check('fallback: a changed system prompt ends the chat\'s process and resumes the session in a new one', prompt2.fake.agents().length === 2 && prompt2.fake.agents()[1].initMeta?.systemPromptOverride === 'B' && prompt2.fake.agents()[1].requests.some((m) => m.method === 'session/resume' && m.params.sessionId === q1.out.sessionId), JSON.stringify(prompt2.fake.agents().map((r) => r.initMeta)));
+    }
+
+    // ---- full access and effort: a kept process of their own kind
+    {
+      const { fake, engine, pool } = setup();
+      const a1 = await send(engine, { fullAccess: true, systemPrompt: 'SYS-FULL' });
+      const a2 = await send(engine, { sessionId: a1.out.sessionId, resume: true, fullAccess: true, systemPrompt: 'SYS-FULL' });
+      const rec = fake.agents()[0];
+      check('full access: answered by a kept process (no headless run), the second message reuses it', a1.out.text === 'warm reply 1' && a2.out.text === 'warm reply 2' && fake.agents().length === 1 && fake.headless().length === 0, JSON.stringify(fake.spawned.map((r) => r.argv)));
+      check('full access: argv has --always-approve and no agent profile; its gate run is a full-access one', rec.argv.includes('--always-approve') && !rec.argv.includes('--agent-profile') && rec.argv.at(-1) === 'stdio' && fakeGate.lastOpen.opts.fullAccess === true, JSON.stringify(rec.argv));
+      check('full access: the user\'s home folder is the working folder (spawn and session), the whole environment is passed', rec.opts.cwd === os.homedir() && rec.requests.find((m) => m.method === 'session/new').params.cwd === os.homedir() && rec.opts.env.HOME === os.homedir() && 'PATH' in rec.opts.env, JSON.stringify({ cwd: rec.opts.cwd, home: rec.opts.env.HOME }));
+      check('full access: config.toml (written for it) has no deny rules', !/^deny = /m.test(fs.readFileSync(path.join(engine.home, 'config.toml'), 'utf8')));
+      // toggling off: the full-access process is never reused for a locked-down message
+      const l1 = await send(engine, { sessionId: a1.out.sessionId, resume: true, systemPrompt: 'SYS-FULL' });
+      const lock = fake.agents()[1];
+      check('toggle: turning full access off ends the full-access process and resumes the session in a locked-down one', l1.out.text === 'warm reply 1' && fake.agents().length === 2 && await until(() => rec.ended || rec.killed) && lock.argv.includes('--agent-profile') && !lock.argv.includes('--always-approve') && lock.opts.cwd === engine.dir && lock.requests.some((m) => m.method === 'session/resume' && m.params.sessionId === a1.out.sessionId) && fakeGate.lastOpen.opts.fullAccess !== true, JSON.stringify(fake.agents().map((r) => r.argv)));
+      check('toggle: the locked-down config.toml is back', /^deny = /m.test(fs.readFileSync(path.join(engine.home, 'config.toml'), 'utf8')));
+      const f2 = await send(engine, { sessionId: a1.out.sessionId, resume: true, fullAccess: true, systemPrompt: 'SYS-FULL' });
+      check('toggle: turning it back on replaces the locked-down process with a full-access one', f2.out.text === 'warm reply 1' && fake.agents().length === 3 && fake.agents()[2].argv.includes('--always-approve') && await until(() => lock.ended || lock.killed) && pool.count() === 1);
+      // tools: Grok's own tools run with full access (no stream check), a locked-down process is still stopped by it
+      const tools = setup();
+      const t1 = await send(tools.engine, { fullAccess: true });
+      tools.fake.script.prompt = (rec2, p, end, update) => {
+        update({ sessionUpdate: 'tool_call', toolCallId: 'c1', title: 'run_terminal_command', status: 'in_progress', rawInput: { command: 'ls' } });
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'listed' } });
+        setImmediate(() => end({ stopReason: 'end_turn', _meta: {} }));
+      };
+      const t2 = await send(tools.engine, { sessionId: t1.out.sessionId, resume: true, fullAccess: true });
+      const ask = await tools.fake.agents()[0].ask('session/request_permission', { toolCall: { toolCallId: 'x', title: 'write', rawInput: {} }, options: [{ optionId: 'ok', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }] });
+      check('full access: Grok\'s own tools may run and are allowed, no stream-check stop', t2.out.text === 'listed' && !t2.out.failed && !tools.fake.agents()[0].killed && ask.result?.outcome?.optionId === 'ok', JSON.stringify({ out: t2.out, ask }));
+      const locked = setup();
+      const k1 = await send(locked.engine);
+      const kask = await locked.fake.agents()[0].ask('session/request_permission', { toolCall: { toolCallId: 'x', title: 'write', rawInput: {} }, options: [{ optionId: 'ok', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }] });
+      check('locked down: the same request is still rejected', k1.out.text === 'warm reply 1' && kask.result?.outcome?.optionId === 'no', JSON.stringify(kask));
+      // effort: a flag of the process, its own kind
+      const eff = setup();
+      const e1 = await send(eff.engine, { effort: 'high' });
+      const e2 = await send(eff.engine, { sessionId: e1.out.sessionId, resume: true, effort: 'high' });
+      const er = eff.fake.agents()[0];
+      check('effort: a chosen effort is passed to the kept process (--reasoning-effort) and the process is reused', e2.out.text === 'warm reply 2' && eff.fake.agents().length === 1 && eff.fake.headless().length === 0 && er.argv.join(' ') === `agent --agent-profile ${er.argv[2]} --reasoning-effort high stdio`, JSON.stringify(er.argv));
+      const e3 = await send(eff.engine, { sessionId: e1.out.sessionId, resume: true, effort: 'low' });
+      check('effort: a changed effort replaces the process (resumed session), as does going back to the default', e3.out.text === 'warm reply 1' && eff.fake.agents().length === 2 && eff.fake.agents()[1].argv.includes('low') && await until(() => er.ended || er.killed));
+      const e4 = await send(eff.engine, { sessionId: e1.out.sessionId, resume: true });
+      check('effort: none chosen means no flag', eff.fake.agents().length === 3 && !eff.fake.agents()[2].argv.includes('--reasoning-effort') && e4.out.text === 'warm reply 1');
+      // prewarm of each kind, and a spare of the wrong kind is not taken
+      const pre = setup();
+      check('prewarm: a full-access spare starts as one', pre.pool.prewarm({ sessionId: null, systemPrompt: 'SYS-FULL', fullAccess: true }) === true && await until(() => pre.fake.agents().length === 1 && pre.pool.count() === 1 && pre.fake.agents()[0].session) && pre.fake.agents()[0].argv.includes('--always-approve'));
+      check('prewarm: a locked-down spare is a separate one (not satisfied by the full-access spare)', pre.pool.prewarm({ sessionId: null, systemPrompt: 'SYS-FULL' }) === true && await until(() => pre.fake.agents().length === 2));
+      const p1 = await send(pre.engine, { fullAccess: true, systemPrompt: 'SYS-FULL' });
+      check('prewarm: the first full-access message takes the full-access spare (no new process, first token before a cold start)', p1.out.text === 'warm reply 1' && pre.fake.agents().length === 2 && pre.fake.headless().length === 0 && p1.ttft < STARTUP_MS, JSON.stringify({ ttft: p1.ttft, n: pre.fake.agents().length }));
+      check('prewarm: the same spec again starts nothing', pre.pool.prewarm({ sessionId: null, systemPrompt: 'SYS-FULL' }) === false);
     }
 
     // ---- lifetime: idle timeout, cap, drop, setting off
