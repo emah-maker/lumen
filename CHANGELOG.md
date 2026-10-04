@@ -4,6 +4,22 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.8 (2026-10-04)
+
+- **Chats in different tabs now all work at once,** Claude Code, Grok Build and Antigravity included. Before, these took turns ("Waiting for the other chat to finish"). Each chat's tools act on its own tab. **Settings → AI → Chats working at once** now has **No limit**, and that's the new default.
+- **Send now.** While a reply is running, type a message and press **Send now** (or Ctrl+Enter, Cmd+Enter on a Mac). The reply stops and your message goes next. Queued messages have their own Send now button too. The part of the reply you already saw stays in the chat, marked as interrupted, and the AI is told what it had said.
+- **Chats keep their history.** A Claude Code, Grok Build or Antigravity chat now remembers the whole conversation, including after you switch models and back, after a lost session, and after Retry. Before, it could forget everything but the last few messages. Each earlier reply is labeled with the model that wrote it.
+- **Faster replies.** Each chat keeps its own Claude Code ready between messages (at most 4 idle, 1 in lite mode, closed after a while). New, off by default: **Keep Grok Build connected** keeps Grok Build running between messages, so its replies arrive about 2 to 4 times faster. You set how long an idle one stays open.
+- **A smaller prompt.** The instructions and tool list Lumen sends the AI are about half the size, which leaves more room for your conversation, most of all with Grok.
+- Antigravity on Windows can use Lumen's tools. Before, every tool call was blocked.
+- A model you pick in a new, empty chat stays with that chat. Before, picking a model in another tab changed it.
+- Switching tabs while a reply runs no longer shows the other chat's Stop button. Before, a message typed there could wait until the other chat finished.
+- Lumen now removes the temporary files it makes for Claude Code and clears out old ones. Before, they built up in your temp folder.
+- Settings → You and AI no longer leaves Claude Code's usage check running after Lumen quits.
+- Help → Report an Issue (macOS) and Settings → About → Report a problem open a GitHub issue with your Lumen version and system filled in.
+- Pages see a shorter language list (Accept-Language), so having many system languages no longer slows some sites.
+- The Mac build works again. 0.5.7 never shipped because of it, so its changes are in this release too.
+
 ## 0.5.7 (2026-10-03)
 
 - Passkeys, Windows Hello and security keys now work on Windows: pages that ask you to sign in or register with one show the real Windows prompt instead of hanging. Turn it off any time in Settings with **Use passkeys and security keys (Windows Hello)**. Known limits: if you cancel while registering a passkey, the Windows picker can stay open until you close it, and passkey autofill (suggestions in the sign-in field) is not supported yet.
