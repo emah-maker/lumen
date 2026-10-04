@@ -13,7 +13,7 @@ const path = require('path');
 const crypto = require('crypto');
 const tlds = require('../browser/tlds');
 const { describeUsage, addUsage } = require('./chat-usage');
-const routines = require('./routines');
+const routines = new Proxy({}, { get: (_t, key) => require('./routines')[key] }); // (loaded when the first routine is scheduled or run)
 const autoModel = require('../ai/auto-model');
 
 const LIMITS = { tasks: 50, steps: 200, runs: 10, result: 24000, title: 80, prompt: 8000, condition: 300, sites: 20, pages: 20, resumeSteps: 15 };

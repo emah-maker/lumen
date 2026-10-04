@@ -43,31 +43,34 @@
 // memory (x.session()), and none of it ever reaches the page, the hash or settings.json in plain text.
 //   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
 //   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
-const ics = require('./ics');
-const FEED = require('./feed');
+// The connector modules load the first time a card of that kind is drawn or its action runs, so a launch
+// that shows only Notes or the page's own sections never reads them (startup module count, test/perf-budget.js).
+const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const ics = lazy(() => require('./ics'));
+const FEED = lazy(() => require('./feed'));
 const WL = require('./widget-layout');
-const TV = require('./todoist-view');
-const GH = require('./github-view');
-const WX = require('./weather-view');
+const TV = lazy(() => require('./todoist-view'));
+const GH = lazy(() => require('./github-view'));
+const WX = lazy(() => require('./weather-view'));
 const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
 const ST = require('./widget-stacks'); // several same-size widgets in one place, shown one at a time
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
-const SV = require('./spotify-view');
-const SW = require('./spotify-web');
-const GV = require('./gmail-view');
-const SL = require('./slack-view');
-const OA = require('./oauth');
-const GC = require('./google-client'); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
-const WCK = require('./worldclock-view');
-const MV = require('./muse-view');
-const MK = require('./markets-view');
-const TVW = require('./tradingview-view');
-const CW = require('./custom-widget');
-const LW = require('./local-widgets');
-const AS = require('./aistatus-view'); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
-const CS = require('./calendar-sources'); // the Calendar card's sources: one or several, merged
-const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
+const SV = lazy(() => require('./spotify-view'));
+const SW = lazy(() => require('./spotify-web'));
+const GV = lazy(() => require('./gmail-view'));
+const SL = lazy(() => require('./slack-view'));
+const OA = lazy(() => require('./oauth'));
+const GC = lazy(() => require('./google-client')); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
+const WCK = lazy(() => require('./worldclock-view'));
+const MV = lazy(() => require('./muse-view'));
+const MK = lazy(() => require('./markets-view'));
+const TVW = lazy(() => require('./tradingview-view'));
+const CW = lazy(() => require('./custom-widget'));
+const LW = lazy(() => require('./local-widgets'));
+const AS = lazy(() => require('./aistatus-view')); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
+const CS = lazy(() => require('./calendar-sources')); // the Calendar card's sources: one or several, merged
+const WCFG = lazy(() => require('./widget-config')); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
