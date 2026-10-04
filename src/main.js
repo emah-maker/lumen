@@ -3914,6 +3914,7 @@ const chats = () => (chatStore ||= createChatStore({
   legacyFile: CHAT_FILE(),
 }));
 let chatId = null; // the open chat
+const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
 // Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
 // after a restart starts with none, as before).
 const approvedByChat = new Map();
@@ -3984,10 +3985,14 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   chatGeneration++;
   clearTimeout(saveChatTimer);
   if (chatId) approvedByChat.set(chatId, agent.approvedHosts);
+  // An empty chat is never saved, so a model picked in it is kept here until the chat is opened again (or gets a message).
+  if (chatId && !agent.messages.length && agent.messages.settings) emptyChatSettings.set(chatId, agent.messages.settings);
   if (agent.running) agent.detach(); // its run goes on with its own messages and approved sites
   else agent.reset();
   if (live) agent.attach(live.messages, approvedByChat.get(id));
   else if (snapshot) agent.restore(snapshot);
+  else if (id && emptyChatSettings.has(id)) agent.messages.settings = emptyChatSettings.get(id);
+  if (id) emptyChatSettings.delete(id);
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   unreadChats.delete(chatId);

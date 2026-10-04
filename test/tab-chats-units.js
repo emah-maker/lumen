@@ -374,6 +374,20 @@ const newAgent = (state) => {
 const chat = () => { const m = []; m.settings = { model: 'claude-opus-5' }; return m; };
 
 (async () => {
+  { // a model picked in an empty chat belongs to that chat (not to whichever empty chat was picked in last)
+    const global = { model: 'claude-opus-5' }; // the saved default, as main.js writes it before agent.setModel
+    const agent = new Agent(fakeBrowser({ active: 1, open: new Set([1]) }), () => null, () => ({ ...global }));
+    const e1 = []; const e2 = [];
+    agent.messages = e1; global.model = 'claudecode:default'; agent.setModel('claudecode:default');
+    agent.messages = e2; global.model = 'grokbuild:default'; agent.setModel('grokbuild:default');
+    check('empty chats: each keeps the model picked in it', e1.settings?.model === 'claudecode:default' && e2.settings?.model === 'grokbuild:default', J([e1.settings, e2.settings]));
+    check('empty chats: a pick makes settings but no message, so the chat still counts as empty', e1.length === 0 && agent.snapshot(e1).messages.length === 0);
+    check('empty chats: the pick is kept in the snapshot of the chat it is run from', agent.snapshot(e1).settings.model === 'claudecode:default');
+    const seen = [];
+    agent.runTask = async function (messages) { seen.push(messages.settings.model); };
+    await agent.run('hi', () => {}, [], { messages: e1, hosts: new Set() });
+    check('empty chats: sending in the first one still uses its own pick', seen[0] === 'claudecode:default' && e1.settings.model === 'claudecode:default', J(seen));
+  }
   {
     const state = { active: 2, open: new Set([1, 2, 3]) };
     const agent = newAgent(state);

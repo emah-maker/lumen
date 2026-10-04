@@ -1277,6 +1277,9 @@ class Agent {
     }
     this.nextModel = null;
     if (this.messages.settings) { this.messages.settings.model = model; delete this.messages.settings.fallbackFrom; this.forgetAuto(this.messages.settings); } // a pick of the user's own ends any stand-in
+    // A chat with no message yet has no settings: the pick starts them (as run() would), so this chat keeps its own
+    // pick while another empty chat is given a different one (the saved default only decides for chats begun later).
+    else this.messages.settings = { adhdMode: true, ...this.getOptions(), model };
     return false;
   }
 
