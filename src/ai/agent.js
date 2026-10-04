@@ -1970,7 +1970,7 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
     const resume = Boolean(settings.ccSession);
     const routed = modelRoute.route({
       engine: 'claudecode', picked: engineModel(settings.model), prompt: userText, imageCount, tabCount,
-      previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, pinned: resume, enabled: this.browser.autoModel?.() !== false,
+      previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, pinned: resume, enabled: this.browser.autoModel?.() !== false || autoModel.isAuto(settings.model) || Boolean(settings.autoFrom), // (the engine's own Auto picks a real model per message whatever the setting: the warm process must not be started on 'default')
     });
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());

@@ -4070,7 +4070,7 @@ const unreadChats = new Set(); // a reply finished while its chat was not in vie
 const sidebarShown = new WeakMap(); // a window's UI -> is its sidebar open (chat:sidebar-state)
 ipcMain.on('chat:sidebar-state', (event, open) => {
   sidebarShown.set(event.sender, Boolean(open));
-  if (open) { unreadChats.delete(chatId); pushAttention(); }
+  if (open) { unreadChats.delete(chatId); pushAttention(); try { agent.prewarm(''); } catch { /* not set up yet */ } } // (Claude Code starts while the user reaches for the box; a no-op for other engines)
 });
 // Saves a chat left running into its own file (the open chat goes through saveChat).
 function saveChatOf(id, messages) {
@@ -7810,6 +7810,7 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   writeSettings({ ...s, model: id, ...(autoHome ? { autoHome } : {}), ...(recentOpenRouter ? { recentOpenRouter } : {}) });
   aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
+  try { setTimeout(() => { try { agent.prewarm(''); } catch { /* not set up yet */ } }, 0); } catch { /* quitting */ } // (the new pick's process starts now, not at the first message)
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
 });
