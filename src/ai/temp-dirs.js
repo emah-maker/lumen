@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 // Exactly what fs.mkdtemp makes: the prefix plus six random characters. Nothing else in the temp folder matches.
-const NAME = /^(?:lumen-cc-|lumen-cc1-|lumen-usage-)[A-Za-z0-9]{6}$/;
+const NAME = /^(?:lumen-cc-|lumen-cc1-|lumen-cx-|lumen-usage-)[A-Za-z0-9]{6}$/;
 const STALE_MS = 24 * 60 * 60 * 1000;
 
 // Async, errors ignored. Retries: on Windows a folder is busy while a process (or a child of its tree) still has it as its cwd.

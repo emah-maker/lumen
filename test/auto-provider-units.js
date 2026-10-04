@@ -13,7 +13,7 @@ const grok = require('../src/ai/grok-build');
 const bgAgents = require('../src/features/background-agents');
 const TC = require('../src/features/tab-chats');
 const { engineModel } = require('../src/ai/cli-utils');
-const { claudeCodeOptions, grokBuildOptions, antigravityOptions } = require('../src/features/ai-agents');
+const { claudeCodeOptions, grokBuildOptions, antigravityOptions, codexOptions } = require('../src/features/ai-agents');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
@@ -30,7 +30,8 @@ const openrouter = [{ id: 'openrouter:anthropic/claude-sonnet-5', label: 'Claude
 const cc = claudeCodeOptions({ signedIn: true });
 const gb = grokBuildOptions({ signedIn: true, models: ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6'] });
 const ag = antigravityOptions({ signedIn: true, models: ['gemini-3.1-pro-high', 'gemini-3-flash'], names: {} });
-const ALL = [...claudeApi, ...gemini, ...openai, ...openrouter, ...xai, ...cc, ...gb, ...ag];
+const cxo = codexOptions({ signedIn: true, models: require('../src/ai/codex').FALLBACK_MODELS });
+const ALL = [...claudeApi, ...gemini, ...openai, ...openrouter, ...xai, ...cc, ...gb, ...ag, ...cxo];
 const scoped = (scope, options, request, extra = {}) => A.route({ options, request, scope, ...extra });
 const providerOf = fallback.providerOf;
 
@@ -115,7 +116,7 @@ check('the hint reason says so, with the provider', /^Auto \(OpenAI\): .+ for ex
 {
   const rows = A.withProviderAutos(ALL, {});
   const autos = rows.filter((r) => r.auto);
-  check('each provider with two or more models gets its Auto', J(autos.map((r) => r.id).sort()) === J(['anthropic:auto', 'antigravity:auto', 'claudecode:auto', 'gemini:auto', 'grokbuild:auto', 'openai:auto', 'openrouter:auto'].sort()), J(autos.map((r) => r.id)));
+  check('each provider with two or more models gets its Auto', J(autos.map((r) => r.id).sort()) === J(['anthropic:auto', 'antigravity:auto', 'claudecode:auto', 'codex:auto', 'gemini:auto', 'grokbuild:auto', 'openai:auto', 'openrouter:auto'].sort()), J(autos.map((r) => r.id)));
   check('a provider with one model (xAI) gets none: there is nothing to choose between', !autos.some((r) => r.id === 'xai:auto'));
   check('the Auto row leads its provider\'s group and carries its heading and the auto flag', ['claudecode', 'grokbuild', 'openai', 'gemini', 'anthropic'].every((p) => { const i = rows.findIndex((r) => r.id === `${p}:auto`); return i >= 0 && providerOf(rows[i + 1].id) === p && rows[i].group === rows[i + 1].group && rows[i].auto === true && rows[i].autoScope === p; }));
   check('the list is the same models in the same order, with the Autos in between', J(rows.filter((r) => !r.auto).map((r) => r.id)) === J(ALL.map((o) => o.id)));

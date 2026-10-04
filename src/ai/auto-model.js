@@ -38,7 +38,7 @@ const modelRoute = require('../features/model-route');
 const AUTO = 'auto';
 const TIERS = ['fast', 'balanced', 'strong'];
 // Providers and engines that have an Auto of their own ("<key>:auto"), and how they are named in a reason ("Auto (Grok Build): ...").
-const SCOPE_NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const SCOPE_NAMES = { anthropic: 'Claude', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
 const SCOPES = Object.keys(SCOPE_NAMES);
 // What a pick id asks for: undefined (not an Auto pick), null (the global 'auto') or a provider key ('grokbuild:auto' -> 'grokbuild').
 function scopeOf(id) {
@@ -140,7 +140,7 @@ function candidatesOf(options, need, { exclude = [], denied = null, cooldowns = 
   // (fallback.usable also drops chat-only models; whether tools are needed is this request's own question, asked below)
   const list = (options || []).filter((o) => o?.id && !isAuto(o.id) && !String(o.id).endsWith(':__more') && !o.more && o.signedIn !== false && !(o.badges || []).includes('sign in'));
   const onlyDefault = new Set(); // engines that list nothing but their own default
-  for (const engine of ['claudecode', 'grokbuild', 'antigravity']) {
+  for (const engine of ['claudecode', 'grokbuild', 'antigravity', 'codex']) {
     if (!list.some((o) => providerOf(o.id) === engine && !/:default$/.test(o.id))) onlyDefault.add(engine);
   }
   return list.filter((o) => {
