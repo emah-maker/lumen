@@ -197,6 +197,22 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     const empty = await measure();
     check('empty: nothing overflows at the smallest size', empty.cardY <= 1 && empty.bodyY <= 2 && empty.outside.length === 0 && empty.clipped.length === 0, JSON.stringify(empty));
 
+    // [usage bars] A reading of the 5-hour window is a thin progressbar on the card; no reading, no bar; the setting off, none.
+    await setFacts({ ...MANY, cooling: {}, meter: { percent: 83, resetsAt: NOW + 2 * 3600e3 } });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    const barJs = "(() => { const b = document.querySelector('.ai-ubar-row'); return b ? { role: b.getAttribute('role'), now: b.getAttribute('aria-valuenow'), level: b.dataset.level, text: b.getAttribute('aria-valuetext'), label: b.getAttribute('aria-label'), width: b.firstChild.style.width } : null; })()";
+    check('usage bars: the card draws the 5-hour reading as a progressbar (83%, amber) with words for a screen reader', await waitFor(`Boolean(${barJs})`), '');
+    const bar = await inTab(barJs);
+    check('usage bars: its value, level, label and fill match the reading', bar && bar.role === 'progressbar' && bar.now === '83' && bar.level === 'warn' && /83% of the 5-hour limit used/.test(bar.text) && /Claude Code usage/.test(bar.label) && bar.width === '83%', JSON.stringify(bar));
+    await setFacts({ ...MANY, cooling: {}, meter: null });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    check('usage bars: with no reading the card has no bar', await waitFor("document.querySelectorAll('.ai-ubar').length === 0"), '');
+    await setFacts({ ...MANY, cooling: {}, meter: { percent: 83, resetsAt: NOW + 2 * 3600e3 }, showBars: false });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    check('usage bars: with the setting off the card has no bar', await waitFor("document.querySelectorAll('.ai-ubar').length === 0"), '');
+    await setFacts(MANY);
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+
     // Light, dark and glass ("on-media" is the photo look): the card is readable and contained under each.
     await setFacts(MANY);
     await app.evaluate(() => global.__widgets.aiStatusChanged());

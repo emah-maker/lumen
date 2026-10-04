@@ -109,6 +109,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
+  usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
@@ -927,7 +928,7 @@ function create(deps) {
     handle('prefs:task-manager', taskManager);
     handle('prefs:restart-tab', restartTabProcess);
     handle('prefs:internals', internals);
-    handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh) }) ?? null); // [usage]
+    handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }) ?? null); // [usage]
     handle('prefs:clear-usage', () => { deps.usage?.clear(); return true; });
     handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget) ?? null); // [usage] the Grok budget
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)

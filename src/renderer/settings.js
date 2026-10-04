@@ -479,6 +479,7 @@ async function buildAi(card) {
     // Claude Code's own row also shows install/sign-in state, so "not signed in" doesn't look like
     // a broken Add button (the CLI itself gates sign-in; Lumen only checks, never reads, its status).
     const ccState = snip.id === 'claude' ? status() : null;
+    const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
       S.ai.claudeCodeStatus().then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
@@ -515,7 +516,7 @@ async function buildAi(card) {
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
     if (cxState) refreshCodex(false);
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
-      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), ccState, add, copy),
+      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
       cxActions,
       h('pre', { class: 'mono code', text: snip.text }),
@@ -2148,6 +2149,18 @@ function codexUsageRows(u) {
   rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
   return rows;
 }
+// [usage bars] The provider's plan bar on its row (renderer/usage-bars.js): empty (nothing shown) until there is data, then kept current.
+function usageChip(provider) {
+  const chip = h('span', { class: 'usage-chip' });
+  if (!provider || !window.usageBars) return chip;
+  const draw = () => {
+    const d = window.usageBars.forProvider(provider, window.usageBars.state());
+    chip.replaceChildren(...(d ? [window.usageBars.element(d, { label: `${ENGINE_NAMES[provider] || provider} usage` })] : []));
+  };
+  window.addEventListener('lumen-usage-bars', draw);
+  window.usageBars.load(false).then(draw);
+  return chip;
+}
 async function buildUsage(card) {
   const body = h('div', { class: 'usage' });
   const render = async (refresh) => {
@@ -2190,6 +2203,7 @@ async function buildUsage(card) {
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
     body.replaceChildren(...parts);
   };
+  card.append(toggle('usageBars', tr('settings.usage.bars', 'Show usage bars in pickers'), tr('settings.usage.barsDesc', 'A thin bar beside each provider in the model menus, the AI status card and here under Accounts, with how much of its plan window is used and when it resets. It uses the numbers Lumen already has and never asks the network. Models that are out of usage are marked too.'), () => window.usageBars?.load(true)));
   card.append(row('What counts', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.'), body);
   render(false);
 }

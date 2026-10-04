@@ -391,8 +391,11 @@ async function pool(items, limit, fn) {
 // and learnAiHints. Sites no hint is known for ride along in the same request (q, host names only), and
 // what the model says they are for is kept for next time and for local grouping; with nothing else to
 // ask, a request with only those hosts is made. A failed or late answer teaches nothing.
-async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
+async function organizeProgressive({ tabGroups, ask, prepare = null, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
   const t0 = now();
+  // `prepare` (optional): works out the route to a model (a CLI's sign-in check can take a second) AFTER the local groups are
+  // on screen, not before: it starts now, alongside the local pass, and is only awaited once there is something to ask.
+  const preparing = typeof prepare === 'function' ? Promise.resolve().then(prepare).catch(() => null) : null;
   const stats = { unchanged: false, groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, hinted: 0, localMs: 0, totalMs: 0 };
   const sigBefore = tabGroups.layoutSignature?.() || null; // what the strip shows now: when it is the same afterwards, Organize changed nothing
   const count = tabGroups.organizeByTopic(null);
@@ -415,6 +418,11 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     return stats;
   };
   if (signal?.aborted) return finish('cancelled');
+  if (preparing) {
+    const ready = await preparing; // { ask, timeoutMs } or null: no route, so the local groups are the answer
+    if (ready && typeof ready.ask === 'function') { ask = ready.ask; if (ready.timeoutMs) timeoutMs = ready.timeoutMs; }
+    if (signal?.aborted) return finish('cancelled');
+  }
   if (typeof ask !== 'function') return finish(count ? 'local' : 'none'); // AI off or no route: the local groups are the answer
   // One request: it has its own AbortController (aborted by a cancel and by its own timeout), so a timeout stops the request itself.
   const request = (wire) => {

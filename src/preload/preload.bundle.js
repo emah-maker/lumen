@@ -666,7 +666,7 @@ contextBridge.exposeInMainWorld('lumenExtras', {
   aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url), // { site, off }
   setAiSite: (site, off) => ipcRenderer.invoke('settings:set-ai-site', site, off),
   // [usage] the plan's limits and Lumen's share (features/usage.js)
-  usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),
+  usage: (refresh, cached) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh), cached: Boolean(cached) }),
   openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
 });
 // ---- [/claude code engine] + [/page context]
