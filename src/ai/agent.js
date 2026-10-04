@@ -350,6 +350,7 @@ function authorName(id) {
   if (id.startsWith('claudecode:')) return 'Claude Code';
   if (id.startsWith('grokbuild:')) return 'Grok Build';
   if (id.startsWith('antigravity:')) return 'Antigravity';
+  if (id.startsWith('codex:')) return 'Codex';
   return MODELS[id]?.label || id.replace(/^[^:/]+[:/]/, '');
 }
 
@@ -410,12 +411,12 @@ function missedItems(messages, seen) {
 const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them; each reply is labeled with the model that wrote it):';
 // The chat's CLI sessions and their counts. A count past the chat's length means the history was cut since (rewound,
 // compacted): the session holds turns the chat no longer has, so it is dropped and the next message hands the chat over.
-const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen'], ['agySession', 'agySeen']];
+const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen'], ['agySession', 'agySeen'], ['cxSession', 'cxSeen']];
 function dropReshapedSessions(messages) {
   const s = messages.settings;
   if (!s) return;
   for (const [session, seen] of CLI_SESSIONS) {
-    if (Number.isInteger(s[seen]) && s[seen] > messages.length) { delete s[session]; delete s[seen]; if (session === 'gbSession') delete s.gbModel; if (session === 'agySession') delete s.agyModel; }
+    if (Number.isInteger(s[seen]) && s[seen] > messages.length) { delete s[session]; delete s[seen]; if (session === 'gbSession') delete s.gbModel; if (session === 'agySession') delete s.agyModel; if (session === 'cxSession') delete s.cxModel; }
   }
 }
 
@@ -456,10 +457,12 @@ function systemFor(settings) {
   const onGrokBuild = String(settings.model || '').startsWith('grokbuild:');
   // An Antigravity pick ('antigravity:…') likewise: the model behind it is Gemini or Claude, whichever the user chose in agy.
   const onAntigravity = String(settings.model || '').startsWith('antigravity:');
-  const onClaude = !onGrokBuild && !onAntigravity && providers.splitModel(settings.model).provider === 'anthropic';
+  // A Codex pick ('codex:…') likewise: the models behind it are OpenAI's.
+  const onCodex = String(settings.model || '').startsWith('codex:');
+  const onClaude = !onGrokBuild && !onAntigravity && !onCodex && providers.splitModel(settings.model).provider === 'anthropic';
   const base = onClaude
     ? SYSTEM
-    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : 'You are the AI assistant built into Lumen, a web browser.'); // web_search's own description covers what it returns
+    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : onCodex ? 'You are the AI assistant built into Lumen, a web browser, running in OpenAI Codex.' : 'You are the AI assistant built into Lumen, a web browser.'); // web_search's own description covers what it returns
   const style = settings.adhdMode ? base + ADHD_STYLE : base;
   return settings.handsOff ? `${style}
 
@@ -528,6 +531,19 @@ function antigravityNote(model = null, now = new Date(), { fullAccess = false, h
 }
 // ---- [/antigravity engine]
 
+// ---- [codex engine] extra guidance when the user's own Codex CLI answers (codex.js). Codex names an MCP tool mcp__<server>__<tool>
+// (the server is `lumen`); it is also told its shell, file and web tools are off (they are: codex.js WHAT THE MODEL MAY DO).
+const CODEX_NOTE = `
+
+You are running inside OpenAI Codex, connected to the user's Lumen browser over MCP, through the server named lumen, whose tools are (…: has options): {TOOLS}. You have no shell, file, patch or web search tools; never try one: any tool that is not one of Lumen's ends your turn with an error. Your reply appears in Lumen's sidebar chat.`;
+// CODEX_NOTE plus today's date and the model when Lumen knows it (the note rides on the chat's first message: codex.js promptFor).
+function codexNote(model = null, now = new Date()) {
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const note = `${CODEX_NOTE.replace('{TOOLS}', toolArgList())} Today's date is ${day}.`;
+  return model ? `${note} The model answering is ${model} (OpenAI).` : note;
+}
+// ---- [/codex engine]
+
 // CLAUDE_CODE_NOTE plus what Claude Code's own system prompt used to give before --system-prompt
 // replaced it (claude-code.js buildArgs): today's date, and the model when Lumen knows it.
 // `model`: the `claude --model` alias this run gets ('default': the CLI's choice, unnamed).
@@ -542,7 +558,7 @@ function claudeCodeNote(model = 'default', now = new Date(), { fullAccess = fals
 // is saved as the task's result instead of showing in the sidebar chat (features/background-runner.js).
 function cliSystemPrompt(settings, engine, { background = false } = {}) {
   const picked = engineModel(settings.model);
-  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : engine === 'antigravity' ? antigravityNote(picked === 'default' ? null : picked) : claudeCodeNote(picked);
+  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : engine === 'antigravity' ? antigravityNote(picked === 'default' ? null : picked) : engine === 'codex' ? codexNote(picked === 'default' ? null : picked) : claudeCodeNote(picked);
   return systemFor(settings) + (background ? note.replace("Your reply appears in Lumen's sidebar chat.", "You are running as a background task: your final reply is saved as the task's result.") : note);
 }
 
@@ -1265,7 +1281,7 @@ class Agent {
       this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
       repairHistory(m);
       // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
-      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; }
+      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; delete m.settings.cxSession; }
       this.onEngineReset?.('rewind'); // its kept Claude Code process holds the old session (features/ai-agents.js)
       return 'rewound';
     }
@@ -1417,7 +1433,7 @@ class Agent {
   // What Auto is told about this message (a pure description, see auto-model.needFor).
   autoRequest(messages, { text = '', images = [], tabs = [], hint = '', skill = null, kind = 'chat' } = {}) {
     const settings = messages.settings || {};
-    const live = Boolean(settings.ccSession || settings.gbSession || settings.agySession); // a CLI session with a warm cache
+    const live = Boolean(settings.ccSession || settings.gbSession || settings.agySession || settings.cxSession); // a CLI session with a warm cache
     return {
       prompt: String(text || ''), kind, imageCount: images.length || 0, tabCount: Array.isArray(tabs) ? tabs.length : 0,
       historyChars: historyChars(messages), turns: Math.ceil(messages.length / 2), hint,
@@ -1574,7 +1590,7 @@ class Agent {
     if (!leases || !this.engines?.lease) return this.engines?.[kind];
     if (!leases.has(kind)) leases.set(kind, this.engines.lease(kind, scope.chatId ?? scope.chat ?? null));
     const lease = leases.get(kind);
-    if (!lease) throw new Error(`${kind === 'antigravity' ? 'Antigravity' : kind === 'grokbuild' ? 'Grok Build' : 'Claude Code'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
+    if (!lease) throw new Error(`${kind === 'codex' ? 'Codex' : kind === 'antigravity' ? 'Antigravity' : kind === 'grokbuild' ? 'Grok Build' : 'Claude Code'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
     return lease.engine;
   }
 
@@ -1598,6 +1614,12 @@ class Agent {
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
     const viaAntigravity = String(messages.settings.model).startsWith('antigravity:') && Boolean(this.engines?.antigravity);
+    const viaCodex = String(messages.settings.model).startsWith('codex:') && Boolean(this.engines?.codex);
+    // A Codex thread stays on the model it was started with (cxModel), like Grok Build's.
+    if (viaCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) {
+      delete messages.settings.cxSession;
+      delete messages.settings.cxModel;
+    }
     // An Antigravity conversation stays on the model it was started with (agyModel), like Grok Build's.
     if (viaAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) {
       delete messages.settings.agySession;
@@ -1623,17 +1645,18 @@ class Agent {
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild) this.engineFor('grokbuild').prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
     if (viaAntigravity) this.engineFor('antigravity').prepare?.().catch?.(() => {});
+    if (viaCodex) this.engineFor('codex').prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
     // waits for the same start and reports a failure as before.)
     const apiPick = providers.splitModel(String(messages.settings.model));
-    if (!viaClaudeCode && !viaGrokBuild && !viaAntigravity && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
+    if (!viaClaudeCode && !viaGrokBuild && !viaAntigravity && !viaCodex && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
     let attached;
     let page;
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) }), controller.signal);
+      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -1670,13 +1693,15 @@ class Agent {
       const toClaudeCode = model.startsWith('claudecode:') && Boolean(this.engines?.claudecode);
       const toGrokBuild = model.startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
       const toAntigravity = model.startsWith('antigravity:') && Boolean(this.engines?.antigravity);
-      if (!toClaudeCode && !toGrokBuild && !toAntigravity) {
+      const toCodex = model.startsWith('codex:') && Boolean(this.engines?.codex);
+      if (!toClaudeCode && !toGrokBuild && !toAntigravity && !toCodex) {
         if (!autoChecked) { autoChecked = true; await this.autoCompact(messages, controller.signal, emit); } // [context]
         try { await this.loop(messages, controller.signal, emit, fb); return; } catch (err) { if (err === REDISPATCH) continue; throw err; }
       }
       // (A switch to another Grok model starts a new session: see above.)
       if (toGrokBuild && messages.settings.gbSession && (messages.settings.gbModel || 'grokbuild:default') !== messages.settings.model) { delete messages.settings.gbSession; delete messages.settings.gbModel; }
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
+      if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
@@ -1687,6 +1712,7 @@ class Agent {
       };
       try {
         if (toClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, gate, { userText, tabCount: wanted.length, plan });
+        else if (toCodex) await this.codexTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
         else if (toAntigravity) await this.antigravityTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
         else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
       } finally {
@@ -1757,7 +1783,7 @@ class Agent {
     const model = String(messages.settings.model);
     const signal = controller.signal;
     if (model.startsWith('claudecode:') && this.engines?.claudecode) return this.claudeCodeCommand(messages, command, signal, emit);
-    const engine = model.startsWith('grokbuild:') ? 'Grok Build' : model.startsWith('antigravity:') ? 'Antigravity' : null;
+    const engine = model.startsWith('grokbuild:') ? 'Grok Build' : model.startsWith('antigravity:') ? 'Antigravity' : model.startsWith('codex:') ? 'Codex' : null;
     if (command.name === 'context') return this.contextReport(messages, emit, engine);
     if (engine) { emit({ type: 'notice', text: `${engine} keeps this conversation in its own session and compacts it by itself when it fills up, so Lumen can't compact it from here. New chat starts fresh.` }); return; }
     await this.compactApi(messages, command.args, signal, emit);
@@ -1861,7 +1887,7 @@ class Agent {
     // [chat history] A CLI session from earlier in this chat holds the turns now replaced by the summary: the next CLI message starts
     // a new one, handed the summary and the turns after it.
     for (const [session, seen] of CLI_SESSIONS) { delete messages.settings[session]; delete messages.settings[seen]; }
-    delete messages.settings.gbModel; delete messages.settings.agyModel;
+    delete messages.settings.gbModel; delete messages.settings.agyModel; delete messages.settings.cxModel;
     emit({ type: 'notice', text: auto
       ? `This chat was getting long, so its earlier part was summarized for the AI (about ${shortCount(before)} → ${shortCount(after)} tokens). It stays on screen.`
       : `Compacted: about ${shortCount(before)} → ${shortCount(after)} tokens. The earlier messages stay on screen; the AI now sees a summary of them.` });
@@ -2181,6 +2207,70 @@ class Agent {
   }
   // ---- [/antigravity engine]
 
+  // ---- [codex engine] One message through the user's Codex CLI (codex.js). Its thread id lives in the chat's settings (cxSession):
+  // follow-ups resume it, New chat starts a new one. cxSeen counts the chat's messages the thread knows: turns another model answered
+  // since are handed over in front of the next message, and a fresh thread is handed the whole chat (authorName "Codex" labels its replies).
+  async codexTurn(messages, prompt, images, signal, emit) {
+    const settings = messages.settings;
+    const resume = Boolean(settings.cxSession);
+    const picked = engineModel(settings.model);
+    const handoff = () => {
+      if (messages.length <= 1) return { text: prompt, historyImages: [] };
+      const priorItems = transcriptFor(messages).slice(0, -1);
+      const earlier = earlierText(messages, priorItems);
+      return { text: earlier ? `<earlier_conversation>
+${earlier}
+</earlier_conversation>
+
+${prompt}` : prompt, historyImages: priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean) };
+    };
+    // [chat history] A resumed thread gets the turns other models answered since its last reply here, and a note when its last reply was cut off.
+    const catchUp = () => {
+      const missed = handoffTurns(missedItems(messages, settings.cxSeen));
+      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>
+${MISSED_NOTE}
+
+${missed}
+</earlier_conversation>
+
+${prompt}` : prompt), historyImages: [] };
+    };
+    const first = resume ? catchUp() : handoff();
+    emit({ type: 'turn_start' });
+    const engine = this.engineFor('codex');
+    const runCodex = (input, sessionId, again) => engine.run({
+      scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
+      prompt: input.text,
+      images: this.engineImages('Codex', picked, [...input.historyImages, ...images], emit),
+      sessionId,
+      quietExpired: again, // a resumed thread Codex no longer has comes back { expired } without an error: see below
+      model: picked, // 'default' or a Codex model id
+      systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked),
+      signal,
+      emit,
+    });
+    let out = await runCodex(first, settings.cxSession || null, resume);
+    if (out.expired && !signal.aborted) {
+      delete settings.cxSession; delete settings.cxModel; delete settings.cxSeen;
+      snapshot.reads.clear();
+      out = await runCodex(handoff(), null, false);
+    }
+    recordUsage(messages, { model: settings.model, cost: 0 }, emit);
+    const logged = this.reportUsage('codex', { usage: out.usage, rateLimit: out.rateLimit, model: picked === 'default' ? null : picked, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
+    if (logged?.notice) emit({ type: 'notice', text: logged.notice });
+    let caughtUp = false;
+    if (out.sessionId === null) { delete settings.cxSession; delete settings.cxModel; }
+    else if (!out.failed && (!out.stopped || out.text)) { settings.cxSession = out.sessionId; settings.cxModel = settings.model; caughtUp = true; }
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
+    if (out.text) {
+      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }] };
+      producedBy.set(turn, settings.model);
+      messages.push(turn);
+    }
+    if (caughtUp) settings.cxSeen = messages.length; // [chat history] the thread knows the chat up to here
+  }
+  // ---- [/codex engine]
+
   // ---- [generated images] Pictures the AI makes or returns (features/gen-images.js): saved with the chat (this.imageStore,
   // encrypted like the chat) and shown in it. In the history they are { type: 'generated_image', id, mime, alt } blocks.
 
@@ -2241,9 +2331,9 @@ class Agent {
     const ask = genImages.imageRequest(userText);
     if (!ask) return false;
     const picked = String(messages.settings.model);
-    const viaEngine = /^(claudecode|grokbuild|antigravity):/.test(picked);
+    const viaEngine = /^(claudecode|grokbuild|antigravity|codex):/.test(picked);
     const { provider, model } = viaEngine ? { provider: null, model: picked } : providers.splitModel(picked);
-    const label = viaEngine ? ({ claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity' })[picked.split(':')[0]] : (providers.PROVIDERS[provider]?.label || 'Claude');
+    const label = viaEngine ? ({ claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex' })[picked.split(':')[0]] : (providers.PROVIDERS[provider]?.label || 'Claude');
     if (!viaEngine && provider === 'openrouter' && providers.canGenerateImages(provider, model)) return false; // it answers with the picture itself
     // [full access] Claude Code with its own tools on runs as in a terminal: the user's own image tools (a CLI named in their
     // CLAUDE.md / rules) are theirs to use, so the message goes to it as any other. (runTask turned "/image …" into words.)
@@ -2354,7 +2444,7 @@ class Agent {
       emit({ type: 'turn_start' });
       const model = messages.settings.model;
       // Never sent to the API as a Claude model id (setModel defers switches mid-run, so this is a guard).
-      if (/^(claudecode|grokbuild|antigravity):/.test(String(model))) throw new Error('This reply can’t switch to Claude Code, Grok Build or Antigravity partway through. Send your message again.');
+      if (/^(claudecode|grokbuild|antigravity|codex):/.test(String(model))) throw new Error('This reply can’t switch to Claude Code, Grok Build, Antigravity or Codex partway through. Send your message again.');
       const onClaude = providers.splitModel(model).provider === 'anthropic';
       // This turn's streamed text, kept in the chat if the stream breaks off (keepPartialReply).
       let streamed = '';
@@ -3836,4 +3926,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };

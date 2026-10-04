@@ -9,6 +9,11 @@
 //   command = '<Lumen.exe>'
 //   args = ['<app>/mcp.js']
 //   env = { ELECTRON_RUN_AS_NODE = "1" }
+//   startup_timeout_sec = 30
+//   tool_timeout_sec = 600
+// The two timeouts matter: Codex gives a stdio server 10 seconds to start (Lumen's bridge may have to start Lumen itself) and
+// a tool call 60 seconds (Lumen's approval card waits for the user for as long as it likes, and a page read can be slow), and
+// it drops the call or the whole server past them. They are added when missing; a value the user set is never changed.
 // This is not a TOML parser: it understands tables, string/array/inline-table values of this one entry, and refuses
 // (state 'unsupported') the forms it cannot edit safely (an inline `mcp_servers = { … }`, dotted keys).
 const fs = require('fs');
@@ -166,22 +171,26 @@ function inspect(text, desired) {
   const enabled = get('enabled') ? /^\s*false\b/.test(get('enabled').value) ? false : true : true;
   const same = command !== null && command === desired.command
     && Array.isArray(argv) && argv.length === (desired.args || []).length && argv.every((a, i) => a === desired.args[i])
-    && Object.entries(desired.env || {}).every(([k, v]) => envValues?.[k] === v);
+    && Object.entries(desired.env || {}).every(([k, v]) => envValues?.[k] === v)
+    && Object.keys(desired.timeouts || {}).every((k) => get(k)); // a timeout the user set is theirs; a missing one makes the entry stale
   return { state: same ? (enabled ? 'same' : 'disabled') : 'stale', command, args: argv, env: envValues, enabled, lines, tables, main: t, envTable: envT[0] || null, keys: { cmd, args, env } };
 }
 
 const newEol = (text) => (/\r\n/.test(text) ? '\r\n' : '\n');
-function entryLines(desired, extraEnv = {}) {
+// The timeout lines of `desired.timeouts` that the entry does not have yet ("key = 30").
+const timeoutLines = (desired, have = () => false) => Object.entries(desired.timeouts || {}).filter(([k]) => !have(k)).map(([k, v]) => `${k} = ${Number(v)}`);
+function entryLines(desired, extraEnv = {}, have = () => false) {
   const env = { ...extraEnv, ...(desired.env || {}) };
   return [
     `command = ${tomlString(desired.command)}`,
     `args = [${(desired.args || []).map(tomlString).join(', ')}]`,
     ...(Object.keys(env).length ? [`env = { ${Object.entries(env).map(([k, v]) => `${tomlKey(k)} = ${tomlString(v)}`).join(', ')} }`] : []),
+    ...timeoutLines(desired, have),
   ];
 }
 
 // The file's new text with the lumen entry present and current, { text, changed, state } (state: what it was).
-// desired: { command, args: [..], env: { ELECTRON_RUN_AS_NODE: '1' } }
+// desired: { command, args: [..], env: { ELECTRON_RUN_AS_NODE: '1' }, timeouts: { startup_timeout_sec: 30, tool_timeout_sec: 600 } }
 function mergeLumen(text, desired) {
   const original = String(text || '');
   const info = inspect(original, desired);
@@ -198,7 +207,7 @@ function mergeLumen(text, desired) {
   const drop = new Set();
   for (const k of [info.keys.cmd, info.keys.args, info.keys.env]) if (k) for (let i = k.start; i < k.end; i++) drop.add(i);
   if (info.envTable) for (let i = info.envTable.start; i < info.envTable.end; i++) drop.add(i);
-  const fresh = entryLines(desired, info.env && typeof info.env === 'object' ? info.env : {});
+  const fresh = entryLines(desired, info.env && typeof info.env === 'object' ? info.env : {}, (k) => Boolean(info.main.keys.find((x) => x.key === k)));
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     if (drop.has(i)) continue;
