@@ -96,6 +96,9 @@ const brandName = (b) => b.brand;
   check('languages: en-001 (how Windows names world English) is plain en', id.languageList(['en-US', 'en-001']).join() === 'en-US,en', id.languageList(['en-US', 'en-001']).join());
   check('languages: empty or invalid falls back to en-US,en (never an empty header)', id.languageList([]).join() === 'en-US,en' && id.languageList(null).join() === 'en-US,en', id.languageList([]).join());
   check('languages: the list has no more than the q range allows (q never below 0.1)', id.acceptLanguageHeader(Array.from({ length: 15 }, (_, i) => `a${String.fromCharCode(97 + i)}-XX`)).split(',').every((p) => !p.includes('q=') || Number(p.split('q=')[1]) >= 0.1), 'q');
+  const many = Array.from({ length: 40 }, (_, i) => `x${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}-YY`);
+  check('languages: Accept-Language stays within 128 bytes (a longer one forces a CORS preflight on every script)', id.acceptLanguageHeader(many).length <= 128 && id.acceptLanguageHeader(many).startsWith(many[0]), String(id.acceptLanguageHeader(many).length));
+  check('languages: a short list is untouched by the cap', id.acceptLanguageHeader(['en-US', 'fr', 'de']) === 'en-US,en;q=0.9,fr;q=0.8,de;q=0.7', id.acceptLanguageHeader(['en-US', 'fr', 'de']));
   check('languages: settings-backend builds Accept-Language from the same function', require('../src/settings/settings-backend').acceptLanguage(['fr-CA', 'en-US']) === id.acceptLanguageHeader(['fr-CA', 'en-US']), 'diverged');
 }
 
