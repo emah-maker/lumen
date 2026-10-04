@@ -1686,7 +1686,7 @@ explain describe list find give compare difference summarize summary write rewri
     m.querySelector('button').focus();
   }
 
-  // pic: { id, alt }
+  // pic: { id, alt, credit? }
   function figure(pic) {
     const fig = el('figure', { className: 'gen-img' });
     fig.dataset.id = pic.id;
@@ -1711,7 +1711,8 @@ explain describe list find give compare difference summarize summary write rewri
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
-      fig.replaceChildren(open, bar);
+      // [image routing] which provider made it (the user's own keys or plan, so it is always said)
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []));
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
@@ -2889,7 +2890,7 @@ window.assistant.onEvent((event) => {
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
-      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '' }));
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}) }));
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));

@@ -109,6 +109,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
+  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
@@ -184,6 +185,7 @@ function validate(key, value) {
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
