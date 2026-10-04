@@ -180,9 +180,20 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
+    if (usageBars) decorateUsage(el, top, usageBars.forModel(o.value, usageBars.state()), o);
     act.set(el, () => choose(o.value));
     rows.push({ el, value: o.value });
     return el;
+  }
+  // [usage bars] renderer/usage-bars.js: a provider's plan window next to its heading (or its rows, when there is no
+  // heading), and a model that is out of usage marked on its own row. All of it is absent when there is no data.
+  const usageBars = window.usageBars;
+  let usageRows = false;
+  function decorateUsage(el, top, desc, o) {
+    if (!desc || !(usageRows || desc.out)) return; // (a row under a heading that has the bar carries one only when it is out)
+    top.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: nameOf(o) }) }));
+    if (desc.out) el.classList.add('picker-out');
+    el.setAttribute('aria-label', `${el.getAttribute('aria-label')}, ${desc.valuetext}`);
   }
   function actionRow(key, textContent, detail, handler, cls = 'picker-more') {
     const el = Object.assign(document.createElement('div'), { className: `picker-item ${cls}`, id: `${uid}-${key}` });
@@ -192,6 +203,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     act.set(el, handler);
     return el;
+  }
+  // The provider's plan bar at the end of its heading; the models that are out of usage are marked on their rows.
+  function decorateHeading(h, o) {
+    const desc = o && usageBars ? usageBars.forProvider(usageBars.providerOf(o.value), usageBars.state()) : null;
+    if (!desc) return;
+    h.classList.add('has-ubar');
+    h.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: h.firstChild.textContent }) }));
   }
   function heading(textContent, count) {
     const h = Object.assign(document.createElement('div'), { className: 'picker-group' });
@@ -243,8 +261,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
         section.setAttribute('aria-labelledby', h.id);
         section.append(h);
         recentRow = true;
+        usageRows = true;
         recents.forEach((o, i) => section.append(row(o, `r${i}`)));
         recentRow = false;
+        usageRows = false;
         out.push(section);
       }
     }
@@ -270,7 +290,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const actions = all2.filter((m) => m.o.dataset.more);
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
-      if (g && (headings || words.length || ordered.length > 1 || out.length)) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
+      usageRows = !(g && (headings || words.length || ordered.length > 1 || out.length)); // no heading to carry the provider's bar: each row does
+      if (!usageRows) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {
@@ -370,6 +391,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     search.setAttribute('aria-label', tr('picker.search', 'Search models'));
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
+    usageBars?.touch(); // the cached usage numbers, at most every few seconds; the list redraws if they changed
     place();
     centreNext = true;
     render();
@@ -432,6 +454,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (!list.contains(e.target) || list.scrollHeight <= list.clientHeight || atEnd) e.preventDefault();
   }, { passive: false });
   sync();
+  window.addEventListener('lumen-usage-bars', () => { if (!menu.hidden) { keepHighlight = true; render(); } });
   // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
   return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) { keepHighlight = true; render(); } } };
 };

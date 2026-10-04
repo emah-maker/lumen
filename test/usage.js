@@ -262,6 +262,74 @@ const USAGE_TEXT = [
   const apiKey = await summary(true);
   check('Codex with no plan data (an API-key sign-in): no bar, and the summary says why', apiKey.codex && !apiKey.codex.hasLimits && apiKey.bars.codex === null && /not reported plan limits/.test(apiKey.codex.note), JSON.stringify(apiKey.codex));
 
+  // ---- the small usage bars (renderer/usage-bars.js): in the model picker's provider headings and rows, from the cached usage numbers
+  await app.evaluate(() => { global.__codexScan = () => null; global.__usage.clear(); });
+  const reset5 = Math.floor(Date.now() / 1000) + 3 * 3600;
+  await app.evaluate((_e, reset) => global.__usage.record('claudecode', { usage: { inputTokens: 10, outputTokens: 5, costUSD: 0.01 }, rateLimit: { status: 'allowed', rateLimitType: 'five_hour', unifiedWindows: { five_hour: { utilization: 0.86, resetsAt: reset } } } }), reset5);
+  const cachedSum = await app.evaluate(() => global.__usage.summary({ cached: true }));
+  check('bars: the cached summary carries the 86% reading, the setting and the cooldowns, with no CLI run', Math.round(cachedSum.bars.claudecode?.percent) === 86 && cachedSum.showBars === true && typeof cachedSum.cooling === 'object', JSON.stringify(cachedSum.bars.claudecode));
+  await ui.evaluate(() => {
+    const sel = document.getElementById('model');
+    const group = (label, items) => { const g = document.createElement('optgroup'); g.label = label; for (const [v, name] of items) { const o = new Option(name, v); o.dataset.name = name; g.append(o); } return g; };
+    sel.replaceChildren(group('Your Claude account', [['claudecode:sonnet', 'Sonnet'], ['claudecode:opus', 'Opus']]), group('OpenAI', [['openai:gpt-5', 'GPT-5'], ['openai:gpt-5-mini', 'GPT-5 mini']]));
+    sel.value = 'claudecode:sonnet';
+    sel.pickerSync();
+  });
+  const openPicker = async () => {
+    await ui.evaluate(async () => { await window.usageBars.load(true); });
+    await ui.evaluate(() => modelPicker.open());
+    await ui.waitForSelector('.picker-menu:not([hidden]) .picker-group', { state: 'attached' });
+    const out = await ui.evaluate(() => {
+      const bar = (el) => { const b = el && el.querySelector('.ubar'); return b && { role: b.getAttribute('role'), now: b.getAttribute('aria-valuenow'), text: b.textContent, level: b.dataset.level, out: b.dataset.out === '1', valuetext: b.getAttribute('aria-valuetext'), title: b.title, label: b.getAttribute('aria-label') }; };
+      const menu = document.querySelector('.picker-menu:not([hidden])');
+      const heads = [...menu.querySelectorAll('.picker-group')].map((h) => ({ name: h.firstChild.textContent, bar: bar(h) }));
+      const rows = [...menu.querySelectorAll('.picker-item')].map((r) => ({ name: r.querySelector('.picker-name')?.textContent, out: r.classList.contains('picker-out'), bar: bar(r), label: r.getAttribute('aria-label') }));
+      return { heads, rows };
+    });
+    await ui.evaluate(() => modelPicker.close(false));
+    return out;
+  };
+  let pk = await openPicker();
+  const claudeHead = pk.heads.find((h) => /Claude/.test(h.name));
+  const openaiHead = pk.heads.find((h) => /OpenAI/.test(h.name));
+  check('bars: the Claude Code heading in the picker has a progressbar at 86% (amber), with the reset time in its tooltip', claudeHead?.bar && claudeHead.bar.role === 'progressbar' && claudeHead.bar.now === '86' && claudeHead.bar.text === '86%' && claudeHead.bar.level === 'warn' && /resets/.test(claudeHead.bar.title) && /86% used/.test(claudeHead.bar.valuetext), JSON.stringify(claudeHead));
+  check('bars: a provider with no usage data (OpenAI by key) gets no bar', openaiHead && !openaiHead.bar && pk.rows.filter((r) => /GPT/.test(r.name)).every((r) => !r.bar && !r.out), JSON.stringify(pk.heads));
+  check('bars: rows under a heading carry no repeated bar while nothing is out', pk.rows.every((r) => !r.bar), JSON.stringify(pk.rows));
+
+  // A provider that hit a usage limit (the model fallback's cooldown) is marked on its rows and heading
+  await app.evaluate(() => global.__aiFallback.shared.mark('openai:gpt-5', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 3600e3, exact: true }));
+  pk = await openPicker();
+  const gpt = pk.rows.find((r) => r.name === 'GPT-5');
+  check('bars: a model out of usage is marked: dimmed row, an "out" bar with the reset time, and said to a screen reader', gpt && gpt.out && gpt.bar && gpt.bar.text === 'out' && gpt.bar.level === 'high' && /Out of usage, resets/.test(gpt.bar.title) && /Out of usage/.test(gpt.label), JSON.stringify(gpt));
+  check('bars: its provider heading shows "out" too, and the other provider is unchanged', pk.heads.find((h) => /OpenAI/.test(h.name))?.bar?.text === 'out' && pk.heads.find((h) => /Claude/.test(h.name))?.bar?.text === '86%', JSON.stringify(pk.heads));
+  await app.evaluate(() => global.__aiFallback.shared.clear());
+
+  // The setting hides every bar
+  await app.evaluate(() => global.__patchSettings({ usageBars: false }));
+  pk = await openPicker();
+  check('bars: with "Show usage bars in pickers" off, no bar and no out mark appears', pk.heads.every((h) => !h.bar) && pk.rows.every((r) => !r.bar && !r.out), JSON.stringify(pk));
+  await app.evaluate(() => global.__patchSettings({ usageBars: true }));
+  pk = await openPicker();
+  check('bars: turned back on they return', pk.heads.some((h) => h.bar && h.bar.now === '86'), JSON.stringify(pk.heads));
+
+  // Settings → Usage has the switch, and it is the setting
+  await app.evaluate(() => global.__settings.open('usage'));
+  let sw = null;
+  for (let i = 0; i < 40 && !(sw && sw.found); i++) {
+    await sleep(250);
+    sw = await app.evaluate(async () => {
+      const t = global.__settings.tabs().find((x) => x.settings);
+      const wc = t && global.__settings.contents(t.id);
+      return wc ? wc.executeJavaScript("(() => { const i = document.getElementById('pref-usageBars'); return { found: Boolean(i), on: i && i.checked, label: i && i.getAttribute('aria-label') }; })()") : null;
+    });
+  }
+  check('Settings → Usage: a "Show usage bars in pickers" switch, on by default', sw && sw.found && sw.on === true && /Show usage bars in pickers/.test(sw.label), JSON.stringify(sw));
+  await app.evaluate(async () => { const t = global.__settings.tabs().find((x) => x.settings); await global.__settings.contents(t.id).executeJavaScript("document.getElementById('pref-usageBars').click()"); });
+  let off = null;
+  for (let i = 0; i < 20 && !(off && off.showBars === false); i++) { await sleep(200); off = await app.evaluate(() => global.__usage.summary({ cached: true })); }
+  check('Settings → Usage: turning it off is the setting the bars follow', off && off.showBars === false, JSON.stringify(off && off.showBars));
+  await app.evaluate(() => global.__patchSettings({ usageBars: true }));
+
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');

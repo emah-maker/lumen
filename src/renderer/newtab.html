@@ -861,6 +861,14 @@
     .s-limited .ai-state { color: var(--ai-warn); }
     .s-down .ai-state { color: var(--ai-bad); }
     .ai-detail { display: none; grid-column: 2; min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.3; }
+    /* [usage bars] a thin bar for the plan's 5-hour window (amber from 80%, red and striped at the limit); the words beside it say the number too. */
+    .ai-ubar { display: block; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 30%, transparent); overflow: hidden; }
+    .ai-ubar > i { display: block; height: 100%; border-radius: 2px; background: var(--ai-ok); }
+    .ai-ubar[data-level="warn"] > i { background: var(--ai-warn); }
+    .ai-ubar[data-level="high"] > i { background: repeating-linear-gradient(135deg, var(--ai-bad) 0 4px, color-mix(in srgb, var(--ai-bad) 55%, transparent) 4px 7px); }
+    .ai-ubar-dot { position: absolute; left: 0; right: 0; bottom: -4px; height: 2px; }
+    .ai-ubar-row { grid-column: 2 / -1; margin-top: 3px; }
+    .ai-nolabel .ai-ubar-dot { display: none; } /* (no room under the logo and dot of a tiny card) */
     .ai-more { margin: 0; color: var(--muted); font-size: 11px; }
     .ai-live { display: none; flex-wrap: wrap; gap: 2px 10px; margin: auto 0 0; padding-top: 7px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; line-height: 1.3; }
     .ai-live > span { white-space: nowrap; }

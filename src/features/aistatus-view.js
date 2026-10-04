@@ -67,6 +67,7 @@ function describe(id, raw, now) {
   } else state = 'ready'; // an API provider is listed once its key is saved
   let stateText = state === 'ready' ? (engine ? 'Signed in' : 'Connected') : { out: 'Signed out', off: 'Off in the sidebar', missing: 'Not installed' }[state] || '';
   const notes = [];
+  let meterBar = null; // [usage bars] { percent, level } of the plan's 5-hour window, drawn as a thin bar; none without a real reading
   let fact = ''; // the one extra thing a small card has room for: when it is back, or the 5-hour reading, or today's cost
   const own = id === 'grokbuild' ? raw.grokLimit : id === 'codex' ? raw.codexLimit : null; // a limit the CLI itself reported (Grok's message, Codex's rate_limits)
   const grok = own ? { until: Number.isFinite(own.resetsAt) ? own.resetsAt : null, kind: 'limit', exact: Number.isFinite(own.resetsAt), scope: 'provider' } : null;
@@ -79,13 +80,14 @@ function describe(id, raw, now) {
       stateText = 'Limit reached';
       notes.push(!whenText ? 'Resets later' : lim.exact ? `Resets ${whenText}` : `Paused until about ${whenText}`);
       fact = whenText ? `${lim.exact ? '' : '~'}${whenText}` : '';
+      meterBar = { percent: 100, level: 'high' };
     }
   } else if (state === 'ready') {
     // One model (Opus, say) being out leaves the AI usable with the others.
     if (active && lim.kind === 'limit') notes.push(`${str(lim.model, 40) || 'One model'} limit reached${whenText ? `, ${lim.exact ? 'resets' : 'paused until about'} ${whenText}` : ''}`);
     const reading = id === 'claudecode' ? raw.meter : id === 'codex' ? raw.codexMeter : null;
     const m = reading && Number(reading.resetsAt) > now && Number.isFinite(reading.percent) ? reading : null;
-    if (m) { notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
+    if (m) { const p = Math.max(0, Math.min(100, m.percent)); meterBar = { percent: Math.round(p), level: p >= 100 ? 'high' : p >= 80 ? 'warn' : 'ok' }; notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
     const t = raw.today && raw.today[id];
     if (t && money(t.costUSD)) { notes.push(`${money(t.costUSD)} today`); if (!fact) fact = money(t.costUSD); }
   } else if (state === 'out') notes.push('Sign in under Settings');
@@ -97,6 +99,7 @@ function describe(id, raw, now) {
   return {
     id, name: NAMES[id], brand: BRANDS[id], short: SHORT[state], fact, label, kind: engine ? 'cli' : 'api', state, stateText, note: notes.join(' · '),
     current, model: current ? str(raw.current.label, 60) : '',
+    ...(meterBar && raw.showBars !== false ? { usage: meterBar } : {}),
     ...(full === true && engine ? { fullAccess: true } : {}),
   };
 }
