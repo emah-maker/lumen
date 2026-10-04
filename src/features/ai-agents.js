@@ -131,9 +131,10 @@ function setupAiAgents(deps) {
   };
   // [warm per chat] Each tab chat's own Claude Code engine, whose process stays warm between that chat's messages
   // (features/warm-chats.js): its own process and MCP token. Freed on chat delete / last tab closed (chatGone), after
-  // the idle time (claude-code.js IDLE_MS, the engine's own idle timeout), past the idle cap (Performance mode: fewer
+  // the idle time (deps.warmIdleMs: Settings > AI, the same choice as a kept Grok Build's, Infinity for never; else
+  // claude-code.js IDLE_MS; the engine's own idle timeout is the same), past the idle cap (Performance mode: fewer
   // on a slow PC; the least recently used idle one goes), and on quit. Active runs are never capped.
-  const ccIdleMs = () => { const ms = deps.warmIdleMs?.(); return Number.isFinite(ms) && ms > 0 ? ms : claudeCodeModule().IDLE_MS; }; // (tests: deps.warmIdleMs)
+  const ccIdleMs = () => { let ms = null; try { ms = deps.warmIdleMs?.(); } catch {} return ms === Infinity || (Number.isFinite(ms) && ms > 0) ? ms : claudeCodeModule().IDLE_MS; };
   const warmChats = require('./warm-chats').createWarmChats({
     make: () => newClaudeCode({ idleMs: ccIdleMs() }),
     maxIdle: () => { try { const n = deps.maxWarmChats?.(); return Number.isFinite(n) && n >= 0 ? n : 4; } catch { return 4; } },
@@ -159,8 +160,9 @@ function setupAiAgents(deps) {
   // text: what is already typed (routed for the model guess); the preload passes it through.
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); });
+  // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true }); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -183,9 +185,26 @@ function setupAiAgents(deps) {
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
       grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
+      // [keep connected] Settings > AI > Keep Grok Build connected (grokKeepConnected, off by default): each chat's own
+      // long-lived `grok agent stdio` process (features/grok-warm.js). Read live: turning it off ends them at the next look.
+      grokBuild.keepWarm = require('./grok-warm').createGrokWarm({
+        engine: grokBuild,
+        enabled: grokKeepOn,
+        idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+      });
     }
     return grokBuild;
   };
+  const grokKeepOn = () => readSettings().grokKeepConnected === true && grokSidebar();
+  // The open chat's Grok Build process, started ahead of its message (composer focus, startup): only with the setting on,
+  // Grok Build found, and the chat on Grok Build (agent.grokWarmSpec). With the setting off, any kept process ends.
+  function warmGrokChat() {
+    if (!grokBuild?.keepWarm && !grokKeepOn()) return;
+    if (!grokKeepOn()) { grokBuild.keepWarm.disposeAll(); return; }
+    if (!grokBuildFound) return;
+    const spec = agent.grokWarmSpec?.();
+    if (spec) grokBuildEngine().keepWarm.prewarm(spec);
+  }
 
   // "Warm up Grok Build when Lumen starts" (grokWarmup, default on; features/grok-warmup.js): the setup a message
   // starts with (binary, HTTP gate, config, sign-in link) is done in the background once the first tab has loaded
@@ -224,7 +243,7 @@ function setupAiAgents(deps) {
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
   async function onTerminalApproval(tag, command) {
-    const owner = grokBuild?.owns(tag) ? grokBuild : [...sideEngines, ...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+    const owner = grokBuild?.owns(tag) ? grokBuild : grokBuild?.keepWarm?.owner(tag) || [...sideEngines, ...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag)); // (a kept Grok process: its own turn)
     const engineRun = owner ? owner.active : null;
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
@@ -258,7 +277,7 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : warmChats.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
@@ -286,6 +305,9 @@ function setupAiAgents(deps) {
       : new (grokBuildModule().GrokBuildEngine)({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads }); // the sidebar's GROK_HOME: the chat's session resumes there
     engine.bin = shared.bin;
     engine.statusCache = shared.statusCache;
+    // [keep connected] A Grok Build message's own engine uses the same kept processes (one per chat, keyed by its Grok
+    // session): each its own tag, token and turn, so chats on Grok Build run side by side through them too.
+    if (kind === 'grokbuild') engine.keepWarm = shared.keepWarm;
     sideEngines.add(engine);
     return {
       engine,
@@ -689,7 +711,7 @@ function setupAiAgents(deps) {
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false)])
-          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); });
+          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); try { warmGrokChat(); } catch {} });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
@@ -700,6 +722,12 @@ function setupAiAgents(deps) {
     // [warm per chat] A chat was deleted, or its last tab closed: its own warm Claude Code process (and MCP token) ends,
     // now or when its message in flight ends.
     chatGone: (chatId) => { if (chatId != null) warmChats.drop(String(chatId)); },
+    // [keep connected] A chat left Lumen's tabs or was deleted: its kept Grok Build process ends. sessionOf() is asked only
+    // when a process is kept (it may read the chat from disk).
+    grokChatGone(sessionOf) {
+      if (!grokBuild?.keepWarm?.count()) return;
+      try { grokBuild.keepWarm.drop(sessionOf()); } catch {}
+    },
     // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
     async useGrokBuild() {
       if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });

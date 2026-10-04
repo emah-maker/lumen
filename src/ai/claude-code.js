@@ -417,6 +417,8 @@ class ClaudeCodeEngine {
 
   idleLater(proc, ms = this.idleMs) {
     clearTimeout(proc.idle);
+    proc.idle = null;
+    if (ms === Infinity) return; // never idle out (Settings: a chat's warm process kept until its chat goes)
     proc.idle = setTimeout(() => this.dispose(proc), ms);
     proc.idle.unref?.();
   }

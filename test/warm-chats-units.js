@@ -54,6 +54,16 @@ function fakeTimers() {
   check('peek: the open chat\'s engine outside a message is the same one', pool.peek('A') === a1.engine && made.length === 2);
 }
 
+// ---- idle time "never" (Settings: the same choice as a kept Grok Build's, 0 -> Infinity): no idle timer at all
+{
+  const log = [];
+  const clock = fakeTimers();
+  const pool = createWarmChats({ make: (k) => fakeEngine(k, log), maxIdle: () => 4, idleMs: () => Infinity, ...clock });
+  const a = pool.lease('A'); a.engine.warm(); a.release();
+  clock.advance(365 * 24 * 3600e3);
+  check('idle never: an idle warm chat is kept (no timer that would fire at once)', a.engine.isWarm() && pool.has('A') && log.length === 0, J(log));
+}
+
 // ---- freed on drop (chat deleted / last tab closed), mid-message drop waits for the message
 {
   const log = [];

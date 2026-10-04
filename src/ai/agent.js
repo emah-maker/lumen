@@ -2012,16 +2012,32 @@ class Agent {
   }
   // ---- [/claude code engine]
 
+  // [grok build engine] The system prompt of a Grok Build message in this chat. The model named in it is the one this run
+  // is, as far as Lumen knows before it starts (see grokBuildNote).
+  grokBuildSystem(settings, fullAccess = false) {
+    const picked = engineModel(settings.model);
+    const known = (settings.gbShownFor === settings.model && settings.gbShown)
+      || (picked !== 'default' ? picked : this.engines.grokbuild.statusCache?.value?.detail || null);
+    return systemFor(settings) + grokBuildNote(known, { fullAccess });
+  }
+
+  // [keep connected] What the open chat's next Grok Build message will need from its kept process (features/grok-warm.js
+  // prewarm): its Grok session (null: a new chat), system prompt and model. null when the chat isn't on Grok Build, gets
+  // full access (always a one-off process), or a reply is running.
+  grokWarmSpec() {
+    const settings = this.messages?.settings;
+    if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running || this.browser.grokBuildFullAccess?.() === true) return null;
+    const session = settings.gbSession && (settings.gbModel || 'grokbuild:default') === settings.model ? settings.gbSession : null;
+    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, false), model: engineModel(settings.model) };
+  }
+
   // ---- [grok build engine] One message through the user's Grok Build CLI. The session id lives in
   // the chat's settings (gbSession), so follow-ups resume it and New chat (reset) starts a fresh one.
   // Images are capped inside grok-build.js's run() (capImages), not here.
   async grokBuildTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
     const resume = Boolean(settings.gbSession);
-    // Which model this run is, as far as Lumen knows before it starts (see grokBuildNote).
     const picked = engineModel(settings.model);
-    const known = (settings.gbShownFor === settings.model && settings.gbShown)
-      || (picked !== 'default' ? picked : this.engines.grokbuild.statusCache?.value?.detail || null);
     // Switched to Grok Build mid-chat (or its session is gone): hand it the conversation so far, same as claudeCodeTurn.
     const handoff = () => {
       if (messages.length <= 1) return { text: prompt, historyImages: [] };
@@ -2047,7 +2063,7 @@ class Agent {
       quietExpired: again, // a resumed session Grok no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or one of `grok models`' ids
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
-      systemPrompt: systemFor(settings) + grokBuildNote(known, { fullAccess }),
+      systemPrompt: this.grokBuildSystem(settings, fullAccess),
       fullAccess,
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,

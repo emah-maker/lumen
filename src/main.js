@@ -4219,6 +4219,15 @@ function bindOpenChatHere(sender) {
   pushAttention();
   refreshSidebars();
 }
+// [keep connected] A chat's tab closed: once no tab shows the chat (a few seconds later: another tab may adopt it) and it
+// isn't working, its kept Grok Build process ends (features/grok-warm.js). Nothing is read unless a process is kept.
+function grokChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const sessionOf = () => (chatRuns.get(chat)?.messages || (chat === chatId ? agent.messages : chats().load(chat)))?.settings?.gbSession || null;
+  if (now) { aiAgents.grokChatGone(sessionOf); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat) && !chatRuns.has(chat)) aiAgents.grokChatGone(sessionOf); }, 5000);
+  t.unref?.();
+}
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
@@ -4234,6 +4243,7 @@ function warmChatLeft(chat, { now = false } = {}) {
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
   warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
+  grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
@@ -7259,6 +7269,7 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
+  grokChatLeft(id, { now: true }); // [keep connected] (read before the chat is removed)
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
@@ -7715,6 +7726,9 @@ const aiAgents = setupAiAgents({
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
+  // [warm per chat] how long a chat's idle Claude Code process is kept: the same setting as a kept Grok Build's
+  // (grokKeepIdleMinutes; 0: never, Infinity), read when the chat's engine is made.
+  warmIdleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? (m === 0 ? Infinity : m * 60000) : null; },
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   modelsChanged: () => modelsChanged(),
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),

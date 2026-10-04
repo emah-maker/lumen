@@ -51,9 +51,12 @@ function createWarmChats({ make, maxIdle = () => 4, idleMs = () => 10 * 60 * 100
     if (e.holds > 0) return;
     if (e.gone) { forget(e); return; }
     clearTimer(e.timer);
-    const ms = Math.max(1000, Number(idleMs()) || 0);
-    e.timer = setTimer(() => { if (e.holds === 0) forget(e); }, ms);
-    e.timer?.unref?.();
+    const ms = Number(idleMs());
+    e.timer = null;
+    if (ms !== Infinity) { // Infinity: never (until its chat goes, the idle cap, or quit)
+      e.timer = setTimer(() => { if (e.holds === 0) forget(e); }, Math.max(1000, ms || 0));
+      e.timer?.unref?.();
+    }
     trim();
   }
 

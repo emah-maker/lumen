@@ -628,21 +628,28 @@ function shareAuth(userHome, home) {
 // A run in `home` starts: no new link is made until it ends. The returned release() (once) ends it; the last run's end
 // copies a refreshed token back to the user's file. After Lumen copies it back the user's file is Lumen's own write, so
 // it becomes the new "before" (a later run's refresh is copied back too, not taken for a new sign-in).
+// release.settle(): the copy-back alone, the hold kept. A kept Grok process (features/grok-warm.js) holds the sign-in
+// for its whole life and copies a refreshed token back after each of its turns; copy-backs are chained, never crossed.
 function holdAuth(userHome, home) {
   const s = authShareOf(home);
   s.runs++;
   let done = false;
-  return () => {
-    if (done) return s.settling;
-    done = true;
-    s.runs = Math.max(0, s.runs - 1);
-    if (s.runs > 0) return s.settling;
+  const copyBack = () => {
     const before = s.before;
     s.settling = s.settling.then(() => settleAuthAsync(userHome, home, before)).then(async (copied) => {
       if (copied && s.before === before) s.before = await fs.promises.stat(path.join(userHome, 'auth.json'), { bigint: true }).catch(() => before);
     }).catch(() => {});
     return s.settling;
   };
+  const release = () => {
+    if (done) return s.settling;
+    done = true;
+    s.runs = Math.max(0, s.runs - 1);
+    if (s.runs > 0) return s.settling;
+    return copyBack();
+  };
+  release.settle = () => (done ? s.settling : copyBack());
+  return release;
 }
 const authStats = (home) => { const s = authShares.get(path.resolve(home)); return s ? { runs: s.runs, links: s.links, pending: s.pending } : { runs: 0, links: 0, pending: false }; };
 
@@ -810,6 +817,14 @@ class GrokBuildEngine {
 
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
+    // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
+    // long-lived `grok agent stdio` process answers. It returns null when it can't take this message (setting off, images,
+    // full access, a start that failed before anything was sent): then the one-process-per-message run below does.
+    if (this.keepWarm) {
+      const warm = fullAccess || this.background ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
+      if (warm) return warm;
+      this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
+    }
     const prepared = this.prepare({ fullAccess }); // (the one runTask started, if it is recent)
     this.prep = null; // each message prepares afresh
     const ready = await prepared;
@@ -1044,4 +1059,4 @@ class GrokBuildEngine {
 
 GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
