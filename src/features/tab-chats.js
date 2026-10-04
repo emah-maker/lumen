@@ -14,12 +14,14 @@
 // nobody else holds (the last chat after a restart, or one whose tab closed), which the tab you are
 // on adopts so the sidebar never opens empty on a chat that still has a history.
 
-const DEFAULT_MAX_RUNS = 3;
+const DEFAULT_MAX_RUNS = 0; // 0: no limit (every chat that is sent a message works at once)
 const MAX_RUNS_LIMIT = 8;
 
+// 0 (or less) is "no limit"; any other number is held to 1..MAX_RUNS_LIMIT; anything else is the default.
 const clampRuns = (n) => {
   const v = Math.round(Number(n));
-  return Number.isFinite(v) ? Math.min(MAX_RUNS_LIMIT, Math.max(1, v)) : DEFAULT_MAX_RUNS;
+  if (!Number.isFinite(v)) return DEFAULT_MAX_RUNS;
+  return v <= 0 ? 0 : Math.min(MAX_RUNS_LIMIT, v);
 };
 
 // ---- tab <-> chat
@@ -114,8 +116,9 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
   const running = new Map(); // chat id -> { kind, alive, missed }
   const waiting = []; // { chatId, kind, start, alive }
   const cliBusy = () => [...running.values()].filter((r) => r.kind === 'cli').length;
-  const fits = (kind) => running.size < limit && (kind !== 'cli' || cliBusy() < cliMax);
-  const why = (kind) => (running.size >= limit ? 'limit' : kind === 'cli' && cliBusy() >= cliMax ? 'cli' : null);
+  const full = () => limit > 0 && running.size >= limit; // (limit 0: no cap)
+  const fits = (kind) => !full() && (kind !== 'cli' || cliBusy() < cliMax);
+  const why = (kind) => (full() ? 'limit' : kind === 'cli' && cliBusy() >= cliMax ? 'cli' : null);
 
   const begin = (chatId, kind, alive, start) => {
     running.set(chatId, { kind, alive, missed: 0 });

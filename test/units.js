@@ -917,7 +917,12 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('cli args: Grok always has a cap: the chosen one, else 100', flag(gbArgs(120)) === '120' && flag(gbArgs(0)) === '100' && !gb.ARGS_BASE.includes('--max-turns'), '');
     const { DEFAULTS } = require('../src/settings/settings-backend');
     check('setting: maxSteps defaults to unlimited', DEFAULTS.maxSteps === 0, '');
-    check('setting: three chats work at once by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 3 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 3, '');
+    check('setting: chats working at once has no limit by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 0 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 0, '');
+    const SBm = require('../src/settings/settings-backend');
+    check('setting: "No limit" (0) is a valid choice for chats working at once', SBm.validate('maxChatRuns', 0) === 0 && SBm.validate('maxChatRuns', 3) === 3 && SBm.validate('maxChatRuns', 5) === null, '');
+    const mig = SBm.migrateMaxChatRuns;
+    check('setting: a profile on the old default of 3 moves to no limit, once', mig({ maxChatRuns: 3 })?.maxChatRuns === 0 && mig({ maxChatRuns: 3 }).maxChatRunsNoLimitDefault === true && mig({ maxChatRuns: 3, maxChatRunsNoLimitDefault: true }) === null, JSON.stringify(mig({ maxChatRuns: 3 })));
+    check('setting: another chosen number is kept, and an unset one is left to the default', mig({ maxChatRuns: 2 })?.maxChatRuns === 2 && mig({ maxChatRuns: 8 })?.maxChatRuns === 8 && mig({}) === null && mig({ theme: 'dark' }) === null, '');
   }
 
   const { ReadCache } = require('../src/ai/snapshot');

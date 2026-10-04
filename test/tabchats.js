@@ -135,6 +135,8 @@ const fakeModel = (app) => app.evaluate(() => {
   check('viewing the chat clears the done dot', await waitFor(async () => (await mark(tabA)) === null), await mark(tabA));
 
   // ---- 4. The cap: three chats work, the fourth waits its turn (and says so), then runs.
+  check('a new profile has no limit on chats working at once', (await tc(() => global.__tabChats.slots.limit)) === 0, await tc(() => global.__tabChats.slots.limit));
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 })); // (the default is no limit)
   const extra = [];
   for (const [i, who] of ['C', 'D', 'E'].entries()) { extra.push(await openTab(`${base}/${who.toLowerCase()}`)); await waitFor(async () => (await active()) === extra[i]); }
   await showTab(extra[0]); await waitFor(async () => (await active()) === extra[0]); await send('chat-C: go'); await inflight('C');
@@ -192,7 +194,8 @@ const fakeModel = (app) => app.evaluate(() => {
   await ui.evaluate(() => document.getElementById('chat-history').click());
   await tc(() => global.__release('I'));
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
-  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 }));
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 0 }));
+  check('"No limit" in Settings lifts the cap', (await tc(() => global.__tabChats.slots.limit)) === 0, await tc(() => global.__tabChats.slots.limit));
 
   // ---- 5. The chat list knows where each chat lives.
   await showTab(tabA);

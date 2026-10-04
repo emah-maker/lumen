@@ -112,7 +112,7 @@ const J = (v) => JSON.stringify(v);
   const mk = (max, cliMax) => TC.createRunSlots({ max, cliMax });
   const go = (slots, id, kind = 'api') => slots.request(id, { kind, start: () => started.push(id) });
   let s = mk(3);
-  check('slots: the default cap is three', TC.DEFAULT_MAX_RUNS === 3 && s.limit === 3);
+  check('slots: a cap of three holds three', s.limit === 3);
   check('slots: three chats start at once', go(s, 'a') === 'started' && go(s, 'b') === 'started' && go(s, 'c') === 'started' && J(started) === '["a","b","c"]', J(started));
   check('slots: the fourth waits, with a visible state', go(s, 'd') === 'queued' && s.state('d') === 'queued' && s.state('a') === 'running' && s.reason('d') === 'limit', `${s.state('d')} ${s.reason('d')}`);
   check('slots: a fifth waits behind it', go(s, 'e') === 'queued' && J(s.waitingIds()) === '["d","e"]');
@@ -128,7 +128,18 @@ const J = (v) => JSON.stringify(v);
   check('slots: ... and then only up to the cap', s.state('g') === 'queued' && s.size() === 2, J(s.runningIds()));
   s.release('d');
   check('slots: ... the waiting one starts once there is room', s.state('g') === 'running');
-  check('slots: the cap is clamped to 1..8', TC.clampRuns(0) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
+  check('slots: the cap is 0 (no limit) or clamped to 1..8', TC.clampRuns(0) === 0 && TC.clampRuns(-2) === 0 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 0 && TC.clampRuns(undefined) === 0 && TC.clampRuns(2.4) === 2);
+
+  // no limit (0, the default)
+  started.length = 0;
+  const u = TC.createRunSlots({ cliMax: 99 });
+  check('slots: the default is no limit', TC.DEFAULT_MAX_RUNS === 0 && u.limit === 0);
+  for (const id of ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10']) go(u, id);
+  check('slots: with no limit every chat starts at once, none waits', u.size() === 10 && u.waitingIds().length === 0 && started.length === 10, J({ r: u.runningIds(), w: u.waitingIds() }));
+  u.setMax(2);
+  check('slots: a limit set while many run makes the next one wait', go(u, 'n11') === 'queued' && u.reason('n11') === 'limit');
+  u.setMax(0);
+  check('slots: going back to no limit starts the waiting one at once', u.state('n11') === 'running' && u.waitingIds().length === 0);
 
   // CLI engines take turns
   started.length = 0;
