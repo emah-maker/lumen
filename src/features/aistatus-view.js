@@ -111,12 +111,13 @@ function shape(rawIn, nowIn) {
   const counts = Object.fromEntries(STATES.map((s) => [s, ais.filter((a) => a.state === s).length]));
   const working = int(raw.runs && raw.runs.working, 99);
   const waiting = int(raw.runs && raw.runs.waiting, 99);
-  const max = Math.max(1, int(raw.runs && raw.runs.max, 99));
+  const rawMax = raw.runs && raw.runs.max;
+  const max = rawMax === Infinity || rawMax === null ? null : Math.max(1, int(rawMax, 99)); // null: no cap (Infinity, null once sent as JSON)
   const tabs = int(raw.aiTabs, 999);
   const handsOff = Boolean(raw.handsOff);
   const live = { working, waiting, max, tabs, handsOff };
   const liveText = [
-    working ? `${working} of ${max} chats working` : 'No chats working',
+    working ? (max == null ? plural(working, 'chat working', 'chats working') : `${working} of ${max} chats working`) : 'No chats working',
     ...(waiting ? [`${waiting} waiting`] : []),
     ...(tabs ? [plural(tabs, 'AI tab', 'AI tabs')] : []),
     ...(handsOff ? ['Hands-off on'] : []),

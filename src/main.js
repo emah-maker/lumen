@@ -7108,10 +7108,11 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
-  // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
-  // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
+  // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
+  // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
+  // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
-  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat: Auto leaves a CLI engine out while another chat is running, see agent.routeAuto)
+  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);

@@ -128,21 +128,34 @@ const J = (v) => JSON.stringify(v);
   check('slots: ... and then only up to the cap', s.state('g') === 'queued' && s.size() === 2, J(s.runningIds()));
   s.release('d');
   check('slots: ... the waiting one starts once there is room', s.state('g') === 'running');
-  check('slots: the cap is clamped to 1..8', TC.clampRuns(0) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
+  check('slots: the cap is clamped to 1..8', TC.clampRuns(-2) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
+  check('slots: 0 / "unlimited" mean no cap', TC.clampRuns(0) === Infinity && TC.clampRuns('0') === Infinity && TC.clampRuns('unlimited') === Infinity && TC.clampRuns(Infinity) === Infinity);
+  {
+    const u = mk(0);
+    const many = Array.from({ length: 25 }, (_, i) => `u${i}`);
+    const kinds = many.map((id, i) => go(u, id, i % 2 ? TC.slotKind('claudecode:default') : TC.slotKind('grokbuild:default')));
+    check('slots: with no cap, 25 Claude Code / Grok Build chats all start at once', kinds.every((k) => k === 'started') && u.size() === 25 && u.waitingIds().length === 0, J(kinds));
+    many.forEach((id) => u.release(id));
+    check('slots: ...and every slot is given back when they end', u.size() === 0);
+    u.setMax(2);
+    check('slots: a cap set later applies again', go(u, 'v1') === 'started' && go(u, 'v2') === 'started' && go(u, 'v3') === 'queued');
+  }
 
-  // CLI engines take turns
+  // Claude Code and Grok Build run side by side; only Antigravity takes turns
   started.length = 0;
   s = mk(3);
-  check('slots: slotKind tells a CLI engine from an API model', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
-  go(s, 'cc1', 'cli');
-  check('slots: a second Claude Code / Grok Build chat waits even with room, and says why', go(s, 'cc2', 'cli') === 'queued' && s.reason('cc2') === 'cli', s.reason('cc2'));
-  check('slots: an API chat still starts beside a CLI chat', go(s, 'api1') === 'started' && s.size() === 2);
-  s.release('cc1');
-  check('slots: the CLI chat in line starts when the CLI chat ends', s.state('cc2') === 'running', J(started));
-  // a CLI chat waiting does not block API chats that fit
+  check('slots: slotKind: Claude Code / Grok Build are CLI chats, Antigravity takes turns', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('antigravity:default') === 'solo' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
+  check('slots: Claude Code and Grok Build chats start together, up to the cap', go(s, 'ccA', 'cli') === 'started' && go(s, 'gbB', 'cli') === 'started' && go(s, 'ccC', 'cli') === 'started' && go(s, 'ccD', 'cli') === 'queued' && s.reason('ccD') === 'limit', s.reason('ccD'));
+  s.cancel('ccD'); s.release('ccA'); s.release('gbB'); s.release('ccC');
+  go(s, 'ag1', 'solo');
+  check('slots: a second Antigravity chat waits even with room, and says why', go(s, 'ag2', 'solo') === 'queued' && s.reason('ag2') === 'cli', s.reason('ag2'));
+  check('slots: an API chat and a Claude Code chat still start beside an Antigravity chat', go(s, 'api1') === 'started' && go(s, 'cc1', 'cli') === 'started' && s.size() === 3);
+  s.release('ag1');
+  check('slots: the Antigravity chat in line starts when the Antigravity chat ends', s.state('ag2') === 'running', J(started));
+  // an Antigravity chat waiting does not block chats that fit
   s = mk(3); started.length = 0;
-  go(s, 'cc1', 'cli'); go(s, 'cc2', 'cli');
-  check('slots: a CLI chat in line does not hold up the API chats behind it', go(s, 'x') === 'started' && s.state('cc2') === 'queued', J(started));
+  go(s, 'ag1', 'solo'); go(s, 'ag2', 'solo');
+  check('slots: an Antigravity chat in line does not hold up the chats behind it', go(s, 'x') === 'started' && s.state('ag2') === 'queued', J(started));
   // a start that throws gives its place back
   s = mk(1);
   s.request('boom', { start: () => { throw new Error('x'); } });
