@@ -6433,7 +6433,8 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null,
+// Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
+const usage = createUsage({ app, claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
