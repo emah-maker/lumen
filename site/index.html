@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lumen: every AI, one browser</title>
-  <meta name="description" content="Lumen is a fast, calm Chromium browser with an AI in the sidebar: Claude (with your own Claude account through Claude Code), ChatGPT, Gemini, Grok or OpenRouter, and any AI agent can drive it over MCP.">
+  <meta name="description" content="Lumen is a fast, calm Chromium browser with an AI in the sidebar. Use your own Claude Code, Grok Build, Codex or Antigravity sign-in, or an API key for Anthropic, OpenAI, xAI, Gemini or OpenRouter. Any AI agent can also drive it over MCP. Windows and macOS.">
   <meta property="og:title" content="Lumen: every AI, one browser">
   <meta property="og:description" content="A Chromium browser with the AI you like built into the sidebar. It reads the page and acts on it, and asks before it does.">
   <meta property="og:image" content="docs/media/sidebar-agent.png">
@@ -31,7 +31,7 @@
     <div class="hero wrap">
       <span class="eyebrow">Free and open source · Windows and macOS</span>
       <h1>Every AI, <span class="grad">one browser.</span></h1>
-      <p class="lede">Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Bring the one you like, switch mid-conversation, or let any AI agent drive it over MCP. It reads the page you're on and acts on it, and it asks before it does.</p>
+      <p class="lede">Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Sign in with the AI tools you already use (Claude Code, Grok Build, Codex, Antigravity) or add an API key, and let Lumen pick the right model for each message. Chats in different tabs run at the same time. Or let any AI agent drive the browser over MCP. It reads the page you're on and acts on it, and it asks before it does.</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/emah-maker/lumen/releases/latest">Download Lumen<span class="ver" data-latest></span></a>
         <a class="btn ghost" href="docs.html">Read the docs</a>
@@ -45,12 +45,15 @@
       <p class="caption">A real, unedited run of about 18 seconds. The capture profile auto-allows actions, so the approval card you'd normally see before the AI first acts on a site isn't shown. <a href="docs/media/agent-task.mp4">MP4</a></p>
 
       <ul class="models" aria-label="Supported AI">
-        <li><b>Claude</b> · your own account via Claude Code</li>
-        <li><b>Claude</b> · Opus, Sonnet, Haiku, Fable by key</li>
-        <li><b>ChatGPT</b> · OpenAI</li>
-        <li><b>Gemini</b></li>
-        <li><b>Grok</b> · xAI and Grok Build</li>
-        <li><b>OpenRouter</b></li>
+        <li><b>Claude Code</b> · your own sign-in</li>
+        <li><b>Grok Build</b> · your own sign-in</li>
+        <li><b>Codex</b> · your own sign-in</li>
+        <li><b>Antigravity</b> · your own sign-in</li>
+        <li><b>Anthropic</b> · API key</li>
+        <li><b>OpenAI</b> · API key</li>
+        <li><b>xAI Grok</b> · API key</li>
+        <li><b>Gemini</b> · API key</li>
+        <li><b>OpenRouter</b> · API key</li>
       </ul>
     </div>
 
@@ -58,10 +61,24 @@
       <div class="wrap">
         <div class="sec-head">
           <h2>An AI that does things, not just chats</h2>
-          <p>Every model gets the same browser tools, and every action goes through the same approvals.</p>
+          <p>Every model gets the same browser tools, and every action goes through the same approvals. Use as many AIs as you have; Lumen only uses the ones you have connected.</p>
         </div>
 
         <div class="feature">
+          <div class="text">
+            <h3>Several chats at once, with the right model for each message</h3>
+            <ul>
+              <li><b>Parallel chats.</b> A chat in each tab, all working at the same time, Claude Code, Grok Build, Codex and Antigravity included. Each chat's tools act on its own tab.</li>
+              <li><b>History that stays.</b> A chat remembers the whole conversation, even after you switch models and back. Each earlier reply is labeled with the model that wrote it.</li>
+              <li><b>Send now.</b> Type while a reply is running and press <b>Send now</b> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>, <kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac): the reply stops and your message goes next.</li>
+              <li><b>Auto.</b> Lumen picks the model for each message on your computer, with no extra model call: a quick question to a small, fast model, a hard one to a stronger one. Each connected AI also has its own <b>Auto</b>. Models that are out of usage are skipped, and each reply says which model answered and why. <a href="docs.html?p=auto-model">How Auto works</a></li>
+              <li><b>Usage bars.</b> A thin bar by each provider in the model menu shows how much of its 5-hour or weekly plan limit is used. You can turn them off in Settings.</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="docs/media/sidebar-agent.png" loading="lazy" alt="The Lumen sidebar after a task, listing each step the AI took"></div>
+        </div>
+
+        <div class="feature flip">
           <div class="text">
             <h3>It reads the page and operates the browser</h3>
             <p><kbd>Ctrl</kbd>+<kbd>J</kbd> opens the sidebar. The page you're on goes with your message, whichever AI answers.</p>
@@ -75,7 +92,7 @@
           <div class="shot"><img src="docs/media/sidebar-agent.png" loading="lazy" alt="The sidebar agent after a task, showing each step it took"></div>
         </div>
 
-        <div class="feature flip">
+        <div class="feature">
           <div class="text">
             <h3>It asks before it acts</h3>
             <ul>
@@ -88,18 +105,18 @@
           <div class="shot"><img src="docs/media/mcp-approval.png" loading="lazy" alt="An approval card in the sidebar: an external agent asks to interact with a site"></div>
         </div>
 
-        <div class="feature">
+        <div class="feature flip">
           <div class="text">
             <h3>Tabs that organize themselves</h3>
-            <p>Group automatically by site or by topic. Topics are found on your computer from titles and addresses, like recipes, one trip, or a library's docs. You can let an AI name the groups if you like.</p>
+            <p>Organize Tabs groups by site or by topic and shows the groups at once. Topics are found on your computer from titles and addresses, like recipes, one trip, one news story or a project's docs. With AI on, the model only refines the names and groups afterwards. Pinned tabs and groups you made yourself are left alone, and you can undo.</p>
           </div>
           <div class="shot"><img src="docs/media/tab-groups.gif" loading="lazy" alt="Tabs about several topics, grouped automatically into named, coloured groups"></div>
         </div>
 
-        <div class="feature flip">
+        <div class="feature">
           <div class="text">
             <h3>A start page that's yours</h3>
-            <p>Widgets sit around the search box: weather, world clock, calendar, Todoist, Gmail, Slack, GitHub, headlines, markets, a TradingView chart or watchlist synced from your account, notes, a countdown, a Pomodoro timer, and your own custom cards.</p>
+            <p>Widgets sit around the search box (and can be stacked into a Smart Stack that cycles through 2 to 10 of them): weather, world clock, calendar, Todoist, Gmail, Slack, GitHub, headlines, markets, a TradingView chart or watchlist synced from your account, notes, a countdown, a Pomodoro timer, and your own custom cards.</p>
             <p>You can move, resize and edit them right on the page, and make them solid, frosted or clear. Search or ask the AI from the same box.</p>
           </div>
           <div class="pair">
@@ -117,13 +134,16 @@
           <p>Chromium, with the parts you'd expect and a few you wouldn't.</p>
         </div>
         <div class="grid">
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 9"/></svg></div><h4>Pictures from any AI</h4><p>Ask for a picture on a model that can't draw and Lumen has another AI you have connected make it. It never uses one you haven't. Choose Automatic, one provider or Off. <a href="docs.html?p=image-generation">Details</a></p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div><h4>Quicker, leaner AI</h4><p>Page actions wait only until the page settles: a simple page opens in about 0.2 s where it took 0.65 s. Older page text in long chats is trimmed to save tokens, and replies stop looking busy as soon as their text ends.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg></div><h4>Permissions like Chrome</h4><p>Sites see "ask" before you decide and hear your answer straight away, for location, notifications, camera, microphone and clipboard. Service workers register, so web apps (PWAs) and push notifications work.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z"/></svg></div><h4>Built-in ad blocker</h4><p>uBlock Origin–compatible lists, built into the browser rather than an extension. Toggle it per site.</p></div>
-          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h4>Saved passwords, opt-in</h4><p>Off by default. Encrypted with your OS keychain, filled only when you click, and never readable by the AI.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h4>Saved passwords and passkeys</h4><p>Saved passwords are off by default, encrypted with your OS keychain, filled only when you click, and never readable by the AI. On Windows, passkeys and Windows Hello work, and no AI tool can start a passkey prompt.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3h6v4H9zM5 7h14v14H5z"/></svg></div><h4>Chrome extensions</h4><p>Install from the Chrome Web Store with <i>Add to Lumen</i>. Their buttons appear in the toolbar.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div><h4>Private by default</h4><p>No telemetry. Background reading runs without your cookies, and the current chat is encrypted at rest.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6"/></svg></div><h4>PDFs and local files</h4><p>Chromium's own PDF viewer, from the web or from disk. Open files with <kbd>Ctrl</kbd>+<kbd>O</kbd> or by dropping them on the window.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></div><h4>Downloads panel</h4><p>Speed and time left, pause and resume, and drag finished files straight into Finder or Explorer.</p></div>
-          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div><h4>Claude usage meter</h4><p>Your Claude plan's 5-hour and weekly limits, with reset times and how much of them Lumen used.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div><h4>Usage at a glance</h4><p>Settings → Usage shows your Claude and Codex plan limits and what Lumen used, with reset times, and the AI status card shows a limit when it is reached.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg></div><h4>Updates that explain themselves</h4><p>New releases install themselves, and a “What's new” card shows once afterwards. You can switch the card off.</p></div>
           <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18M3 12h18M3 17h12"/></svg></div><h4>Import in one step</h4><p>Bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox. Passwords and cookies are never read.</p></div>
         </div>
@@ -138,7 +158,7 @@
       <div class="wrap">
         <div class="sec-head">
           <h2>Drive it from any agent</h2>
-          <p>Lumen is an MCP server. Claude Code, Codex, Antigravity, Cursor or Claude Desktop get the same 28 tools the sidebar uses, with the same approvals.</p>
+          <p>Lumen is an MCP server. Claude Code, Codex, Antigravity, Cursor or Claude Desktop get the same browser tools the sidebar uses, with the same approvals. Settings → AI has an <b>Add to Codex CLI</b> button that works however Codex was installed.</p>
         </div>
         <div class="two">
           <div>
@@ -163,7 +183,7 @@ const page = browser.contexts()[0].pages()[0]; // your open tabs</code></pre>
             <li><b>Every new site still needs your OK.</b> Auto-allow never applies to outside agents.</li>
             <li><b>You can see it working.</b> The toolbar says “Lumen is being driven by …”, each call shows as a step, and <b>Stop</b> disconnects it.</li>
             <li><b>Token-efficient tools.</b> Compact page outlines, diffs, find and batched steps keep agent runs cheap.</li>
-            <li><b>Your Claude account.</b> The sidebar can run your own <code>claude</code> CLI headless, so Lumen never sees your claude.ai login.</li>
+            <li><b>Your own sign-ins.</b> The sidebar can run your own <code>claude</code>, Grok Build or Codex CLI headless, so Lumen never sees your login. Codex gets only Lumen's browser tools, with no shell and no file writes.</li>
           </ul>
         </div>
       </div>
@@ -197,6 +217,8 @@ const page = browser.contexts()[0].pages()[0]; // your open tabs</code></pre>
         <div class="grid">
           <a class="card" href="docs.html?p=readme"><h4>User guide</h4><p>Install, the AI sidebar, approvals, widgets, shortcuts, MCP and Playwright, privacy, and building from source.</p></a>
           <a class="card" href="docs.html?p=architecture"><h4>Architecture</h4><p>Processes, the UI and tabs, the AI and its approvals, outside agents, and updates.</p></a>
+          <a class="card" href="docs.html?p=auto-model"><h4>Auto model</h4><p>How Lumen picks a model for each message, and what it skips.</p></a>
+          <a class="card" href="docs.html?p=image-generation"><h4>Image generation</h4><p>Which connected AI makes a picture, and what happens when one fails.</p></a>
           <a class="card" href="docs.html?p=mcp-tools"><h4>MCP tool reference</h4><p>Every tool an agent can call, with its parameters.</p></a>
           <a class="card" href="docs.html?p=settings"><h4>Settings reference</h4><p>Every setting, its key in <code>settings.json</code>, and its default.</p></a>
           <a class="card" href="docs.html?p=custom-widgets"><h4>Custom widgets</h4><p>The recipe format for your own new-tab cards, with examples.</p></a>

@@ -9,6 +9,8 @@ const REPO = 'https://github.com/emah-maker/lumen';
 const PAGES = {
   readme: { title: 'User guide', file: 'README.md' },
   architecture: { title: 'Architecture', file: 'docs/architecture.md' },
+  'auto-model': { title: 'Auto model', file: 'docs/auto-model.md' },
+  'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
