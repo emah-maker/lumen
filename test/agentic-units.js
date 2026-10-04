@@ -922,8 +922,10 @@ async function toolCallRuns() {
     many.forEach((l) => l.release());
     check('parallel: ...all freed when they end', fakeAgent.engines.sideCount() === 0 && !fakeAgent.engines.leased('claudecode'));
     const agyA = fakeAgent.engines.lease('antigravity');
-    check('parallel: Antigravity still works on one chat at a time (its run token goes through one file)', agyA.shared && fakeAgent.engines.lease('antigravity') === null);
-    agyA.release();
+    const agyB = fakeAgent.engines.lease('antigravity');
+    check('parallel: a second Antigravity chat gets an engine of its own (each chat has its own home folder)', agyA.shared && agyB && !agyB.shared && agyB.engine !== agyA.engine && agyB.engine.kind === 'antigravity' && fakeAgent.engines.sideCount() === 1, String(fakeAgent.engines.sideCount()));
+    agyB.release(); agyA.release();
+    check('parallel: ...and it is freed when its message ends', fakeAgent.engines.sideCount() === 0 && !fakeAgent.engines.leased('antigravity'));
     fakeAgent.inScope = (_scope, fn) => fn();
   }
 

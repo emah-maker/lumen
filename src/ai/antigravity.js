@@ -35,7 +35,8 @@
 // is a Lumen-owned folder (<userData>/antigravity-home) whose .gemini/ holds only what Lumen writes before each
 // message: mcp_config.json naming exactly one server, `lumen` (Lumen's local HTTP MCP server, mcp-http.js, with
 // this run's token) and settings.json (below). The user's own ~/.gemini (their servers, plugins, rules, skills,
-// hooks) is not read or written. The sign-in is in the OS keyring, not under HOME, so it is still there; a user
+// hooks) is not read or written. Each sidebar chat has a home of its own seeded from that one (see "a home folder per
+// chat" below), so chats in different tabs run at the same time, each with its own token file. The sign-in is in the OS keyring, not under HOME, so it is still there; a user
 // who signs in with a Gemini API key keeps working too (modelProvider is copied and GEMINI_API_KEY passed on).
 //
 // WHAT THE MODEL MAY DO: Lumen's browser tools only, as for Claude Code and Grok Build. settings.json denies command,
@@ -157,6 +158,108 @@ function modelNames(stdout) {
 
 const homeFor = (userData) => path.join(userData, 'antigravity-home');
 const sidebarDirFor = (userData) => path.join(userData, 'antigravity-sidebar');
+
+// ---------- a home folder per chat ([parallel Antigravity chats]) ----------
+// agy reads its MCP server (with the run's token) from <HOME>/.gemini/config/mcp_config.json and has no flag for another
+// config path, and it keeps its conversations under that same HOME (.gemini/antigravity-cli/conversations/<id>.db,
+// brain/<id>/). So each sidebar chat gets a home of its own, <userData>/antigravity-chats/<chat id>: chats in different
+// tabs run at the same time without one run's token file being swapped for another's, and a chat's follow-ups resume its
+// conversation because every one of its runs uses the same home. The main home (antigravity-home) stays for `agy models`,
+// for runs that belong to no chat, and as the source a new chat home is seeded from:
+//  - on creation, a copy of the main home's .gemini minus logs, other chats' conversations and the run token file
+//    (CHAT_SEED_SKIP), so first-run state (installation id, onboarding, projects) carries over;
+//  - MIGRATION: a chat saved before this change has its agySession in the main home; the first time its own home lacks
+//    that conversation, the conversation's files are copied over from the main home (migrateConversation);
+//  - SIGN-IN: the sign-in is in the OS keyring (see the header), but any sign-in file agy keeps under HOME (AUTH_FILES) is
+//    copied from the main home before each run when the main one is newer, and back after the run when agy refreshed it.
+// A chat's home is removed when the chat is deleted (removeChatHome), and homes of chats that no longer exist are pruned
+// (pruneChatHomes).
+const chatsDirFor = (userData) => path.join(userData, 'antigravity-chats');
+const SAFE_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+const chatKey = (chatId) => (SAFE_KEY.test(String(chatId)) ? String(chatId) : crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 32));
+const chatHomeFor = (userData, chatId) => (chatId ? path.join(chatsDirFor(userData), chatKey(chatId)) : null);
+const SAFE_SESSION = /^[A-Za-z0-9_.-]{1,128}$/;
+// Under .gemini: what a new chat home does not take from the main home (forward slashes, relative to .gemini).
+const CHAT_SEED_SKIP = new Set(['config/mcp_config.json', 'antigravity-cli/log', 'antigravity-cli/crashes', 'antigravity-cli/updater', 'antigravity-cli/cli.log', 'antigravity-cli/history.jsonl', 'antigravity-cli/conversations', 'antigravity-cli/brain', 'antigravity-cli/implicit', 'antigravity-cli/conversation_summaries.db', 'antigravity-cli/conversation_summaries.db-wal', 'antigravity-cli/conversation_summaries.db-shm']);
+// Sign-in files agy (or the Gemini tooling it grew from) may keep under HOME, relative to .gemini. Kept in step both ways.
+const AUTH_FILES = ['oauth_creds.json', 'google_accounts.json', 'antigravity-cli/credentials.json'];
+
+async function copyIfNewer(from, to) {
+  try {
+    const src = await fs.promises.stat(from);
+    let dst = null;
+    try { dst = await fs.promises.stat(to); } catch { /* none yet */ }
+    if (dst && dst.mtimeMs >= src.mtimeMs) return false;
+    await fs.promises.mkdir(path.dirname(to), { recursive: true });
+    const tmp = `${to}.lumen-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    await fs.promises.copyFile(from, tmp);
+    await fs.promises.utimes(tmp, src.atime, src.mtime);
+    await fs.promises.rename(tmp, to);
+    return true;
+  } catch { return false; }
+}
+
+// Copies the conversation `sessionId` from the main home's .gemini into a chat home's, if the chat home lacks it.
+async function migrateConversation(mainGemini, chatGemini, sessionId) {
+  if (!sessionId || !SAFE_SESSION.test(sessionId)) return false;
+  const cli = (g) => path.join(g, 'antigravity-cli');
+  const hasConv = (g) => { try { return fs.readdirSync(path.join(cli(g), 'conversations')).some((n) => n === sessionId || n.startsWith(`${sessionId}.`)); } catch { return false; } };
+  if (hasConv(chatGemini) || !hasConv(mainGemini)) return false;
+  try {
+    for (const n of fs.readdirSync(path.join(cli(mainGemini), 'conversations'))) {
+      if (n === sessionId || n.startsWith(`${sessionId}.`)) await fs.promises.cp(path.join(cli(mainGemini), 'conversations', n), path.join(cli(chatGemini), 'conversations', n), { recursive: true, force: false, errorOnExist: false });
+    }
+    const brain = path.join(cli(mainGemini), 'brain', sessionId);
+    if (fs.existsSync(brain)) await fs.promises.cp(brain, path.join(cli(chatGemini), 'brain', sessionId), { recursive: true, force: false, errorOnExist: false });
+    for (const n of ['conversation_summaries.db', 'conversation_summaries.db-wal', 'conversation_summaries.db-shm']) {
+      const f = path.join(cli(mainGemini), n);
+      if (fs.existsSync(f) && !fs.existsSync(path.join(cli(chatGemini), n))) await fs.promises.copyFile(f, path.join(cli(chatGemini), n));
+    }
+    return true;
+  } catch { return false; }
+}
+
+// Makes (or refreshes) a chat's home before a run; `sessionId`: the chat's saved conversation (migrated when missing).
+async function prepareChatHome({ mainHome, home, sessionId = null }) {
+  const mainGemini = path.join(mainHome, '.gemini');
+  const gemini = path.join(home, '.gemini');
+  if (!fs.existsSync(gemini)) {
+    await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
+    if (fs.existsSync(mainGemini)) {
+      try {
+        await fs.promises.cp(mainGemini, gemini, {
+          recursive: true,
+          filter: (src) => !CHAT_SEED_SKIP.has(path.relative(mainGemini, src).split(path.sep).join('/')),
+        });
+      } catch { /* a partial seed is fine: agy makes what it lacks */ }
+    }
+    await fs.promises.mkdir(gemini, { recursive: true });
+  }
+  await migrateConversation(mainGemini, gemini, sessionId);
+  for (const f of AUTH_FILES) await copyIfNewer(path.join(mainGemini, f), path.join(gemini, f));
+}
+
+// After a run: a sign-in file agy refreshed in the chat's home goes back to the main home (the next new chat starts from it).
+async function returnAuth({ mainHome, home }) {
+  for (const f of AUTH_FILES) await copyIfNewer(path.join(home, '.gemini', f), path.join(mainHome, '.gemini', f));
+}
+
+// A deleted chat's home goes with it.
+async function removeChatHome(userData, chatId) {
+  const home = chatHomeFor(userData, chatId);
+  if (!home) return false;
+  try { await fs.promises.rm(home, { recursive: true, force: true, maxRetries: 3 }); return true; } catch { return false; }
+}
+
+// Homes of chats not in `keep` (chat ids that still exist or are running) are removed. Resolves the keys removed.
+async function pruneChatHomes(userData, keep) {
+  const kept = new Set([...(keep || [])].filter(Boolean).map(chatKey));
+  let names = [];
+  try { names = await fs.promises.readdir(chatsDirFor(userData)); } catch { return []; }
+  const gone = names.filter((n) => !kept.has(n));
+  for (const n of gone) { try { await fs.promises.rm(path.join(chatsDirFor(userData), n), { recursive: true, force: true, maxRetries: 3 }); } catch { /* in use: next time */ } }
+  return gone;
+}
 
 // The stdio form of the same file (LUMEN_AGY_MCP=stdio): Lumen's bridge process, which names this run by its tag.
 function stdioConfig(bridge, userData, tag) {
@@ -374,24 +477,30 @@ class AntigravityEngine {
     }
     if (signal.aborted) return { text: '', sessionId, stopped: true };
     const folder = fullAccess ? os.homedir() : this.dir; // [full access] the home folder, as in a terminal
-    const { home } = this;
+    // [parallel Antigravity chats] the chat's own home (see prepareChatHome); a run that belongs to no chat uses the main one.
+    const chatHome = chatHomeFor(this.userData, scope?.chatId);
+    const home = chatHome || this.home;
+    await fs.promises.mkdir(this.home, { recursive: true, mode: 0o700 });
+    if (chatHome) await prepareChatHome({ mainHome: this.home, home, sessionId });
     await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
     await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
     const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess });
     const files = []; // everything written for this run, removed after it
+    let mcpFile = null;
+    let mcpText = null; // what this run wrote there: removed afterwards only if no newer run of the chat has replaced it
     try {
       await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider(), fullAccess }), null, 2));
       await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
       const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
       await writeIfChanged(gateFile, gateScript(), 0o700);
       await writeIfChanged(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify(hooksFor(gateFile), null, 2));
-      const mcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
+      mcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
       const stdio = process.env.LUMEN_AGY_MCP === 'stdio' && this.bridge; // the fallback if the HTTP form is not accepted (UNVERIFIED 2)
       if (stdio) this.ensureServer?.();
-      await fs.promises.writeFile(mcpFile, JSON.stringify(stdio ? stdioConfig(this.bridge(), this.userData, tag) : mcpConfig(gateRun)), { mode: 0o600 }); // holds this run's token
-      files.push(mcpFile);
+      mcpText = JSON.stringify(stdio ? stdioConfig(this.bridge(), this.userData, tag) : mcpConfig(gateRun));
+      await fs.promises.writeFile(mcpFile, mcpText, { mode: 0o600 }); // holds this run's token (this chat's home only)
       const imageFiles = [];
       const kept = capImages(images, emit);
       for (const [i, img] of kept.entries()) {
@@ -407,18 +516,21 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
+      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
     } finally {
-      await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {}))); // (the run's token file included)
+      await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})));
+      // The run's token file. A newer message of the same chat ("Send now") may have written its own already: that one stays.
+      if (mcpFile && mcpText) { try { if (await fs.promises.readFile(mcpFile, 'utf8') === mcpText) await fs.promises.rm(mcpFile, { force: true }); } catch { /* gone */ } }
+      if (chatHome) await returnAuth({ mainHome: this.home, home });
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false }) {
+  async attempt({ bin, gate, gateRun, tag, home = this.home, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun, fullAccess }), cwd: folder });
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home, run: gateRun, fullAccess }), cwd: folder });
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     let over = false;
@@ -528,6 +640,9 @@ class AntigravityEngine {
   }
 }
 
+// A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
+AntigravityEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
+
 AntigravityEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { AntigravityEngine, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, chatHomeFor, chatsDirFor, prepareChatHome, migrateConversation, removeChatHome, pruneChatHomes, AUTH_FILES, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
