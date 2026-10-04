@@ -14,14 +14,16 @@
 // nobody else holds (the last chat after a restart, or one whose tab closed), which the tab you are
 // on adopts so the sidebar never opens empty on a chat that still has a history.
 
-const DEFAULT_MAX_RUNS = 3;
+const DEFAULT_MAX_RUNS = 0; // 0: no limit (every chat that is sent a message works at once)
 const MAX_RUNS_LIMIT = 8;
 
-// maxChatRuns 0, 'unlimited' or Infinity: no cap (every chat starts at once).
+// maxChatRuns 0 (the default), 'unlimited', Infinity, or anything unreadable: no cap (every chat starts at once).
+// Any other number is held to 1..MAX_RUNS_LIMIT.
 const clampRuns = (n) => {
-  if (n === 0 || n === '0' || n === 'unlimited' || n === Infinity) return Infinity;
+  if (n === 'unlimited' || n === Infinity) return Infinity;
   const v = Math.round(Number(n));
-  return Number.isFinite(v) ? Math.min(MAX_RUNS_LIMIT, Math.max(1, v)) : DEFAULT_MAX_RUNS;
+  if (!Number.isFinite(v) || v <= 0) return Infinity;
+  return Math.min(MAX_RUNS_LIMIT, v);
 };
 
 // ---- tab <-> chat

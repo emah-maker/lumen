@@ -112,7 +112,7 @@ const J = (v) => JSON.stringify(v);
   const mk = (max, cliMax) => TC.createRunSlots({ max, cliMax });
   const go = (slots, id, kind = 'api') => slots.request(id, { kind, start: () => started.push(id) });
   let s = mk(3);
-  check('slots: the default cap is three', TC.DEFAULT_MAX_RUNS === 3 && s.limit === 3);
+  check('slots: a cap of three holds three', s.limit === 3);
   check('slots: three chats start at once', go(s, 'a') === 'started' && go(s, 'b') === 'started' && go(s, 'c') === 'started' && J(started) === '["a","b","c"]', J(started));
   check('slots: the fourth waits, with a visible state', go(s, 'd') === 'queued' && s.state('d') === 'queued' && s.state('a') === 'running' && s.reason('d') === 'limit', `${s.state('d')} ${s.reason('d')}`);
   check('slots: a fifth waits behind it', go(s, 'e') === 'queued' && J(s.waitingIds()) === '["d","e"]');
@@ -128,8 +128,8 @@ const J = (v) => JSON.stringify(v);
   check('slots: ... and then only up to the cap', s.state('g') === 'queued' && s.size() === 2, J(s.runningIds()));
   s.release('d');
   check('slots: ... the waiting one starts once there is room', s.state('g') === 'running');
-  check('slots: the cap is clamped to 1..8', TC.clampRuns(-2) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
-  check('slots: 0 / "unlimited" mean no cap', TC.clampRuns(0) === Infinity && TC.clampRuns('0') === Infinity && TC.clampRuns('unlimited') === Infinity && TC.clampRuns(Infinity) === Infinity);
+  check('slots: the cap is clamped to 1..8', TC.clampRuns(99) === 8 && TC.clampRuns(2.4) === 2 && TC.clampRuns(1) === 1);
+  check('slots: 0 / "unlimited" mean no cap', TC.clampRuns(0) === Infinity && TC.clampRuns('0') === Infinity && TC.clampRuns('unlimited') === Infinity && TC.clampRuns(Infinity) === Infinity && TC.clampRuns(-2) === Infinity && TC.clampRuns('x') === Infinity && TC.clampRuns(undefined) === Infinity);
   {
     const u = mk(0);
     const many = Array.from({ length: 25 }, (_, i) => `u${i}`);
@@ -139,6 +139,19 @@ const J = (v) => JSON.stringify(v);
     check('slots: ...and every slot is given back when they end', u.size() === 0);
     u.setMax(2);
     check('slots: a cap set later applies again', go(u, 'v1') === 'started' && go(u, 'v2') === 'started' && go(u, 'v3') === 'queued');
+  }
+
+  {
+    // no limit (0, the default)
+    started.length = 0;
+    const n = TC.createRunSlots({ cliMax: 99 });
+    check('slots: the default is no limit', TC.DEFAULT_MAX_RUNS === 0 && n.limit === Infinity);
+    for (const id of ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10']) go(n, id);
+    check('slots: with no limit every chat starts at once, none waits', n.size() === 10 && n.waitingIds().length === 0 && started.length === 10, J({ r: n.runningIds(), w: n.waitingIds() }));
+    n.setMax(2);
+    check('slots: a limit set while many run makes the next one wait', go(n, 'n11') === 'queued' && n.reason('n11') === 'limit');
+    n.setMax(0);
+    check('slots: going back to no limit starts the waiting one at once', n.state('n11') === 'running' && n.waitingIds().length === 0);
   }
 
   // Claude Code and Grok Build run side by side; only Antigravity takes turns
