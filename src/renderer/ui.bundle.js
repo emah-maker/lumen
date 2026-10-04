@@ -1580,7 +1580,7 @@ function setupError(text) {
   el.textContent = text;
 }
 function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
-for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity']) optional(id).addEventListener('click', clearSetupError, true);
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity', 'setup-codex']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
   if (s.model) clearSetupError();
@@ -1604,6 +1604,10 @@ async function refreshSetup() {
   const agy = s.antigravity || {};
   optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
   optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
+  // Codex (OpenAI's CLI): offered once it is found on this computer; the click turns it on in the sidebar.
+  const cx = s.codex || {};
+  optional('setup-codex').hidden = !cx.installed || !window.assistant.useCodex;
+  optional('setup-codex-detail').textContent = cx.signedIn === false ? t('setup.codex.signedOut') : t('setup.codex.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -1720,6 +1724,13 @@ optional('setup-antigravity').onclick = async () => {
   if (await window.assistant.setModel('antigravity:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-codex').onclick = async () => {
+  const r = await window.assistant.useCodex?.().catch(() => null);
+  if (!r?.installed) { setupError(t('setup.codex.notFound')); return; }
+  if (!r.signedIn) { setupError(t('setup.codex.signedOut')); return; }
+  if (await window.assistant.setModel('codex:default')) await loadModels();
+  refreshSetup();
+};
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -1784,6 +1795,12 @@ const ASSISTANTS = {
     // A neutral mark: an arch with a spark above it.
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M3 13.2 8 3.4l5 9.8"/><path d="M5.6 9.6h4.8"/><circle cx="8" cy="1.8" r=".8"/></svg>',
   },
+  Codex: {
+    name: 'Codex',
+    tint: 'currentColor',
+    // OpenAI's blossom, as ChatGPT's mark, with a prompt caret in the middle.
+    svg: '<svg viewBox="0 0 16 16" class="mark"><g transform="translate(8 8)"><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4"/><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4" transform="rotate(120)"/><path d="M0-5.6a2.8 2.8 0 0 1 2.8 2.8v3.4" transform="rotate(240)"/></g><path d="M6.6 6.8 8.4 8 6.6 9.2"/></svg>',
+  },
   Gemini: {
     name: 'Gemini',
     tint: 'url(#gemini-grad)',
@@ -1795,7 +1812,7 @@ let assistantIdentity = null;
 function setAssistantIdentity(group) {
   // Claude Code answers as Claude, Grok Build as Grok. No group (nothing connected) or an unknown
   // one: the neutral mark.
-  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group] || ASSISTANTS.AI;
+  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group === 'Your OpenAI account' ? 'Codex' : group] || ASSISTANTS.AI;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
   assistantIdentity = who;
@@ -7681,7 +7698,7 @@ $('agent-stop')?.addEventListener('click', () => {
   // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }) };
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }), 'codex:': window.t('composer.ask', { name: 'Codex' }) };
   function syncEngine() {
     const value = String(select?.value || '');
     const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));

@@ -2890,6 +2890,8 @@ function cheapTopicModel() {
 function cheapTopicModelFor() {
   let chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
   if (autoModel.isAuto(chosen)) chosen = agent.messages.settings?.autoFrom ? agent.messages.settings.model : (autoConcrete(chosen, 'classification') || DEFAULT_MODEL); // [auto model] the cheapest fit
+  // Codex answers chats only (its runs need Lumen's MCP session and take turns): a one-shot job goes to another connected model.
+  if (/^codex:/.test(chosen)) chosen = modelOptions().find((o) => !/^codex:/.test(o.id) && !o.id.endsWith(':__more') && o.signedIn !== false && !autoModel.isAuto(o.id))?.id || DEFAULT_MODEL;
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
   if (provider === 'anthropic') return 'claude-haiku-4-5';
@@ -3432,6 +3434,7 @@ function homeAssistant() {
   if (String(modelId).startsWith('claudecode:')) return named('Claude');
   if (String(modelId).startsWith('grokbuild:')) return named('Grok');
   if (String(modelId).startsWith('antigravity:')) return named('Antigravity');
+  if (String(modelId).startsWith('codex:')) return named('Codex');
   const { provider } = providers.splitModel(modelId);
   return named(ASSISTANT_NAMES[provider] || 'AI');
 }
@@ -4130,7 +4133,8 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
-onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+let lastCodexSidebar = null;
+onSettingsWritten = (s) => { if (s.codexSidebar !== lastCodexSidebar) { const first = lastCodexSidebar === null; lastCodexSidebar = s.codexSidebar; if (!first) { try { modelsChanged(); } catch { /* not set up yet */ } } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
@@ -7189,7 +7193,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
   // Claude Code and Grok Build chats run side by side like any other: each run has its own MCP connection, found by
-  // its own tag (features/ai-agents.js leaseEngine). Only Antigravity still takes turns (tab-chats.js slotKind).
+  // its own tag (features/ai-agents.js leaseEngine). Every CLI chat runs on a slot of kind 'cli' (tab-chats.js slotKind).
   runSlots.setMax(readSettings().maxChatRuns);
   const kind = tabChatsLib.slotKind(autoModel.scopeOf(messages.settings?.autoFrom) ? messages.settings.autoFrom : messages.settings?.model || effectiveModel()); // ('auto' counts as an API chat; a provider's own Auto, 'grokbuild:auto', as that provider)
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
@@ -7338,6 +7342,7 @@ ipcMain.handle('chats:delete', (event, id) => {
   }
   chatBind.unbindChat(id); // [chat per tab]
   require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
+  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
@@ -7416,7 +7421,13 @@ setTimeout(() => {
   try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
   // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
-  try { if (chats().list().length) require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean))).catch(() => {}); } catch { /* nothing to prune */ }
+  try {
+    if (chats().list().length) {
+      const keep = new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean));
+      require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), keep).catch(() => {});
+      require('./ai/codex').pruneChatHomes(app.getPath('userData'), keep).catch(() => {}); // Codex homes (threads) likewise
+    }
+  } catch { /* nothing to prune */ }
 }, 30000).unref?.();
 // The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
 ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
@@ -7532,10 +7543,12 @@ ipcMain.handle('settings:get', () => {
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
     grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
     antigravity: aiAgents.cliStatus().antigravity, // same, for Antigravity (which replaces Gemini CLI)
+    codex: aiAgents.cliStatus().codex, // same, for Codex (offered once found and signed in)
   };
 });
 ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
 ipcMain.handle('settings:use-antigravity', () => aiAgents.useAntigravity());
+ipcMain.handle('settings:use-codex', () => aiAgents.useCodex());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept
