@@ -63,7 +63,7 @@ const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? { readOnlyHint: tr
 // ({ name, description, input_schema }); `callTool(name, args, session)` runs one and returns
 // { content, isError }. `enabled()` reflects the "Allow AI agents to connect" setting.
 // `engine`: the tag a bridge started by Lumen's own Claude Code engine carries (claude-code.js).
-function createSession({ tools, callTool, enabled, onEvent, send, engine = null }) {
+function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null }) {
   const session = { clientName: 'An AI agent', initialized: false, controller: new AbortController(), engine };
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
@@ -93,7 +93,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
         case 'ping':
           return reply(id, {});
         case 'tools/list':
-          session.listed = true; // the agent now has Lumen's tools (grok-build.js waits for this)
+          if (!session.listed) { session.listed = true; try { onListed?.(session); } catch {} } // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
             tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema, ...(annotationsFor(t.name) ? { annotations: annotationsFor(t.name) } : {}) })),
           });
@@ -116,7 +116,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, callTool, enabled, onEvent, onClose = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
+function startServer({ userData, tools, callTool, enabled, onEvent, onClose = null, onListed = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -152,7 +152,7 @@ function startServer({ userData, tools, callTool, enabled, onEvent, onClose = nu
         }
         authed = true;
         clearTimeout(authTimer);
-        current = createSession({ tools, callTool, enabled, onEvent, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current = createSession({ tools, callTool, enabled, onEvent, onListed, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
         sessions.add(current);
         send({ lumenAuth: 'ok' });
         return;
