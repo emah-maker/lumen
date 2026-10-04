@@ -42,6 +42,11 @@
 // search or another server's tool is reported anyway (offItemOf), the same last line of defence grok-build.js and antigravity.js have.
 // Never --dangerously-bypass-approvals-and-sandbox, --full-auto or a writable sandbox.
 //
+// KEPT PROCESS (features/codex-warm.js, Settings > AI > Keep Codex connected, on by default): the same engine as `codex app-server`
+// (JSON-RPC on stdio: thread/start | thread/resume, turn/start, turn/interrupt, streamed items) stays up per chat between messages, in the
+// same Codex home, with the same config.toml, read-only sandbox, environment and offItemOf check. run() offers each message to it first
+// (this.keepWarm) and does the headless run below when it returns null (no app-server, a thread it can't resume, the setting off).
+//
 // CHECKED against codex-cli 0.160.0 (`--help`, `features list`, `exec --strict-config`, `mcp add`, `debug models`, no sign-in needed):
 // exec's --json, --sandbox read-only, -m, --color, --skip-git-repo-check, -i/--image and `resume [SESSION_ID] [PROMPT|-]`; `url` +
 // `bearer_token_env_var` and default_tools_approval_mode for HTTP servers; sandbox_mode, approval_policy and web_search = "disabled";
@@ -54,7 +59,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, killTree, validModel } = require('./cli-utils');
+const { exists, killTree, validModel, fullAccessRejected } = require('./cli-utils');
 const { removeDir, removeDirSync } = require('./temp-dirs');
 const locate = require('./codex-locate');
 const codexUsage = require('./codex-usage');
@@ -65,8 +70,9 @@ const INSTALL_HINT = `Install it with: ${process.platform === 'win32' ? 'winget 
 const SIGN_IN_HINT = 'Open a terminal, run `codex login` (or run `codex` and choose Sign in with ChatGPT).';
 
 // Turns a CLI failure into what the user should do about it. `text`: the best failure string run() found.
-function describeFailure(text, code) {
+function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
+  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Codex', setting: 'Give Codex full access to this computer' }); if (rejected) return rejected; }
   if (/not (logged|signed) in|please (log|sign) ?in|codex login|log ?in required|unauthori[sz]ed|\b401\b|refresh token|invalid (api )?key|incorrect api key|missing (bearer|api key)|authentication (failed|required)|no credentials/i.test(t)) {
     return { text: `Codex is not signed in. ${SIGN_IN_HINT} Lumen never sees your OpenAI login.` };
   }
@@ -165,6 +171,12 @@ const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').repla
 // The environment variable that carries a run's MCP token to Codex (config.toml's bearer_token_env_var).
 const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 
+// FULL ACCESS (Settings > AI > "Give Codex full access to this computer", codexFullAccess, off by default) keeps the three tools a terminal
+// user expects (FULL_ON: shell, unified exec, view_image) and turns web search live; everything else above stays off. Sandbox
+// danger-full-access in config.toml and argv, approval never, the user's whole environment, a longer watchdog (FULL_WATCHDOG_MS), and
+// offItemOf lets Codex's own tools through (another MCP server's tool is still refused). The working folder is still the empty Lumen
+// folder (a home folder costs seconds per message): the system note names the user's home folder and says relative paths start in an
+// empty scratch folder. Never --dangerously-bypass-approvals-and-sandbox: `--sandbox danger-full-access` and approval never do the job.
 // The [features] that give Codex a tool of its own (checked against `codex features list` and `codex exec --strict-config`, codex-cli 0.160.0):
 // a shell, pictures, a browser or the computer, sub-agents, apps and plugins, hooks, and so on. All off: Lumen's MCP tools are all Codex gets.
 // (`unified_exec` is on whatever the config says in that version; shell_tool = false, the read-only sandbox and offItemOf cover it.)
@@ -172,19 +184,21 @@ const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 // model sees none of Lumen's tools ("Code Mode is unavailable because code-mode host is disabled"). Checked with a signed-in run.
 const OFF_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'apps', 'multi_agent', 'multi_agent_v2', 'in_app_browser', 'hooks', 'plugins', 'tool_suggest', 'skill_search', 'sleep_tool', 'goals', 'memories', 'request_permissions_tool'];
 
+const FULL_ON = ['shell_tool', 'unified_exec', 'view_image']; // [full access] the OFF_FEATURES a terminal user expects back
+const FULL_WATCHDOG_MS = 15 * 60 * 1000; // a silent shell command is not a hang
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.
-function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null } = {}) {
+function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null, fullAccess = false } = {}) {
   const lines = [
     '# Written by Lumen before every message: a Codex home of Lumen\'s own. Edits are overwritten.',
     ...(model !== 'default' && validModel(model) ? [`model = ${q(model)}`] : []),
-    'sandbox_mode = "read-only"',
+    `sandbox_mode = "${fullAccess ? 'danger-full-access' : 'read-only'}"`,
     'approval_policy = "never"',
     'check_for_update_on_startup = false',
-    'web_search = "disabled"',
+    `web_search = "${fullAccess ? 'live' : 'disabled'}"`,
     '',
     '[features]',
-    ...OFF_FEATURES.map((k) => `${k} = false`),
+    ...OFF_FEATURES.filter((k) => !(fullAccess && FULL_ON.includes(k))).map((k) => `${k} = false`),
     '',
     '[mcp_servers.lumen]',
   ];
@@ -199,13 +213,13 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
 
 // The argv for one message (exported for tests; never joined into a shell string, and no quote or % in it: a .cmd shim may be run through cmd.exe).
 // The prompt is read from stdin ("-"). imageFiles: attached pictures. conversation: a thread id to resume.
-function buildArgs({ model = 'default', conversation = null, imageFiles = [], effort = '' } = {}) {
+function buildArgs({ model = 'default', conversation = null, imageFiles = [], effort = '', fullAccess = false } = {}) {
   return [
     'exec',
     '--json',
     '--skip-git-repo-check',
     '--color', 'never',
-    '--sandbox', 'read-only', // never workspace-write, danger-full-access, --full-auto or --dangerously-bypass-approvals-and-sandbox
+    '--sandbox', fullAccess ? 'danger-full-access' : 'read-only', // never workspace-write, --full-auto or --dangerously-bypass-approvals-and-sandbox
     ...(model !== 'default' && validModel(model) ? ['-m', model] : []),
     ...effortLib.cliArgs('codex', effort), // Settings → AI → AI providers: -c model_reasoning_effort=<level> (none: Codex's own default)
     ...imageFiles.map((f) => `--image=${f}`),
@@ -226,18 +240,21 @@ function promptFor({ prompt, systemPrompt, resume }) {
 // The only variables of Lumen's environment the codex child gets: what a process needs to start and reach the network, plus the
 // API-key sign-in. Everything else of the user's shell environment stays behind.
 const ENV_KEEP = /^(CODEX_API_KEY|OPENAI_API_KEY|OPENAI_BASE_URL|PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS)$/i;
-function buildEnv({ home, base = process.env, run = null, extra = {} } = {}) {
-  const kept = Object.fromEntries(Object.entries(base).filter(([k, v]) => ENV_KEEP.test(k) && typeof v === 'string'));
+// [full access] fullAccess: the user's whole environment (as in a terminal, minus Electron's own switch).
+function buildEnv({ home, base = process.env, run = null, extra = {}, fullAccess = false } = {}) {
+  const kept = Object.fromEntries(Object.entries(base).filter(([k, v]) => (fullAccess ? k !== 'ELECTRON_RUN_AS_NODE' && typeof v === 'string' : ENV_KEEP.test(k) && typeof v === 'string')));
   return { ...kept, ...extra, ...(run ? { [TOKEN_ENV]: run.mcpToken } : {}), CODEX_HOME: home, NO_COLOR: '1' };
 }
 
 // A reported item that is not one of Lumen's tools: the label to stop the run with, else null.
-function offItemOf(item) {
+function offItemOf(item, { fullAccess = false } = {}) {
   if (!item || typeof item !== 'object') return null;
   const type = String(item.type || '');
-  if (type === 'command_execution') return 'a shell command';
-  if (type === 'file_change') return 'a file change';
-  if (type === 'web_search') return 'a web search';
+  if (!fullAccess) { // [full access] Codex's own tools are expected then
+    if (type === 'command_execution') return 'a shell command';
+    if (type === 'file_change') return 'a file change';
+    if (type === 'web_search') return 'a web search';
+  }
   if (type === 'mcp_tool_call' && String(item.server || '') !== 'lumen') return `${String(item.server || 'another server').slice(0, 40)}/${String(item.tool || '').slice(0, 40)}`;
   return null;
 }
@@ -373,7 +390,15 @@ class CodexEngine {
   // One message. Resolves { text, sessionId (Codex's thread id), stopped?, failed?, expired?, planLimit?, usage?, rateLimit?, model? };
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '' }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false }) {
+    fullAccess = fullAccess === true; // [full access] Settings > AI (codexFullAccess)
+    // [keep connected] The chat's kept `codex app-server` (features/codex-warm.js) takes the message when it can: null means it did not
+    // (setting off, no app-server, a thread it can't resume...), and nothing was sent, so a headless run below does it.
+    if (this.keepWarm && scope?.chatId != null) {
+      const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, emit, runAgent, scope });
+      if (warm) return warm;
+      this.keepWarm.dropChat(scope.chatId); // (the headless run rewrites this chat's config.toml: no kept process may be left on the old one)
+    }
     const { spec, gate } = await this.prepare();
     if (!spec) {
       emit({ type: 'error', text: `Codex isn't installed. ${INSTALL_HINT}` });
@@ -397,7 +422,7 @@ class CodexEngine {
     try {
       const stdio = process.env.LUMEN_CODEX_MCP === 'stdio' && this.bridge;
       if (stdio) this.ensureServer?.();
-      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
+      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, fullAccess, ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
       const imageFiles = [];
       for (const [i, img] of images.slice(0, 8).entries()) {
         const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[img.media_type];
@@ -406,8 +431,8 @@ class CodexEngine {
         await fs.promises.writeFile(f, Buffer.from(img.data, 'base64'), { mode: 0o600 });
         imageFiles.push(f);
       }
-      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles, effort });
-      return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired });
+      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles, effort, fullAccess });
+      return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired, fullAccess });
     } finally {
       gate.close(tag); // (attempt closes it at the end of the process; this covers a failure before it started)
       const cleanup = async () => {
@@ -444,22 +469,23 @@ class CodexEngine {
     gone.then(() => set.delete(gone));
   }
 
-  async attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input, sessionId, resume, model, signal, emit, runAgent, scope = null, quietExpired = false }) {
+  async attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input, sessionId, resume, model, signal, emit, runAgent, scope = null, quietExpired = false, fullAccess = false }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true };
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Codex…' });
     let inv;
     try { inv = locate.buildInvocation(spec, argv); } catch (err) { emit({ type: 'error', text: err.message }); return { text: '', sessionId, failed: true }; }
-    const env = buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {} });
+    const env = buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
     const child = this.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
+    const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     this.active = active;
     let over = false;
     let stalled = false;
     active.arm = () => {
       clearTimeout(active.dog);
       if (!this.watchdogMs || over || active.inflight > 0) return;
-      active.dog = setTimeout(() => { stalled = true; this.kill(child); }, this.watchdogMs);
+      active.dog = setTimeout(() => { stalled = true; this.kill(child); }, watchdogMs);
     };
     const onAbort = () => this.kill(child);
     signal.addEventListener('abort', onAbort, { once: true });
@@ -493,7 +519,7 @@ class CodexEngine {
         emit({ type: 'text', text: delta });
       } else if (ev.kind === 'thinking') emit({ type: 'thinking', text: ev.text });
       else if (ev.kind === 'item') {
-        const bad = offItemOf(ev.item);
+        const bad = offItemOf(ev.item, { fullAccess });
         if (bad) { offItem = bad; this.kill(child); }
       } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; if (!failedMsg && !offItem) turnDone(); }
       else if (ev.kind === 'failed') failedMsg = ev.error || 'The turn failed.';
@@ -544,7 +570,7 @@ class CodexEngine {
     }
     if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served };
     if (stalled) {
-      emit({ type: 'error', text: `Codex stopped responding for ${Math.round(this.watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
+      emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId: conversation, failed: true, usage, rateLimit };
     }
     if (code === 'ENOENT') {
@@ -563,7 +589,7 @@ class CodexEngine {
       emit({ type: 'error', text: 'Codex no longer has this chat’s conversation. Send your message again: Lumen will start a new one with the chat so far.' });
       return { text, sessionId: null, failed: true };
     }
-    const failure = describeFailure(failText, code);
+    const failure = describeFailure(failText, code, { fullAccess });
     if (/not signed in/.test(failure.text)) { this.signedOut = true; this.statusCache = null; }
     emit({ type: 'error', ...failure });
     return { text, sessionId: conversation, failed: true, usage, rateLimit, planLimit: codexUsage.limitMessage(failText), model: served };
@@ -578,4 +604,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { CodexEngine, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };

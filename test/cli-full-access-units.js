@@ -33,19 +33,19 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
 
 (async () => {
   // ---------- settings ----------
-  const KEYS = ['claudeCodeFullAccess', 'grokBuildFullAccess', 'antigravityFullAccess'];
-  check('settings: one key per command-line AI, and the master switch helper knows exactly those', CA.KEYS.join() === KEYS.join() && CA.CLI_ACCESS.map((c) => c.name).join() === 'Claude Code,Grok Build,Antigravity', CA.KEYS.join());
+  const KEYS = ['claudeCodeFullAccess', 'grokBuildFullAccess', 'antigravityFullAccess', 'codexFullAccess'];
+  check('settings: one key per command-line AI, and the master switch helper knows exactly those', CA.KEYS.join() === KEYS.join() && CA.CLI_ACCESS.map((c) => c.name).join() === 'Claude Code,Grok Build,Antigravity,Codex', CA.KEYS.join());
   check('settings: every one is off by default', KEYS.every((k) => DEFAULTS[k] === false), JSON.stringify(KEYS.map((k) => DEFAULTS[k])));
   check('settings: booleans are accepted as they are', KEYS.every((k) => validate(k, true) === true && validate(k, false) === false), '');
   check('settings: anything else is refused, never coerced to "on"', KEYS.every((k) => [1, 'true', 'yes', null, undefined, {}, [], 0, ''].every((v) => validate(k, v) === null)), '');
-  check('settings: an unknown key (a fourth CLI, a typo) has no default and validates to nothing', !('codexFullAccess' in DEFAULTS) && validate('codexFullAccess', true) === null && validate('cliFullAccess', true) === null, '');
+  check('settings: an unknown key (another CLI, a typo) has no default and validates to nothing', !('geminiFullAccess' in DEFAULTS) && validate('geminiFullAccess', true) === null && validate('cliFullAccess', true) === null, '');
   check('settings: the master switch is not a stored setting', !('cliFullAccess' in DEFAULTS), '');
 
   // ---------- the master switch ----------
-  const prefs = (c, g, a) => ({ claudeCodeFullAccess: c, grokBuildFullAccess: g, antigravityFullAccess: a });
-  check('master: none on is off, all on is on', CA.masterState(prefs(false, false, false)) === 'off' && CA.masterState(prefs(true, true, true)) === 'on', '');
+  const prefs = (c, g, a, x = a) => ({ claudeCodeFullAccess: c, grokBuildFullAccess: g, antigravityFullAccess: a, codexFullAccess: x });
+  check('master: none on is off, all on is on', CA.masterState(prefs(false, false, false)) === 'off' && CA.masterState(prefs(true, true, true)) === 'on' && CA.masterState(prefs(true, true, true, false)) === 'mixed', '');
   check('master: any other mix is mixed (indeterminate), whichever one differs', [prefs(true, false, false), prefs(false, true, false), prefs(false, false, true), prefs(true, true, false), prefs(true, false, true), prefs(false, true, true)].every((p) => CA.masterState(p) === 'mixed'), '');
-  check('master: missing or non-boolean values count as off', CA.masterState({}) === 'off' && CA.masterState(null) === 'off' && CA.masterState({ claudeCodeFullAccess: 'true', grokBuildFullAccess: 1, antigravityFullAccess: {} }) === 'off', '');
+  check('master: missing or non-boolean values count as off', CA.masterState({}) === 'off' && CA.masterState(null) === 'off' && CA.masterState({ claudeCodeFullAccess: 'true', grokBuildFullAccess: 1, antigravityFullAccess: {}, codexFullAccess: 'on' }) === 'off', '');
   check('master: a click turns everything on only from off; from on or mixed it clears everything', CA.masterNext('off') === true && CA.masterNext('on') === false && CA.masterNext('mixed') === false, '');
   check('master: what it writes is every CLI set to the same value', JSON.stringify(CA.masterValues(true)) === JSON.stringify(prefs(true, true, true)) && JSON.stringify(CA.masterValues(false)) === JSON.stringify(prefs(false, false, false)), '');
   const mixedClick = CA.masterValues(CA.masterNext(CA.masterState(prefs(true, false, true))));
@@ -168,7 +168,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
   const so = gOff.f.spawns[0];
   const sn = gOn.f.spawns[0];
   check('grok engine off: no full-access flags, Lumen\'s empty sidebar folder, the lockdown config.toml, the gate run not full', !so.argv.includes('--always-approve') && flag(so.argv, '--permission-mode') === 'dontAsk' && real(so.opts.cwd) === real(path.join(gOff.data, 'grok-sidebar')) && /deny = \["Bash"/.test(so.configToml) && gOff.gate.opened[0].opts?.fullAccess === false, JSON.stringify([so.argv.slice(0, 12), so.opts.cwd, gOff.gate.opened[0].opts]));
-  check('grok engine on: the full-access flags, the home folder, a config.toml without deny rules, the gate run opened as full', sn.argv.includes('--always-approve') && flag(sn.argv, '--permission-mode') === 'bypassPermissions' && real(sn.opts.cwd) === real(os.homedir()) && flag(sn.argv, '--cwd') === os.homedir() && !/deny =/.test(sn.configToml) && gOn.gate.opened[0].opts?.fullAccess === true && sn.opts.env.HOME === os.homedir(), JSON.stringify([sn.argv, sn.opts.cwd, sn.configToml]));
+  check('grok engine on: the full-access flags, Lumen\'s empty folder (not the home folder), a config.toml without deny rules, the gate run opened as full', sn.argv.includes('--always-approve') && flag(sn.argv, '--permission-mode') === 'bypassPermissions' && real(sn.opts.cwd) === real(path.join(gOn.data, 'grok-sidebar')) && flag(sn.argv, '--cwd') === sn.opts.cwd && !/deny =/.test(sn.configToml) && gOn.gate.opened[0].opts?.fullAccess === true && sn.opts.env.HOME === os.homedir(), JSON.stringify([sn.argv, sn.opts.cwd, sn.configToml]));
   check('grok engine on: Lumen\'s gate URL and MCP token still go to the child, and the stream check does not kill the run', sn.opts.env.LUMEN_HOOK_URL?.includes('/hook/') && sn.opts.env.LUMEN_MCP_TOKEN === 'm'.repeat(48) && gOn.out.text === 'ok' && !gOn.out.failed, JSON.stringify(gOn.out));
   check('grok engine: a background task never gets full access even when asked', !gBg.f.spawns[0].argv.includes('--always-approve') && flag(gBg.f.spawns[0].argv, '--permission-mode') === 'dontAsk' && gBg.gate.opened[0].opts?.fullAccess === false, gBg.f.spawns[0].argv.join(' '));
   // With the stream check on (off: a tool that is not Lumen's ends the run), full access lets Grok's own tool through.
@@ -244,6 +244,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cliaccess-'));
   check('agent: Antigravity gets fullAccess only when its own setting is on', aOffTurn.calls[0].fullAccess === false && aOnTurn.calls[0].fullAccess === true && (await turnOf(newAgent({ claudeCodeFullAccess: () => true, grokBuildFullAccess: () => true }), 'antigravity:default', 'antigravityTurn')).calls[0].fullAccess === false, '');
   check('agent: the Antigravity system note names the user\'s real home folder when on, and says "no shell" when off', aOnTurn.calls[0].systemPrompt.includes(os.homedir()) && /full access to the user's computer/.test(aOnTurn.calls[0].systemPrompt) && /You have no shell, file or other tools/.test(aOffTurn.calls[0].systemPrompt) && !aOffTurn.calls[0].systemPrompt.includes(os.homedir()), aOnTurn.calls[0].systemPrompt.slice(-300));
   check('agent: the notes are exported with the same switch', /full access/.test(grokBuildNote(null, { fullAccess: true })) && !/full access/.test(grokBuildNote(null)) && /full access/.test(antigravityNote(null, new Date(), { fullAccess: true })) && !/full access/.test(antigravityNote(null, new Date())), '');
+  check('agent: the Grok Build full-access note names the home folder and says relative paths start in an empty scratch folder', grokBuildNote(null, { fullAccess: true, home: '/h/u$er' }).includes('home folder is /h/u$er;') && /empty scratch folder/.test(grokBuildNote(null, { fullAccess: true })) && !/scratch/.test(grokBuildNote(null)), '');
   // A conversation's system note rides on its first message, so changing the setting starts a new conversation.
   const flip = newAgent({ antigravityFullAccess: () => false });
   const t1 = await turnOf(flip, 'antigravity:default', 'antigravityTurn');

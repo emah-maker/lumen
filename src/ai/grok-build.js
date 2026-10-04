@@ -172,8 +172,9 @@
 //    any `lumen__*` name that is not one of Lumen's tools, and the UserPromptSubmit check still stops a run whose hooks did
 //    not load. Lumen's own tools are unchanged: they go through the MCP server (callTool), so site approvals, the approval
 //    card and "Don't let the AI act on my pages" apply to them exactly as before.
-//  - the stream check (toolWatch) is off (Grok's own tools are expected), the working folder and HOME are the user's home
-//    folder, and the child gets the user's whole environment instead of ENV_KEEP's short list. GROK_HOME stays Lumen's, so
+//  - the stream check (toolWatch) is off (Grok's own tools are expected), HOME is the user's home folder, the working folder
+//    stays Lumen's empty one (Grok looks through its working folder on every message: ~9 s measured for a large home folder;
+//    the system note gives the home path, and absolute paths work anywhere), and the child gets the user's whole environment instead of ENV_KEEP's short list. GROK_HOME stays Lumen's, so
 //    the user's own ~/.grok config, MCP servers and skills are still not loaded; their sign-in is linked as before.
 //  - the inactivity watchdog allows FULL_WATCHDOG_MS: a long shell command prints nothing while it runs.
 //  - the system prompt (replaced, as always) says so in agent.js's GROK_BUILD_FULL_NOTE.
@@ -909,7 +910,7 @@ class GrokBuildEngine {
     // outlive this one message's tag, which is fresh every time.
     const gateRun = gate.open(tag, sessionId, { fullAccess });
     try { this.onFresh?.({ sessionId, resume }); } catch {}
-    const workDir = fullAccess ? os.homedir() : dir; // [full access] the home folder, as in a terminal
+    const workDir = dir; // (full access too: Lumen's empty folder, see "FULL ACCESS")
     const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: workDir, model, maxTurns, background: this.background, fullAccess, effort });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.

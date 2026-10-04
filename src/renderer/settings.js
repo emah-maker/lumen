@@ -68,6 +68,7 @@ const CLI_ACCESS_EXTRA = {
   claudeCodeFullAccess: ', and use your own MCP servers, skills and slash commands',
   grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
   antigravityFullAccess: ', with its terminal sandbox off',
+  codexFullAccess: ', with its sandbox off and its own shell, patch and web search tools',
 };
 const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Off by default; applies from the next message.`;
 function syncCliAccess() {
@@ -86,7 +87,7 @@ function cliAccessRows() {
     for (const key of CA.KEYS) await save(key, value);
     syncCliAccess();
   });
-  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build, Antigravity and Codex together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);
@@ -318,7 +319,8 @@ async function buildAi(card) {
     toggle('codexSidebar', tr('settings.ai.codexSidebar', 'Offer Codex in the model menu'), tr('settings.ai.codexSidebarDesc', 'Lets the sidebar chat answer with your own Codex sign-in (the Codex CLI), using only Lumen’s browser tools: no shell, no file writes.')),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('grokKeepConnected', tr('settings.ai.grokKeepConnected', 'Keep Grok Build connected'), tr('settings.ai.grokKeepConnectedDesc', 'Each chat that uses Grok Build keeps its own Grok Build running between messages, so replies start sooner. Each one uses about 70 MB of memory while it waits. Messages with images, and Grok Build with full access, still start Grok Build each time.')),
-    select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
+    toggle('codexKeepConnected', tr('settings.ai.codexKeepConnected', 'Keep Codex connected'), tr('settings.ai.codexKeepConnectedDesc', 'Each chat that uses Codex keeps its own Codex running between messages, so replies start sooner and stream as they are written. Each one uses about 80 MB of memory while it waits.')),
+    select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build, Codex or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build or Codex, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
       [[5, tr('settings.ai.grokKeepIdle.5', '5 minutes')], [15, tr('settings.ai.grokKeepIdle.15', '15 minutes')], [30, tr('settings.ai.grokKeepIdle.30', '30 minutes')], [60, tr('settings.ai.grokKeepIdle.60', '1 hour')], [0, tr('settings.ai.grokKeepIdle.never', 'Never')]], { number: true }),
   ];
   card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
