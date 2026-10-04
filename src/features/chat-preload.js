@@ -14,6 +14,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: () => ipcRenderer.send('agent:stop'),
+    resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
     // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.

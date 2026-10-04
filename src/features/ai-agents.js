@@ -162,7 +162,21 @@ function setupAiAgents(deps) {
   // take effect without a restart. Cheap when repeated.)
   // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
   ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true }); });
+  // Every Claude Code engine: the sidebar's, each chat's own, the background and side ones.
+  const ccEngines = () => [claudeCode, ...warmChats.engines(), ...bgEngines, ...sideEngines].filter((e) => e && typeof e.purgeDirs === 'function');
+  app.on?.('will-quit', () => {
+    const engines = ccEngines(); // (before disposeAll forgets the chats' engines)
+    claudeCode?.dispose(); warmChats.disposeAll(); for (const e of [...bgEngines, ...sideEngines]) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true });
+    for (const e of engines) { try { e.purgeDirs(); } catch {} } // their temp folders (each holds an MCP token) go before the app does
+  });
+  // Folders (lumen-cc-*) that a crash or a forced quit left behind, a day old or more: swept once, well after start-up.
+  if (!process.env.CLAUDE_BROWSER_PROFILE) {
+    const sweep = setTimeout(() => {
+      const live = new Set(); for (const e of ccEngines()) for (const d of e.workDirs || []) live.add(d);
+      require('../ai/temp-dirs').sweepStale({ live }).catch(() => {});
+    }, 45000);
+    sweep.unref?.();
+  }
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see

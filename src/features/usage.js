@@ -346,7 +346,7 @@ function createUsage(deps) {
         child.on('error', (err) => { ended(); resolve({ error: err.message }); });
         child.on('close', (code) => { ended(); resolve({ code, stdout, stderr }); });
       });
-      fs.rm(dir, { recursive: true, force: true }, () => {});
+      require('../ai/temp-dirs').removeDir(dir); // (with retries: the CLI's tree may still hold it as its cwd for a moment)
       if (out.error) return { available: false, reason: out.error };
       let json;
       try { json = JSON.parse(out.stdout); } catch { return { available: false, reason: (out.stderr || out.stdout || 'No answer from Claude Code.').trim().split('\n')[0].slice(0, 200) }; }

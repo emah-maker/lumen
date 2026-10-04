@@ -3922,6 +3922,7 @@ const chats = () => (chatStore ||= createChatStore({
   legacyFile: CHAT_FILE(),
 }));
 let chatId = null; // the open chat
+const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
 // Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
 // after a restart starts with none, as before).
 const approvedByChat = new Map();
@@ -3992,10 +3993,14 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   chatGeneration++;
   clearTimeout(saveChatTimer);
   if (chatId) approvedByChat.set(chatId, agent.approvedHosts);
+  // An empty chat is never saved, so a model picked in it is kept here until the chat is opened again (or gets a message).
+  if (chatId && !agent.messages.length && agent.messages.settings) emptyChatSettings.set(chatId, agent.messages.settings);
   if (agent.running) agent.detach(); // its run goes on with its own messages and approved sites
   else agent.reset();
   if (live) agent.attach(live.messages, approvedByChat.get(id));
   else if (snapshot) agent.restore(snapshot);
+  else if (id && emptyChatSettings.has(id)) agent.messages.settings = emptyChatSettings.get(id);
+  if (id) emptyChatSettings.delete(id);
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   unreadChats.delete(chatId);
@@ -4222,6 +4227,18 @@ function syncToSender(event) {
   const rec = recOfSender(event?.sender);
   if (rec) withWindow(rec, () => followFront({ push: false }));
 }
+// The sidebar asks which chat it should be showing: a tab switch that skipped the sidebar (a tool was acting at that moment, see
+// switchTab) leaves it on the chat it had, with that chat's running state. The answer is the authoritative view of the chat of
+// this window's front tab; the sidebar applies it when it differs from what it shows.
+ipcMain.handle('chat:resync', (event) => {
+  const wc = event.sender;
+  if (!wc || wc.isDestroyed() || chatPageRt.isChatSender(event)) return null;
+  syncToSender(event);
+  shownChat.set(wc, chatId);
+  const run = chatRuns.get(chatId);
+  if (runIsLive(run)) run.sender = wc;
+  return { view: chatView() };
+});
 // Every other window's sidebar follows its own tab again (a chat moved away from a tab it was showing in).
 function refreshSidebars() {
   if (winRecs.size < 2) return;
@@ -7095,7 +7112,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
   chatPageRt.beginRun(event, { text: askText, runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
-  mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })) }); // another window's sidebar showing this chat shows the turn too
+  mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, chatId: runChat, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })) }); // another window's sidebar showing this chat shows the turn too
   const finishQueued = () => { // a run that never got a slot (stopped, or its chat deleted while it waited)
     runSlots.cancel(runChat);
     if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
@@ -7133,8 +7150,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
-    chatPageRt.emit(to(), 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
-    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId }); // and another window's sidebar that shows this chat too
+    chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));

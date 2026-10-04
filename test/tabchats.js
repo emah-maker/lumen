@@ -24,12 +24,14 @@ const launch = (profile) => electron.launch({
 const fakeModel = (app) => app.evaluate(() => {
   global.__seen = {};
   global.__switchTarget = {};
+  global.__models = {};
   global.__inflight = new Set();
   const holds = {};
   const hold = (who) => (holds[who] ||= (() => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; })());
   global.__release = (who) => hold(who).resolve();
   global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
     const who = /chat-(\w+)/.exec(JSON.stringify(params.messages[0]))?.[1] || '?';
+    global.__models[who] = params.model;
     const results = params.messages.filter((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
     const usage = { input_tokens: 100, output_tokens: 20 };
     if (!results.length && /^SW\d$/.test(who)) { // a chat whose own tool call switches tabs (no hold): global.__switchTarget[who]
@@ -192,6 +194,30 @@ const fakeModel = (app) => app.evaluate(() => {
   const boundR = await chatOfTab(tabR);
   check('a run own switch_tab to a fresh tab still binds that tab to the run chat', Boolean(chatS2) && boundR === chatS2, JSON.stringify({ boundR, chatS2, seen: await tc(() => global.__seen) }));
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  // ---- 3b. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
+  const tX = await openTab(`${base}/s`); await waitFor(async () => (await active()) === tX);
+  await send('chat-QA: go'); await inflight('QA');
+  const tY = await openTab(`${base}/u`); await waitFor(async () => (await active()) === tY);
+  await waitFor(() => tc(() => global.__tabChats.shown() === global.__tabChats.chatId()));
+  await waitFor(emptyNow, 4000);
+  const idX = await tc((_e, t) => global.__tabChats.bindings.chatOf(t), tX);
+  const busy = () => ui.evaluate(() => document.body.classList.contains('agent-active'));
+  // (a) A late run start of chat X reaches the sidebar that now shows Y: it must not turn Y's sidebar into a running one.
+  await app.evaluate(({ webContents }, chat) => { const w = webContents.getAllWebContents().find((c) => /index\.html/.test(c.getURL())); w.send('chat:run-start', { text: 'chat-QA: late', runId: 1, chatId: chat, images: [] }); }, idX);
+  await sleep(400);
+  check('a late run start of another chat does not make the shown chat look running', !(await busy()) && (await bubbles()).length === 0, `${await busy()} ${await bubbles()}`);
+  // (b) A tab switch that reaches the sidebar late or not at all (a tool of X was acting when it happened) leaves the sidebar on S's
+  // running state; the first message typed in Y must still be sent at once, not queued until X ends.
+  await showTab(tX); await waitFor(async () => /QA is working/.test(await messagesText()));
+  await app.evaluate((_e, id) => { const a = global.__agent; const orig = a.currentScope; a.currentScope = () => ({}); try { a.browser.switchTab(id); } finally { a.currentScope = orig; } }, tY);
+  await waitFor(async () => (await active()) === tY);
+  await sleep(300);
+  await send('chat-QB: go');
+  check('the first message in a new tab is sent at once while another chat runs (not queued behind it)', Boolean(await waitFor(() => tc(() => global.__inflight.has('QB')), 4000)), `${await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)} queued`);
+  check('... and shows no queued notice', (await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)) === 0, '');
+  await tc(() => { global.__release('QA'); global.__release('QB'); });
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  check('X ending does not leave Y stuck running', await waitFor(async () => !(await busy()), 6000), 'still busy');
 
   // ---- 4. The cap: three chats work, the fourth waits its turn (and says so), then runs.
   check('a new profile has no limit on chats working at once', (await tc(() => global.__tabChats.slots.limit)) === Infinity, await tc(() => global.__tabChats.slots.limit));
@@ -421,6 +447,45 @@ const fakeModel = (app) => app.evaluate(() => {
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
   const savedX = await tc(() => global.__chats.store().list().some((c) => c.title.includes('chat-X')));
   check('it finished and is in the chat list', savedX, 'not saved');
+
+  // ---- 6b. A model picked in an empty chat stays with that chat: two empty tab chats, two picks.
+  {
+    await tc(() => { for (const t of global.__windows.list()[0].tabs) void t; }); // (settle)
+    const pickerValue = () => ui.evaluate(() => document.getElementById('model')?.value);
+    const pick = (id) => ui.evaluate((m) => window.assistant.setModel(m), id);
+    const synced = (tab) => waitFor(() => tc((_e, t) => global.__tabChats.shown() === global.__tabChats.chatId() && global.__tabChats.chatId() === global.__tabChats.bindings.chatOf(t), tab));
+    const tabE = await openTab(`${base}/e`);
+    await waitFor(async () => (await active()) === tabE);
+    await synced(tabE);
+    await pick('claude-sonnet-5');
+    const tabF = await openTab(`${base}/f`);
+    await waitFor(async () => (await active()) === tabF);
+    await synced(tabF);
+    check('a second empty chat starts on the saved default (the last pick), not the first chat pick', await waitFor(async () => (await pickerValue()) === 'claude-sonnet-5'), await pickerValue());
+    await pick('claude-haiku-4-5');
+    check('picking in the second empty chat shows that pick', await waitFor(async () => (await pickerValue()) === 'claude-haiku-4-5'), await pickerValue());
+    await showTab(tabE);
+    await synced(tabE);
+    check('back on the first empty chat the picker shows its own pick', await waitFor(async () => (await pickerValue()) === 'claude-sonnet-5'), await pickerValue());
+    const listed = await tc(() => global.__chats.store().list().length);
+    await send('chat-PICKONE: hello');
+    await inflight('PICKONE');
+    check('the first empty chat runs on its own pick, not the last one', await waitFor(() => tc(() => global.__models.PICKONE === 'claude-sonnet-5')), await tc(() => global.__models.PICKONE));
+    await showTab(tabF);
+    await synced(tabF);
+    check('the second empty chat still shows its own pick', await waitFor(async () => (await pickerValue()) === 'claude-haiku-4-5'), await pickerValue());
+    check('... and no chat was saved for the pick alone', (await tc(() => global.__chats.store().list().length)) <= listed + 1, await tc(() => global.__chats.store().list().length));
+    await send('chat-PICKTWO: hello');
+    await inflight('PICKTWO');
+    check('the second empty chat runs on its own pick', await waitFor(() => tc(() => global.__models.PICKTWO === 'claude-haiku-4-5')), await tc(() => global.__models.PICKTWO));
+    await tc(() => { global.__release('PICKONE'); global.__release('PICKTWO'); });
+    await waitFor(() => tc(() => global.__seen.PICKONE && global.__seen.PICKTWO));
+    await waitFor(async () => /PICKTWO finished/.test(await messagesText()));
+    await showTab(tabE);
+    await synced(tabE);
+    await waitFor(async () => /PICKONE finished/.test(await messagesText()));
+    await sleep(500); // (both chats saved)
+  }
 
   // ---- 7. A tab moves to another window and takes its chat, and a task working in it, along.
   const mover = await openTab(`${base}/moveme`);
