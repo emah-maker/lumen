@@ -23,8 +23,9 @@ const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
 const NEWTAB_HTML = path.join(__dirname, '..', 'renderer', 'private-newtab.html');
 const TOP = 78; // tab strip + toolbar height in renderer/private.css
 const PROMPTABLE = new Set(['media', 'geolocation', 'notifications', 'clipboard-read']); // permission.<name> in locales/en.json
-// As main.js: protected video (mediaKeySystem) plays, and screen sharing's own picker (pickScreen) is the consent.
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']);
+// As main.js (browser/site-permissions.js): protected video plays, screen sharing's own picker is the consent, wake lock
+// and sensors are never asked, and decisions are read under the canonical origin.
+const SITE_PERMISSIONS = require('../browser/site-permissions');
 const { createBurstLimit } = require('./popup-guard'); // a page opening windows or tabs in a loop
 const { RISKY_TYPES } = require('./downloads'); // programs and scripts: never saved without the user choosing to
 const FAVICON_MAX = 256 * 1024;
@@ -130,11 +131,10 @@ function createPrivateWindows(deps) {
       });
     }
     ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
-      if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+      if (SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) })) return callback(true);
       if (permission === 'openExternal') return callback(Boolean(await deps.askOpenExternal?.(wc, details, rec.externalDecisions)));
-      let origin;
-      try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch { return callback(false); }
-      if (!PROMPTABLE.has(permission) || !isWebUrl(origin)) return callback(false);
+      const origin = SITE_PERMISSIONS.requestOrigin(wc, details);
+      if (!PROMPTABLE.has(permission) || !origin) return callback(false);
       const key = `${origin}|${permission}`;
       if (rec.decisions.has(key)) return callback(rec.decisions.get(key));
       if (deps.permissionDefault?.(permission) === 'block' || !alive(rec)) return callback(false); // [settings] default: Block
@@ -145,8 +145,11 @@ function createPrivateWindows(deps) {
       });
       rec.decisions.set(key, response === 1);
       callback(response === 1);
+      SITE_PERMISSIONS.notify(ses);
     });
-    ses.setPermissionCheckHandler((_wc, permission, origin) => ALWAYS_ALLOWED.has(permission) || rec.decisions.get(`${origin}|${permission}`) === true);
+    ses.setPermissionCheckHandler((_wc, permission, origin, details) =>
+      SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) }) || rec.decisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+    SITE_PERMISSIONS.register(ses, { decisions: rec.decisions, isBlocked: (permission) => deps.permissionDefault?.(permission) === 'block' });
     if (deps.pickScreen) ses.setDisplayMediaRequestHandler((request, callback) => deps.pickScreen(request, callback, rec.win));
     ses.on('will-download', (_event, item) => startDownload(rec, item));
   }
