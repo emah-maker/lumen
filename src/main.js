@@ -4219,11 +4219,21 @@ function bindOpenChatHere(sender) {
   pushAttention();
   refreshSidebars();
 }
+// [keep connected] A chat's tab closed: once no tab shows the chat (a few seconds later: another tab may adopt it) and it
+// isn't working, its kept Grok Build process ends (features/grok-warm.js). Nothing is read unless a process is kept.
+function grokChatLeft(chat, { now = false } = {}) {
+  if (!chat) return;
+  const sessionOf = () => (chatRuns.get(chat)?.messages || (chat === chatId ? agent.messages : chats().load(chat)))?.settings?.gbSession || null;
+  if (now) { aiAgents.grokChatGone(sessionOf); return; }
+  const t = setTimeout(() => { if (!chatBind.claimed(chat) && !chatRuns.has(chat)) aiAgents.grokChatGone(sessionOf); }, 5000);
+  t.unref?.();
+}
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
 function chatTabGone(id, goneRec = null) {
   const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
+  grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
@@ -7246,6 +7256,7 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 // Deleting the open chat leaves an empty one in its place.
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
+  grokChatLeft(id, { now: true }); // [keep connected] (read before the chat is removed)
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again

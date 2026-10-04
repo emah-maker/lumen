@@ -129,8 +129,9 @@ function setupAiAgents(deps) {
   // text: what is already typed (routed for the model guess); the preload passes it through.
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
-  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
+  // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); grokBuild?.keepWarm?.disposeAll({ now: true }); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -153,9 +154,26 @@ function setupAiAgents(deps) {
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
       grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
+      // [keep connected] Settings > AI > Keep Grok Build connected (grokKeepConnected, off by default): each chat's own
+      // long-lived `grok agent stdio` process (features/grok-warm.js). Read live: turning it off ends them at the next look.
+      grokBuild.keepWarm = require('./grok-warm').createGrokWarm({
+        engine: grokBuild,
+        enabled: grokKeepOn,
+        idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+      });
     }
     return grokBuild;
   };
+  const grokKeepOn = () => readSettings().grokKeepConnected === true && grokSidebar();
+  // The open chat's Grok Build process, started ahead of its message (composer focus, startup): only with the setting on,
+  // Grok Build found, and the chat on Grok Build (agent.grokWarmSpec). With the setting off, any kept process ends.
+  function warmGrokChat() {
+    if (!grokBuild?.keepWarm && !grokKeepOn()) return;
+    if (!grokKeepOn()) { grokBuild.keepWarm.disposeAll(); return; }
+    if (!grokBuildFound) return;
+    const spec = agent.grokWarmSpec?.();
+    if (spec) grokBuildEngine().keepWarm.prewarm(spec);
+  }
 
   // "Warm up Grok Build when Lumen starts" (grokWarmup, default on; features/grok-warmup.js): the setup a message
   // starts with (binary, HTTP gate, config, sign-in link) is done in the background once the first tab has loaded
@@ -615,7 +633,7 @@ function setupAiAgents(deps) {
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false)])
-          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); });
+          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); try { warmGrokChat(); } catch {} });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
@@ -623,6 +641,12 @@ function setupAiAgents(deps) {
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // [keep connected] A chat left Lumen's tabs or was deleted: its kept Grok Build process ends. sessionOf() is asked only
+    // when a process is kept (it may read the chat from disk).
+    grokChatGone(sessionOf) {
+      if (!grokBuild?.keepWarm?.count()) return;
+      try { grokBuild.keepWarm.drop(sessionOf()); } catch {}
+    },
     // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
     async useGrokBuild() {
       if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });
