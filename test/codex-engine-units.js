@@ -181,7 +181,7 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
     const ac = new AbortController();
     const { engine, gate } = make([{ type: 'thread.started', thread_id: '0199aaaa-bbbb-cccc-dddd-eeeeffff0002' }, { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'Partial' } }], { close: false });
     const p = engine.run({ prompt: 'x', systemPrompt: 's', signal: ac.signal, emit, scope: { chatId: 'chat-2' } });
-    await new Promise((r) => setTimeout(r, 80));
+    for (let i = 0; i < 400 && !emitted.some((e) => e.type === 'text' && /Partial/.test(e.text)); i++) await new Promise((r) => setTimeout(r, 10)); // (the partial text is on screen)
     ac.abort();
     const out = await p;
     check('stop: aborting kills the process tree, closes the token, and returns the partial text with the thread (so Send now can resume it)', out.stopped === true && out.text === 'Partial' && out.sessionId === '0199aaaa-bbbb-cccc-dddd-eeeeffff0002' && killed.includes(spawned[0].child) && gate.closed.length >= 1, J({ out, killed: killed.length }));

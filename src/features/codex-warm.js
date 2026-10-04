@@ -498,6 +498,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
   }
 
   const count = () => procs.size + pending.size;
+  const settled = () => pending.size === 0; // no start in flight (a prewarm has finished or was cancelled)
 
   // The owner of an MCP tag among the kept processes, starting ones included (features/ai-agents.js engineForSession).
   const owner = (tag) => {
@@ -507,7 +508,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     return null;
   };
 
-  return { run, prewarm, dropChat, disposeAll, count, owner, stats };
+  return { run, prewarm, dropChat, disposeAll, count, settled, owner, stats };
 }
 
 module.exports = { createCodexWarm, modeOf, approvalAnswer, offItemOf, reasoningText, addUsage, OPT_OUT, IDLE_MS, MAX_PROCS };
