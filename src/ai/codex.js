@@ -22,9 +22,9 @@
 //      {"type":"turn.failed","error":{"message"}} and {"type":"error","message"} (also sent for "Reconnecting… 2/5": only
 //      turn.failed ends a turn). There are no text deltas: an agent_message arrives whole.
 //  - Continue a conversation: `codex exec [options] resume <thread id> -`.
-//  - Models: `-m <slug>` (and `model = "<slug>"` in config.toml). There is no model-list command; the CLI keeps what it fetched for
-//    the account in <CODEX_HOME>/models_cache.json ({ models: [{ slug, display_name, visibility, priority }] }), which is read here
-//    (modelsFromCache) with the docs' own recommended ids as the fallback (FALLBACK_MODELS).
+//  - Models: `-m <slug>` (and `model = "<slug>"` in config.toml). `codex debug models` prints the catalog as JSON (works signed out:
+//    { models: [{ slug, display_name, visibility, priority }] }), which is read here (modelsFromCache); <CODEX_HOME>/models_cache.json
+//    has the same shape and is the second source, the documented ids (FALLBACK_MODELS) the last.
 //  - MCP: [mcp_servers.<name>] in <CODEX_HOME>/config.toml: `url` + `bearer_token_env_var` for streamable HTTP (the token is in the
 //    child's environment, never in a file or on the command line), or `command`/`args`/`env` for stdio; startup_timeout_sec (10),
 //    tool_timeout_sec (60), default_tools_approval_mode (auto | prompt | writes | approve).
@@ -42,13 +42,13 @@
 // search or another server's tool is reported anyway (offItemOf), the same last line of defence grok-build.js and antigravity.js have.
 // Never --dangerously-bypass-approvals-and-sandbox, --full-auto or a writable sandbox.
 //
-// UNVERIFIED (needs a live run; check before relying on them):
-//   1. That the [features] keys (shell_tool, unified_exec, apply_patch_freeform, web_search_request, view_image_tool, ...) are the
-//      names this Codex uses; an unknown one should only be warned about. offItemOf is the backstop either way.
-//   2. That `exec resume <id> -` takes the prompt on stdin and --image=<file> before `resume` applies to it.
-//   3. That default_tools_approval_mode and bearer_token_env_var exist in the installed Codex (docs: yes). If a Codex rejects
-//      config.toml the run fails with its message (describeFailure) and says to update Codex.
-//   4. The exact words of Codex's sign-in and usage-limit failures (describeFailure matches broadly, as the others do).
+// CHECKED against codex-cli 0.160.0 (`--help`, `features list`, `exec --strict-config`, `mcp add`, `debug models`, no sign-in needed):
+// exec's --json, --sandbox read-only, -m, --color, --skip-git-repo-check, -i/--image and `resume [SESSION_ID] [PROMPT|-]`; `url` +
+// `bearer_token_env_var` and default_tools_approval_mode for HTTP servers; sandbox_mode, approval_policy and web_search = "disabled";
+// the [features] names (OFF_FEATURES). Differences found and fixed: include_apply_patch_tool and features.view_image_tool are unknown
+// (view_image is the name), apply_patch_freeform is removed, web_search_request is deprecated (web_search = "disabled" replaces it).
+// Still needs a signed-in run: the tool set Codex really exposes (unified_exec stays on), `resume` with the options before it, the
+// exact failure words (describeFailure matches broadly), and the --image=<file> form.
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -85,10 +85,10 @@ function describeFailure(text, code) {
 // The recommended ids from OpenAI's model docs (2026-10), used when Codex has not cached a list for the account.
 // tier: fast / balanced / strong (what Auto routes by; ids Codex adds later are tiered by name, tierFor).
 const FALLBACK_MODELS = [
-  { id: 'gpt-6-astra', name: 'GPT-6 Astra', tier: 'strong' },
   { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', tier: 'balanced' },
+  { id: 'gpt-6-astra', name: 'GPT-6 Astra', tier: 'strong' },
   { id: 'gpt-6-luna', name: 'GPT-6 Luna', tier: 'fast' },
-  { id: 'gpt-5.5', name: 'GPT-5.5', tier: 'strong' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', tier: 'balanced' },
 ];
 // A tier for a model id Lumen does not know: the vendor's own size words.
 function tierFor(id) {
@@ -164,6 +164,11 @@ const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').repla
 // The environment variable that carries a run's MCP token to Codex (config.toml's bearer_token_env_var).
 const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 
+// The [features] that give Codex a tool of its own (checked against `codex features list` and `codex exec --strict-config`, codex-cli 0.160.0):
+// a shell, pictures, a browser or the computer, sub-agents, apps and plugins, hooks, and so on. All off: Lumen's MCP tools are all Codex gets.
+// (`unified_exec` is on whatever the config says in that version; shell_tool = false, the read-only sandbox and offItemOf cover it.)
+const OFF_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'apps', 'multi_agent', 'multi_agent_v2', 'in_app_browser', 'hooks', 'plugins', 'tool_suggest', 'skill_search', 'sleep_tool', 'goals', 'memories', 'code_mode_host', 'request_permissions_tool'];
+
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.
 function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null } = {}) {
@@ -173,14 +178,10 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
     'sandbox_mode = "read-only"',
     'approval_policy = "never"',
     'check_for_update_on_startup = false',
-    'include_apply_patch_tool = false',
+    'web_search = "disabled"',
     '',
     '[features]',
-    'shell_tool = false',
-    'unified_exec = false',
-    'apply_patch_freeform = false',
-    'web_search_request = false',
-    'view_image_tool = false',
+    ...OFF_FEATURES.map((k) => `${k} = false`),
     '',
     '[mcp_servers.lumen]',
   ];
@@ -325,7 +326,10 @@ class CodexEngine {
     const userHome = this.userHome();
     const login = await codexUsage.loginState({ home: userHome, run: (argv) => this.runCli(spec, argv, { home: userHome }) });
     let cached = [];
-    try { cached = modelsFromCache(fs.readFileSync(path.join(userHome, 'models_cache.json'), 'utf8')); } catch { /* none yet */ }
+    // `codex debug models` (the catalog as JSON, no sign-in or model call), else the cache file Codex keeps for the account.
+    const dbg = await this.runCli(spec, ['debug', 'models'], { home: userHome, timeout: 20000 });
+    if (dbg.ok) cached = modelsFromCache(dbg.stdout.slice(Math.max(0, dbg.stdout.indexOf('{'))));
+    if (!cached.length) { try { cached = modelsFromCache(fs.readFileSync(path.join(userHome, 'models_cache.json'), 'utf8')); } catch { /* none yet */ } }
     const value = { signedIn: this.signedOut ? false : login.signedIn === null ? 'unknown' : login.signedIn, method: login.method || null, version: spec.version || null, models: cached.length ? cached : FALLBACK_MODELS, detail: null };
     this.statusCache = { at: Date.now(), value };
     return { installed: true, ...value };
