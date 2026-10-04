@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Math in replies lines up and renders more often.** A long formula in a sentence ("Revolutions: N = 90 rev/min × 1 min = 90 rev.") sat raised above the words around it; it now sits on the line. A formula that starts with a relation ("Work $= 2\pi N	au pprox 15{,}834$ ft·lbf") used to show its raw LaTeX; it is typeset now.
+
 ## 0.5.11 (2026-10-04)
 
 - **Grok Build uses Lumen's browser tools faster.** Each of Lumen's tool calls used to wait about 0.6 s for Lumen's safety check to start as a separate program. Grok now only asks that check about its own built-in tools (the shell and the rest, which are still refused or put to you as before) and takes Lumen's tools straight to Lumen, which already checks every call itself. A follow-up message also no longer restarts the kept Grok connection when only the model name in Lumen's note to it changes.
