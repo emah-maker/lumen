@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.10 (2026-10-04)
+
+- **Codex in the sidebar can use the browser again.** With Codex CLI 0.160, the sidebar's Codex saw none of Lumen's tools (it said "Code Mode is unavailable because code-mode host is disabled"), so it couldn't open, read or click pages. Codex now hands Lumen's tools to the model through its Code Mode, which Lumen had switched off; it is on again, and Codex still gets only Lumen's tools.
+
 ## 0.5.9 (2026-10-04)
 
 - **Codex works as an AI in Lumen's sidebar.** Before, Codex could connect to Lumen but Lumen couldn't use Codex. Now, with the Codex CLI installed and signed in, **Codex** and each model it lists (GPT-6 Astra, Sol, Luna…) are in the model picker under "Your OpenAI account", and your chat answers with your own Codex sign-in. It gets only Lumen's browser tools (read-only sandbox, no shell, no file writes), runs side by side in several tabs, keeps its conversation, takes **Send now** and **Stop**, and shows its usage. **Codex · Auto** picks a fast or strong model for each message (`/think`, `/fast`), is skipped while Codex is out of usage (the OpenAI API answers instead when you have a key), and Codex's models join the main Auto (Settings → AI → Auto may use). Turn it off in Settings → AI → **Offer Codex in the model menu**. Checked against the real Codex CLI (0.160.0): a real `codex exec` session lists and calls Lumen's tools, and two Codex chats in two tabs each read their own tab.
