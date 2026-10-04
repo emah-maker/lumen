@@ -361,12 +361,13 @@ function stemWord(w) {
   if (/[Ѐ-ӿ]/.test(w)) { const base = w.length > 3 ? w.replace(CYRILLIC_ENDING, '') : w; return base.length >= 3 ? base : w; } // "борща" and "борщ" meet; never under 3 letters
   return stem(w);
 }
+const PERIOD_TOKEN = /^(?:q[1-4]|fy\d{2,4})$/i; // "Q3" in four titles of four sites is a quarter's work: its own topic word
 function tokens(text) {
   const out = [];
   for (const raw of String(text).split(/[^\p{L}\p{N}]+/u)) {
     if (CJK.test(raw)) { out.push(...cjkTokens(raw)); continue; }
     const w = raw.toLowerCase();
-    if (w.length < 3 || /^\d+$/.test(w) || STOPWORDS.has(w)) continue;
+    if ((w.length < 3 && !PERIOD_TOKEN.test(w)) || /^\d+$/.test(w) || STOPWORDS.has(w)) continue;
     const key = stemWord(w);
     if (RU_FILLER.has(key)) continue;
     out.push({ key, surface: raw });
@@ -1081,6 +1082,8 @@ function conceptAbsorb(clusters, docs) {
 const SAME_SITE_MIN_COS = 0.05;
 const SAME_SITE_LINK = 0.15;
 const siteGroupable = (d) => Boolean(d.siteKey) && !isAppOrSearch(d.url);
+const rootPage = (url) => { try { const u = new URL(url); return u.pathname === '/' && !u.search && !isLocalHost(url); } catch { return false; } };
+const onlyName = (d) => ![...d.vec.keys()].some((k) => k[0] !== '^' && k[0] !== '#'); // nothing beside the site's own name and letter fragments
 function siteJoin(clusters, docs) {
   const out = clusters.map((c) => [...c]);
   const hinted = new Map(); // cluster (array) -> hint it was formed on
@@ -1088,9 +1091,11 @@ function siteJoin(clusters, docs) {
   // minCos: what the tab must share with the group's words. With one such group it may be 0 (the
   // hint alone decides); with several (two repos on GitHub, two courses) the site can't tell which,
   // so only a tab that shares words with one of them (SAME_SITE_MIN_COS) joins it.
-  const joinBest = (i, pred, minCos) => {
+  // ownWord: the tab must share a word beside the site's own name with the group (two Reuters stories are not one topic for the name "Reuters").
+  const joinBest = (i, pred, minCos, ownWord = false, some = false) => {
     const d = docs[i];
-    const fits = out.filter((c) => c.length >= 2 && majority(c, pred)).map((c) => ({ c, cos: cosine(d, clusterCentroid(c, docs)) }));
+    const sharesWord = (c) => { const v = clusterCentroid(c, docs).vec; for (const k of d.vec.keys()) if (k[0] !== '^' && k[0] !== '#' && v.has(k)) return true; return false; };
+    const fits = out.filter((c) => c.length >= 2 && (some ? c.some((x) => pred(docs[x])) : majority(c, pred)) && (!ownWord || sharesWord(c))).map((c) => ({ c, cos: cosine(d, clusterCentroid(c, docs)) }));
     const need = fits.length > 1 ? Math.max(minCos, SAME_SITE_MIN_COS) : minCos;
     const best = fits.filter((f) => f.cos >= need).sort((a, b) => b.cos - a.cos || b.c.length - a.c.length)[0];
     if (best) best.c.push(i);
@@ -1101,8 +1106,10 @@ function siteJoin(clusters, docs) {
   const linking = (d) => (d.siteHint && !knowledge.BROAD_HINTS.has(d.siteHint) ? d.siteHint : ''); // "Code" never links
   const still = loose.filter((i) => {
     const d = docs[i];
+    // A project's home page titled by its name alone ("FastAPI") has no word to share: it goes with the group of its own site's other pages.
+    if (siteGroupable(d) && rootPage(d.url) && onlyName(d) && stripSiteSegment(d.title || '', d.url || '').trim().split(/\s+/).filter(Boolean).length <= 1 && joinBest(i, (o) => o.siteKey === d.siteKey, 0, false, true)) return false;
     if (linking(d) && joinBest(i, (o) => o.siteHint === d.siteHint, 0)) return false;
-    if (siteGroupable(d) && joinBest(i, (o) => o.siteKey === d.siteKey, SAME_SITE_MIN_COS)) return false;
+    if (siteGroupable(d) && joinBest(i, (o) => o.siteKey === d.siteKey, SAME_SITE_MIN_COS, true)) return false;
     return true;
   });
   const fresh = [];
@@ -1317,11 +1324,13 @@ function tokenGroups(clusters, docs) {
   const loose = new Set(out.filter((c) => c.length === 1).map((c) => c[0]));
   if (loose.size < TOKEN_MIN) return { clusters: out, formed };
   const byWord = new Map();
-  for (const i of loose) {
+  const pairs = new Set(out.filter((c) => c.length === 2).flat()); // a quarter's name ("Q3") also takes tabs a weak pair held (two Google files)
+  for (const i of [...loose, ...pairs]) {
     for (const [k, e] of docs[i].words) {
+      if (!loose.has(i) && !PERIOD_TOKEN.test(String(e.surface || k))) continue;
       if (!isRealKey(k) || e.weight < 0.8 || CJK.test(k)) continue;
       const surface = String(e.surface || k);
-      if (surface.length < (docs.distinct.has(k) ? 3 : 4) || !/^\p{L}+$/u.test(surface) || surface.length > 18) continue;
+      if (!PERIOD_TOKEN.test(surface) && (surface.length < (docs.distinct.has(k) ? 3 : 4) || !/^\p{L}+$/u.test(surface) || surface.length > 18)) continue;
       if (!byWord.has(k)) byWord.set(k, []);
       byWord.get(k).push(i);
     }
@@ -1336,7 +1345,9 @@ function tokenGroups(clusters, docs) {
     const acronym = docs.distinct.has(k) && shown === shown.toUpperCase() && shown.length <= 6; // PCT, SAT: capitals in three titles, an identity of its own
     // (an ambiguous word is a group's only when every tab that says it carries one concept: "chicken" in three cooking tabs, not beside a coop)
     if (AMBIGUOUS_KEYS.has(k) && !conceptsOf(list[0]).some((x) => list.every((i) => conceptsOf(i).includes(x)))) continue;
-    if (STOPWORDS.has(surface) || ORDINARY_KEYS.has(k) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k) || isPlaceKey(k) || GENERIC_PAIR_STEMS.has(k)) continue;
+    // A longer ordinary word ("earthquake", "wedding") in the titles of three or more DIFFERENT sites is no site template and no accident of one window.
+    const wide = PERIOD_TOKEN.test(surface) || surface.length >= 6 && !/(?:ean|ian|ese|ish|ic|ical|ern)$/.test(surface) && new Set(list.map((i) => docs[i].siteKey || docs[i].url)).size >= 3;
+    if (STOPWORDS.has(surface) || (ORDINARY_KEYS.has(k) && !wide) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k) || isPlaceKey(k) || GENERIC_PAIR_STEMS.has(k)) continue;
     if (!inConcept && NOT_A_NOUN.test(surface)) continue;
     if (new Set(list.map((i) => docs[i].siteKey || docs[i].url)).size < 2) continue; // one site's template word
     // The word is what every tab is about: it is no word of a site's own name or address (a brand's tabs say it on every page).
@@ -1344,7 +1355,7 @@ function tokenGroups(clusters, docs) {
     // concept or a site hint, or the word is a topic word of a concept's own vocabulary ("newborn"), or an acronym.
     const sets = list.map((i) => conceptsOf(i)).filter((x) => x.length);
     if (!acronym && sets.some((a, x) => sets.some((b, y) => y > x && !a.some((c) => b.includes(c))))) continue;
-    if (!inConcept && !acronym) {
+    if (!inConcept && !acronym && !wide) {
       const held = new Map();
       for (const i of list) {
         const e = evidenceOf(docs[i]);
@@ -1364,7 +1375,7 @@ function tokenGroups(clusters, docs) {
     docs.tokenKeys.add(k);
     formed.set(free, docs[free[0]].words.get(k).surface);
   }
-  const kept = out.filter((c) => !(c.length === 1 && taken.has(c[0])));
+  const kept = out.map((c) => (c.length === 2 && c.some((i) => taken.has(i)) ? c.filter((i) => !taken.has(i)) : c)).filter((c) => !(c.length === 1 && taken.has(c[0])) && c.length > 0);
   return { clusters: kept.concat([...formed.keys()]), formed };
 }
 
