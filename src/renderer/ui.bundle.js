@@ -538,13 +538,17 @@
   // Where a streaming reply's finished blocks end: just after the last blank line that is outside a code fence and
   // outside a formula. Everything before it renders the same however much text follows, so a stream only has to
   // redraw the text after it. Blocks (lists, tables, paragraphs) all end at a blank line. One pass over the text.
-  function stableLength(source) {
-    let fenced = false;
-    let dollars = 0; // $$ seen outside code (odd: inside a display formula)
-    let brackets = 0; // \[ minus \]
-    let envs = 0; // \begin minus \end
-    let stable = 0;
-    let pos = 0;
+  // `memo` (an object the caller keeps for one growing text) makes a stream's passes resume where the last one
+  // stopped instead of rescanning from the start: a reply is only ever appended to, and lines before the last
+  // newline never change. A text that is not an extension of the remembered one starts over.
+  function stableLength(source, memo) {
+    let st = memo && memo.pos > 0 && memo.pos <= source.length && source.charCodeAt(memo.pos - 1) === 10 && memo.head === source.slice(0, 64) ? memo : null;
+    let fenced = st ? st.fenced : false;
+    let dollars = st ? st.dollars : 0; // $$ seen outside code (odd: inside a display formula)
+    let brackets = st ? st.brackets : 0; // \[ minus \]
+    let envs = st ? st.envs : 0; // \begin minus \end
+    let stable = st ? st.stable : 0;
+    let pos = st ? st.pos : 0;
     while (pos < source.length) {
       const end = source.indexOf('\n', pos);
       if (end === -1) break; // an unfinished last line is never stable
@@ -559,6 +563,7 @@
       }
       pos = end + 1;
     }
+    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, stable, head: source.slice(0, 64) });
     return stable;
   }
 
@@ -2788,7 +2793,7 @@ function renderStreaming(el, source) {
 // left in the DOM; each frame replaces only the nodes after them and parses only the tail text.
 function drawTail(el) {
   const source = el.source;
-  const stable = window.markdownStableLength(source);
+  const stable = window.markdownStableLength(source, el.stableMemo || (el.stableMemo = {})); // (resumes where the last frame stopped)
   const done = el.stableLen || 0;
   if (el.headNodes === undefined || stable < done) { el.innerHTML = ''; el.headNodes = 0; el.stableLen = 0; }
   while (el.childNodes.length > el.headNodes) el.lastChild.remove();

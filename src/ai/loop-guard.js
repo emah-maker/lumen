@@ -8,6 +8,9 @@
 // Repeating these is normal (paging, waiting, re-reading), so only failures count for them.
 const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover']);
 
+// Reads whose identical repeat (same input, nothing done in between) can only return the same thing.
+const STATIC_READS = new Set(['read_page', 'find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf']);
+
 class RepeatDetector {
   constructor(limit = 8) {
     this.limit = limit;
@@ -33,6 +36,7 @@ class RepeatDetector {
     if (!ok && same >= 3) return `REPEAT: this exact call has failed ${same} times in a row. Retrying it will not help. ${fix} If nothing works, stop and tell the user what is blocking you.`;
     if (!ok && same === 2) return `NOTE: this exact call just failed twice. Re-read the page before trying again; ids and the page may have changed.`;
     if (!ok && failStreak >= 4) return `REPEAT: ${failStreak} tool calls in a row have failed. Stop varying the same approach. ${fix} If it is still failing, stop and tell the user.`;
+    if (ok && STATIC_READS.has(name) && same >= 3) return `NOTE: you have made this same ${name} call ${same} times with the same input and nothing has changed. Use what you already have, act on it, or try something different.`;
     if (ok && !BENIGN.has(name) && same >= 3) return `REPEAT: you have made this same call ${same} times with the same input. It is not making progress. ${fix} If the task is already done, stop and answer.`;
     return null;
   }
@@ -186,6 +190,82 @@ async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halt
   return outcomes;
 }
 
+// Identical read-only calls: the same call again, with nothing done in between, can only return what the
+// model already has. The first run is remembered (as a promise, so two identical calls in one turn share
+// one run); a repeat gets one line back instead of the whole result. "Nothing done in between" is any
+// tool that is not a read, a different task-tab URL, or more than CACHE_FRESH calls since (the API clears
+// older tool results, and a model that can no longer see the first one must get it again). Errors are
+// never cached. Pure: `run` does the call, `ctx` is the task tab's address.
+const CACHEABLE = new Set(['find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf']);
+const CACHE_FRESH = 6;
+class ToolCallCache {
+  constructor(fresh = CACHE_FRESH) { this.fresh = fresh; this.entries = new Map(); this.seq = 0; this.hits = 0; this.turn = 0; }
+  clear() { this.entries.clear(); }
+  nextTurn() { this.turn++; } // the model's next reply: a repeat after this is "earlier", not "this turn"
+  keyOf(use, ctx) {
+    if (!CACHEABLE.has(use.name) || (use.name === 'read_urls' && use.input && use.input.as_user)) return null;
+    try { return `${use.name}|${ctx || ''}|${JSON.stringify(use.input ?? {})}`; } catch { return null; }
+  }
+  async run(use, ctx, run) {
+    this.seq++;
+    if (!CACHEABLE.has(use.name)) { if (!PARALLEL_READS.has(use.name)) this.clear(); return run(); } // an acting tool: whatever was read may be stale
+    const key = this.keyOf(use, ctx);
+    if (!key) return run();
+    const hit = this.entries.get(key);
+    if (hit && this.seq - hit.seq <= this.fresh) {
+      this.hits++;
+      const ago = this.seq - hit.seq;
+      await hit.promise.catch(() => {});
+      return ago <= 2 && hit.turn === this.turn ? 'Same call as another one in this turn: see that result.' : `Same as your earlier ${use.name} call (${ago} call${ago === 1 ? '' : 's'} ago): same input and nothing has changed since, so nothing new to show. Use that result.`;
+    }
+    const promise = Promise.resolve().then(run);
+    const entry = { seq: this.seq, promise, turn: this.turn };
+    this.entries.set(key, entry);
+    promise.catch(() => { if (this.entries.get(key) === entry) this.entries.delete(key); });
+    return promise;
+  }
+}
+
+// Page text the sidebar attached to earlier messages (<untrusted_page_content …>…</untrusted_page_content>)
+// is kept whole in every later request, and for a long task it is most of what is re-sent. Once the chat
+// is past the context-management trigger (60k tokens) the old ones are cut to their title and address;
+// the page itself is a read_page away, and the newest user message keeps its page. Returns the same array
+// when nothing changes, otherwise new message objects; never mutates. Called only once the trigger has
+// fired (and then on every request, so the cached prefix stays the same from then on).
+const PAGE_OPEN = /<untrusted_page_content([^>]*)>[\s\S]*?<\/untrusted_page_content>\s*/g;
+function stubOldPages(messages, upTo = Infinity) {
+  const isTyped = (m) => m.role === 'user' && !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
+  const newest = Math.min(messages.findLastIndex(isTyped), upTo);
+  let changed = false;
+  const out = messages.map((m, i) => {
+    if (i >= newest || m.role !== 'user' || !Array.isArray(m.content)) return m;
+    let touched = false;
+    const content = m.content.map((b) => {
+      if (b?.type !== 'text' || typeof b.text !== 'string' || !b.text.includes('<untrusted_page_content')) return b;
+      const text = b.text.replace(PAGE_OPEN, (_, attrs) => `<untrusted_page_content${attrs}>\n(Page text left out of this earlier message; call read_page for the page.)\n</untrusted_page_content>\n\n`);
+      if (text === b.text) return b;
+      touched = true;
+      return { ...b, text };
+    });
+    if (!touched) return m;
+    changed = true;
+    return { ...m, content };
+  });
+  return changed ? out : messages;
+}
+// Stubbing an old message changes the request from that message on, so it is done in batches (messages.pageStubUpTo
+// moves up only once `batch` page-bearing user messages have piled up behind the newest one), not on every user turn.
+function advancePageStub(messages, batch = 2) {
+  const isTyped = (m) => m.role === 'user' && !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
+  const hasPage = (m) => Array.isArray(m.content) && m.content.some((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.includes('<untrusted_page_content') && !b.text.includes('(Page text left out'));
+  const newest = messages.findLastIndex(isTyped);
+  let piled = 0;
+  for (let i = messages.pageStubUpTo || 0; i < newest; i++) if (isTyped(messages[i]) && hasPage(messages[i])) piled++;
+  if (piled >= batch) messages.pageStubUpTo = newest;
+  return messages.pageStubUpTo || 0;
+}
+const CONTEXT_TRIGGER_TOKENS = 60000; // the same number requestFor gives the API's clear_tool_uses edit
+
 // A plain question that needs neither the page nor a tool: short, text only, no link, and none of
 // the words people use when they mean the page or an action. Conservative: when unsure, false.
 const NEEDS_BROWSER = /\b(this|these|that|page|tab|tabs|site|website|here|above|below|screen|click|open|go to|navigate|search|google|find|look up|fill|book|buy|order|add to|sign|log ?in|download|summari[sz]e|summary|tl;?dr|read|scroll|type|select|compare|check|screenshot|form|link|cart|price|video|article|pdf|current|latest|today|now)\b|https?:|www\.|\.(com|org|net|io|dev)\b/i;
@@ -194,4 +274,4 @@ function isSimpleQuestion(text, imageCount = 0) {
   return imageCount === 0 && t.length > 0 && t.length <= 160 && !NEEDS_BROWSER.test(t);
 }
 
-module.exports = { RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
+module.exports = { RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, ToolCallCache, CACHEABLE, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
