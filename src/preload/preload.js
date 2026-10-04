@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('assistant', {
   ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
+  resync: () => ipcRenderer.invoke('chat:resync'), // the chat this window's front tab shows, with its own run state
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
   reset: () => ipcRenderer.send('agent:reset'),
   rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back

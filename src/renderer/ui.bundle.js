@@ -1942,6 +1942,10 @@ const messages = $('messages');
 const prompt = $('prompt');
 const send = $('send');
 let running = false;
+// The chat this view shows, as main last said (a sync's view id, an event's chat id); null until known. `running` and `turn`
+// are that chat's alone: an event or a queued message for another chat never touches them.
+let shownChatId = null;
+const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
 
@@ -2259,8 +2263,10 @@ function sendNow(entry) {
   window.assistant.stop();
 }
 function sendQueued() {
-  const next = queued.shift();
-  if (!next) return;
+  // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
+  const mine = queued.findIndex((q) => !forOtherChat(q.chatId));
+  if (mine === -1) return;
+  const next = queued.splice(mine, 1)[0];
   next.notice.remove();
   if (next.fresh) {
     // A question from the new-tab page that waited for the running reply: now start its new chat. The
@@ -2278,7 +2284,7 @@ function sendQueued() {
 function askInNewChat(text) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text }) }));
-    queued.push({ text, images: [], tabs: null, notice, fresh: true });
+    queued.push({ text, images: [], tabs: null, notice, fresh: true, chatId: shownChatId });
     return;
   }
   $('new-chat').click();
@@ -2289,7 +2295,7 @@ function askInNewChat(text) {
 function ask(text, images = [], tabs = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t('chat.image') }) }));
-    const entry = { text, images, tabs, notice };
+    const entry = { text, images, tabs, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry; // (for Send now)
@@ -2313,6 +2319,7 @@ function ask(text, images = [], tabs = null) {
   startTurn(text, images, tabs);
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
+  shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
   window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
@@ -2620,7 +2627,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
-  if (!turn || event.runId !== runId) return;
+  if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
+  if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
@@ -3197,21 +3205,38 @@ window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 
 // A turn that started in the other view (the sidebar or the chat page) shows here too: the same
 // events follow, tagged with its run id.
-window.assistant.onRunStart?.(({ text, runId: id, images } = {}) => {
-  if (running) return;
+window.assistant.onRunStart?.(({ text, runId: id, images, chatId: chat } = {}) => {
+  if (running || forOtherChat(chat)) return; // (a turn of a chat this view has moved off is not this chat's running state)
+  if (chat && !shownChatId) shownChatId = chat;
   const shown = (images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` }));
   lastAsk = { text: String(text || ''), images: shown, tabs: null }; // started in the other view: this is the chat's last message now
   startTurn(String(text || ''), shown);
   runId = id;
 });
 // The other view opened another chat, started a new one, or deleted this one.
-window.assistant.onSync?.(({ view } = {}) => {
+function applySync(view) {
   clearChatView();
+  shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
   showHistory(view?.items);
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.chatChanged?.();
-});
+}
+window.assistant.onSync?.(({ view } = {}) => applySync(view));
+// Asks main which chat this window's front tab shows and what its run is doing, and takes it when it is not what is shown
+// here (a tab switch can reach this view late or not at all while another chat's tool is acting). `settled` is false when it
+// changed the view.
+async function reconcile() {
+  let answer = null;
+  try { answer = await window.assistant.resync?.(); } catch {}
+  const view = answer?.view;
+  if (!view || !view.id) return true;
+  const live = Boolean(view.live);
+  if (view.id === shownChatId && live === running) return true;
+  if (!shownChatId && live === running) { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
+  applySync(view);
+  return false;
+}
 
 // Links in replies open in a new tab.
 messages.addEventListener('click', (e) => {
@@ -3249,7 +3274,7 @@ const prewarm = (force = false) => {
 };
 let prewarmSent = '';
 prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
-prompt.addEventListener('focus', () => prewarm());
+prompt.addEventListener('focus', () => { prewarm(); if (running) reconcile(); }); // (a Stop button that belongs to another chat goes as soon as the box is used)
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
@@ -3257,7 +3282,13 @@ prompt.addEventListener('keydown', (e) => {
     e.preventDefault();
     // While a reply runs, Enter sends what was typed after it (queued); it never stops the reply (the button does).
     // Ctrl+Enter (Cmd+Enter on a Mac) is Send now: the reply stops and this message goes next.
-    if (running) { if (prompt.value.trim() || attachments.length) sendComposer({ now: e.ctrlKey || e.metaKey }); return; }
+    if (running) {
+      if (!(prompt.value.trim() || attachments.length)) return;
+      const now = e.ctrlKey || e.metaKey;
+      // The running state shown may be another chat's (a tab switch that did not reach this view): main's view of this tab's chat decides.
+      reconcile().then((settled) => { if (running) sendComposer({ now }); else if (!settled || prompt.value.trim() || attachments.length) $('composer').requestSubmit(); });
+      return;
+    }
     $('composer').requestSubmit();
   } else if (e.key === 'Escape' && running && !prompt.value) {
     e.preventDefault();
@@ -3322,6 +3353,7 @@ document.querySelectorAll('.chip').forEach((chip) => {
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
 function clearChatView() {
   runId++;
+  shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
@@ -6931,6 +6963,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const view = await (share ? api.share(id) : api.open(id));
     if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
+    shownChatId = view.id || null;
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
