@@ -54,7 +54,8 @@
 //    one-line curl) that post UserPromptSubmit and every PreToolUse to Lumen (mcp-http.js). Grok
 //    runs PreToolUse hooks before its own permission checks and before the tool, and blocks on a
 //    deny; MCP calls show under their real name (lumen__navigate), not as use_tool. Lumen allows
-//    search_tool and lumen__<one of its tools>, and denies everything else.
+//    search_tool and lumen__<one of its tools>, and denies everything else. (PreToolUse is only
+//    posted for the rest: PRE_TOOL_MATCHER skips Lumen's own tools, the MCP server being their gate.)
 //    - Grok's hooks fail open (a crashed or timed-out hook allows), so the script exits 2, Grok's
 //      deny, when it can't reach Lumen, and an unknown or expired run token gets a deny.
 //    - Grok's HTTP hooks refuse http:// URLs ("SSRF protection"), hence the curl script.
@@ -429,6 +430,31 @@ const COMPAT_ENV = Object.fromEntries(['CLAUDE', 'CURSOR'].flatMap((v) => COMPAT
 // string escapes are valid TOML basic strings. The [marketplace] markers are the ones Grok writes
 // after its first-run setup; set up front, Grok doesn't add its official plugin marketplace.
 // [full access] fullAccess: no [permission] deny rules (Grok's own tools are the user's to run); the hooks stay.
+// [fast tool calls] Which tool calls Lumen's PreToolUse hook is asked about. A hook is a new process per call (curl, ~0.5 s on
+// Windows, and Grok waits for it before every tool), and for Lumen's own tools it decides nothing the rest doesn't: the call
+// goes to Lumen's own MCP server, which refuses a tool it doesn't have, takes it through its site approvals, and the
+// session's only MCP server is Lumen's. So the hook is asked about everything else: every Grok built-in (run_terminal_command:
+// the user's approval card; the rest: denied) and any other name. Grok's matcher is a regex (Rust: no lookahead), tested
+// against the real tool name (a use_tool call shows as lumen__<tool>); notPrefixed builds "not one of these" without one.
+// An unknown name matches (is gated), a matcher Grok can't read means no hook ever runs: test/grok-warm-units.js checks it
+// against Grok's own events and test/grokgate.js (manual, real CLI) checks a built-in is still denied.
+function notPrefixed({ prefixes = [], exact = [] }) {
+  const node = () => ({ kids: new Map(), prefix: false, exact: false });
+  const root = node();
+  const put = (word, mark) => { let n = root; for (const c of word) { if (!n.kids.has(c)) n.kids.set(c, node()); n = n.kids.get(c); } n[mark] = true; };
+  prefixes.forEach((w) => put(w, 'prefix'));
+  exact.forEach((w) => put(w, 'exact'));
+  const esc = (c) => (/[A-Za-z0-9_]/.test(c) ? c : `\\${c}`);
+  const alts = (n) => {
+    const out = n.exact ? [] : [''];
+    for (const [c, kid] of n.kids) if (!kid.prefix) out.push(`${esc(c)}${alts(kid)}`);
+    out.push(n.kids.size ? `[^${[...n.kids.keys()].map(esc).join('')}].*` : '.+');
+    return `(?:${out.join('|')})`;
+  };
+  return `^${alts(root)}$`;
+}
+const PRE_TOOL_MATCHER = notPrefixed({ prefixes: ['lumen__'], exact: ['search_tool'] });
+
 function grokConfig({ gate, fullAccess = false }) {
   const str = (s) => JSON.stringify(String(s));
   const off = COMPAT_SURFACES.map((s) => `${s} = false`);
@@ -441,7 +467,7 @@ function grokConfig({ gate, fullAccess = false }) {
     'enabled = true',
     '',
     '[[hooks.UserPromptSubmit]]', hook, '',
-    '[[hooks.PreToolUse]]', hook, '',
+    '[[hooks.PreToolUse]]', `matcher = ${str(PRE_TOOL_MATCHER)}`, hook, '',
     '[compat.claude]', ...off, '',
     '[compat.cursor]', ...off, '',
     '[permission]',
@@ -1106,4 +1132,4 @@ class GrokBuildEngine {
 
 GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { notPrefixed, PRE_TOOL_MATCHER, grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
