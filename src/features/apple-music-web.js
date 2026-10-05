@@ -18,7 +18,7 @@ const HOSTS = new Set(['music.apple.com', 'authorize.music.apple.com', 'idmsa.ap
 // No sign-in cookie to watch: MusicKit says whether the user is authorized (features/apple-music-engine.js). The page's own
 // sign-in windows (popups on the allowed hosts) are real windows so Apple's page can hear back from them. The preload carries the
 // engine's bridge (features/apple-music-bridge.js).
-const SPEC = { url: WEB_URL, hosts: HOSTS, cardClass: 'applemusic', popups: true, preload: path.join(__dirname, '..', 'preload', 'music-engine-preload.js') };
+const SPEC = { url: WEB_URL, hosts: HOSTS, cardClass: 'applemusic', popups: true, hiddenViewport: { width: 1280, height: 800 }, preload: path.join(__dirname, '..', 'preload', 'music-engine-preload.js') };
 const PROBE = WP.probeScript(SPEC.cardClass);
 
 const isAllowedUrl = (url, testOrigin = '') => WP.isAllowedUrl(url, HOSTS, testOrigin);

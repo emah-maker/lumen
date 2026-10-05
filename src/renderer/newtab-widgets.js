@@ -532,6 +532,17 @@ function engineCard(w, card, o) {
   });
   if (canSearch && !loading) searchBox(w, card, o, d);
   if (d.pageChanged === true) card.body.append(el('p', 'w-note am-note am-changed', o.changed)); // the page's own player controls never showed up
+  if (d.unresponsive === true) { // a button was pressed and nothing happened: say so, and offer the player itself
+    const warn = el('div', 'am-warn');
+    const why = d.signedIn === true && d.drm === 'missing' ? ` Full songs need Lumen’s Widevine component, which isn’t available yet.` : '';
+    const msg = el('span', 'w-note', `${o.name} didn’t respond.${why}`);
+    msg.setAttribute('role', 'status');
+    const show = el('button', 'w-btn', 'Open player');
+    show.type = 'button';
+    show.addEventListener('click', () => widgetAct(w.id, 'eshow'));
+    warn.append(msg, show);
+    card.body.append(warn);
+  }
   if (playing) {
     if (d.preview === true && d.source !== 'app' && o.preview) card.body.append(el('p', 'w-note am-note', o.preview));
     if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120)));

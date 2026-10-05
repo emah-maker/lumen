@@ -19,6 +19,8 @@ const MAX_ART_BYTES = 400e3;
 const MAX_THUMBS = 12; // search results with a small picture
 const PLAYER_MISSING_MS = 25e3; // signed in but the player's controls never showed up: the service changed its page
 const SIGNIN_SIZE = { width: 560, height: 780 };
+const RESPOND_MS = 3500; // a button pressed and nothing changed this long after: the player did not respond
+const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
 //         fetchBytes(url) -> Buffer|null, resizeArt(bytes) -> bytes|null, BrowserWindow?, getParent()? (the browser window, for the sign-in
@@ -43,6 +45,7 @@ function createMusicEngine(deps) {
   let lastSource = 'engine';
   let playerMissingSince = 0;
   let lastFlag = false; // the page-changed self-test, as the card last heard it
+  let pending = null; // { cmd, before, effect(m), timer, late }: a button pressed whose effect has not shown yet
 
   const changed = () => { try { deps.onChange?.(); } catch { /* the card keeps what it shows */ } };
   const touch = () => { lastActivity = now(); };
@@ -50,12 +53,40 @@ function createMusicEngine(deps) {
   const authState = () => (deps.isAuthorized ? deps.isAuthorized() : (msg ? msg.auth : null));
 
   // ---- the page ----
+  // A command goes to the page as a DOM event run by executeJavaScript with a user gesture, so the click or play() the bridge does
+  // inside it has user activation (the way the service's autoplay and "press play first" checks want it; an event relayed from
+  // another world has none). The text is the validated command JSON (bridge.cleanCommand), put into the call as a string literal.
   const send = (cmd) => {
     const wc = player.webContents();
     const json = bridge.cleanCommand(cmd);
     if (!wc || !ready || !json) return false;
-    try { wc.send('musicengine:cmd', json); return true; } catch { return false; }
+    try {
+      const done = wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('lumen-engine-in', { detail: ${JSON.stringify(json)} }))`, true);
+      done?.catch?.(() => {});
+      expectEffect(cmd);
+      return true;
+    } catch { return false; }
   };
+  // What a button should change, so that a player that ignores it is noticed: the card then says so (and can show the player).
+  function expectEffect(cmd) {
+    if (!TRACKED.includes(cmd.cmd)) return;
+    const before = msg ? { state: bridge.playbackKind(msg.state), title: msg.item?.title || '', pos: msg.pos || 0 } : { state: 'idle', title: '', pos: 0 };
+    const effect = {
+      play: (m) => bridge.playbackKind(m.state) === 'playing',
+      pause: (m) => bridge.playbackKind(m.state) !== 'playing',
+      next: (m) => (m.item?.title || '') !== before.title,
+      previous: (m) => (m.item?.title || '') !== before.title || (m.pos || 0) + 3 < before.pos,
+      playItem: (m) => bridge.playbackKind(m.state) === 'playing' && ((m.item?.title || '') !== before.title || before.state !== 'playing'),
+    }[cmd.cmd];
+    if (cmd.cmd === 'play' && before.state === 'playing') return;
+    if (cmd.cmd === 'pause' && before.state !== 'playing') return;
+    if (pending?.timer) clearTimeout(pending.timer);
+    pending = { cmd: cmd.cmd, effect, late: false, timer: null };
+    const p = pending;
+    p.timer = (deps.setTimeout || setTimeout)(() => { if (pending === p) { p.late = true; changed(); } }, deps.respondMs?.() || RESPOND_MS);
+    p.timer.unref?.();
+  }
+  const unresponsive = () => Boolean(pending && pending.late);
   function askLists(force = false) {
     if (!caps.lists || !ready || (!force && now() - listsAskedAt < LISTS_FRESH_MS)) return;
     listsAskedAt = now();
@@ -67,7 +98,7 @@ function createMusicEngine(deps) {
     touch();
     player.ensure();
     const wc = player.webContents();
-    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; playerMissingSince = 0; }
+    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; playerMissingSince = 0; pending = null; }
     if (!timer) {
       timer = (deps.setInterval || setInterval)(unloadIfIdle, 60e3);
       timer.unref?.();
@@ -75,7 +106,7 @@ function createMusicEngine(deps) {
   }
   const playing = () => Boolean(msg && bridge.playbackKind(msg.state) === 'playing' && msg.item);
   function unload() {
-    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false }; playerMissingSince = 0;
+    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false }; playerMissingSince = 0; pending = null;
     player.destroy();
     clearInterval(timer);
     timer = null;
@@ -98,6 +129,7 @@ function createMusicEngine(deps) {
       const was = msg;
       msg = m;
       touch();
+      if (pending && pending.effect(m)) { const wasLate = pending.late; clearTimeout(pending.timer); pending = null; if (wasLate) changed(); }
       if (m.player === false && authState() === true) playerMissingSince ||= now(); else playerMissingSince = 0;
       if (m.item?.art && !arts.has(m.item.art)) fetchArt(m.item.art);
       if (m.auth && (!was || !was.auth)) { askLists(true); closeSignIn(); }
@@ -160,6 +192,7 @@ function createMusicEngine(deps) {
       searching: results.pending,
       error: error && now() - error.at < 8000 ? error.message : '',
       pageChanged: pageChanged(),
+      unresponsive: unresponsive(),
     };
   }
   function engineCard() {
@@ -213,12 +246,12 @@ function createMusicEngine(deps) {
   // ---- signing in ----
   // The engine's own page in a window of its own: the user signs in on the service's page, as on any site, and the window closes by
   // itself once the service says it is signed in. Lumen never sees the account's password.
-  function signIn() {
+  function openWindow(title) {
     wake();
     if (signInWin && !signInWin.isDestroyed()) { signInWin.focus(); return true; }
     if (!deps.BrowserWindow) return false;
     const parent = deps.getParent?.();
-    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title: deps.signInTitle || 'Sign in', autoHideMenuBar: true, show: true, ...(parent && !parent.isDestroyed() ? { parent } : {}) });
+    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title, autoHideMenuBar: true, show: true, ...(parent && !parent.isDestroyed() ? { parent } : {}) });
     signInWin = win;
     try { win.removeMenu?.(); } catch { /* no menu to remove */ }
     const fit = () => { if (win.isDestroyed()) return; const [width, height] = win.getContentSize(); player.showIn(win, { x: 0, y: 0, width, height }); };
@@ -227,6 +260,10 @@ function createMusicEngine(deps) {
     win.on('close', () => { player.release(); if (signInWin === win) signInWin = null; changed(); });
     return true;
   }
+  const signIn = () => openWindow(deps.signInTitle || 'Sign in');
+  // The player itself in a small window (when a button did nothing): the user can press its own controls, which also gives it the
+  // activation a service may want before it plays. It closes like the sign-in window, and the card hears about it.
+  function showPlayer() { pending = null; const ok = openWindow(`${deps.name || 'Music'} player`); changed(); return ok; }
   function closeSignIn() {
     const win = signInWin;
     if (win && !win.isDestroyed()) win.close();
@@ -239,7 +276,7 @@ function createMusicEngine(deps) {
 
   return {
     read, control, seek, playItem, playNext: (kind, id) => queueItem('playNext', kind, id), playLater: (kind, id) => queueItem('playLater', kind, id),
-    search, signIn, refreshLists, onMessage, wake, unload, authChanged,
+    search, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
     status: () => ({ ...player.status(), ready, signedIn: authState(), playing: playing() }),
     signedIn: authState,
     isPlaying: playing,

@@ -15,7 +15,7 @@ function fakePlayer() {
   const p = {
     destroyed: 0, ensured: 0, pinned: null, released: 0, reloaded: 0, st: { state: 'ready', drm: 'ok' },
     wc: null,
-    ensure() { p.ensured++; if (!p.wc) { p.wc = { sent: [], send: (ch, json) => p.wc.sent.push([ch, JSON.parse(json)]) }; wcs.push(p.wc); } return {}; },
+    ensure() { p.ensured++; if (!p.wc) { p.wc = { sent: [], gestures: [], codes: [], executeJavaScript(code, gesture) { const m = /detail: (".*") \}\)\)$/.exec(code); p.wc.codes.push(code); p.wc.gestures.push(gesture); if (m) p.wc.sent.push(['musicengine:cmd', JSON.parse(JSON.parse(m[1]))]); return Promise.resolve(); } }; wcs.push(p.wc); } return {}; },
     webContents: () => p.wc,
     status: () => p.st,
     destroy() { p.destroyed++; p.wc = null; },
@@ -152,6 +152,29 @@ module.exports = async function appleMusicEngineUnits(check) {
   native.read = () => new Promise(() => {}); // a desktop source that never answers must not hang the card
   const slow = await Promise.race([e.read({ app: true }), sleep(4000).then(() => 'hung')]);
   check('apple engine: a desktop source that never answers does not hang the card (the engine answers after a short wait)', slow !== 'hung' && slow.state === 'idle', String(slow && slow.state));
+
+  // ---- commands carry a user gesture; a button that does nothing is noticed ----
+  check('apple engine: every command runs in the page as a DOM event with a user gesture (executeJavaScript(..., true)), so a click or play() there has activation', page().gestures.length > 5 && page().gestures.every((g) => g === true) && page().codes.every((c) => /^document\.dispatchEvent\(new CustomEvent\('lumen-engine-in', \{ detail: ".*" \}\)\)$/.test(c)), String(page().gestures.length));
+  check('apple engine: what goes into that call is only the validated command (a term with quotes and a line break stays inside its string)', (() => { e.search('a"b\\c\nd'); const code = page().codes.at(-1); return /^document\.dispatchEvent\(new CustomEvent\('lumen-engine-in', \{ detail: ".*" \}\)\)$/.test(code) && !code.includes('\n') && sentCmds().at(-1).term === 'a"b\\c d'; })(), JSON.stringify(page().codes.at(-1)));
+  const respond = createEngine({ player: fakePlayer(), now: () => t, fetchBytes: async () => null, onChange: () => { changes.n++; }, setInterval: () => ({ unref() {} }), respondMs: () => 60 });
+  await respond.read();
+  respond.onMessage('{"t":"ready"}');
+  respond.onMessage(state({ state: 3 }));
+  await respond.control('play');
+  check('apple engine: a button pressed and not answered: after the wait the card is told "did not respond"', (await respond.read()).unresponsive === false && (await sleep(120), (await respond.read()).unresponsive === true), '');
+  respond.onMessage(state({ state: 2 }));
+  check('apple engine: …and the player finally doing it clears that', (await respond.read()).unresponsive === false, '');
+  await respond.control('play');
+  check('apple engine: pressing play while it is already playing is not a button that can fail', (await sleep(120), (await respond.read()).unresponsive === false), '');
+  respond.onMessage(state({ state: 2, item: { id: '1', type: 'song', title: 'Other One', artist: 'X', album: 'Y', art: '', ms: 1000 } }));
+  await respond.control('next');
+  respond.onMessage(state({ state: 2, item: { id: '2', type: 'song', title: 'Next Song', artist: 'X', album: 'Y', art: '', ms: 1000 } }));
+  check('apple engine: Next is answered by a different song', (await sleep(120), (await respond.read()).unresponsive === false), '');
+  respond.playItem('song', '9');
+  check('apple engine: playing an item that nothing starts is noticed', (await sleep(120), (await respond.read()).unresponsive === true), '');
+  respond.showPlayer();
+  check('apple engine: "Open player" clears it (the player is shown to the user)', (await respond.read()).unresponsive === false, '');
+  respond.destroy();
 
   // ---- trouble ----
   e.onMessage(JSON.stringify({ t: 'error', message: 'NOT_ALLOWED' }));

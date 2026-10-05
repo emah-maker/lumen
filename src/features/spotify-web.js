@@ -16,7 +16,7 @@ const WEB_URL = 'https://open.spotify.com/';
 const HOSTS = new Set(['open.spotify.com', 'accounts.spotify.com']);
 // sp_dc is the cookie Spotify's site keeps while someone is signed in.
 // The preload carries the engine's bridge (features/spotify-bridge.js); popups: sign-in pages on the allowed hosts open as windows of their own.
-const SPEC = { url: WEB_URL, hosts: HOSTS, cardClass: 'spotify', popups: true, preload: path.join(__dirname, '..', 'preload', 'music-engine-preload.js'), signIn: { cookie: 'sp_dc', domain: /(^|\.)spotify\.com$/ } };
+const SPEC = { url: WEB_URL, hosts: HOSTS, cardClass: 'spotify', popups: true, hiddenViewport: { width: 1280, height: 800 }, preload: path.join(__dirname, '..', 'preload', 'music-engine-preload.js'), signIn: { cookie: 'sp_dc', domain: /(^|\.)spotify\.com$/ } };
 const PROBE = WP.probeScript(SPEC.cardClass);
 
 // The widget's mode. An explicit 'status' | 'web' | 'api' wins. Widgets saved before modes existed have the API card's fields

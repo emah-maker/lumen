@@ -6753,7 +6753,7 @@ function aiStatusFacts() {
 // several widgets often finish together).
 let widgetRefreshTimer = null;
 // The widgets' view of an engine (features/music-engine.js): its calls, with a test fake able to stand in for any of them.
-const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : engine()[name](...args))]));
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : engine()[name](...args))]));
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),
@@ -6896,6 +6896,7 @@ const appleMusicEngine = require('./features/apple-music-engine').createEngine({
   BrowserWindow,
   getParent: () => win,
   hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
+  respondMs: () => (TEST && global.__respondMs) || 0,
   onChange: () => widgets.engineChanged(),
 });
 if (TEST) global.__appleMusicEngine = appleMusicEngine;
@@ -6908,6 +6909,7 @@ const spotifyEngine = require('./features/spotify-engine').createEngine({
   getParent: () => win,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
+  respondMs: () => (TEST && global.__respondMs) || 0,
   onChange: () => widgets.engineChanged(),
 });
 if (TEST) global.__spotifyEngine = spotifyEngine;
