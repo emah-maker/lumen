@@ -93,6 +93,9 @@ function setupAiAgents(deps) {
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
   // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
   const mcpEnabled = () => readSettings().mcpEnabled === true;
+  // Settings → AI → "Agents in their own window don't ask" (on by default): an outside agent's calls in its own Lumen window run
+  // without approval cards (agent.js autoAllows); AI-off sites, kept-off tabs and hands-off mode still apply. Off: every new site asks.
+  const agentsNoAsk = () => readSettings().agentsNoAsk !== false;
 
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
@@ -439,7 +442,7 @@ function setupAiAgents(deps) {
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
       ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : owner.kind === 'antigravity' ? 'Antigravity' : owner.kind === 'codex' ? 'Codex' : 'Claude', input: args, run: scope || engineRun }
-      : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
+      : { hosts: session.approvedHosts, who: session.clientName, external: true, noAsk: Boolean(agentRec) && agentsNoAsk(), input: args, run: session }; // outside agents ask, unless they work in their own window and the setting says not to
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     // An outside agent's own window: the tab in front THERE (not the user's, not the sidebar run's).
