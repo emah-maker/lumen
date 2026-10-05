@@ -209,6 +209,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set',
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
@@ -7254,7 +7255,7 @@ ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSele
 
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = []) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
@@ -7263,6 +7264,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const messages = agent.messages;
   const hosts = agent.approvedHosts;
   const askText = String(text || '');
+  let attachedFiles = []; // [uploads] files attached in the composer move into this chat's store; the AI is told their names and refs
+  try { attachedFiles = uploads().adopt(runChat, fileRefs); } catch { /* none kept */ }
   const fromChatPage = chatPageRt.isChatSender(event);
   // [chat per tab] Starting a chat in a tab binds it there: its tools act on this tab, not on whichever is in front later.
   // A chat shown in several tabs has one live run on one home tab: a message typed in another tab while the run is going
@@ -7277,8 +7280,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
-  chatPageRt.beginRun(event, { text: askText, runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
-  mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, chatId: runChat, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })) }); // another window's sidebar showing this chat shows the turn too
+  chatPageRt.beginRun(event, { text: askText, runId, images: valid, files: attachedFiles }); // pins a chat-page run to the tab last looked at; the other view mirrors it
+  mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, chatId: runChat, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })), files: attachedFiles }); // another window's sidebar showing this chat shows the turn too
   const finishQueued = () => { // a run that never got a slot (stopped, or its chat deleted while it waited)
     runSlots.cancel(runChat);
     if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
@@ -7346,7 +7349,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     const leftOut = chatImages.rejectionNotice(rejected);
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
@@ -7511,6 +7514,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     chatBind.bind(activeId, chatId);
     chats().remove(id);
     imageStore().removeChat(id);
+    uploads().removeChat(id); // [uploads] the files attached to it
     announceModelIfChanged();
     pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
@@ -7518,6 +7522,7 @@ ipcMain.handle('chats:delete', (event, id) => {
   }
   const removed = chats().remove(id);
   imageStore().removeChat(id); // its pictures go with it
+  uploads().removeChat(id); // [uploads] and the files attached to it
   pushAttention();
   return { cleared: false, removed };
 });
@@ -7577,8 +7582,46 @@ const imageStore = () => (imageStoreRef ||= genImages.createImageStore({
 }));
 Object.defineProperty(agent, 'imageStore', { get: imageStore, set() {}, configurable: true });
 if (TEST) global.__imageStore = imageStore;
+
+// ---------- files the AI uploads for the user (features/upload-files.js, docs/uploading-files.md) ----------
+// Files attached in the composer wait in <userData>/uploads/pending until the message is sent (agent:ask moves them into the
+// chat's folder); the model only ever names them by ref. A file the user did not attach is chosen with the OS picker, from the
+// approval card's button (agent:upload-choose): the path comes from that dialog, never from the model or the page.
+const uploadFilesLib = require('./features/upload-files');
+let uploadStoreRef = null;
+const uploads = () => (uploadStoreRef ||= uploadFilesLib.createUploadStore({ dir: path.join(app.getPath('userData'), 'uploads') }));
+Object.defineProperty(agent, 'uploads', { get: uploads, set() {}, configurable: true });
+if (TEST) global.__uploads = uploads;
+ipcMain.handle('uploads:stash', (_e, file) => {
+  try {
+    const data = file?.data;
+    const bytes = data instanceof ArrayBuffer ? Buffer.from(data) : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : null;
+    if (!bytes) return { ok: false, error: 'No data.' };
+    return { ok: true, ...uploads().stash({ name: String(file.name || ''), type: String(file.type || ''), data: bytes }) };
+  } catch (err) { return { ok: false, error: String(err?.message || err) }; }
+});
+ipcMain.on('uploads:discard', (_e, ref) => { try { uploads().discard(String(ref)); } catch { /* gone */ } }); // the chip was removed before sending
+ipcMain.handle('agent:upload-choose', async (event, approvalId) => {
+  const id = Number(approvalId);
+  const spec = agent.uploadSpec(id);
+  if (!spec) return { ok: false, error: t('upload.choose.gone') };
+  let paths;
+  if (TEST && global.__uploadPick) paths = await global.__uploadPick(spec); // tests answer for the OS picker
+  else {
+    const parent = BrowserWindow.fromWebContents(event.sender) || win;
+    const picked = await electronDialog.showOpenDialog(parent && !parent.isDestroyed() ? parent : undefined, {
+      title: t('upload.choose.title', { host: spec.host }),
+      properties: spec.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      filters: uploadFilesLib.dialogFilters(spec.accept, t('upload.choose.all')),
+    });
+    paths = picked.canceled ? [] : picked.filePaths;
+  }
+  if (!paths?.length) return { ok: false, cancelled: true }; // closed the picker: the card stays for another try or Cancel
+  return agent.pickUpload(id, paths);
+});
 setTimeout(() => {
   try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
+  try { uploads().sweep(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to sweep */ } // [uploads] old pending files, files of chats that are gone
   // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
   try {

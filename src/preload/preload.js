@@ -127,7 +127,14 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+  ask: (text, runId, images, tabIds, files) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files),
+  // Files attached to a message (renderer/chat-core.js): kept by main until it is sent, named to the AI by ref only; and the
+  // "Choose file…" card's picker. See features/upload-files.js.
+  uploads: {
+    stash: (file) => ipcRenderer.invoke('uploads:stash', file),
+    discard: (ref) => ipcRenderer.send('uploads:discard', ref),
+    choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
+  },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
   resync: () => ipcRenderer.invoke('chat:resync'), // the chat this window's front tab shows, with its own run state

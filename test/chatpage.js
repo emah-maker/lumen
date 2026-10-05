@@ -106,7 +106,7 @@ const fakeClient = (app) => app.evaluate(() => {
     const input = document.getElementById('attach-input'); input.files = dt.files; input.dispatchEvent(new Event('change'));
     await new Promise((r) => setTimeout(r, 600));
     const chips = document.querySelectorAll('#attachments .attachment').length;
-    const named = Boolean(btn && btn.getAttribute('aria-label') && /up to 5/.test(btn.title));
+    const named = Boolean(btn && btn.getAttribute('aria-label') && /up to 10/.test(btn.title));
     document.querySelector('#attachments .attachment-remove')?.click();
     return { chips, named, after: document.querySelectorAll('#attachments .attachment').length };
   })()`);
