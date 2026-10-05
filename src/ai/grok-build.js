@@ -427,7 +427,11 @@ function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = '
 const grokHomeFor = (userData) => path.join(userData, 'grok-home');
 const sidebarDirFor = (userData) => path.join(userData, 'grok-sidebar');
 // The user's own Grok home, where `grok login` keeps auth.json.
-const userGrokHome = () => process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+// Test mode (a development run with CLAUDE_BROWSER_TEST): a folder inside the throwaway profile with no auth.json, never the real
+// ~/.grok. linkAuth hard-links auth.json, and every test profile left in %TEMP% held one more link to the user's own file until
+// NTFS's 1023-link limit broke sign-in linking for the real Lumen.
+const userGrokHome = () => process.env.GROK_HOME
+  || (process.env.CLAUDE_BROWSER_PROFILE && require('../test-mode').isTest() ? path.join(process.env.CLAUDE_BROWSER_PROFILE, 'user-grok') : path.join(os.homedir(), '.grok'));
 
 // Grok's imports of the user's Claude Code and Cursor setups. Off in config.toml and, because an env
 // var beats config.toml, in the child's environment too.

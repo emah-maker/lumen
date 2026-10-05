@@ -20,30 +20,25 @@ if (unknown.length) {
   process.exit(2);
 }
 
-// Each suite's copies of Lumen leave their throwaway profiles in the temp folder (a suite may read
-// one after Lumen quits); a full run left gigabytes. They go once the suite is over.
-const os = require('os');
-const fs = require('fs');
-function removeTestProfiles(since) {
-  const tmp = os.tmpdir();
-  for (const name of fs.readdirSync(tmp)) {
-    if (!/^(claude-browser-test-|playwright-artifacts-)/.test(name)) continue;
-    const dir = path.join(tmp, name);
-    try { if (fs.statSync(dir).mtimeMs >= since) fs.rmSync(dir, { recursive: true, force: true }); } catch (err) { console.error(`could not remove ${dir}: ${err.message}`); }
-  }
-}
+// Each suite runs with its own TEMP folder (scripts/test-tmp.js), removed once the suite is over, however it ended: its copies of
+// Lumen leave throwaway profiles there (a suite may read one after Lumen quits), and a full run left gigabytes.
+const { suiteTmp } = require('./test-tmp');
+// A suite that hangs is killed after this long (the Electron suites are the slow ones).
+const TIMEOUT_MS = Number(process.env.LUMEN_SUITE_TIMEOUT_MS) || 600000;
 
 const results = [];
 for (const name of picked.length ? picked : SUITES) {
   console.log(`\n=== ${name}`);
   const started = Date.now();
-  const run = spawnSync(process.execPath, [path.join(__dirname, '..', 'test', `${name}.js`)], { stdio: 'inherit' });
-  results.push({ name, ok: run.status === 0, code: run.status ?? run.signal, seconds: Math.round((Date.now() - started) / 1000) });
-  removeTestProfiles(started);
+  const tmp = suiteTmp(name);
+  const run = spawnSync(process.execPath, [path.join(__dirname, '..', 'test', `${name}.js`)], { stdio: 'inherit', env: tmp.env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
+  tmp.done();
+  const timedOut = run.error && run.error.code === 'ETIMEDOUT';
+  results.push({ name, ok: run.status === 0 && !run.error, code: timedOut ? `timeout after ${TIMEOUT_MS / 1000}s` : run.status ?? run.signal ?? run.error?.message, seconds: Math.round((Date.now() - started) / 1000) });
 }
 
 const failed = results.filter((r) => !r.ok);
 console.log('\n=== summary');
-for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name} (${r.seconds}s${r.ok ? '' : `, exit ${r.code}`})`);
+for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name} (${r.seconds}s${r.ok ? '' : `, ${typeof r.code === 'number' ? 'exit ' : ''}${r.code}`})`);
 console.log(failed.length ? `\n${failed.length} of ${results.length} suites failed: ${failed.map((r) => r.name).join(', ')}` : `\nall ${results.length} suites passed`);
 process.exit(failed.length ? 1 : 0);

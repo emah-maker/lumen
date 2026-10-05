@@ -203,7 +203,7 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(cwd, { recursive: true });
     fs.writeFileSync(path.join(home, 'config.toml'), grokConfig(), { mode: 0o600 });
-    const userHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+    const userHome = gb.userGrokHome();
     let authBefore = null;
     try { authBefore = gb.linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
     const promptFile = path.join(cwd, `prompt-${process.pid}-${Date.now()}.json`);
