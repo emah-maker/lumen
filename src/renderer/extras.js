@@ -105,8 +105,8 @@
     return result;
   };
   const resolveBase = window.resolveApproval;
-  window.resolveApproval = function resolveApproval(approvalId, ok) {
-    const result = resolveBase(approvalId, ok);
+  window.resolveApproval = function resolveApproval(approvalId, ok, ...rest) {
+    const result = resolveBase(approvalId, ok, ...rest);
     pending.delete(approvalId);
     syncBadge();
     return result;

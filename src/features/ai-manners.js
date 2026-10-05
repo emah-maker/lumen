@@ -67,7 +67,7 @@ function closeAfterRun({ setting = 'off', n = 0 } = {}) {
 
 // ---- hands-off mode
 // The tools that click, type, move or run something in a page (or close a tab). Reading tools are not here.
-const ACTION_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab', 'group_tabs', 'ungroup_tabs']);
+const ACTION_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'upload_file', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab', 'group_tabs', 'ungroup_tabs']);
 const isActionTool = (name) => ACTION_TOOLS.has(name);
 
 const handsOffRefusal = (tool) => `Hands-off mode is on: the user does not let the AI click, type, scroll or navigate in their own tabs, so ${tool} was not run on this tab. Open a tab of your own with open_tab (it opens in the background) and work there. Reading the user's tabs (read_page, find, screenshot, read_tabs, list_tabs) still works.`;

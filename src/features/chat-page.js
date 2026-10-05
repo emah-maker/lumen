@@ -28,6 +28,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
+  'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
   'settings:get', 'settings:set-model', 'openrouter:models',
@@ -136,7 +137,7 @@ function create(deps) {
 
   // A run starts (`event.sender` asked). From the chat page it is pinned to the target tab, and a
   // tab is opened if there is none. Other views hear about it so they show the same turn.
-  function beginRun(event, { text, runId, images }) {
+  function beginRun(event, { text, runId, images, files }) {
     const fromChat = isChatSender(event);
     let pinned = null;
     if (fromChat) {
@@ -145,7 +146,7 @@ function create(deps) {
     }
     runs.start({ runId, text, fromChat, target: pinned });
     if (fromChat) pushTarget();
-    broadcast('chat:run-start', { text, runId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })) }, event.sender);
+    broadcast('chat:run-start', { text, runId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })), files: files || [] }, event.sender);
     return fromChat;
   }
   const endRun = () => { runs.end(); pushTarget.last = null; pushTarget(); };
