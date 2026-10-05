@@ -131,12 +131,12 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   if (process.env.LUMEN_TEST_BACKGROUND) console.log('SKIP  video fullscreen (needs a visible window; LUMEN_TEST_BACKGROUND is set)');
   else {
     // HTML fullscreen fills the window.
-    const viewTop = () => app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((w) => /renderer[\/]index\.html/.test(w.webContents.getURL())); return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents)?.getBounds().y; });
+    const viewTop = () => app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((w) => /renderer[/\\]index\.html/.test(w.webContents.getURL())); return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents)?.getBounds().y; });
     await pageEval("document.getElementById('fs').click()");
     await waitFor(async () => (await viewTop()) === 0);
     await new Promise((r) => setTimeout(r, 200)); // the width follows the move
     const fsBounds = await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows().find((w) => /renderer[\/]index\.html/.test(w.webContents.getURL()));
+      const win = BrowserWindow.getAllWindows().find((w) => /renderer[/\\]index\.html/.test(w.webContents.getURL()));
       const view = win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents);
       return { view: view.getBounds(), content: win.getContentSize() };
     });
@@ -145,7 +145,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
     await waitFor(async () => (await viewTop()) > 0);
     const normal = await app.evaluate(() => global.__agent.browser.activeTab().webContents);
     const afterFs = await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows().find((w) => /renderer[\/]index\.html/.test(w.webContents.getURL()));
+      const win = BrowserWindow.getAllWindows().find((w) => /renderer[/\\]index\.html/.test(w.webContents.getURL()));
       return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents).getBounds();
     });
     check('leaving fullscreen restores the layout', afterFs.y > 0, JSON.stringify(afterFs));
