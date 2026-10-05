@@ -4,6 +4,7 @@
 // (they still show), Regenerate keeping the summary, the API engine's /compact, /context and auto-compact with a fake
 // Claude client, Claude Code's /compact and /context going to the CLI as typed without full access (a fake `claude`
 // speaking stream-json, as checked against Claude Code 2.1.287), and skills named like the new commands.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

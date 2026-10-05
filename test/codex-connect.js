@@ -1,6 +1,7 @@
 // Settings → AI → "Add to Codex CLI", in the real app against a stand-in `codex` (a .cmd on Windows, a script elsewhere; it is not
 // npm's shim, so on Windows it also exercises the cmd.exe route) and a throwaway CODEX_HOME: nothing of the real ~/.codex or
 // the installed Codex is touched, and no model call exists to make. Offline.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const path = require('path');

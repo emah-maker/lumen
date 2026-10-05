@@ -2,6 +2,7 @@
 // hint, a skill made in Settings showing up in the menu, the import review, "create from this chat",
 // and web pages having no way to the skills calls. A fake Claude client (no network, no key) records
 // what the model would have received. Hidden windows; nothing touches a real profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

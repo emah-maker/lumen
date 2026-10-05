@@ -2,6 +2,7 @@
 // how file paths are read out of a reply and out of tool results (Windows, posix, backticks, markdown, file: addresses, quotes,
 // trailing punctuation), the rules a file must meet to be shown (written during the run, real picture bytes, size cap, no
 // link out, a few per reply), each engine's tool-result hook, and a markdown image that names a local file.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

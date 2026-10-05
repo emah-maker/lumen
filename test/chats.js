@@ -2,6 +2,7 @@
 // (features/chat-usage.js), with a fake Claude client: no network, no key needed.
 // Covers: moving the old single chat.json into the list, New chat keeping the old chat, reopening
 // one, rename, export, delete, token/cost totals, and approved sites staying with their chat.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

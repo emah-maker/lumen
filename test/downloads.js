@@ -2,6 +2,7 @@
 // agrees and is not downloaded twice (a one-time link still works); two files with the same name
 // at once get different names; everything goes to the folder chosen in Settings. The toolbar
 // button's panel lists them, acts on them, drags finished files out, and the list survives a restart.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -109,7 +110,7 @@ const os = require('os');
   const names = (await list()).map((d) => d.name);
   check('the panel lists every download, newest first', JSON.stringify(shown.map((r) => r.name)) === JSON.stringify(names), `${JSON.stringify(shown.map((r) => r.name))} vs ${JSON.stringify(names)}`);
   check('a finished download shows its size and site', /KB|MB|B · 127\.0\.0\.1/.test(shown.find((r) => r.name === 'slow.bin')?.status || ''), JSON.stringify(shown.find((r) => r.name === 'slow.bin')));
-  check('a cancelled download says so', /Cancelled/.test(shown.find((r) => /cancelled/.test(r.cls))?.status || ''), JSON.stringify(shown));
+  check('a cancelled download says so', /Cancell?ed/.test(shown.find((r) => /cancelled/.test(r.cls))?.status || ''), JSON.stringify(shown));
 
   // Drag a finished file out: a native file drag of that file.
   await app.evaluate(() => { const wc = global.__downloads.panel(); global.__dragged = null; wc.startDrag = (o) => { global.__dragged = o.file; }; });

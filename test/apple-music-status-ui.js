@@ -4,6 +4,7 @@
 // keyboard, no console errors. Part 2 (Windows only, skipped when there is no media session to read) runs the real PowerShell
 // helper against whatever media app is playing, with the Apple filter off (LUMEN_TEST_APPLE_MUSIC_ANY=1).
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep a screenshot of each.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

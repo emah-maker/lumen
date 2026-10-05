@@ -2,6 +2,7 @@
 // translate-local.js): reading Mozilla's model registry, picking the newest complete model set, route
 // planning (direct, or through English), SHA-256 checking, the download cache, cancelling, and the
 // client's process handling with a fake worker. No network and no wasm: the registry and files are fakes.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

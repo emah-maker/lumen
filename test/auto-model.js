@@ -3,6 +3,7 @@
 // message: quick questions go to a small model, hard ones to a strong one, a /think asks for the strongest, a model that is
 // cooling down or turned off for Auto is skipped, and a model that refuses the request is replaced once by another.
 // The engines are fakes (the Claude client and providers.streamTurn record the model they are given); no network, no key.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -36,16 +37,18 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
     global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
       fake.used.push(`anthropic:${params.model}`);
       fake.prompts.push(text(params.messages[params.messages.length - 1]));
-      const failure = fake.fail[`anthropic:${params.model}`];
-      if (failure) { delete fake.fail[`anthropic:${params.model}`]; return { async *[Symbol.asyncIterator]() { throw Object.assign(new Error(failure.message), { status: failure.status }); }, finalMessage: async () => { throw Object.assign(new Error(failure.message), { status: failure.status }); } }; }
+      const key = fake.fail[`anthropic:${params.model}`] ? `anthropic:${params.model}` : '*'; // ('*': whichever model gets the next request)
+      const failure = fake.fail[key];
+      if (failure) { delete fake.fail[key]; return { async *[Symbol.asyncIterator]() { throw Object.assign(new Error(failure.message), { status: failure.status }); }, finalMessage: async () => { throw Object.assign(new Error(failure.message), { status: failure.status }); } }; }
       const message = { role: 'assistant', model: params.model, stop_reason: 'end_turn', content: [{ type: 'text', text: `Reply ${++fake.n}.` }], usage: { input_tokens: 10, output_tokens: 5 } };
       return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: message.content[0].text } }; }, finalMessage: async () => message };
     } } } });
     global.__providers.streamTurn = async ({ provider, model, emit, messages }) => {
       fake.used.push(`${provider}:${model}`);
       fake.prompts.push(text(messages[messages.length - 1]));
-      const failure = fake.fail[`${provider}:${model}`];
-      if (failure) { delete fake.fail[`${provider}:${model}`]; throw Object.assign(new Error(failure.message), { status: failure.status }); }
+      const key = fake.fail[`${provider}:${model}`] ? `${provider}:${model}` : '*';
+      const failure = fake.fail[key];
+      if (failure) { delete fake.fail[key]; throw Object.assign(new Error(failure.message), { status: failure.status }); }
       emit({ type: 'text', text: 'Reply.' });
       return { content: [{ type: 'text', text: `Reply ${++fake.n}.` }], stop_reason: 'end_turn', model: `${provider}:${model}`, usage: null };
     };
@@ -66,7 +69,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await waitFor(() => ui.evaluate(() => document.querySelectorAll('#model option').length > 3));
   // A Claude Code (or other CLI) on the machine running this test would be a candidate too: keep the run the same everywhere.
-  const ENGINES = ['claudecode', 'grokbuild', 'antigravity'];
+  const ENGINES = ['claudecode', 'grokbuild', 'antigravity', 'codex']; // (every command-line engine: Codex joined later and answered for Auto, where the fakes see nothing)
   await app.evaluate((_e, e) => global.__patchSettings({ autoExclude: e }), ENGINES);
 
   // ---- the picker: Auto first, the default on a fresh profile
@@ -116,7 +119,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   check('a model that hit its limit is left alone by Auto', second !== first, `${first} -> ${second}`);
   check('the Auto reply says which provider it skipped for being out of usage', await waitFor(() => ui.evaluate(() => { const el = [...document.querySelectorAll('.reply-model')].pop(); return Boolean(el) && /skipped: out of usage/.test(el.title); })), await ui.evaluate(() => [...document.querySelectorAll('.reply-model')].map((e) => e.title).join(' ; ')));
   await app.evaluate(() => global.__aiFallback.shared.clear());
-  await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity'] }));
+  await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity', 'codex'] }));
   const picks = [];
   for (const text of ['hi', HEAVY]) { await ui.evaluate(() => document.getElementById('new-chat').click()); await sleep(250); picks.push(...await send(text)); }
   check('a provider turned off for Auto is never chosen', picks.every((m) => m.startsWith('anthropic:')), JSON.stringify(picks));
@@ -125,8 +128,8 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   // ---- escalation: a model that can't take the request is replaced once by another
   await ui.evaluate(() => document.getElementById('new-chat').click());
   await sleep(300);
-  const wanted = A.route({ options: (await settings()).models.filter((o) => o.id !== 'auto'), request: { prompt: 'hi' }, prefer: [] }).id;
-  await failNext(wanted.includes(':') ? wanted : `anthropic:${wanted}`, 'prompt is too long: 900000 tokens > 200000 maximum', 400);
+  // (Auto's pick also follows the last model used and the home provider, so it is not predicted here: the next request fails, whichever model gets it.)
+  await failNext('*', 'prompt is too long: 900000 tokens > 200000 maximum', 400);
   u = await send('hi');
   check('too long for the cheap model: the same message goes on another one', u.length === 2 && u[0] !== u[1], JSON.stringify(u));
 
@@ -164,14 +167,17 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
     check('settings.json keeps "openai:auto"', JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).model === 'openai:auto');
     check('no request ever carried "auto" as its model', !(await used()).some((m) => /(^|:)auto$/.test(m)), JSON.stringify((await used()).slice(-6)));
     // Turned off for the global Auto, a provider is still used by its own Auto
-    await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity'] }));
+    await app.evaluate(() => global.__patchSettings({ autoExclude: ['openai', 'claudecode', 'grokbuild', 'antigravity', 'codex'] }));
     u = await send('hello');
     check('a provider turned off for Auto (Settings) is still chosen by its own Auto', u[0].startsWith('openai:'), JSON.stringify(u));
     await app.evaluate((_e, e) => global.__patchSettings({ autoExclude: e }), ENGINES);
     // Out of usage inside the provider: both models limited, the fallback takes over like for a picked model
     await app.evaluate(() => { for (const id of ['gpt-5.6', 'gpt-5.6-mini']) global.__aiFallback.shared.mark(`openai:${id}`, { kind: 'limit', scope: 'model', resetsAt: Date.now() + 600000 }); });
     u = await send('hello again');
-    check('every OpenAI model out of usage: another provider answers (the setting "Switch models automatically" is on)', u.length === 1 && !u[0].startsWith('openai:'), JSON.stringify(u));
+    // The vendor's other route comes first (fallback RELATED: openai -> codex), and it is tried by name, so Codex answers here even though Auto
+    // never picks it; the fakes only see API calls, so that shows as no API request (the chat's notice names it). Without Codex, an API provider answers.
+    const answeredBy = await ui.evaluate(() => [...document.querySelectorAll('.reply-model')].pop()?.textContent || '');
+    check('every OpenAI model out of usage: another provider answers (the setting "Switch models automatically" is on)', u.every((m) => !m.startsWith('openai:')) && (u.length === 1 || /Codex/.test(answeredBy)), JSON.stringify({ u, answeredBy }));
     check('...and the chat says so, staying on OpenAI Auto', await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.notice')].some((n) => /OpenAI is unavailable right now, so Auto uses /.test(n.textContent)))) && (await ui.inputValue('#model')) === 'openai:auto', await ui.evaluate(() => [...document.querySelectorAll('.notice')].map((n) => n.textContent).join(' | ')));
     await app.evaluate(() => global.__aiFallback.shared.clear());
     // The Claude API's own Auto: only Claude models

@@ -2,6 +2,7 @@
 // them live without a reload, adapts to the card's size (summary and dots, then rows, then detail and the live strip) and never
 // overflows or clips at any size. The window is off-screen (LUMEN_TEST_BACKGROUND) and the profile a throwaway.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

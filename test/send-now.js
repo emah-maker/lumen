@@ -1,6 +1,7 @@
 // "Send now" in the sidebar chat: while a reply runs, a typed message (the button or Ctrl+Enter) or a queued one
 // (its notice's Send now) stops the reply and goes next. The reply so far stays on screen, marked interrupted, and
 // reaches the next request in the history. Uses a fake Claude client: no network, no key.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

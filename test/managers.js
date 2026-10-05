@@ -2,6 +2,7 @@
 // bookmarks add / edit / search / remove / export / import round trip, a local download driven
 // from the Downloads page, and a "last hour" clear that removes only recent history, cookies,
 // site data and downloads. Local servers only; a throwaway profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -181,6 +182,9 @@ const os = require('os');
   // ================= Clear browsing data, last hour =================
   // An "old" site (127.0.0.1: visited, cookie and localStorage 3 days ago) and a "new" one (localhost).
   await app.evaluate((_e, u) => global.__agent.execute('open_tab', { url: u }).catch((err) => err.message), `${base}/start`);
+  // open_tab opens in the background now (AI manners); the run-less calls below act on the tab in front, so bring it forward.
+  await app.evaluate((_e, u) => { const t = global.__agent.browser.listTabs().find((x) => x.url.startsWith(u)); if (t) global.__agent.browser.switchTab(t.id); }, `${base}/start`);
+  await new Promise((r) => setTimeout(r, 500));
   await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }), `${base}/set`);
   await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }), `${other}/set`);
   const cookieHosts = () => app.evaluate(async ({ session }) => (await session.defaultSession.cookies.get({ name: 'lumen_test' })).map((c) => c.domain).sort());

@@ -4,6 +4,7 @@
 //  - per-provider totals Lumen counted (today, 7 days, per day, per model, last use) and the price estimate of an API turn;
 //  - the usage log taking API and Antigravity turns, a budget per provider, the bars and the status card;
 //  - reasoning effort per AI: validation, the flag or request field each engine gets.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

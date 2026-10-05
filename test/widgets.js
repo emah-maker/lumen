@@ -4,6 +4,7 @@
 // screen, kept fresh live, with tokens that never leave the main process. Offline: a local https server (a
 // throwaway self-signed certificate) stands in for Open-Meteo, its geocoder, an IP-location service, Todoist,
 // a calendar feed and sites with and without X-Frame-Options. Pointer input is dispatched into the page.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

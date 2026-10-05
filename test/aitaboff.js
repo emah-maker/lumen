@@ -2,6 +2,7 @@
 // tab strip), with a temp profile and no network: the shield button shows on a page and toggles per tab; the tab carries a mark in the
 // strip; reading it still works, every tool that acts is refused on it, in the tool layer; it stays through navigation and a restart.
 // Run with LUMEN_TEST_BACKGROUND=1 so the windows stay invisible and never take focus. SHOTS=<dir> saves screenshots of the button.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

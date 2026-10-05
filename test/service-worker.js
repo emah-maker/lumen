@@ -1,6 +1,7 @@
 // Service workers, shared workers and dedicated workers in a real Lumen: a page's navigator.serviceWorker.register()
 // settles and becomes ready (the identity auto-attach once left the paused worker targets unresumed, so it never did),
 // and a worker's navigator.userAgent / userAgentData agree with the page's. Throwaway profile; LUMEN_TEST_BACKGROUND=1.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

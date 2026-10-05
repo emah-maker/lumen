@@ -5,6 +5,7 @@
 // Organize Tabs leaves those tabs out. Turning AI back on restores it all.
 // Undo: a sidebar run's opened tabs close, closed tabs reopen in their group, navigations go back,
 // groups and the tab switch are reversed; typing on a site is listed as not undoable; once only.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -70,7 +71,7 @@ const { openSettingsTab } = require('./settings-tab');
       return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
     } } } });
     const events = [];
-    await agent.run('do it', (e) => events.push(e));
+    await agent.run('do it on this page', (e) => events.push(e));
     const results = agent.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
       .filter((b) => b.type === 'tool_result')
       .map((b) => ({ error: Boolean(b.is_error), text: typeof b.content === 'string' ? b.content : JSON.stringify(b.content).slice(0, 400) }));
@@ -169,12 +170,16 @@ const { openSettingsTab } = require('./settings-tab');
   await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test-agent' } });
   bridge.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
   const mcpText = (m) => (m.result?.content || []).map((c) => c.text || '').join('\n');
+  // An outside agent works in a window of its own (08ec84a), apart from the user's tabs: it never sees the user's tab on the site, so it
+  // reads its own blank tab, lists no address or title from the site, and is refused when it goes to the site itself.
   const mcpRead = await request('tools/call', { name: 'read_page', arguments: {} });
-  check('MCP: read_page on a tab with AI off is refused', mcpRead.result?.isError && /turned off AI on localhost/.test(mcpText(mcpRead)), JSON.stringify(mcpRead).slice(0, 300));
-  const mcpBatch = await request('tools/call', { name: 'batch', arguments: { steps: [{ do: 'scroll', direction: 'down' }] } });
-  check('MCP: batch there is refused', mcpBatch.result?.isError && /turned off AI/.test(mcpText(mcpBatch)), JSON.stringify(mcpBatch).slice(0, 300));
+  check('MCP: read_page shows nothing from the user tab on a site with AI off', !/Private text/.test(mcpText(mcpRead)) && !mcpText(mcpRead).includes('localhost'), JSON.stringify(mcpRead).slice(0, 300));
   const mcpTabs = await request('tools/call', { name: 'list_tabs', arguments: {} });
-  check('MCP: list_tabs shows no address or title from the site', !mcpText(mcpTabs).includes('localhost') && /"ai_off":true/.test(mcpText(mcpTabs)), mcpText(mcpTabs));
+  check('MCP: list_tabs shows no address or title from the site', !mcpText(mcpTabs).includes('localhost') && !/Private/.test(mcpText(mcpTabs)), mcpText(mcpTabs));
+  const mcpGo = await request('tools/call', { name: 'navigate', arguments: { url: `${off}/page` } });
+  check('MCP: navigating to the site is refused', mcpGo.result?.isError && /turned off AI/.test(mcpText(mcpGo)), JSON.stringify(mcpGo).slice(0, 300));
+  const mcpBatch = await request('tools/call', { name: 'batch', arguments: { steps: [{ do: 'navigate', url: `${off}/page` }] } });
+  check('MCP: a batch that goes there is refused too', !/Private text/.test(mcpText(mcpBatch)) && (mcpBatch.result?.isError || /turned off AI/.test(mcpText(mcpBatch))), JSON.stringify(mcpBatch).slice(0, 300));
   bridge.kill();
 
   // ---- 5. Organize Tabs with AI leaves those tabs out
@@ -236,7 +241,8 @@ const { openSettingsTab } = require('./settings-tab');
     { name: 'open_tab', input: { url: `${on}/new` } },
   ] });
   const undo = r.done?.undo;
-  check('the reply reports what can be undone', undo && undo.undoable >= 5, JSON.stringify(r.done));
+  // Four things to undo: the navigation, the closed tab, the group and the tab it opened. switch_tab and open_tab no longer pull the user's front tab away (AI manners: the run follows its own tab), so there is no "switched" step any more.
+  check('the reply reports what can be undone', undo && undo.undoable >= 4 && undo.lasting.some((l) => /typed text/.test(l)), JSON.stringify(r.done));
   check('typing on a site is listed as not undoable', undo?.lasting?.some((l) => /typed text on 127\.0\.0\.1/.test(l)), JSON.stringify(undo));
   const before = await app.evaluate(() => global.__agent.browser.listTabs().map((t) => ({ id: t.id, url: t.url, group: t.group, active: t.active })));
   const result = await app.evaluate((_e, id) => global.__agent.undoRun(id), undo?.id);

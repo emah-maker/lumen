@@ -8,6 +8,7 @@
 // the interrupt being killed), Lumen's checks (config.toml, environment, approval answers, items that aren't Lumen's tools,
 // the watchdog), the fallbacks to a headless run (no app-server, a thread Codex doesn't know, MCP not connected), a changed
 // sign-in, idle timeout, the process cap, dropChat / disposeAll, images, usage.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

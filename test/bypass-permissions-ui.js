@@ -2,6 +2,7 @@
 // message box, in a real window, and the same choice in Settings → AI. Turning a level up takes a second click, turning it down one;
 // the saved settings and the agent's switches follow; Settings and the sidebar stay in step. Run with LUMEN_TEST_BACKGROUND=1.
 // BYPASS_SHOTS=<dir> also saves screenshots of the menu, the armed line and the indicator there.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

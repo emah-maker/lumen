@@ -10,6 +10,7 @@
 //  - Lumen's local HTTP MCP server (automation/mcp-http.js startHttp) is replaced by a recording fake gate: it hands
 //    out one token per run (the token IS the run's tag), records open / close, and keeps the `callTool` it was given,
 //    which the tests call the way a CLI's MCP request would arrive (session.engine = the run's tag).
+require('../_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');

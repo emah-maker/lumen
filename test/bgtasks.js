@@ -4,6 +4,7 @@
 // allowed site; a watch task notices a changed page without calling the model when nothing changed; a
 // private window can't create a task; and a restart marks a running task interrupted.
 // Claude Code / Grok Build tasks run against a fake CLI process (test/fixtures/fake-cli.js): no login, no tokens.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -11,6 +12,20 @@ const fs = require('fs');
 const os = require('os');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// [sidebar per tab] the sidebar is open or closed tab by tab, so a tab the test opened comes up without it: sidebar controls open it first.
+const keepSidebarOpen = (page) => {
+  for (const method of ['click', 'fill', 'selectOption', 'inputValue']) {
+    const original = page[method].bind(page);
+    page[method] = async (selector, ...rest) => {
+      if (/^(#prompt|#model|\.task-)/.test(String(selector))) {
+        await page.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); });
+        await page.waitForFunction(() => !document.body.classList.contains('sidebar-hidden'));
+      }
+      return original(selector, ...rest);
+    };
+  }
+  return page;
+};
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(80); } return v; };
 
 (async () => {
@@ -42,7 +57,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     colorScheme: null,
   });
   let app = await launch();
-  let ui = await app.firstWindow();
+  let ui = keepSidebarOpen(await app.firstWindow());
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
@@ -277,7 +292,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     'TASK-CA': [{ tool: 'navigate', input: { url: `${base}/ca` } }, { tool: 'read_page', input: {} }, { hold: 'CA' }, { say: 'RESULT-CA the page says: Page text for /ca' }],
     'SIDE-1': [{ tool: 'read_page', input: {} }, { hold: 'S1' }, { say: 'RESULT-S1 sidebar reply' }],
   });
-  await ui.selectOption('#model', 'claudecode:default');
+  await ui.selectOption('#model', 'claudecode:default', { force: true }); // (the native select is hidden behind the custom picker)
   await ui.fill('#prompt', 'SIDE-1 what is on this page?');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => started('SIDE-1'), 15000);
@@ -315,7 +330,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   check('the fake process and its temp folder are gone, and the run\'s engine is released', await waitFor(() => !alive(sa.pid) && !fs.existsSync(sa.cwd), 5000) && (await app.evaluate(() => global.__bgEngineCount())) === 0, sa.cwd);
   const usageRecords = await (async () => { await sleep(900); try { return JSON.parse(fs.readFileSync(path.join(profile, 'usage.json'), 'utf8')).records; } catch { return []; } })();
   check('usage: the task\'s turn is logged as a background claudecode record, the sidebar\'s is not', usageRecords.some((r) => r.engine === 'claudecode' && r.background === true) && usageRecords.some((r) => r.engine === 'claudecode' && !r.background), JSON.stringify(usageRecords));
-  await ui.selectOption('#model', originalModel);
+  await ui.selectOption('#model', originalModel, { force: true });
 
   // Approvals: a call that needs the user waits as waiting-approval (a card in the Tasks panel, none in the sidebar).
   setScripts({
@@ -447,7 +462,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await sleep(700);
   await app.close();
   app = await launch();
-  ui = await app.firstWindow();
+  ui = keepSidebarOpen(await app.firstWindow());
   await ui.waitForSelector('.tab');
   await waitFor(() => app.evaluate(() => Boolean(global.__bg)));
   const g = await app.evaluate(() => { const t = global.__bg.tasks().find((x) => x.prompt.includes('TASK-G')); return t ? { status: t.status, error: t.error, runs: t.runs.map((r) => r.status), model: t.model, result: t.result, n: global.__bg.tasks().length } : null; });
@@ -455,7 +470,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const kept = await app.evaluate(() => global.__bg.tasks().map((t) => t.status));
   check('finished tasks and the watch tasks came back too', kept.filter((s) => s === 'done').length >= 4 && kept.length >= 10, JSON.stringify(kept));
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await ui.click('#tasks-btn');
+  await ui.click('#tasks-btn', { force: true }); // (its unseen-dot animation never settles)
   await ui.waitForSelector('.task-row');
   await ui.evaluate(() => [...document.querySelectorAll('.task-row')].find((r) => r.textContent.includes('TASK-G')).click());
   await ui.waitForSelector('.task-actions');

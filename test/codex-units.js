@@ -6,6 +6,7 @@
 //  - what Codex reports about usage (rollout token_count events, exec turn.completed), scanning session logs, the limit state;
 //  - the Settings button end to end (found, already connected, stale, added by the CLI, an old CLI, failure text, Locate...);
 //  - how Lumen's usage store and the sidebar/status surfaces take Codex's numbers.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

@@ -5,6 +5,7 @@
 // cycles, after a drag-drop, and under the OS "reduce motion" preference (which deliberately swaps
 // the shake for a dashed outline: checked to be consistent for every card, and to resume afterwards).
 // Offline; a throwaway profile; LUMEN_TEST_BACKGROUND keeps the window off-screen.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

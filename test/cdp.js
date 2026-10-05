@@ -3,6 +3,7 @@
 // URL needs the token Settings shows, and Chromium's DevToolsActivePort file doesn't stay around.
 // Parts 1 and 2 run under Playwright's _electron (Chromium's port, as on macOS); part 3 starts Lumen
 // the way a user does, through launcher.js: Chromium on a private pipe, no debugging port at all.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron, chromium } = require('playwright-core');
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
@@ -165,7 +166,8 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   await page.goto(`${site}/second`);
   check('newPage opens a real Lumen tab', (await lumenTabs()) === before + 1 && (await page.title()) === 'Fixture /second', `${await lumenTabs()} tabs`);
   const active = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
-  check('new page is the active tab', active.endsWith('/second'), active);
+  // Target.createTarget opens in the background by default (automation.js, AI tab manners round 5): the user's tab stays in front.
+  check('new page opens behind the user tab', !active.endsWith('/second'), active);
   await page.close();
   await ui.waitForTimeout(300);
   check('page.close closes the Lumen tab', (await lumenTabs()) === before, await lumenTabs());
@@ -232,6 +234,17 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     await piped.goto(`${site}/piped`);
     check('pipe: newPage opens a tab and navigates', (await piped.title()) === 'Fixture /piped' && (await pipeList()).length === tabsBefore.length + 1, await piped.title());
     check('pipe: evaluate in a tab', (await piped.evaluate(() => 6 * 7)) === 42, 'wrong result');
+    const activate = async (context, page) => { // Target.createTarget opens behind the user's tab (background by default), and Playwright cannot click a hidden page: ask the browser endpoint to bring it forward
+          const target = (await pipeList()).find((x) => x.url === page.url());
+          const { webSocketDebuggerUrl } = await fetch(`${pipeRoot}/json/version`).then((r) => r.json());
+          const ws = new WebSocket(webSocketDebuggerUrl);
+          await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+          const answered = new Promise((resolve) => { ws.onmessage = resolve; });
+          ws.send(JSON.stringify({ id: 1, method: 'Target.activateTarget', params: { targetId: target.id } }));
+          await answered;
+          ws.close();
+        };
+    await activate(pipeContext, piped);
     await piped.click('button');
     check('pipe: click in a tab', (await piped.title()) === 'clicked', await piped.title());
     // A page endpoint is its own session on the same pipe.

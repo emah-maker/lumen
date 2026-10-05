@@ -1,5 +1,6 @@
 // Hardening: Lumen's own UI window can't be navigated or made to open windows, its IPC answers only
 // its own top-level document, and the AI's hidden reader views get no permissions or downloads.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

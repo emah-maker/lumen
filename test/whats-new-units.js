@@ -3,6 +3,7 @@
 // covers, when the notes show (never on a first run, a downgrade or in test mode unless asked), that
 // the version is recorded and the switch saved, the settings' validation, and that CHANGELOG.md ships
 // inside the app with an entry for package.json's version.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

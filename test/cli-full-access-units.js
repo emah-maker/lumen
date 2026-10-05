@@ -9,6 +9,7 @@
 //  - a CLI that rejects a full-access flag fails with a plain message instead of running without it;
 //  - agent.js: the setting reaches each engine through the same dependency-injection pattern as claudeCodeFullAccess.
 // The flag names come from the CLIs' own --help (grok 1.0.44, agy 1.2.14); no model call was made with them.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

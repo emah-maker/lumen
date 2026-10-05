@@ -4,6 +4,7 @@
 // stand-in cipher (no plaintext on disk, a file it can't decrypt left alone), off by default, the
 // settings calls, and the AI side: run_script refused after a fill, nothing AI-facing requires the vault.
 // No Electron window; a temp folder, never the real profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 module.exports = async function passwordUnits(check) {
   const fs = require('fs');
   const os = require('os');

@@ -1,6 +1,7 @@
 // On-device translation, the download path in plain Node (features/translate-models.js): a failing
 // sibling file, a full disk, a stalled connection, stale half-downloads, and two callers sharing one
 // pair. Fake registry, fake fetch (real streams), fake write stream where a disk error is needed.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

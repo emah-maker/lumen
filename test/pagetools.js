@@ -1,6 +1,7 @@
 // Page tools (features/page-tools.js): Save Page As, View Source, Reader mode and Picture in
 // Picture, against local fixture pages. Also checks that the source and reader pages stay out of
 // the AI's reach and that web pages can't open them.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

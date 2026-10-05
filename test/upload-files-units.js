@@ -3,6 +3,7 @@
 // a label / button / drop zone, what the model is told about attached files, and the tool layer: the card, the picker, the
 // refusals (AI off on the site, a tab kept off, hands-off mode), and that no path from the model ever reaches the page.
 // The Electron side (a real page, the real composer and cards) is test/uploads.js.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

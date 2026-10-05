@@ -4,6 +4,7 @@
 // chooser, `accept` and `multiple`, the "Upload?" card and the "Choose file…" card (the OS picker stubbed), and every refusal
 // (AI off on the site, a tab kept off, hands-off mode, a path the model typed). No network; run with LUMEN_TEST_BACKGROUND=1
 // (set here) so no window shows. SHOTS=<dir> saves screenshots of the attachment chips and the cards.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

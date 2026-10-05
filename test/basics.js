@@ -4,6 +4,7 @@
 // Keyboard Shortcuts sheet, Esc stops a page that is still loading, a zoom picked by hand comes back
 // after a restart, and after a crash with "Open the new-tab page" at startup Lumen offers the old tabs
 // (and a normal quit leaves nothing to offer). Throwaway profiles; run with LUMEN_TEST_BACKGROUND=1.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

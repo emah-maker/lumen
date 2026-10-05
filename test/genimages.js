@@ -2,6 +2,7 @@
 // picture in the reply (fit to the bubble, Save / Copy, click to enlarge, right-click menu), it is saved with the chat and drawn again
 // after the chat is reopened and in the full-page chat, a model that can't make pictures says so, a made picture comes out with the
 // export, deleting the chat deletes the file, web pictures wait for a click, and nothing unsafe becomes an <img>.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

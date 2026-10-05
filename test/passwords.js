@@ -5,6 +5,7 @@
 // (read_page shows no password, run_script refused after a fill), research tabs and private windows
 // never offered, Never for this site, the settings page list with Show behind re-authentication, and
 // turning it off (Keep by default). A throwaway profile; windows stay invisible (LUMEN_TEST_BACKGROUND).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -87,6 +88,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
     server.close();
     process.exit(failures ? 1 : 0);
   }
+  await waitFor(() => settingsJson().savePasswords === true); // (settings are written to disk a moment after the change)
   check('turns on when OS encryption is available', on.enabled && settingsJson().savePasswords === true, JSON.stringify(on));
 
   // ---- the save offer ----
@@ -161,6 +163,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await signIn(t4, 'bob@example.com', 'bob-pw-123');
   await waitFor(async () => (await stateOf(t4))?.offer);
   await app.evaluate((_e, i) => { global.__agent.browser.switchTab(i); global.__passwords.act(global.__translate.tab(i), 'never'); }, t4);
+  await waitFor(() => (settingsJson().passwordsNever || []).includes(site));
   check('Never for this site is remembered (site only) and nothing is saved', (settingsJson().passwordsNever || []).includes(site) && (await app.evaluate(() => global.__passwords.vault.count())) === 1, JSON.stringify(settingsJson().passwordsNever));
   const t5 = await open(`${base}/login`);
   await sleep(400);
@@ -185,6 +188,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   // ---- turning it off ----
   await app.evaluate(() => { global.__passwordsConfirm = async ({ buttons }) => { global.__pwConfirmButtons = buttons; return 0; }; });
   const off = await app.evaluate(() => global.__passwords.setEnabled(false));
+  await waitFor(() => settingsJson().savePasswords === false);
   check('turning off asks, and Keep (the default) keeps the saved passwords', !off.enabled && off.count === 1 && fs.existsSync(vaultFile) && settingsJson().savePasswords === false, JSON.stringify(off));
   await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), t2);
   check('off: the key button goes', await waitFor(() => ui.$eval('#passwords-btn', (b) => b.hidden)), '');

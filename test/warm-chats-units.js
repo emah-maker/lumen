@@ -2,6 +2,7 @@
 // grok-build.js's sign-in lock (shareAuth / holdAuth: one link for overlapping Grok Build runs in a home, one
 // copy-back when the last ends). Plain Node, fake engines and clocks; the end-to-end version with fake CLIs is
 // test/acceptance/chat-warm-per-chat.js.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -138,26 +139,28 @@ function fakeTimers() {
   fs.mkdirSync(user); fs.mkdirSync(home);
   fs.writeFileSync(path.join(user, 'auth.json'), 'v1');
   const own = path.join(home, 'auth.json');
+  // A refresh lands later than the link; the test's writes can share one timestamp tick, so say so explicitly.
+  const laterMtime = (file, seconds) => { const t = new Date(Date.now() + seconds * 1000); fs.utimesSync(file, t, t); };
   try {
     // Three runs prepare at once: one link.
     const links = await Promise.all([gb.shareAuth(user, home), gb.shareAuth(user, home), gb.shareAuth(user, home)]);
     check('grok lock: concurrent prepares share one link (made once)', gb.authStats(home).links === 1 && links.every((b) => b === links[0]), J(gb.authStats(home)));
     const r1 = gb.holdAuth(user, home); const r2 = gb.holdAuth(user, home);
     // Run 1's Grok refreshes the token (replaces Lumen's file).
-    fs.rmSync(own); fs.writeFileSync(own, 'v2');
+    fs.rmSync(own); fs.writeFileSync(own, 'v2'); laterMtime(own, 1);
     await gb.shareAuth(user, home); // a run starting while two are in flight
     check('grok lock: a link asked for under runs in flight is the shared one (refreshed token kept)', gb.authStats(home).links === 1 && fs.readFileSync(own, 'utf8') === 'v2');
     await r1();
     check('grok lock: no copy-back while another run is going', fs.readFileSync(path.join(user, 'auth.json'), 'utf8') === 'v1');
     // Run 2 refreshes once more before it ends.
-    fs.rmSync(own); fs.writeFileSync(own, 'v3');
+    fs.rmSync(own); fs.writeFileSync(own, 'v3'); laterMtime(own, 2);
     await r2(); await r2(); // (twice: harmless)
     check('grok lock: the last run\'s end copies the newest token back, once', fs.readFileSync(path.join(user, 'auth.json'), 'utf8') === 'v3' && gb.authStats(home).runs === 0);
     // A later run links afresh, and a refresh in it is copied back too (Lumen's own copy-back is not "the user signed in again").
     await gb.shareAuth(user, home);
     const r3 = gb.holdAuth(user, home);
     check('grok lock: with no run in flight the next run links again', gb.authStats(home).links === 2, J(gb.authStats(home)));
-    fs.rmSync(own); fs.writeFileSync(own, 'v4');
+    fs.rmSync(own); fs.writeFileSync(own, 'v4'); laterMtime(own, 3);
     await r3();
     check('grok lock: a refresh in a later run is copied back as well', fs.readFileSync(path.join(user, 'auth.json'), 'utf8') === 'v4');
     // The user signs in again in a terminal during a run: their new file wins, nothing is copied over it.
@@ -165,7 +168,7 @@ function fakeTimers() {
     const r4 = gb.holdAuth(user, home);
     await new Promise((r) => setTimeout(r, 30));
     fs.writeFileSync(path.join(user, 'auth.json.tmp'), 'user-new'); fs.renameSync(path.join(user, 'auth.json.tmp'), path.join(user, 'auth.json'));
-    fs.rmSync(own); fs.writeFileSync(own, 'v5');
+    fs.rmSync(own); fs.writeFileSync(own, 'v5'); laterMtime(own, 4);
     await r4();
     check('grok lock: a sign-in the user made meanwhile is not overwritten', fs.readFileSync(path.join(user, 'auth.json'), 'utf8') === 'user-new');
   } catch (err) {

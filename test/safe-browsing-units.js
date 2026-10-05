@@ -1,6 +1,7 @@
 // Plain Node checks for the Safe Browsing list files (features/safe-browsing.js): the big-endian
 // byte swap, loading a cache written in the old format, damaged/partial files, and the atomic async save.
 // No Electron. Run from test/units.js (or on its own: node test/safe-browsing-units.js).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

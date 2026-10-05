@@ -5,6 +5,7 @@
 // test opts in (LUMEN_WHATS_NEW_TEST); Settings → Updates has the switch and a button that reopens
 // the notes; and the card is drawn over the normal window, never in a private one.
 // Run with LUMEN_TEST_BACKGROUND=1 to keep the windows invisible.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -64,7 +65,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return { app, ui, overlay, kind, card, gotIt };
   }
 
-  const expected = W.releasesBetween(W.parseChangelog(fs.readFileSync(W.CHANGELOG, 'utf8')), '0.3.0', version).map((r) => r.version);
+  const expected = W.releasesBetween(W.parseChangelog(fs.readFileSync(W.CHANGELOG, 'utf8')), '0.3.0', version).map((r) => r.version).slice(0, W.MAX_RELEASES); // the card lists at most MAX_RELEASES, newest first
 
   // ---- 1. an update from 0.3.0: the card comes up once
   const updated = makeProfile({ lastSeenVersion: '0.3.0' });
@@ -84,6 +85,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check('update: the card is drawn in the browser window', hosted.length === 1 && !/private/.test(hosted[0]), JSON.stringify(hosted));
       await gotIt(false);
       check('update: Got it closes the card', (await kind()) === null, await kind());
+      await waitFor(() => settingsOf(updated).showWhatsNew === false, 4000); // (saved once the card's promise settles, a moment after it closes)
       check('update: switching it off on the card saves showWhatsNew: false', settingsOf(updated).showWhatsNew === false && settingsOf(updated).lastSeenVersion === version, JSON.stringify(settingsOf(updated)));
 
       // ---- Settings → Updates: the switch (now off) and the button that reopens the notes

@@ -2,6 +2,7 @@
 // opening it in one tab leaves the others as they were, switching restores each tab's own state (toolbar button, aria-pressed,
 // the page area), tabs that share a chat share the state, a new tab starts closed, a moved or torn-off tab takes its state
 // along, a closed tab is forgotten, and the saved session brings the open tabs back open. Run with LUMEN_TEST_BACKGROUND=1.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

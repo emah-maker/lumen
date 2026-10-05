@@ -1,5 +1,6 @@
 // Toolbar pills (update, "Lumen is using this tab", zoom) are never clipped or overlapped at ordinary window
 // widths: every pill sits whole inside the toolbar's end column, clear of the address field and its star.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

@@ -1,6 +1,7 @@
 // Pure unit test for browser/chrome-identity.js (the one Chrome identity every page, popup and frame gets: UA string,
 // navigator.userAgentData, Sec-CH-UA* headers, window.chrome) and for the switches the automation launcher and
 // prepareAutomation give the relaunched browser. No Electron, no window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const assert = require('assert');
 const vm = require('vm');
 const { spawnSync } = require('child_process');

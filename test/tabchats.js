@@ -4,6 +4,7 @@
 // the cap makes the next chat wait, a tab closed under a working chat does not stop it, the chat list shows
 // where each chat lives (open it in its tab, move it here), and tab-chat bindings come back after a restart and
 // follow a tab into another window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

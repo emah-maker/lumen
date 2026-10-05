@@ -5,6 +5,7 @@
 // With SLACK_SETUP_SHOTS=<dir> it also saves screenshots; with SLACK_SETUP_WINDOW=1 it also presses
 // "Create the Lumen app in Slack" and checks the setup window opens on Slack's prefilled create-app page
 // (that one reaches the real slack.com, so it is off by default).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

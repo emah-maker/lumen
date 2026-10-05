@@ -2,6 +2,7 @@
 // chart on a wallpaper page (whose cards are dark whatever the scheme), and its interval menu reloads the chart at
 // the picked bar size and remembers the pick.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -5,6 +5,7 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { suiteTmp } = require('./test-tmp'); // each suite gets its own TEMP folder, removed after it
 
 const TEST_DIR = path.join(__dirname, '..', 'test');
 const TIMEOUT_MS = Number(process.env.LUMEN_UNIT_TIMEOUT_MS) || 120000;
@@ -30,7 +31,9 @@ const results = [];
 for (const name of names) {
   console.log(`\n=== ${name}`);
   const started = Date.now();
-  const run = spawnSync(process.execPath, [path.join(TEST_DIR, `${name}.js`)], { stdio: 'inherit', timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const tmp = suiteTmp(name);
+  const run = spawnSync(process.execPath, [path.join(TEST_DIR, `${name}.js`)], { stdio: 'inherit', env: tmp.env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
+  tmp.done();
   const timedOut = run.error && run.error.code === 'ETIMEDOUT';
   results.push({ name, ok: run.status === 0 && !run.error, code: timedOut ? `timeout after ${TIMEOUT_MS / 1000}s` : `exit ${run.status ?? run.signal ?? run.error?.message}`, seconds: ((Date.now() - started) / 1000).toFixed(1) });
 }

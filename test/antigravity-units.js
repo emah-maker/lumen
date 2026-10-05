@@ -5,6 +5,7 @@
 //  - the install command (shown, never run unless asked), the picker entries, the one-shot runner for Organize.
 // Verified against a real agy 1.2.14 by hand (read-only: --help, models, mcp add/list in a throwaway HOME, no model call): the flag
 // names and the `agy models` format used below. The live headless behaviour is from Google's docs: see antigravity.js's header.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

@@ -4,6 +4,7 @@
 // whichever contents has native focus: the text must land in the address bar. Tabs opened in the
 // background (middle-click, Open link in new tab, an AI tab) must leave the cursor where it was.
 // Needs a window that can take OS focus: with LUMEN_TEST_BACKGROUND set, the native-focus checks are skipped.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

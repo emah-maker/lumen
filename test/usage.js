@@ -2,6 +2,7 @@
 // (and Grok Build's bar: context fill, a budget, the limit-reached state; stubbed turns only)
 // (stubbed Claude Code / Grok Build turns reporting tokens and rate_limit_event readings), shown in
 // Settings → Usage and the sidebar's meter, and kept across a restart. Offline; no real CLI runs.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

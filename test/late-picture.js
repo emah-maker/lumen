@@ -1,6 +1,7 @@
 // A picture that arrives after a reply already ended early (Claude Code's reply_complete comes at the end of the text; the
 // pictures a CLI made with its own tools are found after that, in agent.js enginePictures) is drawn under that reply in the
 // real app, instead of being dropped with the finished turn. Run: node test/late-picture.js (a throwaway profile).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

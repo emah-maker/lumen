@@ -4,6 +4,7 @@
 // Songs, Albums, Artists, Playlists with a picture, title, artist and length, arrow keys, Enter and Escape, Play next and Add to queue
 // where the service has them, the last five searches when the field is empty, songs only in a small card, and the typing surviving the
 // card being drawn again. Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep screenshots.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -6,6 +6,7 @@
 // so, and that it lives next to a Spotify Web player card
 // (two views, independent). Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin).
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep a screenshot of the card.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

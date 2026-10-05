@@ -14,6 +14,7 @@
 // third-party passkey provider (1Password, ...) the "where to save this passkey" picker can ignore
 // WebAuthNCancelCurrentOperation and stay up until someone closes it (Chromium's own calls show the same in the
 // Microsoft-Windows-WebAuthN/Operational log).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

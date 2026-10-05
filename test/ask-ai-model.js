@@ -8,6 +8,7 @@
 // limit (fallback), plus a pick made while a reply is streaming and a pick that is no longer connected.
 // What the next ask used is read from the fake engines (Claude client + providers.streamTurn).
 // Each surface must show the change within 200 ms of the change being accepted.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const { openSettingsTab } = require('./settings-tab');
@@ -151,7 +152,14 @@ const LIMIT_MS = 200;
   }
 
   // The sidebar may be folded away (the chat page, a full-page chat): drive the composer through the DOM.
-  const typeAndSend = (page, text) => page.evaluate((t) => { const p = document.getElementById('prompt'); p.value = t; p.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('send').click(); }, text);
+  // A sidebar that was folded away can miss a run's end and keep its Stop button; Send as a button would then stop instead of send.
+  const typeAndSend = async (page, text) => {
+    await page.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar')?.click(); }); // (the sidebar is open or closed tab by tab)
+    await page.waitForFunction(() => !document.body.classList.contains('sidebar-hidden'), null, { timeout: 4000 }).catch(() => {});
+    await page.evaluate(() => document.getElementById('prompt').focus());
+    await page.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 4000 }).catch(() => {});
+    return page.evaluate((t) => { const p = document.getElementById('prompt'); p.value = t; p.dispatchEvent(new Event('input', { bubbles: true })); p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); }, text); // (Enter, as a user sends: with a stale Stop showing it first asks main what the chat is doing, where the button would stop)
+  };
   async function nextAsk(id, how) {
     await ensureChatPage();
     // The one before has finished (nothing running or waiting): its reply must not count as this ask's.

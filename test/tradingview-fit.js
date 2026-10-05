@@ -4,6 +4,7 @@
 // shows by its size (features/tradingview-fit.js) and shrinks the mini view to fit, and swaps back when the
 // card grows. The frames load TradingView's own pages; nothing here needs a sign-in.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
