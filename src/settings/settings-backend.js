@@ -163,6 +163,7 @@ const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 8640
 
 const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
+const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
@@ -872,16 +873,33 @@ function create(deps) {
       slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
     };
     handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });
-    // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
+    // Slack setup (features/slack-setup.js, features/slack-view.js explains the flow). Slack's pages open in a
+    // small Lumen window that only shows slack.com; when Slack sends it to the app's redirect address, the
+    // address is taken from the navigation (no pasting) and checked against the pending state.
+    const slackSetup = require('../features/slack-setup').create({ BrowserWindow: deps.BrowserWindow, clipboard: deps.clipboard });
+    const slackTokenSeen = (token) => { slackSetup.close(); deps.widgets.slackAuto('token', token); };
+    const slackOwner = () => { try { return require('os').userInfo().username; } catch { return ''; } };
+    handle('prefs:slack-create-app', (opts) => {
+      const url = SLACK.manifestUrl({ name: slackOwner() });
+      if (opts && opts.browser === true) shell.openExternal(url).catch(() => {}); // for a sign-in the setup window can't do (SSO): the default browser
+      else slackSetup.open(url, { followToTokenPage: true });
+      slackSetup.watchClipboard(slackTokenSeen);
+      return deps.widgets.state();
+    });
     handle('prefs:slack-start', (input) => {
       const out = deps.widgets.slackStart(input);
-      if (!out.url.startsWith('https://slack.com/oauth/v2/authorize?')) throw new Error('Not allowed');
-      shell.openExternal(out.url).catch(() => {});
+      slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
       return { redirectUri: out.redirectUri, state: deps.widgets.state() };
     });
-    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); return { message: out.message, state: deps.widgets.state() }; });
-    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); return deps.widgets.state(); });
-    handle('prefs:slack-disconnect', async () => { await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
+    handle('prefs:slack-paste', async (text) => {
+      const out = await deps.widgets.slackPaste(text);
+      if (out.kind === 'approve') slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
+      else if (out.kind === 'connected') { slackSetup.stopWatch(); slackSetup.close(); }
+      return { kind: out.kind, message: out.message || '', missing: out.missing || '', state: deps.widgets.state() };
+    });
+    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); slackSetup.close(); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); slackSetup.stopWatch(); slackSetup.close(); return deps.widgets.state(); });
+    handle('prefs:slack-disconnect', async () => { slackSetup.stopWatch(); slackSetup.close(); await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
     handle('prefs:slack-channels', () => deps.widgets.slackChannels());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });

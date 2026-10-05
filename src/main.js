@@ -6904,6 +6904,7 @@ const settingsBackend = settingsPage.create({
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
   systemLanguages: () => chromeLanguages.list(), // [identity] Accept-Language when Settings → Languages is empty: the system's, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
+  BrowserWindow, clipboard, // [widgets] the Slack setup window and clipboard watch (features/slack-setup.js)
   broadcastUi: (channel, payload) => { // [ai manners] every window's browser UI and the chat page, not just the one in front
     const to = new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents), ...(chatPageRt?.surfaces() || [])]);
     for (const wc of to) if (wc && !wc.isDestroyed()) wc.send(channel, payload);

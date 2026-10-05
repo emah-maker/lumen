@@ -329,6 +329,10 @@ body.interstitial { display: block; }
 .widget-head .sub-label { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; }
 .widget-head .note { display: block; margin-top: 2px; }
 .wf-foot { margin: 6px 16px 0; color: var(--muted); font-size: 12px; }
+.wf-steps { margin: 0; padding: 4px 16px 12px 38px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.wf-steps li { margin: 6px 0; padding-left: 4px; }
+.wf-steps li b { color: var(--text, inherit); font-weight: 600; }
+.wf-steps[hidden] { display: none; }
 .wf-section .row .controls input:not(.switch):not([type="checkbox"]), .wf-section .row .controls select { width: 220px; max-width: 100%; }
 .wf-section .row.stack input:not(.switch):not([type="checkbox"]), .wf-section .row.stack select, .wf-section .row.stack textarea { width: 100%; }
 .wf-section .row.stack .widget-inline input[type="text"], .wf-section .row.stack .widget-inline input[type="url"] { width: auto; min-width: 200px; flex: 1 1 200px; }
