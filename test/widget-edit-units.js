@@ -234,6 +234,24 @@ module.exports = async function widgetEditUnits(check) {
     const src = read(f);
     check(`page: ${f} builds everything with DOM calls and textContent (no markup strings, no eval, no network)`, !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|fetch\(|XMLHttpRequest|WebSocket/.test(src), '');
   }
+  // ---- Edit layout holds the cards where they were drawn (WE.holdBase / holdItems) ----
+  {
+    const saved = [it('a', 'notes', 0, 5, 4, 3), it('b', 'notes', 8, 5, 4, 3, { snap: 'right' }), it('wsysfavs', 'favorites', 3, 5, 6, 3)];
+    const drawn = [it('a', 'notes', 0, 9, 4, 3), it('b', 'notes', 8, 0, 4, 8, { snap: 'right' }), it('wsysfavs', 'favorites', 3, 5, 6, 3)];
+    const base = WE.holdBase(drawn, saved, WS.isSystemId);
+    check('hold: only real, unsnapped cards are held', base.size === 1 && base.has('a'), [...base.keys()].join());
+    const held = WE.holdItems(saved, base);
+    check('hold: a card is drawn where it was, not at its saved rect', enc([held[0]]) === 'a:0,9,4,3' && enc([held[1]]) === enc([saved[1]]) && enc([held[2]]) === enc([saved[2]]), enc(held));
+    check('hold: once its saved rect changes (a layout was sent) the saved rect wins', enc(WE.holdItems([it('a', 'notes', 0, 9, 4, 4)], base)) === 'a:0,9,4,4' && enc(WE.holdItems([it('a', 'notes', 2, 5, 4, 3)], base)) === 'a:2,5,4,3', '');
+    check('hold: no base (edit mode off) leaves the list alone', WE.holdItems(saved, null) === saved, '');
+    // the obstacle shrinks in Edit layout (sections are cards), yet the held cards resolve exactly where they were
+    const o = { cols: 12, packed: false, rows: 10 };
+    const full = WL.resolve(saved.slice(0, 1), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 9 } });
+    const edit = WL.resolve(WE.holdItems(saved.slice(0, 1), WE.holdBase(full, saved.slice(0, 1), WS.isSystemId)), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 5 } });
+    check('hold: a card pushed below the full column stays there under the smaller one', enc(full) === 'a:0,9,4,3' && enc(edit) === enc(full), `${enc(full)} / ${enc(edit)}`);
+    const loose = WL.resolve(saved.slice(0, 1), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 5 } });
+    check('hold: without it the card would jump up (the bug)', enc(loose) === 'a:0,5,4,3', enc(loose));
+  }
   const gridSrc = read('src/renderer/newtab-widgets-grid.js');
   check('page: the grid keeps its calm mode and reduced-motion rules, and the edit UI has its own', /body\.calm/.test(read('src/renderer/newtab.html')) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\)/.test(read('src/renderer/newtab-edit.js')) && /aria-live|widgetAnnounce/.test(gridSrc), '');
   check('page: keyboard moving and resizing, snapping and undo are wired (arrows, Shift, Ctrl+Alt, Ctrl+Z)', /ArrowLeft/.test(gridSrc) && /e\.shiftKey/.test(gridSrc) && /e\.ctrlKey && e\.altKey/.test(gridSrc) && /key\.toLowerCase\(\) === 'z'/.test(gridSrc), '');
