@@ -274,4 +274,32 @@ function isSimpleQuestion(text, imageCount = 0) {
   return imageCount === 0 && t.length > 0 && t.length <= 160 && !NEEDS_BROWSER.test(t);
 }
 
-module.exports = { RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, ToolCallCache, CACHEABLE, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
+// Pictures in a chat ride along in every later request (an API model is sent the whole history each time, and a picture is
+// the heaviest part of it: megabytes of base64 to upload and read again). Only the newest `keep` typed messages and what
+// follows them keep their pictures (the user's attachments and the screenshots the AI took); older ones become a short note.
+// The cut moves only when a new typed message arrives, so the prefix is stable within a turn and the provider's cache holds.
+const OLD_IMAGE_NOTE = '[earlier picture left out to keep the request fast; ask the user to attach it again if it matters]';
+function stubOldImages(messages, keep = 2) {
+  const isTyped = (m) => m.role === 'user' && !(Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_result'));
+  let seen = 0;
+  let cut = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isTyped(messages[i]) && ++seen === keep) { cut = i; break; }
+  }
+  if (cut <= 0) return messages;
+  const swap = (b) => (b?.type === 'image' ? { type: 'text', text: OLD_IMAGE_NOTE } : b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((c) => c?.type === 'image') ? { ...b, content: b.content.map(swap) } : b);
+  const holds = (m) => Array.isArray(m.content) && m.content.some((b) => b?.type === 'image' || (b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((c) => c?.type === 'image')));
+  if (!messages.slice(0, cut).some(holds)) return messages;
+  return messages.map((m, i) => (i < cut && m.role === 'user' && holds(m) ? { ...m, content: m.content.map(swap) } : m));
+}
+
+// A question about the pictures the user attached ("what's in this picture?", "read the total"): it needs neither the page's
+// text nor a tool, so the page is not read first (that read waits up to 4 s on a heavy or loading page). Words that mean the
+// page or an action still make it a browser question; "this", "screen" and "read" point at the picture here.
+const NEEDS_BROWSER_PICTURE = /\b(page|tab|tabs|site|website|click|open|go to|navigate|search|google|find|look up|fill|book|buy|order|add to|sign|log ?in|download|scroll|type|select|form|link|cart|video|article|pdf|take (a |another )?screenshot|my screen|current tab)\b|https?:|www\.|\.(com|org|net|io|dev)\b/i;
+function isPictureQuestion(text, imageCount = 0) {
+  const t = String(text || '').trim();
+  return imageCount > 0 && t.length <= 240 && !NEEDS_BROWSER_PICTURE.test(t);
+}
+
+module.exports = { isPictureQuestion, stubOldImages, OLD_IMAGE_NOTE, RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, ToolCallCache, CACHEABLE, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };

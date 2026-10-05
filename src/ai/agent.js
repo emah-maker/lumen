@@ -19,7 +19,7 @@ const genImages = require('../features/gen-images'); // pictures the AI made or 
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
-const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
+const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
@@ -586,17 +586,18 @@ function parseImageDataUrl(url) {
 // Newest history images are kept and oldest are dropped first: a follow-up question is more likely
 // to be about a recent picture than one from many messages ago.
 const CC_IMAGE_BUDGET = 8 * 1024 * 1024;
-function capHistoryImages(historyImages, currentImages, emit) {
+const HISTORY_IMAGE_MAX = 3; // earlier pictures re-sent to a CLI that has no session of its own yet: the newest few (each is read again by the model)
+function capHistoryImages(historyImages, currentImages, emit, engineName = 'Claude Code') {
   let used = currentImages.reduce((n, img) => n + img.data.length, 0);
   const kept = [];
   let dropped = 0;
   for (let i = historyImages.length - 1; i >= 0; i--) {
     const img = historyImages[i];
-    if (used + img.data.length > CC_IMAGE_BUDGET) { dropped++; continue; }
+    if (kept.length >= HISTORY_IMAGE_MAX || used + img.data.length > CC_IMAGE_BUDGET) { dropped++; continue; }
     used += img.data.length;
     kept.unshift(img);
   }
-  if (dropped) emit({ type: 'notice', text: `Claude Code: dropped ${dropped} older image${dropped === 1 ? '' : 's'} from the conversation history to stay under the size limit.` });
+  if (dropped) emit({ type: 'notice', text: `${engineName}: dropped ${dropped} older image${dropped === 1 ? '' : 's'} from the conversation history to stay under the size limit.` });
   return kept;
 }
 // ---- [/claude code engine]
@@ -656,7 +657,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // attached to earlier messages are stubbed (loop-guard.js stubOldPages). Not before: a request that
 // changed an old message would break the prompt cache on every normal turn. Sticky once set, so the
 // stubbed prefix is the same on every later request and caches again at once.
-const pagesFor = (messages) => (messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
+const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
 function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
   const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
@@ -1678,7 +1679,7 @@ class Agent {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
       // A plain question that needs neither the page nor a tool (isSimpleQuestion) is sent without the page's text.
-      page = wanted.includes(tab?.id) || isSimpleQuestion(userText, images.length + wanted.length) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
+      page = wanted.includes(tab?.id) || isSimpleQuestion(userText, images.length + wanted.length) || (!wanted.length && isPictureQuestion(userText, images.length)) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -2167,7 +2168,7 @@ class Agent {
     const runGrok = (input, sessionId, again) => engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: input.text,
-      images: this.engineImages('Grok Build', picked, [...input.historyImages, ...images], emit),
+      images: this.engineImages('Grok Build', picked, [...capHistoryImages(input.historyImages, images, emit, 'Grok Build'), ...images], emit),
       sessionId,
       resume: again,
       quietExpired: again, // a resumed session Grok no longer has comes back { expired } without an error: see below
@@ -2241,7 +2242,7 @@ class Agent {
     const out = await engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: text,
-      images: this.engineImages('Antigravity', picked, [...historyImages, ...images], emit),
+      images: this.engineImages('Antigravity', picked, [...capHistoryImages(historyImages, images, emit, 'Antigravity'), ...images], emit),
       sessionId: settings.agySession || null,
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
@@ -2314,7 +2315,7 @@ ${prompt}` : prompt), historyImages: [] };
     const runCodex = (input, sessionId, again) => engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: input.text,
-      images: this.engineImages('Codex', picked, [...input.historyImages, ...images], emit),
+      images: this.engineImages('Codex', picked, [...capHistoryImages(input.historyImages, images, emit, 'Codex'), ...images], emit),
       sessionId,
       quietExpired: again, // a resumed thread Codex no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or a Codex model id

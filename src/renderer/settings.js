@@ -227,6 +227,8 @@ function collapsible(title, rows) {
   return d;
 }let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
 let gmailWatchOn = false;
+let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
+let slackWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
@@ -1284,43 +1286,68 @@ async function buildWidgets(card) {
         section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),
         adv);
     }
-    // ---- slack: sign in (OAuth v2 with your own Slack app), then what to show ----
+    // ---- slack: guided setup (create the app from a prefilled link, copy one token), then what to show ----
     function slackFields(same) {
       const sc = same?.slack || {};
       let st = ws.slack || {};
+      let sawLast = '';
       const picked = new Map((sc.channels || []).map((c) => [c.id, c.name]));
       inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: 'xoxp-… (optional)', 'aria-label': 'Slack user token' });
       const clientId = h('input', { type: 'text', id: 'slack-client-id', autocomplete: 'off', spellcheck: 'false', placeholder: '1234567890.1234567890', value: st.clientId || '', 'aria-label': 'Slack app Client ID' });
       const clientSecret = h('input', { type: 'password', id: 'slack-client-secret', autocomplete: 'off', spellcheck: 'false', placeholder: st.hasSecret ? 'Saved. Paste a new secret to replace it' : 'Client Secret', 'aria-label': 'Slack app Client Secret' });
       const redirect = h('input', { type: 'url', id: 'slack-redirect', spellcheck: 'false', value: st.redirect || '', 'aria-label': 'Slack redirect URL' });
       const pasted = h('input', { type: 'text', id: 'slack-pasted', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the address you landed on', 'aria-label': 'Address after approving' });
+      const pasteAll = h('input', { type: 'password', id: 'slack-paste', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the token (xoxp-…) here', 'aria-label': 'Slack token, or Client ID and Client Secret' });
       const status = h('span', { class: 'sp-status', role: 'status', id: 'slack-status' });
+      const steps = h('ol', { class: 'wf-steps', id: 'slack-steps' });
       const drawStatus = () => {
         st = ws.slack || st;
-        if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Log in again to reconnect.`, 'warn');
-        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
-        else if (st.waiting) flash(status, 'Approve in the browser tab that opened, then paste the address it ends on.', 'note');
+        if (st.last && st.last.message !== sawLast) { sawLast = st.last.message; flash(status, st.last.message, st.last.ok ? 'ok' : 'err'); }
+        else if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Set it up again to reconnect.`, 'warn');
+        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.user ? ` as ${st.user}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
+        else if (st.waiting) flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+        else if (st.draft) flash(status, 'Got one half. Paste the other (Client ID and Client Secret) to continue.', 'note');
         else { status.textContent = 'Not connected.'; status.className = 'sp-status'; }
         disconnect.hidden = !st.connected;
-        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
-        open.classList.toggle('primary', !st.connected);
+        create.textContent = st.connected ? 'Set up again' : 'Create the Lumen app in Slack';
+        create.classList.toggle('primary', !st.connected);
+        steps.hidden = Boolean(st.connected);
+        viaBrowser.hidden = Boolean(st.connected);
+        pasteRow.hidden = Boolean(st.connected);
         pastedRow.hidden = !st.waiting;
+        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
       };
-      const open = h('button', { type: 'button', id: 'slack-open', class: 'primary big', text: 'Log in with Slack', onclick: async () => {
-        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret under Advanced.', 'warn'); clientId.focus(); return; }
-        try {
-          const r = await S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value });
-          ws = r.state; clientSecret.value = ''; drawStatus();
-        } catch (err) { flash(status, clean(err), 'err'); }
+      const run = async (fn) => { try { const r = await fn(); if (r?.state) ws = r.state; else if (r && r.slack) ws = r; drawStatus(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; } };
+      const create = h('button', { type: 'button', id: 'slack-create', class: 'primary big', text: 'Create the Lumen app in Slack', onclick: () => run(async () => { const r = await S.widgets.slackCreateApp(); flash(status, 'Slack opened in a small window. Follow the steps below; Lumen connects when you copy the token.', 'note'); return r; }) });
+      const viaBrowser = h('button', { type: 'button', class: 'linkish', id: 'slack-browser', text: 'Slack won’t let me sign in there: use my browser instead', onclick: () => run(() => S.widgets.slackCreateApp({ browser: true })) });
+      const connectPasted = async () => {
+        const r = await run(() => S.widgets.slackPaste(pasteAll.value));
+        if (!r) return;
+        pasteAll.value = '';
+        if (r.kind === 'connected') flash(status, r.message, 'ok');
+        else if (r.kind === 'partial') flash(status, `Got it. Now paste the ${r.missing}.`, 'note');
+        else if (r.kind === 'approve') flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+      };
+      const connect = h('button', { type: 'button', id: 'slack-connect', text: 'Connect', onclick: connectPasted });
+      pasteAll.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectPasted(); } });
+      steps.append(
+        h('li', {}, h('b', { text: 'Create the app. ' }), 'The button above opens Slack with the name, read-only permissions and redirect already filled in. Pick your workspace, press Next, then Create.'),
+        h('li', {}, h('b', { text: 'Install it. ' }), 'On the page that follows press Install to Workspace, then Allow.'),
+        h('li', {}, h('b', { text: 'Copy the token. ' }), 'Press Copy next to User OAuth Token. Lumen notices it and connects by itself; or paste it below.'));
+      const pasteRow = setting('Paste it instead', pasteAll, 'The token, or the Client ID and Client Secret from Basic Information (copied together is fine). Stored encrypted by your system.', connect);
+      const open = h('button', { type: 'button', id: 'slack-open', text: 'Log in with Slack', onclick: async () => {
+        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret.', 'warn'); clientId.focus(); return; }
+        run(() => S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value })).then(() => { clientSecret.value = ''; });
       } });
       const finish = h('button', { type: 'button', id: 'slack-finish', text: 'Finish', onclick: async () => {
-        try {
-          const r = await S.widgets.slackFinish(pasted.value);
-          ws = r.state; pasted.value = ''; drawStatus(); flash(status, r.message, 'ok');
-        } catch (err) { flash(status, clean(err), 'err'); }
+        const r = await run(() => S.widgets.slackFinish(pasted.value));
+        if (r) { pasted.value = ''; flash(status, r.message, 'ok'); }
       } });
-      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: async () => { ws = await S.widgets.slackDisconnect(); drawStatus(); } });
-      const pastedRow = setting('Finish signing in', pasted, 'Slack ends on a page that may not load. That is fine: copy its address from the address bar and paste it here.', finish);
+      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: () => run(async () => S.widgets.slackDisconnect()) });
+      const pastedRow = setting('Finish signing in', pasted, 'Only if the Slack window was closed before it finished: paste the address it ended on.', finish);
+      // A connection that finished by itself (the window caught the redirect, the clipboard held the token) shows here at once.
+      slackWatch = async () => { if (!status.isConnected) return; ws = await S.widgets.state(); drawStatus(); };
+      if (!slackWatchOn) { slackWatchOn = true; S.widgets.onChanged?.(() => slackWatch?.()); }
       const chBox = h('div', { class: 'widget-checks', id: 'slack-channels' });
       const drawChannels = (items) => {
         chBox.replaceChildren(...items.map((c) => {
@@ -1339,17 +1366,18 @@ async function buildWidgets(card) {
       inputs.dms = tog('widget-slack-dms', 'Unread direct messages', sc.dms !== false);
       inputs.mentions = tog('widget-slack-mentions', 'Mentions of you', sc.mentions !== false, 'In the channels chosen below.');
       inputs.count = segment('widget-slack-count', 'Recent messages', [[3, '3'], [5, '5'], [8, '8'], [10, '10']], sc.count || 5);
-      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, open, disconnect), status,
-        h('span', { class: 'note', text: 'Read-only: nothing can be posted. Slack’s sign-in opens in your browser.' }));
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, create, disconnect), status,
+        h('span', { class: 'note', text: 'Read-only: nothing can be posted. The app is yours; Lumen only ever shows slack.com in its setup window.' }), viaBrowser);
       const adv = advanced([
-        helpLink(setting('Slack app Client ID', clientId, 'Slack needs an app of your own (Create New App). Keep it private, not distributed.'), 'slack', 'Open Slack API apps'),
-        setting('Client Secret', clientSecret, 'From the app’s Basic Information page. Stored encrypted by your system.'),
-        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https.'),
-        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token from the app’s OAuth & Permissions page. It doesn’t renew itself.'),
-      ], 'User Token Scopes to add: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', !st.connected && !st.clientId);
+        setting('Slack app Client ID', clientId, 'From the app’s Basic Information page, if you made the app yourself.'),
+        setting('Client Secret', clientSecret, 'The same page. Stored encrypted by your system.'),
+        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https. The setup link already does.'),
+        setting('Sign in with them', open, 'Opens Slack’s approval in the setup window and finishes by itself. Renews itself if the app has token rotation on.'),
+        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token. It doesn’t renew itself. (Saved with the card.)'),
+      ], 'User Token Scopes the app needs: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', Boolean(st.draft));
       drawStatus();
       fields.replaceChildren(
-        section('Account', [accountRow, pastedRow]),
+        section('Account', [accountRow, steps, pasteRow, pastedRow]),
         section('Show', [inputs.dms, inputs.mentions, setting('Recent messages', inputs.count)]),
         section('Channels', [block('Channels to follow', 'Up to 4 channels you are in; their recent messages show on the card.', h('div', { class: 'widget-inline' }, load), chBox)]),
         adv);

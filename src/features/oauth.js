@@ -308,7 +308,7 @@ function normalizeToken(body, now, previous) {
 }
 
 // The stored secret: one JSON string of short strings and a number. Anything else reads as nothing.
-const FIELDS = { access: 4096, refresh: 4096, clientId: 64, clientSecret: 128, userId: 40, teamId: 40, teamName: 120, teamUrl: 200 };
+const FIELDS = { access: 4096, refresh: 4096, clientId: 64, clientSecret: 128, userId: 40, userName: 80, teamId: 40, teamName: 120, teamUrl: 200 };
 function packTokens(obj) {
   const out = {};
   for (const [k, max] of Object.entries(FIELDS)) if (typeof obj?.[k] === 'string' && obj[k] && obj[k].length <= max) out[k] = obj[k];
