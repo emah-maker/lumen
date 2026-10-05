@@ -19,6 +19,7 @@ const crypto = require('crypto');
 
 const MAX_BYTES = 12 * 1024 * 1024; // one picture, on disk and from the network
 const MAX_PER_REPLY = 8;
+const MAX_LOCAL = 4; // pictures taken from file paths a reply names
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 // The type of an image from its first bytes: { mime, ext } or null. (SVG is never accepted: it can carry script.)
@@ -185,17 +186,56 @@ function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, availab
 
 // ---------- pictures a CLI engine wrote to disk ----------
 // Absolute paths in the engine's reply that end in an image extension.
-const WIN_PATH = /(?:[A-Za-z]:[\\/][^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
+const WIN_PATH = /(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/][^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
 const POSIX_PATH = /(?:^|[\s("'`])(\/[^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
 const TILDE_PATH = /(?:^|[\s("'`])(~[\\/][^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
+const EXT = '(?:png|jpe?g|gif|webp)';
+const ROOT = '(?:[A-Za-z]:[\\\\/]|/|~[\\\\/])';
+// A path with spaces, as a model writes it: in backticks or quotes, in <angle brackets>, or as a markdown link/image target.
+const QUOTED_PATH = new RegExp(`([\`"'])(${ROOT}[^\`"'\\n<>|*?]*?\\.${EXT})\\1`, 'gi');
+const ANGLE_PATH = new RegExp(`<(${ROOT}[^<>\\n|*?]*?\\.${EXT})>`, 'gi');
+const LINK_PATH = new RegExp(`\\]\\(\\s*(${ROOT}[^\\n()<>|*?]*?\\.${EXT})(?:\\s+"[^"\\n]*")?\\s*\\)`, 'gi');
+const FILE_URL = new RegExp(`file://[^\\s"'<>|*?\`()\\]]+?\\.${EXT}(?![\\w%])`, 'gi');
+// A file: address -> the path it names ("file:///C:/a%20b/x.png" -> "C:/a b/x.png"); null when it is not a local one.
+function fromFileUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'file:' || (u.hostname && u.hostname !== 'localhost')) return null;
+    const p = decodeURIComponent(u.pathname);
+    return /^\/[A-Za-z]:[\\/]/.test(p) ? p.slice(1) : p;
+  } catch { return null; }
+}
 // With `home`: "~/x.png" and (on Windows) a Git Bash path "/c/Users/me/x.png" are read as the native path they stand for.
+// Also read: file:// addresses, and a path with spaces inside backticks, quotes, <...> or a markdown link/image target.
 function pathsIn(text, { home = null, platform = process.platform } = {}) {
   const found = new Set();
   const s = String(text || '');
-  for (const m of s.matchAll(WIN_PATH)) found.add(m[0]);
-  for (const m of s.matchAll(POSIX_PATH)) found.add(platform === 'win32' && home ? m[1].replace(/^\/([A-Za-z])\//, (_a, d) => `${d.toUpperCase()}:/`) : m[1]);
-  if (home) for (const m of s.matchAll(TILDE_PATH)) found.add(path.join(home, m[1].slice(2)));
+  const native = (p) => {
+    if (home && /^~[\\/]/.test(p)) return path.join(home, p.slice(2));
+    if (platform === 'win32' && home) return p.replace(/^\/([A-Za-z])\//, (_a, d) => `${d.toUpperCase()}:/`);
+    return p;
+  };
+  for (const m of s.matchAll(FILE_URL)) { const p = fromFileUrl(m[0]); if (p) found.add(native(p)); }
+  const plain = s.replace(FILE_URL, ' ');
+  for (const m of plain.matchAll(QUOTED_PATH)) found.add(native(m[2]));
+  for (const m of plain.matchAll(ANGLE_PATH)) found.add(native(m[1]));
+  for (const m of plain.matchAll(LINK_PATH)) found.add(native(m[1]));
+  for (const m of plain.matchAll(WIN_PATH)) found.add(m[0]);
+  for (const m of plain.matchAll(POSIX_PATH)) found.add(native(m[1]));
+  if (home) for (const m of plain.matchAll(TILDE_PATH)) found.add(path.join(home, m[1].slice(2)));
   return [...found].slice(0, 20);
+}
+
+// Image paths a tool reported in its result (any shape: text, JSON text, or an object such as { path: "C:\\...\\1.jpg" }).
+function toolImagePaths(value, { home = null } = {}, out = [], depth = 0) {
+  if (out.length >= 20 || depth > 6 || value === null || value === undefined) return out;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (t[0] === '{' || t[0] === '[') { try { return toolImagePaths(JSON.parse(t), { home }, out, depth + 1); } catch { /* plain text */ } }
+    for (const p of pathsIn(value.slice(0, 20000), { home })) if (out.length < 20 && !out.includes(p)) out.push(p);
+  } else if (Array.isArray(value)) value.slice(0, 50).forEach((v) => toolImagePaths(v, { home }, out, depth + 1));
+  else if (typeof value === 'object') Object.values(value).slice(0, 50).forEach((v) => toolImagePaths(v, { home }, out, depth + 1));
+  return out;
 }
 
 // The files among `text`'s paths that really are pictures lying inside one of `roots` (the engine's own working and temp
@@ -203,15 +243,16 @@ function pathsIn(text, { home = null, platform = process.platform } = {}) {
 // fresh: { roots, since, until, home } (a CLI that runs as in a terminal, "full access"): a picture also counts when it lies
 // in one of fresh.roots (the home folder and the folders the run was pointed at) AND was written during the run (its modified
 // time is between `since` and `until`). A file that was already there is never shown, whatever names it.
-function findLocalImages(text, roots, { fsImpl = fs, max = MAX_BYTES, fresh = null } = {}) {
+function findLocalImages(text, roots, { fsImpl = fs, max = MAX_BYTES, fresh = null, paths = [] } = {}) {
   const real = (list) => { const out = []; for (const r of list || []) { try { out.push(normalise(fsImpl.realpathSync(r))); } catch { /* not there */ } } return out; };
   const realRoots = real(roots);
   const freshRoots = fresh ? real(fresh.roots) : [];
   const within = (key, list) => list.some((root) => key === root || key.startsWith(root + path.sep.toLowerCase()) || key.startsWith(`${root}/`) || key.startsWith(`${root}${path.sep}`));
   const out = [];
-  for (const p of pathsIn(text, { home: fresh?.home || null })) {
-    if (out.length >= MAX_PER_REPLY) break;
+  for (const p of [...new Set([...pathsIn(text, { home: fresh?.home || null }), ...(Array.isArray(paths) ? paths.map(String).slice(0, 20) : [])])]) {
+    if (out.length >= MAX_LOCAL) break;
     try {
+      if (!path.isAbsolute(p)) continue;
       const realPath = fsImpl.realpathSync(p);
       const key = normalise(realPath);
       const stat = fsImpl.statSync(realPath);
@@ -271,5 +312,5 @@ async function fetchRemoteImage(url, { fetchImpl = globalThis.fetch, max = MAX_B
 
 module.exports = {
   MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, markdownImages,
-  createImageStore, pathsIn, findLocalImages, publicHost, fetchRemoteImage,
+  createImageStore, pathsIn, toolImagePaths, fromFileUrl, findLocalImages, publicHost, fetchRemoteImage,
 };

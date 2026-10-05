@@ -22,6 +22,7 @@ const { removeDir, removeDirSync } = require('./temp-dirs');
 const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
+const { toolImagePaths } = require('../features/gen-images');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -633,6 +634,7 @@ class ClaudeCodeEngine {
     if (proc.fresh) { const f = proc.fresh; proc.fresh = null; try { this.onFresh?.(f); } catch {} }
     const reused = proc.turns > 0;
     this.runDirs = new Set(); // folders this message's shell commands were pointed at (freshRoots)
+    this.runImagePaths = []; // image files this message's tools reported (enginePictures checks each)
     if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
     const { tag } = proc;
@@ -718,6 +720,7 @@ class ClaudeCodeEngine {
         for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
           if (b.type !== 'tool_result' || !active.builtin.delete(b.tool_use_id)) continue;
           active.inflight = Math.max(0, active.inflight - 1);
+          for (const p of toolImagePaths(b.content, { home: os.homedir() })) if (this.runImagePaths.length < 20 && !this.runImagePaths.includes(p)) this.runImagePaths.push(p);
           const err = b.is_error ? clip(Array.isArray(b.content) ? b.content.map((c) => c.text || '').join(' ') : b.content, 200) : '';
           emit({ type: 'tool_done', id: `cc-${String(b.tool_use_id).replace(/[^\w-]/g, '').slice(0, 60)}`, ok: !b.is_error, ...(err ? { error: err } : {}) });
         }
@@ -804,7 +807,7 @@ class ClaudeCodeEngine {
       emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0 };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0, imagePaths: [...(this.runImagePaths || [])] };
   }
 }
 

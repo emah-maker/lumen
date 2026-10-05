@@ -65,6 +65,7 @@ const locate = require('./codex-locate');
 const codexUsage = require('./codex-usage');
 const codexConfig = require('./codex-config');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
+const { toolImagePaths } = require('../features/gen-images');
 
 const INSTALL_HINT = `Install it with: ${process.platform === 'win32' ? 'winget install OpenAI.Codex  (or: npm install -g @openai/codex)' : process.platform === 'darwin' ? 'brew install --cask codex  (or: npm install -g @openai/codex)' : 'npm install -g @openai/codex'}, then run codex once and sign in.`;
 const SIGN_IN_HINT = 'Open a terminal, run `codex login` (or run `codex` and choose Sign in with ChatGPT).';
@@ -244,6 +245,14 @@ const ENV_KEEP = /^(CODEX_API_KEY|OPENAI_API_KEY|OPENAI_BASE_URL|PATH|PATHEXT|SY
 function buildEnv({ home, base = process.env, run = null, extra = {}, fullAccess = false } = {}) {
   const kept = Object.fromEntries(Object.entries(base).filter(([k, v]) => (fullAccess ? k !== 'ELECTRON_RUN_AS_NODE' && typeof v === 'string' : ENV_KEEP.test(k) && typeof v === 'string')));
   return { ...kept, ...extra, ...(run ? { [TOKEN_ENV]: run.mcpToken } : {}), CODEX_HOME: home, NO_COLOR: '1' };
+}
+// [full access] The picture files a finished shell command or file change names (command line, output, changed paths), for agent.js enginePictures to check.
+// A reported item that is not one of Lumen's tools: the label to stop the run with, else null.
+function itemImagePaths(item) {
+  const type = String(item?.type || '');
+  if (type === 'commandExecution' || type === 'command_execution') return toolImagePaths([item.command, item.aggregatedOutput ?? item.aggregated_output], { home: os.homedir() });
+  if (type === 'fileChange' || type === 'file_change') return toolImagePaths((Array.isArray(item.changes) ? item.changes : []).map((c) => c?.path), { home: os.homedir() });
+  return [];
 }
 
 // A reported item that is not one of Lumen's tools: the label to stop the run with, else null.
@@ -500,6 +509,7 @@ class CodexEngine {
     let lastError = null; // the latest `error` event (a retry notice until turn.failed says it is final)
     let stderr = '';
     let offItem = null;
+    const imagePaths = []; // image files this turn's shell commands named (itemImagePaths)
     const shown = new Map(); // agent_message id -> how much of its text is on screen
     let lastId = null;
     const handle = (obj) => {
@@ -521,6 +531,7 @@ class CodexEngine {
       else if (ev.kind === 'item') {
         const bad = offItemOf(ev.item, { fullAccess });
         if (bad) { offItem = bad; this.kill(child); }
+        else if (ev.phase === 'completed') for (const f of itemImagePaths(ev.item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
       } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; if (!failedMsg && !offItem) turnDone(); }
       else if (ev.kind === 'failed') failedMsg = ev.error || 'The turn failed.';
       else if (ev.kind === 'error') lastError = ev.error;
@@ -568,7 +579,7 @@ class CodexEngine {
       emit({ type: 'error', text: `Lumen stopped Codex: it used something that isn't one of Lumen's browser tools (${offItem}). Codex should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true, usage, rateLimit };
     }
-    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served };
+    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served, imagePaths };
     if (stalled) {
       emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId: conversation, failed: true, usage, rateLimit };
@@ -580,7 +591,7 @@ class CodexEngine {
     }
     if (completed && !failedMsg && (code === 0 || code === null)) {
       this.signedOut = false;
-      return { text, sessionId: conversation, usage, rateLimit, model: served };
+      return { text, sessionId: conversation, usage, rateLimit, model: served, imagePaths };
     }
     const failText = failedMsg || lastError || stderr || '';
     // A resumed thread Codex no longer has: forget it so the next message starts a new one (handed the conversation).
@@ -604,4 +615,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };

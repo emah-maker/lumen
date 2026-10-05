@@ -353,11 +353,24 @@
   // picture markdown ever puts in an <img>); an https address becomes a placeholder the chat shows a "Show picture" button for
   // (renderer/gen-images.js: web pictures load only when asked); anything else is not a picture here. { length, html(alt) } | null.
   const DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const LOCAL_START = /^(?:&lt;)?(?:file:\/\/|[A-Za-z]:[\\/]|\/|~[\\/])/;
+  const LOCAL_IMAGE = /^(?:&lt;[^\n]+\.(?:png|jpe?g|gif|webp)&gt;|[^\n<>]+\.(?:png|jpe?g|gif|webp))$/i;
   function imageAt(s, start) {
     if (s.startsWith('data:image/', start)) {
       const end = s.indexOf(')', start);
       const raw = end > start ? s.slice(start, end) : '';
       return raw.length <= 11000000 && DATA_IMAGE.test(raw) ? { length: raw.length, html: (alt) => `<img class="md-img" src="${raw}" alt="${alt}">` } : null;
+    }
+    // A picture on this computer (C:\...\cat.png, /home/me/cat.png, file:///...): never loaded here. When the AI made it, main shows
+    // it under the reply (features/gen-images.js findLocalImages); the markdown itself reads as its alt text, not as raw syntax.
+    if (LOCAL_START.test(s.slice(start, start + 12))) {
+      const end = s.indexOf(')', start);
+      const raw = end > start ? s.slice(start, end) : '';
+      if (raw.length <= 1000 && !raw.includes('\n') && LOCAL_IMAGE.test(raw)) {
+        const name = raw.replace(/^&lt;|&gt;$/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+        return { length: raw.length, html: (alt) => `<span class="md-img-local">${alt || name}</span>` };
+      }
+      return null;
     }
     if (!s.startsWith('https://', start)) return null;
     const url = scanUrl(s, start, true);
@@ -1720,7 +1733,9 @@ explain describe list find give compare difference summarize summary write rewri
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
       // [image routing] which provider made it (the user's own keys or plan, so it is always said)
-      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []));
+      // a picture taken from a file the AI made: its file name
+      const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []), ...caption);
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
@@ -2898,7 +2913,7 @@ window.assistant.onEvent((event) => {
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
-      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}) }));
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}), ...(event.caption ? { caption: event.caption } : {}) }));
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));

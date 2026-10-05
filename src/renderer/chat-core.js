@@ -1130,7 +1130,7 @@ window.assistant.onEvent((event) => {
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
-      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}) }));
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}), ...(event.caption ? { caption: event.caption } : {}) }));
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));

@@ -339,6 +339,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     let turnId = null;
     let status = null; // turn/completed's: completed | failed | interrupted
     let failedMsg = null;
+    const imagePaths = []; // image files this turn's shell commands named (cx.itemImagePaths)
     let lastError = null;
     let offItem = null;
     let stopAsked = false;
@@ -383,6 +384,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         if (bad) { offItem = bad; kill(); finish('off'); return; }
         if (item.type === 'agentMessage' && method === 'item/completed' && typeof item.text === 'string') { shownText.set(String(item.id), item.text); say(String(item.id), item.text); }
         else if (item.type === 'reasoning' && method === 'item/completed') { const t = reasoningText(item); if (t) emit({ type: 'thinking', text: t }); }
+        else if (method === 'item/completed') for (const f of cx.itemImagePaths(item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
         return;
       }
       if (method === 'thread/tokenUsage/updated') { sum = addUsage(sum, params.tokenUsage?.last); calls++; return; }
@@ -448,14 +450,14 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       emit({ type: 'error', text: `Lumen stopped Codex: it used something that isn't one of Lumen's browser tools (${offItem}). Codex should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true, usage, rateLimit, keep: false };
     }
-    if (signal.aborted) return { text, sessionId: threadId, stopped: true, usage, rateLimit, model: served, keep: !p.exited && (status !== null || !started) };
+    if (signal.aborted) return { text, sessionId: threadId, stopped: true, usage, rateLimit, model: served, imagePaths, keep: !p.exited && (status !== null || !started) };
     if (stalled) {
       emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId: threadId, failed: true, usage, rateLimit, keep: false };
     }
     if (status === 'completed' && !failedMsg) {
       engine.signedOut = false;
-      return { text, sessionId: threadId, usage, rateLimit, model: served, keep: true };
+      return { text, sessionId: threadId, usage, rateLimit, model: served, imagePaths, keep: true };
     }
     const failText = failedMsg || lastError || p.stderr || '';
     const failure = cx.describeFailure(failText, p.exited ? p.exitCode : null, { fullAccess: p.full });

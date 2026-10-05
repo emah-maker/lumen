@@ -385,6 +385,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     let unguarded = false;
     let capped = false;
     let toolCalls = 0;
+    const imagePaths = []; // files Grok's picture tools reported (gb.imageToolPaths)
     let shown = false;
     const cap = maxTurns > 0 ? maxTurns : gb.DEFAULT_MAX_TURNS;
     const watchdogMs = p.full && engine.watchdogMs ? Math.max(engine.watchdogMs, gb.FULL_WATCHDOG_MS) : engine.watchdogMs; // [full access] a silent shell command is not a hang
@@ -430,6 +431,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
         const name = toolName(u) || before.name || '';
         const input = (kind === 'tool_call' ? toolInput(u) : null) || before.input || toolInput(u);
         p.known.set(id, { name, input });
+        if (u.rawOutput || u.content) for (const f of gb.imageToolPaths(name, u.rawOutput || u.content)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
         if (kind === 'tool_call') {
           toolCalls++;
           if (toolCalls > cap) { capped = true; stopTurn(); return; }
@@ -463,7 +465,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       emit({ type: 'error', text: 'Lumen stopped Grok Build before it could act: Lumen couldn\'t confirm its check on Grok\'s tool calls was running. Make sure curl is installed and Grok Build is up to date, or pick another AI in the model picker.' });
       return { text: '', sessionId: null, failed: true, keep: false };
     }
-    if (signal.aborted) return { text, sessionId, stopped: true, model: served, keep: !p.exited && !res.error?.exited };
+    if (signal.aborted) return { text, sessionId, stopped: true, imagePaths, model: served, keep: !p.exited && !res.error?.exited };
     if (stalled) {
       emit({ type: 'error', text: `Grok Build stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId, failed: true, keep: false };
@@ -481,7 +483,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       emit({ type: 'error', ...gb.describeFailure(failText || 'no output', null) });
       return { text, sessionId: gone ? null : sessionId, failed: true, usage, planLimit: require('./grok-limit').limitOf(failText), model: served, keep: false };
     }
-    return { text, sessionId, cost: result.total_cost_usd, usage, model: served, keep: true };
+    return { text, sessionId, cost: result.total_cost_usd, usage, model: served, imagePaths, keep: true };
   }
 
   // Start the chat's process ahead of its message. spec: { sessionId (null: a new chat), systemPrompt, model, fullAccess, effort }.
