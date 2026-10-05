@@ -10,9 +10,17 @@
 // https address that never has to work (default https://localhost/lumen-slack), Lumen opens Slack's
 // approval page, and after approving the browser lands on that address (an error page is fine): the
 // user pastes the address back into Settings, and Lumen takes the code out of it (oauth.parseRedirect
-// checks the state) and trades it for a user token with the app's client secret. Slack has no PKCE for
-// this exchange, so the client secret (encrypted, like the token) is required. As a simpler fallback the
-// user may paste a user token (xoxp-…) from their app's "OAuth & Permissions" page instead.
+// checks the state) and trades it for a user token with the app's client secret. Without PKCE
+// the client secret (encrypted, like the token) is required. (Slack added PKCE for
+// public clients in 2026, but turning it on is one-way and makes every refresh token expire in 30 days,
+// so Lumen does not use it.)
+//
+// The guided setup (Settings → Slack → "Connect Slack") needs one copy and no address pasting: Lumen opens
+// Slack's prefilled "create app from manifest" page in its own window (manifestUrl: the read-only scopes,
+// no token rotation), the user presses Create, then Install to Workspace → Allow, then Copy on the
+// "User OAuth Token"; Lumen sees the xoxp- token on the clipboard (or in the paste box) and connects. The
+// Client ID/Secret path still works: pasting both at once (parseCredentials) opens the approval in that
+// same window, where guardNavigation catches the redirect, so the address is never pasted either.
 'use strict';
 
 const OAuth = require('./oauth');
@@ -191,7 +199,71 @@ function shapeMessage(m, { where, dm, unread }, nameOf, cfg, channel, teamUrl) {
   return { where, from, text, ts: Math.round(tsNum(m.ts) * 1000), dm, unread, url: permalink(teamUrl, channel, m.ts) };
 }
 
+// ---- Guided setup: the prefilled "create app" link, the setup window's navigation rule, the paste parser ----
+
+const CREATE_APP_URL = 'https://api.slack.com/apps';
+// "Lumen for <you>" (Slack app names are at most 35 characters, no control characters).
+function appName(who) {
+  const w = flat(who, 20).replace(/[<>"\\]/g, '');
+  return w ? `Lumen for ${w}` : 'Lumen';
+}
+// The app Slack creates from the link: only the read-only user scopes above, no bot user, no events, no
+// token rotation (so the token it shows never expires), and the redirect the sign-in path uses.
+function manifest({ name, redirectUri } = {}) {
+  return {
+    display_information: { name: appName(name), description: 'Read-only: shows unread DMs, mentions and recent messages on the Lumen new-tab page.' },
+    oauth_config: { redirect_urls: [cleanRedirect(redirectUri) || DEFAULT_REDIRECT], scopes: { user: [...USER_SCOPES] } },
+    settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: false },
+  };
+}
+// Slack opens "Create app from manifest" with the manifest already in the box when it is given as
+// manifest_json: the user picks a workspace, presses Next and Create.
+function manifestUrl(opts) {
+  return `${CREATE_APP_URL}?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest(opts)))}`;
+}
+
+const isSlackHost = (host) => host === 'slack.com' || host.endsWith('.slack.com');
+// What the setup window does with an address it is about to go to: 'redirect' (the sign-in came back:
+// take its code, do not load it), 'allow' (an https page on slack.com) or 'block' (anything else).
+function guardNavigation(url, redirectUri) {
+  let u;
+  try { u = new URL(String(url)); } catch { return 'block'; }
+  if (u.protocol !== 'https:' || u.username || u.password) return 'block';
+  let r = null;
+  try { r = new URL(redirectUri || DEFAULT_REDIRECT); } catch { /* none */ }
+  if (r && u.hostname === r.hostname && u.port === r.port && u.pathname === r.pathname) return 'redirect';
+  return isSlackHost(u.hostname) ? 'allow' : 'block';
+}
+// After the app is created Slack shows its app page: /apps/A0123ABC/general. The page that has
+// "Install to Workspace" and the token is /apps/A0123ABC/oauth. Returns that address, or '' for any other page.
+function oauthPageFor(url) {
+  const m = /^https:\/\/api\.slack\.com\/apps\/(A[A-Z0-9]{5,20})(?:\/(?:general|app-settings))?\/?(?:[?#].*)?$/.exec(String(url));
+  return m ? `https://api.slack.com/apps/${m[1]}/oauth` : '';
+}
+
+// Whatever the user pasted -> the pieces we can use. It may be a token (xoxp-…), a Client ID and
+// Client Secret copied together from "Basic Information" (labelled or not), or just one of them.
+// Slack's page also lists a Signing Secret that looks the same as the Client Secret, so an unlabelled
+// 32-character value is only taken when it is the only one that is not labelled as the signing secret.
+function parseCredentials(text) {
+  const t = typeof text === 'string' ? text.slice(0, 5000) : '';
+  const out = { token: '', clientId: '', clientSecret: '' };
+  const tok = /(?:xoxe\.)?xoxp-[A-Za-z0-9-]{10,200}/.exec(t);
+  if (tok) out.token = cleanUserToken(tok[0]);
+  const id = /\b\d{6,20}\.\d{6,20}\b/.exec(t);
+  if (id) out.clientId = cleanClientId(id[0]);
+  const labelled = /client[\s_-]*secret[^0-9a-f]{0,40}([0-9a-f]{20,64})\b/i.exec(t);
+  if (labelled) out.clientSecret = cleanClientSecret(labelled[1]);
+  else {
+    const hex = [...new Set(t.match(/\b[0-9a-f]{32}\b/gi) || [])]
+      .filter((h) => !/signing[\s_-]*secret[^0-9a-f]{0,40}$/i.test(t.slice(Math.max(0, t.indexOf(h) - 60), t.indexOf(h))));
+    if (hex.length === 1) out.clientSecret = cleanClientSecret(hex[0]);
+  }
+  return out;
+}
+
 module.exports = {
+  CREATE_APP_URL, appName, manifest, manifestUrl, isSlackHost, guardNavigation, oauthPageFor, parseCredentials,
   AUTHORIZE_URL, DEFAULT_REDIRECT, USER_SCOPES, MAX_CHANNELS, MAX_DMS, COUNTS, SlackError, RECONNECT,
   cleanClientId, cleanClientSecret, cleanUserToken, cleanRedirect, authorizeUrl, codeForm, refreshForm, parseAccess,
   explain, plainText, cleanConfig, nameFor, summaryFor, permalink, collect,

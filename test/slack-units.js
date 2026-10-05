@@ -109,7 +109,7 @@ module.exports = async function slackUnits(check) {
       return json({ ok: true, authed_user: { id: ME, access_token: `xoxe.xoxp-1-t0`, refresh_token: `xoxe-1-r0`, expires_in: 43200 }, team: { id: 'T1', name: 'Muse' } });
     }
     if (mode.invalidAuth && path !== '/api/auth.revoke') return json({ ok: false, error: 'invalid_auth' });
-    if (path === '/api/auth.test') return json({ ok: true, user_id: ME, team_id: 'T1', team: 'Muse', url: 'https://muse.slack.com/' });
+    if (path === '/api/auth.test') return json({ ok: true, user_id: ME, team_id: 'T1', team: 'Muse', user: 'ana.ruiz', url: 'https://muse.slack.com/' });
     if (path === '/api/auth.revoke') return json({ ok: true, revoked: true });
     if (path === '/api/users.conversations') return json(body.get('types') === 'im,mpim' ? { ok: true, channels: [{ id: 'D0AAA', user: 'U200', updated: 1 }] } : { ok: true, channels: [{ id: 'C111', name: 'general' }, { id: 'G222', name: 'secret', is_private: true }] });
     if (path === '/api/conversations.info') return json({ ok: true, channel: { name: 'general', last_read: '1.0', unread_count_display: 3 } });
@@ -200,4 +200,34 @@ module.exports = async function slackUnits(check) {
   const t2 = OA.unpackTokens(store.secrets.slack);
   check('slack: a pasted user token is checked with auth.test and stored encrypted, without a client secret', /Connected to Muse/.test(viaToken.message) && t2.access === 'xoxp-1111-2222-abcdefghij' && !t2.clientSecret && !JSON.stringify(store.settings).includes('xoxp'), JSON.stringify(t2));
   check('slack: removing the last Slack widget forgets the sign-in', (w.remove(id), !store.secrets.slack), '');
+
+  // ---- guided setup: the one paste box, the token connect, the automatic finish ----
+  let pe = null;
+  await w.slackPaste('hello there').catch((x) => { pe = x; });
+  check('slack paste: text with nothing usable in it is refused with what to paste', /User OAuth Token/.test(pe?.message) && !store.secrets.slack, String(pe));
+  pe = null;
+  await w.slackConnectToken('xoxb-1234-5678-abcdefghij').catch((x) => { pe = x; });
+  check('slack paste: a bot token is refused before any request', /user token/.test(pe?.message) && !store.secrets.slack, String(pe));
+  const half = await w.slackPaste('Client ID\n1234567.7654321');
+  check('slack paste: a Client ID alone waits for the secret (nothing stored, nothing opened)', half.kind === 'partial' && half.missing === 'Client Secret' && w.state().slack.draft === true && !store.secrets.slack, JSON.stringify(half));
+  const both = await w.slackPaste('Client Secret: 0123456789abcdef0123456789abcdef');
+  check('slack paste: the second half completes it and returns the approval address', both.kind === 'approve' && both.url.startsWith('https://slack.com/oauth/v2/authorize?') && both.redirectUri === SL.DEFAULT_REDIRECT && w.state().slack.draft === false && w.state().slack.waiting === true, JSON.stringify(both));
+  const st2 = new URL(both.url).searchParams.get('state');
+  const auto = await w.slackAuto('address', `https://localhost/lumen-slack?code=CODE1&state=${st2}`);
+  check('slack auto: the address the setup window caught finishes the sign-in and the result is left in the status', auto.ok && /Connected to Muse/.test(auto.message) && w.state().slack.connected && w.state().slack.last.ok, JSON.stringify(auto));
+  await w.slackDisconnect();
+  const one = await w.slackPaste('1234567.7654321 0123456789abcdef0123456789abcdef');
+  const forged = await w.slackAuto('address', 'https://localhost/lumen-slack?code=CODE1&state=forged');
+  check('slack auto: an address with a forged state connects nothing and says so', one.kind === 'approve' && forged.ok === false && /different sign-in/.test(forged.message) && !store.secrets.slack, JSON.stringify(forged));
+  const viaPaste = await w.slackPaste('  xoxp-1111-2222-abcdefghij  ');
+  const t3 = OA.unpackTokens(store.secrets.slack);
+  check('slack paste: a token connects at once, as the user named by Slack, encrypted and without a client secret', viaPaste.kind === 'connected' && /Connected to Muse as ana\.ruiz/.test(viaPaste.message) && t3.access === 'xoxp-1111-2222-abcdefghij' && t3.userName === 'ana.ruiz' && !t3.clientSecret && w.state().slack.user === 'ana.ruiz' && !JSON.stringify(w.state()).includes('xoxp-1111'), JSON.stringify(viaPaste));
+  const seen = await w.slackAuto('token', 'xoxp-3333-4444-abcdefghij');
+  check('slack auto: a token seen on the clipboard connects the same way', seen.ok && OA.unpackTokens(store.secrets.slack).access === 'xoxp-3333-4444-abcdefghij', JSON.stringify(seen));
+  const dead = await w.slackAuto('token', 'nope');
+  check('slack auto: a bad token ends as a message, never a throw', dead.ok === false && /user token/.test(dead.message), JSON.stringify(dead));
+  await w.slackDisconnect();
+  check('slack disconnect: the status forgets the last result and any half-pasted credentials', w.state().slack.last === null && w.state().slack.draft === false && !w.state().slack.connected, '');
+
+  await require('./slack-setup-units')(check);
 };

@@ -1364,6 +1364,8 @@ function createWidgets(deps) {
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
+  let slackDraft = null; // a pasted Client ID or Secret that is waiting for the other half: { clientId, clientSecret, at }
+  let slackLast = null; // how the last automatic sign-in ended, for Settings to show: { ok, message }
   let slackBad = false; // Slack refused the stored sign-in: the cards say Reconnect until it is redone
   let slackRefreshing = null; // one token refresh at a time (rotation invalidates the old refresh token)
   const now = () => (deps.now ? deps.now() : Date.now());
@@ -1600,7 +1602,7 @@ function createWidgets(deps) {
       },
       async identify(access) {
         const r = await slackRequest(x, access || (await slackToken(x)).access, 'auth.test');
-        return { userId: str(r.user_id, 40), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
+        return { userId: str(r.user_id, 40), userName: str(r.user, 80), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
       },
       userName: (id) => x.memo(`slack:user:${id}`, 3600e3, async () => {
         const u = (await x.slack.call('users.info', { user: id })).user || {};
@@ -2009,7 +2011,7 @@ function createWidgets(deps) {
   function slackStatus() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
     return {
-      connected: Boolean(tok?.access), team: tok?.teamName || '', reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
+      connected: Boolean(tok?.access), team: tok?.teamName || '', user: tok?.userName || '', last: slackLast, draft: Boolean(slackDraft), reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
       clientId: tok?.clientId || slackPending?.clientId || '', hasSecret: Boolean(tok?.clientSecret), redirect: SL.DEFAULT_REDIRECT, scopes: SL.USER_SCOPES, waiting: Boolean(slackPending),
     };
   }
@@ -2024,6 +2026,7 @@ function createWidgets(deps) {
     if (!clientId) throw new Error('Paste your Slack app’s Client ID (Basic Information → App Credentials: two numbers with a dot).');
     if (!clientSecret) throw new Error('Paste your Slack app’s Client Secret (the same page). It is stored encrypted and never shown again.');
     if (!redirectUri) throw new Error('The redirect URL must be an https:// address. Add the same one under OAuth & Permissions → Redirect URLs in your Slack app.');
+    slackLast = null;
     slackPending = { state: OA.randomState(), clientId, clientSecret, redirectUri, at: now() };
     return { url: SL.authorizeUrl({ clientId, redirectUri, state: slackPending.state }), redirectUri };
   }
@@ -2043,11 +2046,45 @@ function createWidgets(deps) {
     slackReset();
     return { message: `Connected to ${t.teamName || 'Slack'}.` };
   }
-  function slackCancel() { slackPending = null; return true; }
+  function slackCancel() { slackPending = null; slackDraft = null; return true; }
+  // The easy path: a user token (xoxp-…) the user copied from the app's OAuth & Permissions page, or that
+  // Lumen saw on the clipboard. It is checked with auth.test before anything is stored.
+  async function slackConnectToken(token) {
+    const pasted = SL.cleanUserToken(token);
+    if (!pasted) throw new Error('That doesn’t look like a Slack user token (it starts with xoxp-).');
+    const who = await helpers('slack').slack.identify(pasted);
+    deps.setSecret('slack', OA.packTokens({ access: pasted, userId: who.userId, userName: who.userName, teamId: who.teamId, teamName: who.teamName, teamUrl: who.teamUrl }));
+    slackPending = null; slackDraft = null;
+    slackReset();
+    return { message: `Connected to ${who.teamName || 'Slack'}${who.userName ? ` as ${who.userName}` : ''}.` };
+  }
+  // One paste box for everything: a token connects at once; a Client ID and Client Secret (together, or one
+  // after the other) start the approval, whose address comes back through slackAuto.
+  async function slackPaste(text) {
+    const p = SL.parseCredentials(text);
+    if (p.token) return { kind: 'connected', ...(await slackConnectToken(p.token)) };
+    if (!p.clientId && !p.clientSecret) throw new Error('Lumen can’t use that. Paste the User OAuth Token (starts with xoxp-), or the Client ID and Client Secret.');
+    const keep = slackDraft && now() - slackDraft.at < 15 * 60e3 ? slackDraft : null;
+    const clientId = p.clientId || keep?.clientId || '';
+    const clientSecret = p.clientSecret || keep?.clientSecret || '';
+    if (!clientId || !clientSecret) {
+      slackDraft = { clientId, clientSecret, at: now() };
+      return { kind: 'partial', missing: clientId ? 'Client Secret' : 'Client ID' };
+    }
+    slackDraft = null;
+    return { kind: 'approve', ...slackStart({ clientId, clientSecret }) };
+  }
+  // The address Slack sent the setup window to, or a token Lumen saw on the clipboard: finish quietly and
+  // leave the result in the status (Settings shows it), because no call is waiting for an answer.
+  async function slackAuto(what, value) {
+    try { slackLast = { ok: true, message: (what === 'token' ? await slackConnectToken(value) : await slackFinish(value)).message }; } catch (err) { slackLast = { ok: false, message: err instanceof Error ? err.message : 'Slack sign-in failed.' }; }
+    deps.onUpdate?.();
+    return slackLast;
+  }
   // Settings' Disconnect: revoke the token at Slack when possible, then forget everything stored.
   async function slackDisconnect() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
-    slackPending = null;
+    slackPending = null; slackDraft = null; slackLast = null;
     if (tok?.access) await slackRequest(helpers('slack'), tok.access, 'auth.revoke').catch(() => {});
     deps.setSecret('slack', null);
     slackReset();
@@ -2430,7 +2467,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, appleMusicChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, aiStatusChanged, aiStatusSoon, appleMusicChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
