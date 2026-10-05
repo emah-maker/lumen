@@ -34,7 +34,7 @@ module.exports = async function appleMusicUnits(check) {
   check('web player: the card class goes into the probe as given', WP.probeScript('applemusic').includes('.w-card.applemusic .sp-web-slot'), '');
 
   // The widget in the layout, the lists and the page's setup kinds
-  check('apple music layout: it has size limits and the Spotify card\'s default size', WL.limitsOf('applemusic').minW >= 2 && WL.defaultSize('applemusic').h === 3 && WL.defaultSize('applemusic', 12).w === 4, JSON.stringify(WL.defaultSize('applemusic')));
+  check('apple music layout: it has size limits and the Spotify card\'s default size', WL.limitsOf('applemusic').minW >= 2 && WL.defaultSize('applemusic').h === 4 && WL.defaultSize('applemusic', 12).w === 4, JSON.stringify(WL.defaultSize('applemusic')));
   check('apple music: the picker lists it with a name and a plain line, after Spotify', WS.kindName('applemusic') === 'Apple Music' && /Apple Music/.test(WS.kindHint('applemusic')) && WS.ORDER.indexOf('applemusic') === WS.ORDER.indexOf('spotify') + 1, WS.kindHint('applemusic'));
 
   // The connector: nothing to sign in to here, nothing fetched from Apple

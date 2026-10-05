@@ -1492,9 +1492,10 @@ async function buildWidgets(card) {
       } else if (type === 'applemusic') {
         inputs.mode = segment('widget-applemusic-mode', 'How Apple Music is shown', [['status', 'Status card'], ['web', 'Web player']], same?.mode === 'web' ? 'web' : 'status');
         inputs.art = tog('widget-applemusic-art', 'Album art', same ? same.art !== false : true);
-        const modeRow = block('How to show Apple Music', 'Status card: what the Apple Music app on this computer is playing, with play, pause, next and previous (Windows and Mac). Web player: Apple’s own site in the card; you sign in there and Lumen never sees your Apple ID.', inputs.mode);
-        const statusNote = h('p', { class: 'wf-foot', text: 'Reads the Apple Music app (or iTunes on Windows) through the system’s now-playing controls. Nothing is sent anywhere and no account is needed. On a Mac, macOS asks once to let Lumen control Music.' });
-        const showBox = section('Show', [inputs.art]);
+        inputs.app = tog('widget-applemusic-app', 'Also show the Apple Music app', same ? same.app !== false : true, 'When nothing is playing inside Lumen but the Apple Music app on this computer is (iTunes on Windows too), show it, with its own buttons. On a Mac, macOS asks once to let Lumen control Music.');
+        const modeRow = block('How to show Apple Music', 'Status card: Apple Music plays inside Lumen, and the card shows what is playing with play, pause, next, previous and seek, your recent plays and playlists, and a search. You sign in on Apple’s site once. Web player: Apple’s own site in the card.', inputs.mode);
+        const statusNote = h('p', { class: 'wf-foot', text: 'Apple Music plays in a hidden page inside Lumen (Apple’s own MusicKit), in your normal Lumen session, so the music keeps playing when you leave the new-tab page. Search works without signing in (30-second previews); sign in for your library and full songs. Lumen never sees your Apple ID or password.' });
+        const showBox = section('Show', [inputs.art, inputs.app]);
         const syncMode = () => { statusNote.hidden = showBox.hidden = inputs.mode.value !== 'status'; };
         inputs.mode.addEventListener('change', syncMode);
         syncMode();
@@ -1618,7 +1619,7 @@ async function buildWidgets(card) {
         } };
       }
       if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
-      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art) };
+      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app) };
       if (type === 'gmail') {
         return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
       }

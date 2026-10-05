@@ -6752,14 +6752,9 @@ const widgets = createWidgets({
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   spotifyWebStatus: () => spotifyWeb.status(),
   spotifyWebReload: () => spotifyWeb.reload(),
-  // The Status mode: the Apple Music app's now-playing interface (features/apple-music-native.js). Tests may stand in a fake.
-  appleMusic: {
-    read: () => (TEST && global.__appleMusicFake ? global.__appleMusicFake.read() : appleMusicNative.read()),
-    control: (name) => (TEST && global.__appleMusicFake ? global.__appleMusicFake.control(name) : appleMusicNative.control(name)),
-    open: () => (TEST && global.__appleMusicFake ? global.__appleMusicFake.open() : appleMusicNative.open()),
-  },
-  openWebTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
-  appleMusicWebSignedIn: () => appleMusicWeb.isSignedIn(),
+  // The Status mode: the Apple Music engine (features/apple-music-engine.js). Tests may stand in a fake for any of its calls.
+  appleMusic: Object.fromEntries(['read', 'control', 'seek', 'playItem', 'search', 'signIn', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && global.__appleMusicFake?.[name] ? global.__appleMusicFake[name](...args) : appleMusicEngine[name](...args))])),
+  appleMusicWebSignedIn: () => appleMusicEngine.signedIn(),
   appleMusicWebStatus: () => appleMusicWeb.status(),
   appleMusicWebReload: () => appleMusicWeb.reload(),
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
@@ -6812,12 +6807,13 @@ function tradingviewAccountLists() {
 }
 // [widgets] The music cards' Web players (features/web-player.js): the Spotify widget's (features/spotify-web.js) and the
 // Apple Music widget's (features/apple-music-web.js), one persistent view each, in the normal session.
-const musicWebDeps = (hasWidget, testUrl, drmProbe) => ({
+const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
   getBounds: () => contentBounds,
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
   hasWidget,
+  keepAlive,
   openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
   onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   onStatus: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); }, // loading, offline, no Widevine: the card says which
@@ -6825,21 +6821,38 @@ const musicWebDeps = (hasWidget, testUrl, drmProbe) => ({
   drmProbe: (wc) => (TEST && drmProbe() ? drmProbe()(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
 const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe));
-const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe));
+const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe, () => true)); // (the engine keeps the page, hidden, with no web card)
 if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
-// [widgets] The Apple Music Status card's now-playing source: a PowerShell helper on Windows, osascript on macOS; both only while
-// the card is being read, and ended at quit. The album picture is made small here (it travels in the new-tab page's address).
+// [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
+// Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
+// while a card is being read, and ended at quit). Album pictures are made small here (they travel in the new-tab page's address).
+const resizeArt = (bytes) => {
+  const { nativeImage } = require('electron');
+  const img = nativeImage.createFromBuffer(Buffer.from(bytes));
+  if (img.isEmpty()) return null;
+  return (img.getSize().height > 160 ? img.resize({ height: 160, quality: 'good' }) : img).toJPEG(82);
+};
 const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
   any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
-  resizeArt: (bytes) => {
-    const { nativeImage } = require('electron');
-    const img = nativeImage.createFromBuffer(Buffer.from(bytes));
-    if (img.isEmpty()) return null;
-    return (img.getSize().height > 160 ? img.resize({ height: 160, quality: 'good' }) : img).toJPEG(82);
-  },
+  resizeArt,
   onChange: () => widgets.appleMusicChanged(),
 });
-app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); });
+const appleMusicEngine = require('./features/apple-music-engine').createEngine({
+  player: appleMusicWeb,
+  native: appleMusicNative,
+  resizeArt,
+  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on mzstatic.com)
+  BrowserWindow,
+  getParent: () => win,
+  hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
+  onChange: () => widgets.appleMusicChanged(),
+});
+if (TEST) global.__appleMusicEngine = appleMusicEngine;
+// The engine page's bridge: only the hidden view's own music.apple.com page may fetch the script or send state.
+const amusicSender = (event) => { const wc = appleMusicWeb.webContents(); let origin = ''; try { origin = TEST && global.__appleMusicWebUrl ? new URL(global.__appleMusicWebUrl).origin : ''; } catch { /* no stand-in */ } return Boolean(wc) && event.sender === wc && event.senderFrame === wc.mainFrame && AMW.isEnginePage(event.senderFrame.url, origin); };
+ipcMain.on('amusic:bridge-source', (event) => { event.returnValue = amusicSender(event) ? require('./features/apple-music-bridge').BRIDGE_SOURCE : ''; });
+ipcMain.on('amusic:msg', (event, raw) => { if (amusicSender(event)) appleMusicEngine.onMessage(raw); });
+app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
 // Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,
