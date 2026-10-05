@@ -50,7 +50,7 @@ function toneWav() {
   const other = `http://localhost:${port}`; // a different host, same server
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabsearch-'));
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_ALLOW_AUDIO: '1' } }); // (test mode mutes audio, and a muted page is never reported as playing)
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -136,7 +136,7 @@ function toneWav() {
   const audible = await waitFor(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some((w) => w.getURL() === url && w.isCurrentlyAudible()), `${base}/audio`), 10000);
   if (audible) check('the sound page is playing audio', true, ''); // (not audible: reported as skipped below)
   // Chromium reports a tab as audible only while the machine's audio output takes the stream; with no usable output (some CI and remote
-  // sessions, a busy device) the speaker button never appears, so what depends on it is skipped, loudly, and the muting by tab and site is still checked below.
+  // sessions) the speaker button never appears, so what depends on it is skipped, loudly.
   if (audible) {
     check('its tab shows the speaker button', await waitFor(() => ui.evaluate((sel) => Boolean(document.querySelector(`${sel} .tab-audio:not(.muted)`)), tabEl)), 'no speaker');
   check('the other tabs don\'t', await ui.evaluate((id) => [...document.querySelectorAll('#tabs .tab .tab-audio')].every((b) => b.closest('.tab').dataset.id === String(id)), soundId), 'speaker elsewhere');
