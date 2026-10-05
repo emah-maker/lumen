@@ -778,6 +778,145 @@ else {
 }
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
+// ---- usage-popover.js
+// The plan meter's popover (chat-extras.js draws it): everything it says, worked out from the usage summary the strip
+// and Settings → Usage already hold (features/usage.js summary(): bars, plan, meter, providers, rate, codex). Pure
+// formatting, no window and no network, so it also runs in node (test/usage-popover-units.js). Missing data is left
+// out, never guessed: no number is better than a made-up one.
+//
+//   view(key, state, { now, name }) -> { name, plan, windows, counted, rates, updatedAt, updated, note, message } | null
+//     windows  [{ key, label, percent, percentText, level, text }]   text: "resets 3:40 PM, in 1 h 12 m" ('' when unknown)
+//     counted  [{ label, text }]                  what Lumen counted: "Today": "12.3k tokens · 4 messages · ≈$0.40"
+//     rates    [{ label, percent, percentText, text }]   per-minute limits an API key's replies carried
+//   percentText(p), relative(ms, now), updatedText(ms, now), countText(c, unit)  the pieces, for the tests
+(function (root) {
+'use strict';
+
+const finite = (n) => typeof n === 'number' && Number.isFinite(n);
+const tr = (key, fallback, vars) => {
+  let s = root.t ? root.t(key, vars) : key;
+  if (!s || s === key) s = fallback;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, k) => (k in vars ? String(vars[k]) : '')) : s;
+};
+const bars = () => (typeof module !== 'undefined' && module.exports ? require('./usage-bars') : root.usageBars);
+
+// "42%" for a real number, '' for a missing one.
+const percentText = (p) => (finite(p) ? `${Math.round(Math.max(0, Math.min(100, p)))}%` : '');
+
+// "in 1 h 12 m", "in 2 d 3 h", "in 40 m", "in 12 s"; '' when the time is unknown or already past.
+function relative(ms, now = Date.now()) {
+  if (!finite(ms)) return '';
+  const left = ms - now;
+  if (left <= 0) return '';
+  const s = Math.ceil(left / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  let t;
+  if (d > 0) t = h ? `${d} d ${h} h` : `${d} d`;
+  else if (h > 0) t = m ? `${h} h ${m} m` : `${h} h`;
+  else if (m > 0) t = `${m} m`;
+  else t = `${s} s`;
+  return tr('usage.pop.in', 'in {time}', { time: t });
+}
+
+// "Updated just now", "Updated 5 min ago", "Updated 2 h ago"; '' when unknown.
+function updatedText(ms, now = Date.now()) {
+  if (!finite(ms) || ms <= 0) return '';
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 45) return tr('usage.pop.updated', 'Updated {time}', { time: tr('usage.pop.justNow', 'just now') });
+  const t = s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
+  return tr('usage.pop.updated', 'Updated {time}', { time: tr('usage.pop.ago', '{time} ago', { time: t }) });
+}
+
+const compact = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
+const money = (n) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+
+// "12.3k tokens · 4 messages · ≈$0.40": only the parts that exist (a cost only when the provider or the price table gave
+// one). '' when nothing was counted.
+function countText(c, unit = 'messages') {
+  if (!c || !(c.tokens > 0 || c.turns > 0 || c.sessions > 0)) return '';
+  const parts = [];
+  if (c.tokens > 0) parts.push(tr('usage.tokens', '{tokens} tokens', { tokens: compact(c.tokens) }));
+  const n = unit === 'sessions' ? c.sessions : c.turns;
+  if (n > 0) parts.push(unit === 'sessions' ? tr('usage.pop.sessions', '{count} sessions', { count: n }) : tr('usage.pop.messages', '{count} messages', { count: n }));
+  if (c.costUSD > 0) parts.push(`≈${money(c.costUSD)}`);
+  return parts.join(' · ');
+}
+
+const clockOf = (ms, now) => {
+  const d = new Date(ms);
+  return d.toDateString() === new Date(now).toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+};
+// "resets 3:40 PM, in 1 h 12 m" from a time; "resets Mon 12:00 AM" from the CLI's own words; '' when neither is known.
+function resetLine(source, now = Date.now()) {
+  if (source && finite(source.resetsAt) && source.resetsAt > now) {
+    return `${tr('usage.resets', 'resets {time}', { time: clockOf(source.resetsAt, now) })}, ${relative(source.resetsAt, now)}`;
+  }
+  const words = source && typeof source.resetsText === 'string' ? source.resetsText.trim() : '';
+  return words ? tr('usage.resets', 'resets {time}', { time: words }) : '';
+}
+
+const cap = (s) => String(s || '').replace(/^./, (c) => c.toUpperCase());
+function planName(key, state) {
+  if (key === 'claudecode' && state.plan && state.plan.available && state.plan.subscription) return tr('usage.pop.plan.claude', 'Claude subscription');
+  if (key === 'codex' && state.codex && state.codex.planType) return tr('usage.pop.plan.named', '{plan} plan', { plan: cap(state.codex.planType) });
+  return '';
+}
+
+// When the numbers were last read: the meter's reading (Claude Code), Codex's own log reading, the newest rate-limit headers.
+function updatedAt(key, state) {
+  const candidates = [];
+  if (key === 'claudecode' && state.meter) candidates.push(state.meter.at);
+  if (key === 'codex' && state.codex) candidates.push(state.codex.readAt);
+  if (state.rate && state.rate[key]) candidates.push(state.rate[key].at);
+  const known = candidates.filter((n) => finite(n) && n > 0);
+  return known.length ? Math.max(...known) : null;
+}
+
+function countedFor(key, state) {
+  if (key === 'codex') {
+    const c = state.codex;
+    return c && c.available ? { today: c.today, week: c.week, unit: 'sessions' } : null;
+  }
+  const p = state.providers && state.providers[key];
+  if (p) return { today: p.today, week: p.week, unit: 'messages' };
+  if (key === 'claudecode' && state.lumen) return { today: state.lumen.today, week: state.lumen.week, unit: 'messages' };
+  return null;
+}
+
+function view(key, state, { now = Date.now(), name = '' } = {}) {
+  if (!key || !state || typeof state !== 'object') return null;
+  const bar = state.bars ? state.bars[key] : null;
+  const windows = bars().windowsOf(bar, now).map((w) => ({
+    key: w.key, label: w.label, percent: w.percent, level: w.level, percentText: percentText(w.percent),
+    text: w.resetsAt ? resetLine({ resetsAt: w.resetsAt }, now) : w.reset, // (w.reset: the CLI's own words, already "resets Mon 12:00 AM")
+  }));
+  const counted = [];
+  const c = countedFor(key, state);
+  if (c) {
+    const today = countText(c.today, c.unit);
+    const week = countText(c.week, c.unit);
+    if (today) counted.push({ label: tr('usage.pop.today', 'Today'), text: today });
+    if (week) counted.push({ label: tr('usage.pop.week', 'Last 7 days'), text: week });
+  }
+  const rate = state.rate && state.rate[key];
+  const rates = rate && Array.isArray(rate.buckets)
+    ? rate.buckets.filter((b) => !b.expired && finite(b.percent)).map((b) => ({
+      label: b.label, percent: b.percent, percentText: percentText(b.percent),
+      text: [finite(b.limit) && finite(b.remaining) ? tr('usage.pop.left', '{left} of {limit} left', { left: compact(b.remaining), limit: compact(b.limit) }) : '', resetLine({ resetsAt: b.resetsAt }, now)].filter(Boolean).join(', '),
+    }))
+    : [];
+  const at = updatedAt(key, state);
+  const note = !windows.length && !rates.length ? (state.notes && state.notes[key]) || '' : '';
+  return { name, plan: planName(key, state), windows, counted, rates, updatedAt: at, updated: updatedText(at, now), note, message: bar && bar.kind === 'limit' && bar.message ? bar.message : '' };
+}
+
+const api = { view, percentText, relative, updatedText, countText, resetLine };
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+else root.usagePopover = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- picker-match.js
 // Matching for the model picker's search (renderer/picker.js). A plain script in the UI; test/units.js loads it
 // with require().
@@ -8214,7 +8353,8 @@ $('agent-stop')?.addEventListener('click', () => {
   // publishes no plan limits, shows the chat's context-window fill with today's tokens and cost, a
   // progress bar toward the budget the user set, or "limit reached" with its reset time; never a
   // plan percentage. With nothing real yet it shows a hint instead of a bar. Live during a Claude turn (rate_limit_event),
-  // refreshed after each one; a click opens Settings → Usage.
+  // refreshed after each one; a click opens a small popover with the details (limit windows, what Lumen counted, rate
+  // limits) and a link to Settings → Usage (renderer/usage-popover.js works out what it says).
   const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
   const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
   const meterFill = document.createElement('i');
@@ -8230,7 +8370,8 @@ $('agent-stop')?.addEventListener('click', () => {
   if ($('prompt')) $('prompt').before(strip);
   else $('composer')?.prepend(strip);
   const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
-  meter.addEventListener('click', () => extras.openUsage?.());
+  meter.setAttribute('aria-haspopup', 'dialog');
+  meter.setAttribute('aria-expanded', 'false');
   let usage = null;
   // Every AI has a bar: the CLIs by their prefix, an API provider by its prefix or (a bare Claude model id) Anthropic; Auto has none.
   const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex', antigravity: 'Antigravity', anthropic: 'Claude', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
@@ -8289,6 +8430,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
     meter.hidden = off || (!bar && !hint);
     syncStrip();
+    if (meter.hidden) closePopover(false); else if (!pop.hidden) renderPopover();
     meter.classList.toggle('hint', hint);
     if (hint) {
       meterBar.hidden = true;
@@ -8338,7 +8480,96 @@ $('agent-stop')?.addEventListener('click', () => {
     usage = await extras.usage(force).catch(() => usage);
     renderMeter();
   }
-  select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
+  // ---------- [usage] the popover a click on the plan meter opens ----------
+  // Above the strip, not a page change: the limit windows with their exact reset times, what Lumen counted today and
+  // over 7 days, the plan, an API key's per-minute limits, when the numbers were read, and a link to Settings → Usage.
+  // It only reads the summary already loaded (`usage`). Esc, a click outside or the meter again closes it, and focus
+  // goes into it and back to the meter.
+  const pop = Object.assign(document.createElement('div'), { id: 'usage-popover', className: 'usage-popover', hidden: true, tabIndex: -1 });
+  pop.setAttribute('role', 'dialog');
+  meter.setAttribute('aria-controls', 'usage-popover');
+  strip.append(pop);
+  let popTimer = null;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  // One row: a label and value, a thin bar (through the CSSOM: a page's CSP may drop inline style attributes), a line of detail.
+  function barRow(label, percent, level, detail, valueText) {
+    const row = el('div', 'up-row');
+    const top = el('div', 'up-line');
+    top.append(el('span', 'up-label', label), el('span', 'up-value', valueText));
+    const track = el('span', 'up-bar');
+    track.dataset.level = level;
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.round(percent)));
+    track.setAttribute('aria-label', label);
+    const fill = document.createElement('i');
+    fill.style.width = `${Math.round(percent)}%`;
+    track.append(fill);
+    row.append(top, track);
+    if (detail) row.append(el('div', 'up-sub', detail));
+    return row;
+  }
+  function renderPopover() {
+    const key = engineKey();
+    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key] }) : null;
+    if (!v) { closePopover(false); return; }
+    pop.replaceChildren();
+    const label = window.t('usage.bar.labelFor', { name: v.name });
+    pop.setAttribute('aria-label', label);
+    const head = el('div', 'up-head');
+    head.append(el('span', 'up-title', label));
+    if (v.plan) head.append(el('span', 'up-plan', v.plan));
+    pop.append(head);
+    if (v.message) pop.append(el('p', 'up-note', v.message));
+    for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
+    if (v.rates.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.rates')));
+      for (const r of v.rates) pop.append(barRow(r.label, r.percent, window.usageBars?.levelOf(r.percent) || 'ok', r.text, window.t('usage.bar.used', { percent: Math.round(r.percent) })));
+    }
+    if (v.note && !v.windows.length) pop.append(el('p', 'up-note', v.note));
+    if (v.counted.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.counted')));
+      for (const c of v.counted) {
+        const line = el('div', 'up-line up-count');
+        line.append(el('span', 'up-label', c.label), el('span', 'up-value', c.text));
+        pop.append(line);
+      }
+    } else if (!v.windows.length && !v.rates.length && !v.note) pop.append(el('p', 'up-note', window.t('usage.pop.none')));
+    const foot = el('div', 'up-foot');
+    foot.append(el('span', 'up-updated', v.updated));
+    const link = Object.assign(document.createElement('button'), { type: 'button', className: 'up-link', textContent: window.t('usage.pop.settings') });
+    link.addEventListener('click', () => { closePopover(true); extras.openUsage?.(); });
+    foot.append(link);
+    pop.append(foot);
+  }
+  function openPopover() {
+    if (!pop.hidden || !usage) return;
+    renderPopover();
+    if (!pop.childNodes.length) return;
+    pop.hidden = false;
+    meter.setAttribute('aria-expanded', 'true');
+    pop.focus({ preventScroll: true });
+    clearInterval(popTimer);
+    popTimer = setInterval(renderPopover, 30000); // "in 12 m" and "updated 3 min ago" stay honest while it is open
+    document.addEventListener('pointerdown', onOutside, true);
+  }
+  function closePopover(refocus) {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    meter.setAttribute('aria-expanded', 'false');
+    clearInterval(popTimer);
+    document.removeEventListener('pointerdown', onOutside, true);
+    if (refocus) meter.focus({ preventScroll: true });
+  }
+  function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+  meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+  const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
+  pop.addEventListener('keydown', escape);
+  meter.addEventListener('keydown', escape);
+  strip.addEventListener('focusout', (e) => { if (!pop.hidden && e.relatedTarget && !strip.contains(e.relatedTarget)) closePopover(false); });
+
+  select?.addEventListener('change', () => { closePopover(false); setTimeout(() => refreshUsage(false)); });
   // Another chat is open (New chat, one from the chat list, or a new topic starting its own chat):
   // Grok's context bar is that chat's, empty for a new one. Main has switched chats by then.
   $('new-chat')?.addEventListener('click', () => setTimeout(() => refreshUsage(false), 50));

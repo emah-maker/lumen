@@ -1487,6 +1487,33 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .hands-off-badge svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .notice.slash-help ul { margin: 4px 0; padding-left: 18px; text-align: left; }
 .notice.slash-help code { font-size: 11px; }
+
+/* [usage] the popover over the plan meter (chat-extras.js, text from usage-popover.js): compact, anchored above the strip */
+.meter-strip { position: relative; }
+.usage-popover { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30; box-sizing: border-box; width: 320px; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border, rgba(0, 0, 0, 0.1)); border-radius: 10px; background: var(--surface-raised, var(--surface, #fff)); color: var(--text, #1d1d1f); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; outline: none; }
+.usage-popover[hidden] { display: none; }
+.usage-popover .up-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.usage-popover .up-title { font-weight: 600; }
+.usage-popover .up-plan { color: var(--muted, #6e6e73); font-size: 11px; white-space: nowrap; }
+.usage-popover .up-row { margin-bottom: 8px; }
+.usage-popover .up-line { display: flex; justify-content: space-between; gap: 10px; }
+.usage-popover .up-label { min-width: 0; overflow-wrap: anywhere; }
+.usage-popover .up-value { color: var(--muted, #6e6e73); text-align: right; }
+.usage-popover .up-bar { display: block; height: 4px; margin: 4px 0 2px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }
+.usage-popover .up-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent, #007aff); }
+.usage-popover .up-bar[data-level="warn"] i { background: #ff9f0a; }
+.usage-popover .up-bar[data-level="high"] i { background: #ff453a; }
+.usage-popover .up-sub { color: var(--muted, #6e6e73); font-size: 11px; }
+.usage-popover .up-section { margin: 10px 0 4px; padding-top: 8px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2)); color: var(--muted, #6e6e73); font-size: 11px; font-weight: 600; }
+.usage-popover .up-count { margin-bottom: 2px; }
+.usage-popover .up-count .up-value { color: var(--text, inherit); }
+.usage-popover .up-note { margin: 0 0 8px; color: var(--muted, #6e6e73); font-size: 11px; }
+.usage-popover .up-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2)); }
+.usage-popover .up-updated { color: var(--muted, #6e6e73); font-size: 11px; }
+.usage-popover .up-link { margin: 0; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: var(--accent, #007aff); font: inherit; font-size: 11px; cursor: pointer; }
+.usage-popover .up-link:hover { text-decoration: underline; }
+.usage-popover .up-link:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
+.usage-meter[aria-expanded="true"] { color: var(--text, inherit); }
 /* ---- prefs.css */
 /* Browser-UI preferences from Settings (lumen://settings), set as classes on <html> by app.js.
    Kept out of styles.css so the preferences only add to the base look. */
