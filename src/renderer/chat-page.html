@@ -89,9 +89,9 @@
         <div class="attachments" id="attachments" hidden></div>
         <div class="attachment-note" id="attachment-note" role="status" aria-live="polite" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
-        <input type="file" id="attach-input" accept="image/*,.heic,.heif" multiple hidden tabindex="-1" aria-hidden="true" />
-        <button class="attach-btn" id="attach" type="button" title="Attach images (up to 5)" aria-label="Attach images" data-i18n-aria-label="composer.attach">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="5.8" cy="6" r="1.1"/><path d="m2.5 12 3.3-3.3 2.4 2.4 2-2L13.5 12"/></svg>
+        <input type="file" id="attach-input" multiple hidden tabindex="-1" aria-hidden="true" />
+        <button class="attach-btn" id="attach" type="button" title="Attach files (up to 10)" aria-label="Attach files" data-i18n-aria-label="composer.attach">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 7.2 7.6 12.4a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.2 10.8a1.1 1.1 0 0 1-1.5-1.5l4.7-4.7"/></svg>
         </button>
         <button class="send-now" id="send-now" type="button" title="Stop the reply and send this now (Ctrl+Enter)" data-i18n="composer.sendNow" data-i18n-title="composer.sendNow.title" hidden>Send now</button>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>

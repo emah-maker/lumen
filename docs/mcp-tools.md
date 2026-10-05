@@ -1,11 +1,11 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 29 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 30 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
 - **The active tab.** An agent works in a Lumen window of its own, opened on its first call that needs a tab; `list_tabs` shows only that window's tabs (an empty list before it has one), and you never see or reach the user's tabs. Page tools (`read_page`, `click`, `type_text`, `find`, `batch`, `screenshot`, …) work on the tab in front in that window. Use `list_tabs` and `switch_tab` to pick another of its tabs.
-- **Element ids.** `read_page` and `find` number the page's links, buttons and fields. `click`, `type_text`, `hover`, `fill_form` and `batch` (`ref`) take those numbers. They stay valid until the page changes; read again after a navigation.
+- **Element ids.** `read_page` and `find` number the page's links, buttons and fields. `click`, `type_text`, `hover`, `upload_file`, `fill_form` and `batch` (`ref`) take those numbers. They stay valid until the page changes; read again after a navigation.
 - **Approvals.** The first time an agent acts on a site in a chat, Lumen asks you in the sidebar. Once it has read page content, opening, fetching or searching a site not yet approved asks too. See [Asking before it acts](../README.md#asking-before-it-acts). A refused call returns an error that says so.
 - **Cheaper reads.** `read_page` with `mode: "compact"` or `since_last: true`, `find` and `batch` cost far fewer tokens than a full read. See [Token-efficient tools](../README.md#token-efficient-tools-all-ais).
 
@@ -158,6 +158,15 @@ Move the mouse over an element by its id from read_page, e.g. to open a hover me
 | Parameter | Type | Required |
 |---|---|---|
 | `element_id` | integer | yes |
+
+### `upload_file`
+
+Put a file into a page's file upload: `element_id` is the file input, its label or button, or a drop zone (from `read_page` or `find`). `files` are refs of files the user attached to the chat (listed in the message as `<attached_files>`); leave it out and the user is asked to choose a file with the OS picker. The AI never names a path: only refs and the user's own pick are accepted. It does not submit the form. See [Uploading files for you](uploading-files.md).
+
+| Parameter | Type | Required |
+|---|---|---|
+| `element_id` | integer | yes |
+| `files` | array of strings (refs) |  |
 
 ### `go_forward`
 

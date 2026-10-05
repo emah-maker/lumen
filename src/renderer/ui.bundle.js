@@ -2283,9 +2283,14 @@ function updateSend() {
   sendNowBtn.hidden = !(running && typed);
 }
 
-// ---------- image attachments: paste, drop or pick images for the message ----------
+// ---------- attachments: paste, drop or pick files for the message ----------
+// Pictures go to the AI as pictures (downsized here); every file, pictures included, is also kept by Lumen under an
+// opaque ref (main.js uploads:stash), so the AI can put it into a web page's file upload (upload_file) after the user
+// has seen the names and the site. A file that is not a picture is never sent to the model: only its name and size.
 
 const MAX_IMAGES = 5;
+const MAX_ATTACH = 10; // pictures and other files together
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // main refuses a bigger file too
 const MAX_EDGE = 1568; // larger images are downscaled by the API anyway; resizing first saves upload time
 const MAX_BYTES = 3.5 * 1024 * 1024; // a PNG/JPEG/GIF/WebP under this and within MAX_EDGE goes as it is
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // a bigger file is refused before it is read
@@ -2293,7 +2298,11 @@ const MAX_SEND_CHARS = 6_500_000; // base64 characters of one image after conver
 const PASSTHROUGH = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_NAME = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|svg|ico|tiff?|heic|heif)$/i;
 const HEIC_NAME = /\.(heic|heif)$/i;
-let attachments = []; // { media_type, data (base64), url (data URL for previews), name }
+let attachments = []; // a picture: { media_type, data (base64), url (data URL for previews), name, ref }; any other file: { file: true, name, size, type, ref }
+const isFileItem = (a) => Boolean(a?.file);
+const imageItems = (list) => list.filter((a) => !isFileItem(a));
+const refsOf = (list) => list.map((a) => a.ref).filter(Boolean);
+const fileSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
 let attachNoteTimer = null;
 
 // Some systems give a dropped photo no MIME type: the name decides then.
@@ -2393,25 +2402,45 @@ function showAttachNote(lines) {
   if (lines.length) attachNoteTimer = setTimeout(() => showAttachNote([]), 12000);
 }
 
-// Adds the images among `files`; returns whether there was any to add. Says what it left out.
-async function addImages(files, { announceOthers = true } = {}) {
+// Keeps the file's own bytes in main under a ref (main.js uploads:stash). -> { ok, ref, name, size, type } | { ok: false, error }
+async function stashFile(file) {
+  try {
+    const data = await file.arrayBuffer();
+    return (await window.assistant.uploads?.stash({ name: file.name || '', type: file.type || '', data })) || { ok: false };
+  } catch { return { ok: false }; }
+}
+
+// Adds `files` (any kind) to the message; returns whether any was added. A picture goes as a picture (and is kept as a
+// file too); a picture that can't be shown (HEIC, too big, a sixth) and any other file becomes a file chip. Says what it left out.
+async function addFiles(files) {
   const list = [...files];
-  const images = list.filter(isImageFile);
   const problems = [];
-  if (announceOthers) for (const f of list.filter((x) => !isImageFile(x))) problems.push(attachProblem(f, 'notImage'));
   let over = 0;
-  for (const file of images) {
-    if (attachments.length >= MAX_IMAGES) { over++; continue; }
-    try {
-      attachments.push(await toAttachment(file));
-    } catch (err) {
-      problems.push(attachProblem(file, err?.code));
+  let added = 0;
+  for (const file of list) {
+    if (attachments.length >= MAX_ATTACH) { over++; continue; }
+    if (!file.size) { problems.push(attachProblem(file, 'empty')); continue; }
+    if (file.size > MAX_UPLOAD_BYTES) { problems.push(t('composer.attach.bigFile', { name: imageLabel(file), max: 100 })); continue; }
+    let picture = null;
+    if (isImageFile(file) && imageItems(attachments).length < MAX_IMAGES && !isHeic(file) && file.size <= MAX_FILE_BYTES) {
+      try { picture = await toAttachment(file); } catch { picture = null; } // (kept as a file instead)
     }
+    const kept = await stashFile(file);
+    if (picture) {
+      if (kept.ok) picture.ref = kept.ref;
+      attachments.push(picture);
+    } else if (kept.ok) {
+      attachments.push({ file: true, name: kept.name, size: kept.size, type: kept.type, ref: kept.ref });
+    } else {
+      problems.push(kept.error || attachProblem(file, 'unreadable'));
+      continue;
+    }
+    added++;
   }
-  if (over) problems.push(t('composer.attach.limit', { max: MAX_IMAGES, n: over }));
+  if (over) problems.push(t('composer.attach.limit', { max: MAX_ATTACH, n: over }));
   renderAttachments();
   showAttachNote(problems);
-  return images.length > 0;
+  return added > 0;
 }
 
 function renderAttachments() {
@@ -2420,28 +2449,39 @@ function renderAttachments() {
   strip.hidden = attachments.length === 0;
   attachments.forEach((a, i) => {
     const chip = document.createElement('div');
-    chip.className = 'attachment';
+    chip.className = isFileItem(a) ? 'attachment attachment-file' : 'attachment';
     chip.setAttribute('role', 'listitem');
     if (a.name) chip.title = a.name;
-    const img = document.createElement('img');
-    img.src = a.url;
-    img.alt = a.name ? t('composer.attachedNamed', { n: i + 1, name: a.name }) : t('composer.attachedImage', { n: i + 1 });
+    if (isFileItem(a)) { // a file that isn't shown to the AI: its name and size
+      chip.setAttribute('aria-label', t('composer.attachedFile', { n: i + 1, name: a.name, size: fileSize(a.size) }));
+      const ext = (/\.([a-z0-9]{1,5})$/i.exec(a.name || '') || [])[1];
+      chip.append(
+        Object.assign(document.createElement('span'), { className: 'attachment-ext', textContent: (ext || 'file').toUpperCase() }),
+        Object.assign(document.createElement('span'), { className: 'attachment-name', textContent: a.name }),
+        Object.assign(document.createElement('span'), { className: 'attachment-size', textContent: fileSize(a.size) }),
+      );
+    } else {
+      const img = document.createElement('img');
+      img.src = a.url;
+      img.alt = a.name ? t('composer.attachedNamed', { n: i + 1, name: a.name }) : t('composer.attachedImage', { n: i + 1 });
+      chip.append(img);
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'attachment-remove';
     remove.setAttribute('aria-label', t('composer.removeImage', { n: i + 1 }));
     remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
-    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); showAttachNote([]); prompt.focus(); };
-    chip.append(img, remove);
+    remove.onclick = () => { const [gone] = attachments.splice(i, 1); if (gone?.ref) window.assistant.uploads?.discard(gone.ref); renderAttachments(); showAttachNote([]); prompt.focus(); };
+    chip.append(remove);
     strip.append(chip);
   });
   strip.setAttribute('role', 'list');
   strip.setAttribute('aria-label', t('composer.attachments'));
   const attachBtn = $('attach');
   if (attachBtn) {
-    const full = attachments.length >= MAX_IMAGES;
+    const full = attachments.length >= MAX_ATTACH;
     attachBtn.disabled = full;
-    attachBtn.title = full ? t('composer.attach.full', { max: MAX_IMAGES }) : t('composer.attach.title', { max: MAX_IMAGES });
+    attachBtn.title = full ? t('composer.attach.full', { max: MAX_ATTACH }) : t('composer.attach.title', { max: MAX_ATTACH });
   }
   updateSend();
   document.dispatchEvent(new CustomEvent('lumen:attachments', { detail: { count: attachments.length } })); // (the background button can't carry images)
@@ -2458,7 +2498,7 @@ window.chatAttachments = { count: () => attachments.length, note: (lines) => sho
     picker.addEventListener('change', async () => {
       const files = [...picker.files];
       picker.value = ''; // (the same file can be picked again)
-      if (files.length) await addImages(files);
+      if (files.length) await addFiles(files);
       prompt.focus();
     });
     renderAttachments(); // (the tooltip states the limit)
@@ -2467,16 +2507,16 @@ window.chatAttachments = { count: () => attachments.length, note: (lines) => sho
 
 prompt.addEventListener('paste', async (e) => {
   const files = [...(e.clipboardData?.files || [])];
-  if (files.some(isImageFile)) {
-    e.preventDefault(); // text paste stays untouched; only images are intercepted
-    await addImages(files, { announceOthers: false });
+  if (files.length) {
+    e.preventDefault(); // text paste stays untouched; only files (pictures included) are intercepted
+    await addFiles(files);
   }
 });
 const sidebarEl = chatRoot;
-// (Other files dropped here are left to the window, which opens them in a tab; a file with no type may be a photo.)
-const dragHasImages = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file' && (i.type === '' || i.type.startsWith('image/')));
+// Any file dropped on the chat joins the message (it no longer opens in a tab).
+const dragHasFiles = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file');
 sidebarEl.addEventListener('dragover', (e) => {
-  if (dragHasImages(e.dataTransfer)) {
+  if (dragHasFiles(e.dataTransfer)) {
     e.preventDefault();
     sidebarEl.classList.add('dropping');
   }
@@ -2484,9 +2524,9 @@ sidebarEl.addEventListener('dragover', (e) => {
 sidebarEl.addEventListener('dragleave', (e) => { if (!sidebarEl.contains(e.relatedTarget)) sidebarEl.classList.remove('dropping'); });
 sidebarEl.addEventListener('drop', async (e) => {
   sidebarEl.classList.remove('dropping');
-  if (![...e.dataTransfer.files].some(isImageFile)) return;
+  if (!e.dataTransfer.files.length) return;
   e.preventDefault();
-  await addImages(e.dataTransfer.files); // (a file that came with the images and is not one is named in the note)
+  await addFiles(e.dataTransfer.files);
   prompt.focus();
 });
 
@@ -2507,7 +2547,7 @@ function queueControls(entry) {
   };
   const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
   cancel.setAttribute('aria-label', t('chat.queued.cancel'));
-  cancel.onclick = drop;
+  cancel.onclick = () => { for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
   const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
   now.onclick = () => sendNow(entry);
   entry.notice.append(' ', now, edit, cancel);
@@ -2558,7 +2598,7 @@ function askInNewChat(text) {
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
 function ask(text, images = [], tabs = null) {
   if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t('chat.image') }) }));
+    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
     const entry = { text, images, tabs, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
@@ -2584,11 +2624,11 @@ function ask(text, images = [], tabs = null) {
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
-  window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images));
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
-const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 // The thinking block's summary once the answer starts: "Thought for 4s".
 function settleThinking() {
   const box = turn?.thinking?.parentElement;
@@ -2697,13 +2737,21 @@ function askOf(bubble) {
 }
 
 // The user's bubble and the working line for a turn that is now running.
+// The files a message carried, under its pictures: a chip each with the name and size.
+function fileChips(files) {
+  const row = document.createElement('div');
+  row.className = 'msg-files';
+  for (const f of files) row.append(Object.assign(document.createElement('span'), { className: 'msg-file', textContent: `${f.name} · ${fileSize(f.size)}`, title: f.name }));
+  return row;
+}
 function startTurn(text, images, tabs = null) {
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
-  if (images.length) {
+  const pictures = imageItems(images);
+  if (pictures.length) {
     const row = document.createElement('div');
     row.className = 'msg-images';
-    for (const [i, a] of images.entries()) {
+    for (const [i, a] of pictures.entries()) {
       const img = document.createElement('img');
       img.src = a.url;
       img.alt = t('chat.imageN', { n: i + 1 });
@@ -2711,6 +2759,8 @@ function startTurn(text, images, tabs = null) {
     }
     bubble.append(row);
   }
+  const files = images.filter(isFileItem);
+  if (files.length) bubble.append(fileChips(files));
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
@@ -2742,7 +2792,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) turn.working.dataset.status = live.queued.status;
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, upload: a.upload });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -2793,6 +2843,7 @@ const TOOL_LABELS = {
   fill_form: () => t('tool.fill_form'),
   click_at: () => t('tool.click_at'),
   hover: () => t('tool.hover'),
+  upload_file: () => t('tool.upload_file'),
   go_forward: () => t('tool.go_forward'),
   reload: () => t('tool.reload'),
   close_tab: (i) => t('tool.close_tab', { tab: i.tab_id }),
@@ -2889,7 +2940,7 @@ let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arri
 window.assistant.onEvent((event) => {
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
   // clear, or the toolbar's "waiting for approval" badge stayed on.
-  if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
+  if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
@@ -2998,7 +3049,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -3261,7 +3312,8 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload } = {}) {
+  if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
@@ -3410,22 +3462,87 @@ function showSignInApproval(approvalId, host, { noAlways = false } = {}) {
   scrollToBottom();
 }
 
-function resolveApproval(approvalId, ok) {
+// [uploads] upload_file (features/upload-files.js, agent.js uploadFile). Two cards:
+//   'upload'       the AI wants to put files the user attached to this chat into a page: the names and the site, Upload / Don't upload.
+//   'upload-pick'  it needs a file the user has not attached: "Choose file…" opens the OS picker (the user picks; the AI only learns
+//                  the name), Cancel declines. The field's label and accepted types say what is being asked for.
+function showUploadApproval(approvalId, host, { action, upload = {} }) {
+  const picking = action === 'upload-pick';
+  const card = document.createElement('div');
+  card.className = 'approval approval-upload';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  const agentName = assistantIdentity?.name || t('approval.theAi');
+  const names = (upload.files || []).map((f) => f.name).join(', ');
+  const text = picking ? t('approval.upload.pick', { name: agentName, host }) : t('approval.upload.send', { name: agentName, names, host });
+  const shownHeading = text;
+  card.setAttribute('aria-label', shownHeading);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: shownHeading });
+  card.append(title);
+  if (!picking) {
+    const list = document.createElement('ul');
+    list.className = 'approval-files';
+    for (const f of upload.files || []) list.append(Object.assign(document.createElement('li'), { textContent: `${f.name} · ${fileSize(f.size)}` }));
+    card.append(list);
+  } else if (upload.label || upload.acceptText) {
+    const what = [upload.label ? t('approval.upload.for', { label: upload.label }) : '', upload.acceptText ? t('approval.upload.accepts', { types: upload.acceptText }) : '', upload.multiple ? t('approval.upload.several') : ''].filter(Boolean).join(' · ');
+    card.append(Object.assign(document.createElement('p'), { className: 'approval-what', textContent: what }));
+  }
+  card.append(Object.assign(document.createElement('p'), { className: 'approval-detail', textContent: picking ? t('approval.detail.uploadPick') : t('approval.detail.uploadSend') }));
+  const problem = Object.assign(document.createElement('p'), { className: 'approval-problem', hidden: true });
+  problem.setAttribute('role', 'alert');
+  card.append(problem);
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: picking ? t('approval.cancel') : t('approval.upload.deny') });
+  const go = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: picking ? t('approval.upload.choose') : t('approval.upload.allow') });
+  const lock = () => { card.classList.add('answered'); deny.disabled = true; go.disabled = true; };
+  const entry = { card, host, upload: true, picking };
+  deny.onclick = () => { if (card.classList.contains('answered')) return; lock(); window.assistant.approve?.(approvalId, false); };
+  go.onclick = async () => {
+    if (card.classList.contains('answered')) return;
+    if (!picking) { lock(); window.assistant.approve?.(approvalId, true); return; }
+    go.disabled = true; // (while the picker is open)
+    problem.hidden = true;
+    let result;
+    try { result = await window.assistant.uploads?.choose(approvalId); } catch { result = null; }
+    if (result?.ok) { entry.names = result.names || []; lock(); return; } // (main answered the AI's call; approval_done follows)
+    go.disabled = false;
+    if (result?.error) { problem.textContent = result.error; problem.hidden = false; }
+    go.focus();
+  };
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); deny.click(); }
+    else if (e.key === 'Enter' && e.target === card && !picking) { e.preventDefault(); go.click(); }
+  });
+  actions.append(deny, go);
+  card.append(actions);
+  append(card, { force: true }); // waiting for you: always in view
+  approvals.set(approvalId, entry);
+  scrollToBottom();
+}
+
+function resolveApproval(approvalId, ok, names) {
   const entry = approvals.get(approvalId);
   if (!entry) return;
   approvals.delete(approvalId);
+  if (names) entry.names = names; // [uploads] the file the user chose
   const { card, host, tool, signin } = entry;
   card.className = ok ? 'approval resolved' : 'approval resolved denied';
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
-  card.textContent = signin ? t(ok === 'always' ? 'approval.signin.allowedAlways' : ok ? 'approval.signin.allowedOnce' : 'approval.signin.denied', { host }) // [signed-in sites]
+  card.textContent = entry.upload ? (entry.picking ? (ok ? t('approval.upload.chosen', { host, names: (entry.names || []).join(', ') }) : t('approval.upload.notChosen', { host })) : (ok ? t('approval.upload.allowed', { host }) : t('approval.upload.denied', { host })))
+    : signin ? t(ok === 'always' ? 'approval.signin.allowedAlways' : ok ? 'approval.signin.allowedOnce' : 'approval.signin.denied', { host }) // [signed-in sites]
     : tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
   syncWorking();
   if (document.activeElement === document.body) prompt.focus();
 }
 
 // ---------- chat restored from the last session ----------
+
+// The files a saved message carried (main keeps them under their refs): chips, and the refs again if the message is asked again.
+const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) => f && typeof f.ref === 'string' && typeof f.name === 'string').map((f) => ({ file: true, name: f.name, size: Number(f.size) || 0, type: String(f.type || ''), ref: f.ref }));
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
@@ -3441,8 +3558,10 @@ function showHistory(items) {
         images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) })));
         bubble.append(row);
       }
+      const files = restoredFiles(item.files);
+      if (files.length) bubble.append(fileChips(files));
       if (item.text) bubble.append(document.createTextNode(item.text));
-      bubbleAsks.set(bubble, { text: item.text || '', images: images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), tabs: null });
+      bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
       if (!item.text) { // only pictures
         bubble.className = 'msg assistant gen-pics restored';
@@ -3484,17 +3603,17 @@ function showHistory(items) {
   const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
     ? [...messages.querySelectorAll('.msg.assistant.gen-pics.restored')].pop()
     : [...messages.querySelectorAll('.msg.assistant.restored:not(.gen-pics)')].pop();
-  if (lastUser && (lastUser.text || lastUser.images?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
+  if (lastUser && (lastUser.text || lastUser.images?.length || lastUser.files?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
     const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
       const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);
       return { media_type, data, url: src };
     });
-    lastAsk = { text: lastUser.text || '', images: imgs, tabs: null };
+    lastAsk = { text: lastUser.text || '', images: [...imgs, ...restoredFiles(lastUser.files)], tabs: null };
     if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
     markEditable([...messages.querySelectorAll('.msg.user')].pop());
-  } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length)) {
+  } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length || items[lastIndex].files?.length)) {
     // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
     const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
     lastAsk = askOf(lastBubble);
@@ -3511,10 +3630,10 @@ window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 
 // A turn that started in the other view (the sidebar or the chat page) shows here too: the same
 // events follow, tagged with its run id.
-window.assistant.onRunStart?.(({ text, runId: id, images, chatId: chat } = {}) => {
+window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } = {}) => {
   if (running || forOtherChat(chat)) return; // (a turn of a chat this view has moved off is not this chat's running state)
   if (chat && !shownChatId) shownChatId = chat;
-  const shown = (images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` }));
+  const shown = [...(images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` })), ...restoredFiles(files)];
   lastAsk = { text: String(text || ''), images: shown, tabs: null }; // started in the other view: this is the chat's last message now
   startTurn(String(text || ''), shown);
   runId = id;
@@ -7188,18 +7307,20 @@ window.assistant.onMcpEvent?.((event) => {
     case 'approval': {
       // (An outside agent's card is quiet: with the sidebar closed the AI button carries a badge instead, and the card waits for the user.)
       if (document.body.classList.contains('sidebar-hidden') && !event.quiet) showSidebar(true);
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, upload: event.upload });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
       const vars = { client: event.clientName, host: event.host, file: event.host, query: event.query };
-      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
+      const uploading = event.action === 'upload' || event.action === 'upload-pick'; // [uploads]
+      if (title && uploading) title.textContent = t(event.action === 'upload' ? 'mcp.approval.upload' : 'mcp.approval.uploadPick', { ...vars, names: (event.upload?.files || []).map((x) => x.name).join(', ') });
+      else if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }
     case 'approval_done':
-      resolveApproval(event.approvalId, event.ok);
+      resolveApproval(event.approvalId, event.ok, event.names);
       break;
   }
 });

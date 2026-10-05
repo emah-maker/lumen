@@ -2740,18 +2740,20 @@ window.assistant.onMcpEvent?.((event) => {
     case 'approval': {
       // (An outside agent's card is quiet: with the sidebar closed the AI button carries a badge instead, and the card waits for the user.)
       if (document.body.classList.contains('sidebar-hidden') && !event.quiet) showSidebar(true);
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, upload: event.upload });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
       const vars = { client: event.clientName, host: event.host, file: event.host, query: event.query };
-      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
+      const uploading = event.action === 'upload' || event.action === 'upload-pick'; // [uploads]
+      if (title && uploading) title.textContent = t(event.action === 'upload' ? 'mcp.approval.upload' : 'mcp.approval.uploadPick', { ...vars, names: (event.upload?.files || []).map((x) => x.name).join(', ') });
+      else if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }
     case 'approval_done':
-      resolveApproval(event.approvalId, event.ok);
+      resolveApproval(event.approvalId, event.ok, event.names);
       break;
   }
 });

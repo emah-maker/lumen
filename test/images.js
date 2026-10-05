@@ -117,7 +117,7 @@ function clipboardImage(app, size, color) {
   // 6b. The attach button: visible, named, with its limit in the tooltip, keyboard operable.
   const attachBtn = ui.locator('#attach');
   check('attach button is in the composer', (await attachBtn.count()) === 1 && await attachBtn.isVisible(), 'missing');
-  check('attach button has an accessible name and a tooltip stating the limit', (await attachBtn.getAttribute('aria-label')) === 'Attach images' && /up to 5/.test((await attachBtn.getAttribute('title')) || ''), await attachBtn.getAttribute('title'));
+  check('attach button has an accessible name and a tooltip stating the limit', (await attachBtn.getAttribute('aria-label')) === 'Attach files' && /up to 10/.test((await attachBtn.getAttribute('title')) || ''), await attachBtn.getAttribute('title'));
   await attachBtn.focus();
   const chooser = ui.waitForEvent('filechooser', { timeout: 4000 }).catch(() => null);
   await ui.keyboard.press('Enter');
@@ -142,28 +142,27 @@ function clipboardImage(app, size, color) {
   ]);
   await ui.waitForTimeout(800);
   const note = await ui.locator('#attachment-note').innerText().catch(() => '');
-  check('an SVG is added (converted)', (await ui.locator('.attachment').count()) === 2, await ui.locator('.attachment').count());
-  check('a HEIC photo is refused with a clear message', /photo\.heic.*HEIC/.test(note), note);
-  check('a corrupt image is refused with a clear message', /broken\.png.*couldn.t be read/.test(note), note);
-  check('a non-image file is named in the note', /notes\.txt.*isn.t an image/.test(note), note);
-  check('an empty file is refused', /empty\.jpg.*empty/.test(note), note);
+  check('an SVG is added (converted), and the other files become file chips', (await ui.locator('.attachment').count()) === 5 && (await ui.locator('.attachment img').count()) === 2, await ui.locator('.attachment').count());
+  const fileChips = await ui.locator('.attachment-file').allInnerTexts();
+  check('a HEIC photo, a corrupt image and a text file are kept as files (they can be uploaded to a page, the AI is not sent them)', fileChips.length === 3 && /photo\.heic/.test(fileChips[0]) && /broken\.png/.test(fileChips[1]) && /notes\.txt/.test(fileChips[2]), JSON.stringify(fileChips));
+  check('an empty file is refused', /empty\.jpg.*empty/.test(note) && !/photo\.heic|notes\.txt/.test(note), note);
   check('the note is announced (status role)', (await ui.locator('#attachment-note').getAttribute('role')) === 'status', 'no role');
   const svgOut = await ui.evaluate(() => document.querySelectorAll('.attachment img')[1]?.src.slice(0, 22));
   check('the SVG became a PNG', svgOut === 'data:image/png;base64,', svgOut);
 
-  // The limit of 5: the rest are counted in the note and the button waits.
+  // The limit of 10 attachments (5 of them pictures the AI sees): the rest are counted in the note and the button waits.
   const tiny = (n) => ({ name: `p${n}.png`, mimeType: 'image/png', buffer: PIXEL });
-  await ui.setInputFiles('#attach-input', [tiny(1), tiny(2), tiny(3), tiny(4)]);
-  await ui.waitForTimeout(800);
-  check('no more than 5 previews', (await ui.locator('.attachment').count()) === 5, await ui.locator('.attachment').count());
-  check('the overflow is counted in the note', /up to 5 images; 1 not added/.test(await ui.locator('#attachment-note').innerText()), await ui.locator('#attachment-note').innerText());
-  check('the attach button waits at the limit and says why', await ui.isDisabled('#attach') && /up to 5 images/.test((await attachBtn.getAttribute('title')) || ''), await attachBtn.getAttribute('title'));
+  await ui.setInputFiles('#attach-input', [tiny(1), tiny(2), tiny(3), tiny(4), tiny(5), tiny(6)]);
+  await ui.waitForTimeout(1200);
+  check('no more than 10 attachments, and no more than 5 of them pictures', (await ui.locator('.attachment').count()) === 10 && (await ui.locator('.attachment img').count()) === 5, `${await ui.locator('.attachment').count()} / ${await ui.locator('.attachment img').count()}`);
+  check('the overflow is counted in the note', /up to 10 files; 1 not added/.test(await ui.locator('#attachment-note').innerText()), await ui.locator('#attachment-note').innerText());
+  check('the attach button waits at the limit and says why', await ui.isDisabled('#attach') && /up to 10 files/.test((await attachBtn.getAttribute('title')) || ''), await attachBtn.getAttribute('title'));
 
   // A background task is saved as words only: with images the button waits and says so (instead of dropping them).
   await ui.fill('#prompt', 'check this later');
   await ui.waitForTimeout(150);
   const bgTitle = (await ui.locator('#send-bg').getAttribute('title')) || '';
-  check('Run in the background is disabled while images are attached, with a reason', await ui.isDisabled('#send-bg') && /can.t include images/.test(bgTitle), bgTitle);
+  check('Run in the background is disabled while images or files are attached, with a reason', await ui.isDisabled('#send-bg') && /can.t include images/.test(bgTitle), bgTitle);
   await ui.fill('#prompt', '/background look at this');
   await ui.press('#prompt', 'Enter');
   await ui.waitForTimeout(300);
