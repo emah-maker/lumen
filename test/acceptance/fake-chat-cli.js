@@ -50,7 +50,21 @@ async function answer(prompt) {
   // partial reply carried over, and their directives must not apply again.
   const all = [...prompt.matchAll(/RUN-[A-Za-z0-9]+/g)];
   const marker = all.length ? all[all.length - 1][0] : 'RUN-NONE';
-  log({ ev: 'msg', marker, prompt, model: current });
+  // What this session remembers, like a real CLI's session on disk: every RUN-<id> it was ever sent (kept per session id under the log
+  // dir, so a --resume in another process finds it), plus the ones handed over in the prompt's <earlier_conversation>. 'known' is what it
+  // knew BEFORE this message: the acceptance suites check that a chat's earlier messages are always among them.
+  const memory = path.join(DIR, `session-${session}.txt`);
+  if (role === 'claude' && resume && !fs.existsSync(memory)) { // (a session this machine never had, or lost: the real CLI says so and ends)
+    log({ ev: 'expired', session });
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `No conversation found with session ID: ${session}`, errors: [`No conversation found with session ID: ${session}`], session_id: session, total_cost_usd: 0, usage: {} });
+    process.exit(1);
+  }
+  const sessionKnown = role === 'claude' && session && fs.existsSync(memory) ? fs.readFileSync(memory, 'utf8').split('\n').filter(Boolean) : [];
+  const handed = [...(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/.exec(prompt)?.[0].matchAll(/RUN-[A-Za-z0-9]+/g) || [])].map((m) => m[0]);
+  // NOREC (after the marker): the CLI fails before it records the message, so its session never holds it.
+  const recorded = !/NOREC/.test(all.length ? prompt.slice(all[all.length - 1].index) : prompt);
+  if (role === 'claude' && session && recorded) fs.appendFileSync(memory, `${[...new Set([...handed, marker])].join('\n')}\n`);
+  log({ ev: 'msg', marker, prompt, model: current, known: [...new Set([...sessionKnown, ...handed])], resumedMissing: Boolean(resume && !sessionKnown.length) });
   prompt = all.length ? prompt.slice(all[all.length - 1].index) : prompt;
   out({ type: 'system', subtype: 'init', session_id: session, model: 'fake-model', mcp_servers: [{ name: 'lumen', status: 'connected' }] });
   const hold = /HOLD-([A-Za-z0-9]+)/.exec(prompt)?.[1];
