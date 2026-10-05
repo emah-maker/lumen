@@ -203,6 +203,26 @@ const survivesEditExit = (e) => Boolean(e) && (e.kind === 'config' || e.kind ===
 // A config or removal the browser has let go of (ttl ms after it happened) can no longer be undone.
 const timedOut = (e, now, ttl) => Boolean(e) && (e.kind === 'config' || e.kind === 'remove') && now - e.at > ttl;
 const rectKey = (it) => `${it.x},${it.y},${it.w},${it.h},${it.snap || ''}`;
+// Edit layout frees the page's sections into cards, which shrinks the centre column's obstacle, so a card the column
+// was pushing down would jump up. holdBase(view, items, isSystem) notes, for each real card (not snapped), where it is
+// drawn now (`to`) and the saved rect that put it there (`from`); holdItems(items, base) then keeps drawing it there
+// for as long as its saved rect is unchanged (a change sends every card, and the saved rects take over).
+function holdBase(view, items, isSystem) {
+  const saved = new Map(items.map((i) => [i.id, i]));
+  const base = new Map();
+  for (const v of view) {
+    const s = saved.get(v.id);
+    if (s && !v.snap && !s.snap && !isSystem(v.id)) base.set(v.id, { from: rectKey(s), to: { x: v.x, y: v.y, w: v.w, h: v.h } });
+  }
+  return base;
+}
+function holdItems(items, base) {
+  if (!base) return items;
+  return items.map((it) => {
+    const b = base.get(it.id);
+    return b && !it.snap && rectKey(it) === b.from ? { ...it, ...b.to } : it;
+  });
+}
 // To go from the layout `cur` back to `prev` (both: [{ id, x, y, w, h, snap? }], system cards that are
 // free included): `items` are the cards to send (only those that differ, and only ones that still
 // exist), `dock` the system cards that were untouched then and have been changed since (their stored
@@ -352,7 +372,7 @@ function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, placePanel, placeToast, overlapArea };
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();
