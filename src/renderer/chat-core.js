@@ -528,6 +528,16 @@ const readAsDataUrl = (file) => new Promise((resolve, reject) => {
 // A reason an image could not be added (attachProblem says it in words).
 const imageError = (code) => Object.assign(new Error(code), { code });
 
+const PNG_PASS_BYTES = 1_000_000; // a PNG over this goes through the canvas (and becomes a JPEG when it has no transparency)
+// Any pixel that is not fully opaque? (Read in rows, stopping at the first one.)
+function hasAlpha(ctx, canvas) {
+  try {
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) return true;
+    return false;
+  } catch { return true; } // unreadable: keep it as PNG
+}
+
 // Canvas -> { media_type, data, url } within the size main accepts, or null. Pictures with transparency keep it
 // as PNG; photos (and anything too big as PNG) become JPEG on white.
 function encodeCanvas(canvas, wantPng) {
@@ -564,16 +574,20 @@ async function toAttachment(file) {
   const h = img.naturalHeight || Math.round(w * 0.75);
   const edge = Math.max(w, h);
   const name = file.name || '';
-  if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES) {
+  // A big opaque PNG (a screenshot: several MB) is re-encoded as a JPEG below: the model reads it as well and it uploads in a fraction of the time.
+  const heavyPng = file.type === 'image/png' && file.size > PNG_PASS_BYTES;
+  if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES && !heavyPng) {
     return { media_type: file.type, data: url.split(',')[1], url, name };
   }
   let scale = Math.min(1, MAX_EDGE / edge);
-  const wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
+  let wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
   for (let tries = 0; tries < 3; tries++, scale *= 0.7) {
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(w * scale));
     canvas.height = Math.max(1, Math.round(h * scale));
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: heavyPng });
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (heavyPng && wantPng && !hasAlpha(ctx, canvas)) wantPng = false;
     const encoded = encodeCanvas(canvas, wantPng);
     if (encoded) return { ...encoded, name };
   }
