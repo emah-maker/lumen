@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.12 (2026-10-04)
+
 - **Math in replies lines up and renders more often.** A long formula in a sentence ("Revolutions: N = 90 rev/min × 1 min = 90 rev.") sat raised above the words around it; it now sits on the line. A formula that starts with a relation ("Work $= 2\pi N\tau \approx 15{,}834$ ft·lbf") used to show its raw LaTeX; it is typeset now.
 
 ## 0.5.11 (2026-10-04)
