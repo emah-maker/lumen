@@ -1,6 +1,6 @@
-// "Keep the AI off this tab" in the real app (features/ai-manners.js keepOff, main.js "[ai off-tab]", the address bar's button and the
+// "Keep the AI from acting on this tab" in the real app (features/ai-manners.js keepOff, main.js "[ai off-tab]", the address bar's button and the
 // tab strip), with a temp profile and no network: the shield button shows on a page and toggles per tab; the tab carries a mark in the
-// strip; every tool is refused on it, reading included, in the tool layer; it stays through navigation and a restart.
+// strip; reading it still works, every tool that acts is refused on it, in the tool layer; it stays through navigation and a restart.
 // Run with LUMEN_TEST_BACKGROUND=1 so the windows stay invisible and never take focus. SHOTS=<dir> saves screenshots of the button.
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
@@ -49,29 +49,35 @@ const launch = (profile) => electron.launch({
   await goto(`${base}/one`);
   await waitFor(async () => (await btn()).hidden === false);
   const off = await btn();
-  check('on a web page it shows, off: pressed false, the tooltip offers it', off.hidden === false && off.pressed === 'false' && off.title === 'Keep the AI off this tab' && off.label === off.title, JSON.stringify(off));
+  check('on a web page it shows, off: pressed false, the tooltip offers it', off.hidden === false && off.pressed === 'false' && off.title === 'Keep the AI from acting on this tab' && off.label === off.title, JSON.stringify(off));
   check('the page works for the AI at first', (await run(first, 'read_page')).ok === true);
   await shot('ai-off-tab-off.png');
 
   await press();
   const on = await waitFor(async () => { const b = await btn(); return b.pressed === 'true' && b; });
-  check('clicking it turns it on: pressed, and the tooltip says the AI can\'t use the tab', on && /can't use this tab/.test(on.title), JSON.stringify(on));
+  check('clicking it turns it on: pressed, and the tooltip says the AI can read but not act', on && /can read this tab but not act on it/.test(on.title), JSON.stringify(on));
   const m = await waitFor(async () => (await mark(first))?.kept && (await mark(first)));
-  check('the tab strip marks the tab (a shield after the title, and a spoken note)', m?.kept && m.shown && /AI kept off/.test(m.label || ''), JSON.stringify(m));
+  check('the tab strip marks the tab (a shield after the title, and a spoken note)', m?.kept && m.shown && /AI read-only/.test(m.label || ''), JSON.stringify(m));
   await shot('ai-off-tab-on.png');
 
-  for (const [name, input] of [['read_page', {}], ['find', { text: 'Go' }], ['screenshot', {}], ['click', { text: 'Go' }], ['run_script', { code: '1' }], ['navigate', { url: `${base}/two` }]]) {
+  for (const [name, input] of [['read_page', {}], ['find', { query: 'Go' }], ['screenshot', {}]]) {
     const r = await run(first, name, input);
-    check(`${name} is refused on the tab, with the clear text`, !r.ok && /kept the AI off this tab/.test(r.error), JSON.stringify(r));
+    check(`${name} still works on the tab (read-only)`, r.ok === true, JSON.stringify(r).slice(0, 300));
+  }
+  for (const [name, input] of [['click', { text: 'Go' }], ['type_text', { text: 'x' }], ['press_key', { key: 'Enter' }], ['scroll', { direction: 'down' }], ['run_script', { code: '1' }], ['navigate', { url: `${base}/two` }], ['reload', {}]]) {
+    const r = await run(first, name, input);
+    check(`${name} is refused on the tab, with the clear text`, !r.ok && /keeps the AI from acting on this tab/.test(r.error) && /You can read it/.test(r.error), JSON.stringify(r));
   }
   const second = await app.evaluate((_e, u) => global.__agent.browser.openTab(u, { ai: true }).id, `${base}/ai`);
   check('another tab works as usual', (await run(second, 'read_page')).ok === true);
   const listed = JSON.parse((await run(second, 'list_tabs')).out);
-  check('list_tabs lists the tab marked off limits', /off limits/.test(listed.find((t) => t.id === first)?.off_limits || ''), JSON.stringify(listed));
-  check('switch_tab and close_tab on it are refused', /kept the AI off/.test((await run(second, 'switch_tab', { tab_id: first })).error || '') && /kept the AI off/.test((await run(second, 'close_tab', { tab_id: first })).error || ''));
+  check('list_tabs lists the tab marked read-only', /read-only/.test(listed.find((t) => t.id === first)?.off_limits || ''), JSON.stringify(listed));
+  check('close_tab on it is refused, and read_tabs reads it', /keeps the AI from acting/.test((await run(second, 'close_tab', { tab_id: first })).error || '') && (await run(second, 'read_tabs', { ids: [first] })).ok === true);
+  const rt = String((await run(second, 'read_tabs', { ids: [first] })).out || '');
+  check('read_tabs returns its text', /PAGE \//.test(rt) && !/keeps the AI|skipped/.test(rt), rt.slice(0, 300));
 
   await goto(`${base}/three`);
-  check('it stays on while the tab navigates (per tab, not per site)', (await btn()).pressed === 'true' && (await run(first, 'read_page')).error?.includes('kept the AI off'));
+  check('it stays on while the tab navigates (per tab, not per site)', (await btn()).pressed === 'true' && (await run(first, 'click', { text: 'Go' })).error?.includes('keeps the AI from acting'));
 
   // the other tab's own button state, and the user's right to turn it off again
   await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), second);
@@ -87,12 +93,12 @@ const launch = (profile) => electron.launch({
   await ui.waitForSelector('.tab');
   const restored = await waitFor(() => app.evaluate(() => global.__windows.list()[0].tabs.length >= 1 && global.__windows.list()[0].activeId));
   const back = await waitFor(async () => { const b = await btn(); return b.pressed === 'true' && b; });
-  check('after a restart the tab comes back with the AI still kept off', Boolean(back) && (await run(restored, 'read_page')).error?.includes('kept the AI off'), JSON.stringify({ back, restored }));
+  check('after a restart the tab comes back with the AI still kept off', Boolean(back) && (await run(restored, 'click', { text: 'Go' })).error?.includes('keeps the AI from acting'), JSON.stringify({ back, restored }));
 
   // turning it off again (the user's click) lets the AI back in
   await press();
   await waitFor(async () => (await btn()).pressed === 'false');
-  check('clicking again lets the AI use the tab', (await run(restored, 'read_page')).ok === true);
+  check('clicking again lets the AI act on the tab', !/keeps the AI from acting/.test((await run(restored, 'click', { text: 'Go' })).error || ''));
 
   check('no page errors', errors.length === 0, errors.join('; '));
   await app.close();

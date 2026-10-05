@@ -399,7 +399,7 @@ function start({ port, pipeFd, file, inproc, token, hooks, chromium: injected })
         const tabId = (await userTargets()).get(m[2]);
         if (!tabId) return send(404, { error: 'No such tab' });
         const refused = hooks.handsOffVerdict?.(m[1] === 'close' ? 'Target.closeTarget' : 'Target.activateTarget', tabId)?.error;
-        if (refused) return send(403, { error: /kept the AI off/.test(refused) ? refused : 'Hands-off mode is on: the AI may not close or front a tab it did not open.' }); // [ai off-tab]
+        if (refused) return send(403, { error: /keeps the AI from acting/.test(refused) ? refused : 'Hands-off mode is on: the AI may not close or front a tab it did not open.' }); // [ai off-tab]
         if (m[1] === 'close') hooks.closeTab(tabId);
         else hooks.switchTab?.(tabId);
         return send(200, m[1] === 'close' ? 'Target is closing' : 'Target activated');

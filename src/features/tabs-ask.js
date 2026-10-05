@@ -23,7 +23,7 @@ const hostOf = (url) => {
 
 const clean = (s, max) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
-// Why a tab can't be read, or null when it can. `tab`: { id, url, offLimits?, aiOff?, keptOff?, windowId?,
+// Why a tab can't be read, or null when it can. `tab`: { id, url, offLimits?, aiOff?, windowId?,
 // isPrivate?, closing? }; `ctx`: { windowId, isPrivate } of the window asking.
 function ineligible(tab, ctx = {}) {
   if (!tab) return 'no such tab';
@@ -33,7 +33,6 @@ function ineligible(tab, ctx = {}) {
   if (tab.offLimits) return 'off limits'; // settings, Bookmarks, Downloads, the chat page
   if (!isReadableUrl(tab.url)) return 'not a web page';
   if (tab.aiOff) return 'AI is off on this site';
-  if (tab.keptOff) return 'the user keeps the AI off this tab'; // [ai off-tab]
   return null;
 }
 
