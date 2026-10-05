@@ -907,6 +907,8 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .gen-img-status { min-height: 0; font-size: 12px; color: var(--muted); }
 .gen-img-status:empty { display: none; }
 .gen-img-credit { font-size: 12px; color: var(--muted); }
+.gen-img-caption { overflow-wrap: anywhere; }
+.md-img-local { font-style: italic; color: var(--muted); }
 .gen-img-remote { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .gen-img-remote-alt { color: var(--muted); font-size: 12px; }
 .md-img { display: block; max-width: 100%; max-height: min(420px, 60vh); border-radius: 10px; cursor: zoom-in; }

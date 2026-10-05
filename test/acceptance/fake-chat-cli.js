@@ -74,7 +74,18 @@ async function answer(prompt) {
     if (role === 'grok') process.exit(1);
     process.exit(1); // a Claude CLI that errors out ends its process too
   }
-  const text = `reply from ${marker}`;
+  // PICTOOL (Grok, full access): its own image_gen tool saves a picture in the session folder under GROK_HOME and answers with the path;
+  // the reply names it only as "images/1.jpg", as the real one does.
+  let text = `reply from ${marker}`;
+  if (role === 'grok' && /\bPICTOOL\b/.test(prompt)) {
+    const dir = path.join(process.env.GROK_HOME || DIR, 'sessions', 'fake-cwd', session || 'session', 'images');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, '1.jpg');
+    fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]), Buffer.from('JFIF'), Buffer.alloc(40)]));
+    out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'tool_use', id: 'call-pic', name: 'image_gen', input: { prompt: 'a cat' } }] } });
+    out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-pic', content: JSON.stringify({ type: 'ImageGen', path: file, filename: '1.jpg', session_folder: 'images' }), is_error: false }] } });
+    text = 'images/1.jpg';
+  }
   say(text);
   out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } } });
   // Claude Code: the model call ends its turn here, and `result` follows a moment later (the real one takes 0.8-1.1 s): Lumen shows the reply as

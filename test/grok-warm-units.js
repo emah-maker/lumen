@@ -56,6 +56,7 @@ function fakeGrok() {
         out({ type: 'system', subtype: 'init', session_id: session, model: 'grok-4.7' });
         out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } });
         out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'cold reply' } } });
+        script.headless?.(out, session); // a test's own extra events (a tool call, say)
         out({ type: 'result', subtype: 'success', is_error: false, result: 'cold reply', session_id: session, usage: { input_tokens: 10, output_tokens: 2 } });
         setTimeout(() => rec.exit(0), EXIT_MS);
       }, STARTUP_MS);
@@ -155,6 +156,33 @@ const fakeGate = {
   };
 
   try {
+    // ---- Grok's own picture tools (full access): the file path its image_gen result names reaches the caller (agent.js enginePictures)
+    {
+      const shot = 'C:\\Users\\me\\.grok\\sessions\\C%3A%5Cw\\01a1\\images\\1.jpg';
+      const result = JSON.stringify({ type: 'ImageGen', path: shot, filename: '1.jpg', session_folder: 'images' });
+      // headless: the tool_use is announced in an assistant message, its tool_result comes back in a user message
+      const cold = setup({ on: false });
+      cold.fake.script.headless = (out) => {
+        out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'image_gen', input: { prompt: 'a cat' } }, { type: 'tool_use', id: 'call-2', name: 'read_file', input: {} }] } });
+        out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: result }, { type: 'tool_result', tool_use_id: 'call-2', content: 'see C:\\Users\\me\\other.png' }] } });
+      };
+      const viaCold = await send(cold.engine, { fullAccess: true });
+      check('picture tool, headless: the image_gen result path is returned; another tool\'s output is not', JSON.stringify(viaCold.out.imagePaths) === JSON.stringify([shot]), JSON.stringify(viaCold.out.imagePaths));
+      // agent mode: tool_call_update carries rawOutput (and the same JSON as content text)
+      const warm = setup();
+      warm.fake.script.prompt = (rec, p, end, update) => {
+        update({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'image_gen', rawInput: { prompt: 'a cat' }, _meta: { 'x.ai/tool': { name: 'image_gen' } } });
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: result } }], rawOutput: { type: 'ImageGen', path: shot, filename: '1.jpg' } });
+        update({ sessionUpdate: 'tool_call', toolCallId: 't2', title: 'read_file', _meta: { 'x.ai/tool': { name: 'read_file' } } });
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 't2', status: 'completed', rawOutput: { text: 'C:\\Users\\me\\other.png' } });
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'images/1.jpg' } });
+        end({ stopReason: 'end_turn', _meta: { modelId: 'grok-4.7', usage: { inputTokens: 10, outputTokens: 1, modelCalls: 1 } } });
+      };
+      const viaWarm = await send(warm.engine, { fullAccess: true });
+      check('picture tool, kept process: the same path is returned once, and a relative "images/1.jpg" reply adds nothing', viaWarm.out.text === 'images/1.jpg' && JSON.stringify(viaWarm.out.imagePaths) === JSON.stringify([shot]), JSON.stringify(viaWarm.out));
+      check('picture folders: Grok\'s freshRoots are the home, Lumen\'s grok home and ~/.grok', cold.engine.freshRoots().includes(os.homedir()) && cold.engine.freshRoots().includes(cold.engine.home) && cold.engine.freshRoots().includes(userHome), JSON.stringify(cold.engine.freshRoots()));
+    }
+
     // ---- off by default: exactly today's behaviour
     {
       const settings = require('../src/settings/settings-backend');

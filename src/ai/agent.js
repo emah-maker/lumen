@@ -1080,7 +1080,7 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
       const final = !blocks.some((b) => b.type === 'tool_use');
-      const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '', ...(b.credit ? { credit: b.credit } : {}) }));
+      const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '', ...(b.credit ? { credit: b.credit } : {}), ...(b.caption ? { caption: b.caption } : {}) }));
       const pictures = generated.length ? { generated } : {};
       const name = authorName(producedBy.get(m));
       if (name) pictures.by = name;
@@ -2098,8 +2098,9 @@ class Agent {
     else if (!out.failed && (!out.stopped || out.text)) { settings.ccSession = out.sessionId; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
-    if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit, spawn.fullAccess ? { since: startedAt } : {}))] };
+    const pics = await this.enginePictures(out.text || '', engine, emit, { ...(spawn.fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
+    if (out.text || pics.length) {
+      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2162,6 +2163,7 @@ class Agent {
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
     emit({ type: 'turn_start' });
     const engine = this.engineFor('grokbuild');
+    const startedAt = Date.now() - 2000; // (pictures written from here on are this run's: enginePictures)
     const runGrok = (input, sessionId, again) => engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: input.text,
@@ -2198,8 +2200,9 @@ class Agent {
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
-    if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit))] };
+    const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
+    if (out.text || pics.length) {
+      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2234,6 +2237,7 @@ class Agent {
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
     const engine = this.engineFor('antigravity');
+    const startedAt = Date.now() - 2000; // (see enginePictures)
     const out = await engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: text,
@@ -2260,8 +2264,9 @@ class Agent {
     if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
-    if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }, ...(await this.enginePictures(out.text, engine, emit))] };
+    const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
+    if (out.text || pics.length) {
+      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2305,6 +2310,7 @@ ${prompt}` : prompt), historyImages: [] };
     const first = resume ? catchUp() : handoff();
     emit({ type: 'turn_start' });
     const engine = this.engineFor('codex');
+    const startedAt = Date.now() - 2000; // (see enginePictures)
     const runCodex = (input, sessionId, again) => engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: input.text,
@@ -2332,8 +2338,9 @@ ${prompt}` : prompt), historyImages: [] };
     if (out.sessionId === null) { delete settings.cxSession; delete settings.cxModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.cxSession = out.sessionId; settings.cxModel = settings.model; caughtUp = true; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
-    if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: cliReplyText(out) }] };
+    const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
+    if (out.text || pics.length) {
+      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -2357,8 +2364,9 @@ ${prompt}` : prompt), historyImages: [] };
       const ref = got && store.save(chatId, got.buffer, { alt: entry.alt || alt });
       if (!ref) continue;
       const credit = entry.credit ? String(entry.credit).slice(0, 80) : '';
-      blocks.push({ type: 'generated_image', id: ref.id, mime: ref.mime, alt: ref.alt, bytes: ref.bytes, ...(credit ? { credit } : {}) });
-      emit({ type: 'image', id: ref.id, mime: ref.mime, alt: ref.alt, ...(credit ? { credit } : {}) });
+      const caption = entry.caption ? String(entry.caption).slice(0, 120) : ''; // the file's name, when the picture came from a file the engine made
+      blocks.push({ type: 'generated_image', id: ref.id, mime: ref.mime, alt: ref.alt, bytes: ref.bytes, ...(credit ? { credit } : {}), ...(caption ? { caption } : {}) });
+      emit({ type: 'image', id: ref.id, mime: ref.mime, alt: ref.alt, ...(credit ? { credit } : {}), ...(caption ? { caption } : {}) });
     }
     if (!blocks.length) emit({ type: 'notice', text: 'The AI sent a picture Lumen could not show (a type it does not display, damaged, or too large).' });
     return blocks;
@@ -2378,13 +2386,16 @@ ${prompt}` : prompt), historyImages: [] };
   // since: [full access] the CLI ran with its own tools (Bash, file writes) from the user's home folder, so a picture it
   // made may lie anywhere there (or in a folder its shell command was pointed at, engine.freshRoots()): shown only when the
   // file was written after `since` (the start of this message's run). Older files, and files elsewhere, are never shown.
-  async enginePictures(text, engine, emit, { since = null } = {}) {
+  // paths: files the engine's own picture tools reported (Grok's image_gen result, a tool result naming a file): taken under the same rules.
+  async enginePictures(text, engine, emit, { since = null, paths = [] } = {}) {
     const viaTool = await this.scopeImages(emit); // [image routing] pictures the CLI's generate_image calls made during this message
-    if (!this.imageStore || typeof engine?.imageRoots !== 'function') return viaTool;
+    if (!this.imageStore) return viaTool;
     let found = [];
-    const fresh = since !== null && typeof engine.freshRoots === 'function' ? { roots: engine.freshRoots(), since, until: Date.now(), home: require('os').homedir() } : null;
-    try { found = genImages.findLocalImages(text, engine.imageRoots(), { fresh }); } catch { return viaTool; }
-    return [...viaTool, ...(await this.keepImages(found.map((f) => ({ data: f.buffer.toString('base64'), alt: require('path').basename(f.file) })), emit))];
+    const home = require('os').homedir();
+    const fresh = since !== null ? { roots: typeof engine?.freshRoots === 'function' ? engine.freshRoots() : [home], since, until: Date.now(), home } : null;
+    try { found = genImages.findLocalImages(text, typeof engine?.imageRoots === 'function' ? engine.imageRoots() : [], { fresh, paths }); } catch { return viaTool; }
+    const base = require('path').basename;
+    return [...viaTool, ...(await this.keepImages(found.map((f) => ({ data: f.buffer.toString('base64'), alt: base(f.file), caption: base(f.file) })), emit))];
   }
 
   // ---- [image routing] (ai/image-router.js) Any engine can ask for a picture: the generate_image tool, or a message like "draw a cat".
@@ -2518,6 +2529,9 @@ ${prompt}` : prompt), historyImages: [] };
     if (picked.startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) return false;
     // [image routing] A connected provider that makes pictures takes it (the chat's own first), whatever model the chat is on.
     if (this.imageSetting() !== 'off' && await this.routedImageTurn(messages, ask, picked, signal, emit)) return true;
+    // [full access] Grok Build with its own tools on has image_gen / image_edit: it makes the picture itself, and what it saves is
+    // shown in the reply (enginePictures), so there is nothing to say it can't.
+    if (picked.startsWith('grokbuild:') && this.browser.grokBuildFullAccess?.() === true) return false;
     if (viaEngine || !providers.canGenerateImages(provider, model)) {
       const text = picked.startsWith('claudecode:') ? this.claudeCodeNoImageNotice() : `${viaEngine ? label : (provider === 'openrouter' ? model : label)} can't make pictures here. Pick GPT, Grok or Gemini (with your own API key) in the model menu to generate images; this one can describe or write about the picture instead.`;
       if (ask.explicit) {

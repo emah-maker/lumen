@@ -190,6 +190,15 @@ const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected } = re
 const { turnLimitHit } = require('./loop-guard');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { isLimitText, limitOf } = require('../features/grok-limit');
+const { toolImagePaths } = require('../features/gen-images');
+
+// [full access] Grok's own picture tools (image_gen, image_edit) save a file in the session folder and answer with its path
+// (`{"type":"ImageGen","path":"C:\\...\\images\\1.jpg",...}`), and the model's reply often names it only as "images/1.jpg".
+// imageToolPaths(name, result) -> the absolute image paths a result names, for agent.js enginePictures (which checks each one).
+const IMAGE_TOOL = /^image_(?:gen|edit)$/;
+function imageToolPaths(name, result) {
+  return IMAGE_TOOL.test(String(name || '')) ? toolImagePaths(result, { home: os.homedir() }) : [];
+}
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'
@@ -970,6 +979,8 @@ class GrokBuildEngine {
     let newSession = sessionId;
     let initModel = null;
     let replyModel = null; // the assistant message's own model field
+    const toolNames = new Map(); // tool_use id -> name, to tell which tool_result is a picture tool's
+    const imagePaths = []; // files Grok's picture tools reported (imageToolPaths)
     let lastCall = null; // usage of the last model call this turn (the assistant message's)
     let stderr = '';
     let buffer = '';
@@ -1023,7 +1034,12 @@ class GrokBuildEngine {
         // Held like the rest on a chat's first message only (later ones aren't held): a stopped try's thinking must not reach the sidebar (test/units.js).
         else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') show({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
+      } else if (msg.type === 'user') {
+        for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
+          if (b?.type === 'tool_result') for (const p of imageToolPaths(toolNames.get(b.tool_use_id), b.content)) if (imagePaths.length < 20 && !imagePaths.includes(p)) imagePaths.push(p);
+        }
       } else if (msg.type === 'assistant') {
+        for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) if (b?.type === 'tool_use' && b.id) toolNames.set(b.id, b.name);
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
         if (msg.message?.usage) lastCall = msg.message.usage;
@@ -1101,7 +1117,7 @@ class GrokBuildEngine {
       return { text: '', sessionId: null, failed: true };
     }
     const served = servedModel({ init: initModel, assistant: replyModel, result });
-    if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true, model: served };
+    if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true, model: served, imagePaths };
     if (early) return { retry: true };
     if (held) for (const event of held) emit(event); // ended (a failure, say) before Lumen's tools came up
     if (stalled) {
@@ -1126,10 +1142,12 @@ class GrokBuildEngine {
       // planLimit: the plan's usage limit was hit, with the reset time when the message names one.
       return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage, planLimit: limitOf(failText), model: served };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage, model: served };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage, model: served, imagePaths };
   }
 }
 
 GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
+// [full access] Grok saves a picture its image tools make in its own session folder (<GROK_HOME>/sessions/...): Lumen's grok-home, or the user's ~/.grok. (agent.js enginePictures also requires it to be written during the run.)
+GrokBuildEngine.prototype.freshRoots = function freshRoots() { return [os.homedir(), this.home, userGrokHome()].filter(Boolean); };
 
-module.exports = { notPrefixed, PRE_TOOL_MATCHER, grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { imageToolPaths, notPrefixed, PRE_TOOL_MATCHER, grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };

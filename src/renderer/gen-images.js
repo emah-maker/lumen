@@ -137,7 +137,9 @@
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
       // [image routing] which provider made it (the user's own keys or plan, so it is always said)
-      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []));
+      // a picture taken from a file the AI made: its file name
+      const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []), ...caption);
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();

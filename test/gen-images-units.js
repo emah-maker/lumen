@@ -250,10 +250,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     events.length = 0;
     const off = await inChat(() => agent.imageTurn(chat('claudecode:default'), 'draw a cat', new AbortController().signal, emit));
     check('full access off: the notice still shows, and says how to turn on drawing', off === false && /Settings > AI/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
-    const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => true }, () => null, () => ({}), () => null);
+    const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => false }, () => null, () => ({}), () => null);
     events.length = 0;
     await grokFull.inTask(null, new AbortController().signal, () => grokFull.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
     check('Grok Build keeps its own behaviour (the notice), whatever Claude Code\'s setting', /Grok Build can't make pictures/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
+    const grokOwn = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', grokBuildFullAccess: () => true }, () => null, () => ({}), () => null);
+    events.length = 0;
+    const grokOwnTurn = await grokOwn.inTask(null, new AbortController().signal, () => grokOwn.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
+    check('Grok Build with full access: no "can not make pictures" notice (its image_gen makes it, and the reply shows it)', grokOwnTurn === false && !events.some((e) => e.type === 'notice'), J(events));
 
     delete agent.browser.imageGen;
     // pictures: written during the run under the home folder / a folder the run was pointed at -> shown; the rest -> not

@@ -309,11 +309,24 @@
   // picture markdown ever puts in an <img>); an https address becomes a placeholder the chat shows a "Show picture" button for
   // (renderer/gen-images.js: web pictures load only when asked); anything else is not a picture here. { length, html(alt) } | null.
   const DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const LOCAL_START = /^(?:&lt;)?(?:file:\/\/|[A-Za-z]:[\\/]|\/|~[\\/])/;
+  const LOCAL_IMAGE = /^(?:&lt;[^\n]+\.(?:png|jpe?g|gif|webp)&gt;|[^\n<>]+\.(?:png|jpe?g|gif|webp))$/i;
   function imageAt(s, start) {
     if (s.startsWith('data:image/', start)) {
       const end = s.indexOf(')', start);
       const raw = end > start ? s.slice(start, end) : '';
       return raw.length <= 11000000 && DATA_IMAGE.test(raw) ? { length: raw.length, html: (alt) => `<img class="md-img" src="${raw}" alt="${alt}">` } : null;
+    }
+    // A picture on this computer (C:\...\cat.png, /home/me/cat.png, file:///...): never loaded here. When the AI made it, main shows
+    // it under the reply (features/gen-images.js findLocalImages); the markdown itself reads as its alt text, not as raw syntax.
+    if (LOCAL_START.test(s.slice(start, start + 12))) {
+      const end = s.indexOf(')', start);
+      const raw = end > start ? s.slice(start, end) : '';
+      if (raw.length <= 1000 && !raw.includes('\n') && LOCAL_IMAGE.test(raw)) {
+        const name = raw.replace(/^&lt;|&gt;$/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+        return { length: raw.length, html: (alt) => `<span class="md-img-local">${alt || name}</span>` };
+      }
+      return null;
     }
     if (!s.startsWith('https://', start)) return null;
     const url = scanUrl(s, start, true);
