@@ -179,6 +179,99 @@ function agoText(ms) {
 }
 
 // ---- the renderers, one per connector type ----
+// A now-playing card (Spotify's Now playing mode, Apple Music's Status mode): artwork, title, artist, album, the buttons and the progress
+// bar. Everything is a checked string or number set with textContent; the picture is a data: URL that main made from bytes it
+// sniffed itself; the buttons ask main to press them. o: { name, openUrl(d) (a checked address or null), idleHint(d), playLabel }.
+function nowPlayingCard(w, card, o) {
+  const d = w.data;
+    card.head.append(refreshButton(w));
+    const open = o.openUrl(d);
+    if (open) card.head.append(openLink(open, `Open in ${o.name}`));
+    const state = d.state === 'playing' || d.state === 'paused' ? d.state : 'idle';
+    card.el.classList.toggle('sp-card-idle', state === 'idle');
+    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
+    const title = text(d.title, 200);
+    const wrap = el('div', 'sp-wrap');
+    const art = typeof d.art === 'string' && d.art.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(d.art) ? d.art : '';
+    if (art) {
+      const img = document.createElement('img');
+      img.className = 'sp-art';
+      img.alt = '';
+      img.src = art;
+      wrap.append(img);
+    }
+    const info = el('div', 'sp-text');
+    if (state === 'idle') {
+      info.append(el('span', 'sp-title', 'Nothing is playing'), el('span', 'sp-artist', o.idleHint(d)));
+    } else {
+      info.append(el('span', 'sp-title', title), el('span', 'sp-artist', text(d.artist, 200)));
+      if (text(d.album, 120)) info.append(el('span', 'sp-album', text(d.album, 120)));
+    }
+    wrap.append(info);
+    card.body.append(wrap);
+    const button = (name, label, act, cls = 'sp-btn') => {
+      const b = el('button', cls);
+      b.type = 'button';
+      b.innerHTML = SP_ICONS[name]; // constant markup
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      b.addEventListener('click', () => widgetAct(w.id, act));
+      return b;
+    };
+    const controls = el('div', 'sp-controls');
+    if (state === 'idle') { // nothing to skip: Play resumes (Spotify on the last device, and says if there is none)
+      controls.append(button('play', o.playLabel, 'play', 'sp-btn main'));
+      card.body.append(controls);
+      return;
+    }
+    const prev = button('prev', 'Previous track', 'previous');
+    const next = button('next', 'Next track', 'next');
+    if (d.kind === 'ad') { // Spotify refuses skipping during an ad
+      for (const b of [prev, next]) { b.disabled = true; b.title = 'Not during an ad'; b.setAttribute('aria-label', `${b.getAttribute('aria-label')} (not during an ad)`); }
+    }
+    controls.append(prev, state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), next);
+    card.body.append(controls);
+    if (d.kind === 'ad' && state === 'playing') setTimeout(() => { if (controls.isConnected) widgetAct(w.id, 'refresh'); }, 16000); // an ad has no length: look again when it is likely over
+    // Progress: main sends where the playhead was and when; this page moves it on once a second.
+    const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
+    if (duration) {
+      const at = Number.isFinite(d.at) ? d.at : Date.now();
+      const from = Number.isFinite(d.progressMs) ? d.progressMs : 0;
+      const bar = el('div', 'sp-bar');
+      const fill = document.createElement('i');
+      bar.append(fill);
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', `${title} progress`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      const elapsed = el('span', 'sp-elapsed');
+      const total = el('span', 'sp-total', spClock(duration));
+      const progress = el('div', 'sp-progress');
+      progress.append(elapsed, bar, total);
+      card.body.append(progress);
+      const draw = () => {
+        const now = Math.min(duration, Math.max(0, from + (state === 'playing' ? Math.max(0, Date.now() - at) : 0)));
+        elapsed.textContent = spClock(now);
+        fill.style.width = `${(now / duration) * 100}%`;
+        bar.setAttribute('aria-valuenow', String(Math.round((now / duration) * 100)));
+        return now;
+      };
+      draw();
+      if (state === 'playing') {
+        const timer = setInterval(() => {
+          if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
+          if (!document.hidden && draw() >= duration) {
+            clearInterval(timer);
+            // The track is over: Spotify has moved on to the next one (or stopped). Without this the card sat at the end
+            // of the old song until its next scheduled refresh, up to two minutes. The later asks cover Spotify still
+            // answering with the old song, or the first coming too soon after the last fetch (a Spotify card is fetched at most every 4 s).
+            for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (progress.isConnected) widgetAct(w.id, 'refresh'); }, wait);
+          }
+        }, 1000);
+      }
+    }
+}
+
 // A music site's own web player in the card (Spotify's Web player, Apple Music): main.js lays a native view over
 // the .sp-web-slot placeholder (features/web-player.js). The page only draws the header buttons, the slot and what main
 // says about the view; `name` and `site` are constants of ours.
@@ -352,99 +445,46 @@ const WIDGET_RENDERERS = {
   },
 
   // Apple Music: music.apple.com in the card, the same kind of view as Spotify's Web player (features/apple-music-web.js).
-  applemusic(w, card) { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/'); },
+  applemusic(w, card) {
+    const d = w.data;
+    if (d.mode === 'web') { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/'); return; }
+    if (d.state === 'unavailable') { // no Apple Music app to read (not installed, not allowed, not this system): say why, offer the way on
+      card.head.append(refreshButton(w));
+      card.el.classList.add('sp-card-idle');
+      const reasons = {
+        'not-installed': 'The Apple Music app isn’t installed on this computer. You can use the web player instead.',
+        denied: 'Lumen isn’t allowed to control Music. Allow it in System Settings > Privacy & Security > Automation, then press refresh.',
+        unsupported: 'The Apple Music status card works on Windows and macOS. Use the web player mode instead.',
+      };
+      const msg = el('p', 'w-note', reasons[d.reason] || 'Lumen couldn’t read what Apple Music is playing. Press refresh to try again.');
+      msg.setAttribute('role', 'status');
+      card.body.append(msg);
+      card.body.append(link('https://music.apple.com/', 'Open the web player', 'w-btn'));
+      return;
+    }
+    const idle = d.state !== 'playing' && d.state !== 'paused';
+    nowPlayingCard(w, card, {
+      name: 'Apple Music', playLabel: 'Play in Apple Music', openUrl: () => null,
+      idleHint: () => (text(d.reason, 20) === 'not-running' ? 'Open Apple Music and press play' : 'Press play in Apple Music'),
+    });
+    if (idle) { // nothing playing: a way to start the app
+      const open = el('button', 'w-btn sp-open', 'Open Apple Music');
+      open.type = 'button';
+      open.addEventListener('click', () => widgetAct(w.id, 'open'));
+      card.body.append(open);
+    }
+  },
 
   // Now playing. Everything is a checked string or number set with textContent; the album picture is a
   // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
   spotify(w, card) {
     const d = w.data;
     if (d.mode === 'web') { webPlayerCard(w, card, 'Spotify', 'https://open.spotify.com/'); return; } // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
-    card.head.append(refreshButton(w));
-    const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
-    if (open) card.head.append(openLink(open, 'Open in Spotify'));
-    const state = d.state === 'playing' || d.state === 'paused' ? d.state : 'idle';
-    card.el.classList.toggle('sp-card-idle', state === 'idle');
-    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
-    const title = text(d.title, 200);
-    const wrap = el('div', 'sp-wrap');
-    const art = typeof d.art === 'string' && d.art.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(d.art) ? d.art : '';
-    if (art) {
-      const img = document.createElement('img');
-      img.className = 'sp-art';
-      img.alt = '';
-      img.src = art;
-      wrap.append(img);
-    }
-    const info = el('div', 'sp-text');
-    if (state === 'idle') {
-      info.append(el('span', 'sp-title', 'Nothing is playing'), el('span', 'sp-artist', text(d.device, 60) ? `${text(d.device, 60)} is ready` : 'Start Spotify on any device'));
-    } else {
-      info.append(el('span', 'sp-title', title), el('span', 'sp-artist', text(d.artist, 200)));
-      if (text(d.album, 120)) info.append(el('span', 'sp-album', text(d.album, 120)));
-    }
-    wrap.append(info);
-    card.body.append(wrap);
-    const button = (name, label, act, cls = 'sp-btn') => {
-      const b = el('button', cls);
-      b.type = 'button';
-      b.innerHTML = SP_ICONS[name]; // constant markup
-      b.setAttribute('aria-label', label);
-      b.title = label;
-      b.addEventListener('click', () => widgetAct(w.id, act));
-      return b;
-    };
-    const controls = el('div', 'sp-controls');
-    if (state === 'idle') { // nothing to skip: Play resumes on the last device (Spotify says if there is none)
-      controls.append(button('play', 'Play on Spotify', 'play', 'sp-btn main'));
-      card.body.append(controls);
-      return;
-    }
-    const prev = button('prev', 'Previous track', 'previous');
-    const next = button('next', 'Next track', 'next');
-    if (d.kind === 'ad') { // Spotify refuses skipping during an ad
-      for (const b of [prev, next]) { b.disabled = true; b.title = 'Not during an ad'; b.setAttribute('aria-label', `${b.getAttribute('aria-label')} (not during an ad)`); }
-    }
-    controls.append(prev, state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), next);
-    card.body.append(controls);
-    if (d.kind === 'ad' && state === 'playing') setTimeout(() => { if (controls.isConnected) widgetAct(w.id, 'refresh'); }, 16000); // an ad has no length: look again when it is likely over
-    // Progress: main sends where the playhead was and when; this page moves it on once a second.
-    const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
-    if (duration) {
-      const at = Number.isFinite(d.at) ? d.at : Date.now();
-      const from = Number.isFinite(d.progressMs) ? d.progressMs : 0;
-      const bar = el('div', 'sp-bar');
-      const fill = document.createElement('i');
-      bar.append(fill);
-      bar.setAttribute('role', 'progressbar');
-      bar.setAttribute('aria-label', `${title} progress`);
-      bar.setAttribute('aria-valuemin', '0');
-      bar.setAttribute('aria-valuemax', '100');
-      const elapsed = el('span', 'sp-elapsed');
-      const total = el('span', 'sp-total', spClock(duration));
-      const progress = el('div', 'sp-progress');
-      progress.append(elapsed, bar, total);
-      card.body.append(progress);
-      const draw = () => {
-        const now = Math.min(duration, Math.max(0, from + (state === 'playing' ? Math.max(0, Date.now() - at) : 0)));
-        elapsed.textContent = spClock(now);
-        fill.style.width = `${(now / duration) * 100}%`;
-        bar.setAttribute('aria-valuenow', String(Math.round((now / duration) * 100)));
-        return now;
-      };
-      draw();
-      if (state === 'playing') {
-        const timer = setInterval(() => {
-          if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
-          if (!document.hidden && draw() >= duration) {
-            clearInterval(timer);
-            // The track is over: Spotify has moved on to the next one (or stopped). Without this the card sat at the end
-            // of the old song until its next scheduled refresh, up to two minutes. The later asks cover Spotify still
-            // answering with the old song, or the first coming too soon after the last fetch (a Spotify card is fetched at most every 4 s).
-            for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (progress.isConnected) widgetAct(w.id, 'refresh'); }, wait);
-          }
-        }, 1000);
-      }
-    }
+    nowPlayingCard(w, card, {
+      name: 'Spotify', playLabel: 'Play on Spotify',
+      openUrl: (x) => (typeof x.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(x.url) ? x.url : null),
+      idleHint: (x) => (text(x.device, 60) ? `${text(x.device, 60)} is ready` : 'Start Spotify on any device'),
+    });
   },
 
   // GitHub: unread notifications and review requests as numbers on a small card; the lists on a bigger one.
@@ -1846,7 +1886,7 @@ function settleCard(cardEl) {
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, applemusic: 30e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;

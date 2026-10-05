@@ -6753,6 +6753,13 @@ const widgets = createWidgets({
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   spotifyWebStatus: () => spotifyWeb.status(),
   spotifyWebReload: () => spotifyWeb.reload(),
+  // The Status mode: the Apple Music app's now-playing interface (features/apple-music-native.js). Tests may stand in a fake.
+  appleMusic: {
+    read: () => (TEST && global.__appleMusicFake ? global.__appleMusicFake.read() : appleMusicNative.read()),
+    control: (name) => (TEST && global.__appleMusicFake ? global.__appleMusicFake.control(name) : appleMusicNative.control(name)),
+    open: () => (TEST && global.__appleMusicFake ? global.__appleMusicFake.open() : appleMusicNative.open()),
+  },
+  openWebTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
   appleMusicWebSignedIn: () => appleMusicWeb.isSignedIn(),
   appleMusicWebStatus: () => appleMusicWeb.status(),
   appleMusicWebReload: () => appleMusicWeb.reload(),
@@ -6819,9 +6826,21 @@ const musicWebDeps = (hasWidget, testUrl, drmProbe) => ({
   drmProbe: (wc) => (TEST && drmProbe() ? drmProbe()(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
 const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe));
-const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe));
+const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe));
 if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
-app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicWeb.destroy(); });
+// [widgets] The Apple Music Status card's now-playing source: a PowerShell helper on Windows, osascript on macOS; both only while
+// the card is being read, and ended at quit. The album picture is made small here (it travels in the new-tab page's address).
+const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
+  any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
+  resizeArt: (bytes) => {
+    const { nativeImage } = require('electron');
+    const img = nativeImage.createFromBuffer(Buffer.from(bytes));
+    if (img.isEmpty()) return null;
+    return (img.getSize().height > 160 ? img.resize({ height: 160, quality: 'good' }) : img).toJPEG(82);
+  },
+  onChange: () => widgets.appleMusicChanged(),
+});
+app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); });
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
 // Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,

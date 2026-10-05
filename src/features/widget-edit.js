@@ -124,7 +124,7 @@ const STRINGS = {
   'newtab.edit.type.spotify': 'Spotify',
   'newtab.edit.type.spotify.hint': 'What is playing, with controls',
   'newtab.edit.type.applemusic': 'Apple Music',
-  'newtab.edit.type.applemusic.hint': 'The Apple Music web player',
+  'newtab.edit.type.applemusic.hint': 'What is playing in Apple Music, with controls',
   'newtab.edit.type.gmail': 'Gmail',
   'newtab.edit.type.gmail.hint': 'Unread count and latest messages',
   'newtab.edit.type.slack': 'Slack',

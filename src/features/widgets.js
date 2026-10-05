@@ -58,7 +58,7 @@ const ST = require('./widget-stacks'); // several same-size widgets in one place
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = lazy(() => require('./spotify-view'));
 const SW = lazy(() => require('./spotify-web'));
-const AM = lazy(() => require('./apple-music-web'));
+const AMV = lazy(() => require('./apple-music-view'));
 const GV = lazy(() => require('./gmail-view'));
 const SL = lazy(() => require('./slack-view'));
 const OA = lazy(() => require('./oauth'));
@@ -100,7 +100,7 @@ const ENDPOINTS = {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
-  applemusic: () => ({}),
+  applemusic: (w) => ({ mode: w.mode, art: w.art }),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -867,18 +867,48 @@ const CONNECTORS = {
     present: (c, d, ctx) => ctx.aiStatus(),
   },
 
-  // Apple Music (features/apple-music-web.js): music.apple.com in a view over the card, like the Spotify widget's Web
-  // player. No account, key or request from here: the user signs in on Apple's own site, and the card only learns from
-  // main.js (present) whether that site is signed in and what its view is doing.
+  // Apple Music. Two modes, like Spotify's. 'status' (the default) is a now-playing card for the Apple Music app on this
+  // computer (features/apple-music-view.js, features/apple-music-native.js): Apple's own API has no "what is playing" or
+  // remote control and needs a paid developer token, so it reads the operating system's now-playing interface (Windows media
+  // sessions, the Music app on macOS) through deps.appleMusic. No account, key or network request here. 'web' is
+  // music.apple.com in a view over the card (features/apple-music-web.js); the user signs in on Apple's own site, and the
+  // card only learns from main.js (present) whether that site is signed in and what its view is doing.
   applemusic: {
     label: 'Apple Music',
-    ttl: 365 * 24 * 3600e3,
-    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
-    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' }; },
+    ttl: (d) => (d && d.mode === 'web' ? 365 * 24 * 3600e3 : 4e3),
+    minRefresh: 300, // the app tells main when it changes (deps.appleMusic.onChange), which asks for a fresh look at once
+    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors) }),
+    async resolve(input) {
+      const cfg = AMV.cleanConfig(input);
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card shows what the Apple Music app on this computer is playing.' };
+    },
     title: () => 'Apple Music',
-    summary: () => 'Apple Music web player',
-    async fetch() { return { url: AM.WEB_URL }; },
-    present: (c, d, ctx) => ({ ...d, signedIn: ctx.appleMusicSignedIn, view: ctx.appleMusicView || null }),
+    summary: (c) => (c.mode === 'web' ? 'Apple Music web player' : `Now playing${c.art ? '' : ' · no album art'}`),
+    async fetch(c, x) {
+      if (c.mode === 'web') return { mode: 'web', url: AMV.WEB_URL };
+      if (!x.appleMusic) return AMV.unavailable('unsupported', x.now());
+      const d = await x.appleMusic.read();
+      return c.art === false ? { ...d, art: '' } : d;
+    },
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.appleMusicSignedIn, view: ctx.appleMusicView || null } : d),
+    // Page actions: play, pause, next, previous, and open (the Apple Music app, or the web player when there is no app).
+    async act(c, action, x, cached) {
+      if (c.mode === 'web' || !x.appleMusic) return false;
+      if (action.do === 'open') {
+        if ((await x.appleMusic.open()) === 'web') { x.openWebTab?.(AMV.WEB_URL); return { notice: 'Apple Music isn’t installed here. Opening the web player.', local: true }; }
+        return { delay: 3000 };
+      }
+      const name = AMV.actionOf(action.do);
+      if (!name) return false;
+      if (!(await x.appleMusic.control(name))) throw new Error('Apple Music didn’t answer. Is it open?');
+      if ((name === 'play' || name === 'pause') && (cached.state === 'playing' || cached.state === 'paused')) {
+        cached.progressMs = Math.round(AMV.progressNow(cached, x.now()));
+        cached.at = x.now();
+        cached.state = name === 'play' ? 'playing' : 'paused';
+      }
+      delete cached.notice;
+      return { delay: 600 };
+    },
   },
 
   embed: {
@@ -1275,6 +1305,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         appleMusic? ({ read(), control(name), open() }: the Apple Music app's now-playing interface, features/apple-music-native.js), openWebTab(url)?,
 //         appleMusicWebSignedIn()?, appleMusicWebStatus()?, appleMusicWebReload()? (the same three for the Apple Music card),
 //         spotifyWebStatus()? ({ state: 'loading'|'ready'|'offline'|'failed', drm: 'unknown'|'ok'|'missing' }: the Web player's view), spotifyWebReload()?,
 //         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
@@ -1418,6 +1449,8 @@ function createWidgets(deps) {
       },
       backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       googleClient,
+      openWebTab: deps.openWebTab || null,
+      appleMusic: deps.appleMusic || null, // the Apple Music app's now-playing interface (features/apple-music-native.js)
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -2018,7 +2051,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2205,7 +2238,7 @@ function createWidgets(deps) {
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     if (action.do === 'signin') return gmailSignInFromPage(w);
     if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
-      if (w.type === 'applemusic') { deps.appleMusicWebReload?.(); return true; }
+      if (w.type === 'applemusic') { if (w.mode !== 'web') return false; deps.appleMusicWebReload?.(); return true; }
       if (w.type !== 'spotify' || w.mode !== 'web') return false;
       deps.spotifyWebReload?.();
       return true;
@@ -2265,6 +2298,15 @@ function createWidgets(deps) {
     }
   }
 
+  // The Apple Music app changed what it is playing (deps.appleMusic told main.js): the status cards look again at once.
+  function appleMusicChanged() {
+    for (const w of list()) {
+      if (w.type !== 'applemusic' || w.mode === 'web') continue;
+      // A change that comes right after another look is not dropped: it is looked at again a moment later.
+      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 350); }, () => {});
+    }
+  }
+
   // The AI status card shows live facts (chats working, tabs the AI opened, a limit that ended), so main.js says when
   // any of them may have moved (aiStatusSoon: several events in a row become one look). The page is only refreshed when the card's
   // data really differs from what it was last given, so an idle browser costs nothing.
@@ -2282,7 +2324,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, aiStatusChanged, aiStatusSoon, appleMusicChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
