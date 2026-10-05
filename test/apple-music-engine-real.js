@@ -35,7 +35,7 @@ if (shots) fs.mkdirSync(shots, { recursive: true });
   check('real: the engine page loads and MusicKit\'s instance is found by the bridge', await (async () => { for (let i = 0; i < 160; i++) { if ((await status()).ready) return true; await sleep(250); } return false; })(), JSON.stringify(await status()));
   console.log(`      (${Date.now() - t0} ms from launch to the bridge being ready)`);
   const mkVersion = await engine('window.MusicKit && MusicKit.version');
-  check('real: it is MusicKit JS v3', /^3\./.test(String(mkVersion)), String(mkVersion));
+  check('real: it is MusicKit JS (v3 numbering, or the newer AppleMusic-NNNN build names)', /^3\.|AppleMusic-\d/.test(String(mkVersion)), String(mkVersion));
   check('real: the engine view is hidden (not on screen), never shown for a status card', await app.evaluate(() => { const v = global.__appleMusicWeb.view(); return !v || !v.getVisible(); }), '');
   check('real: signed out is known from MusicKit (no cookie guessing) and the card offers Sign in and a search', (await status()).signedIn === false && await waitFor(`Boolean(${card}.querySelector('.am-signin')) && Boolean(${card}.querySelector('.am-searchfield input'))`), JSON.stringify(await status()));
   await shot('engine-signed-out.png');
