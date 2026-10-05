@@ -6750,6 +6750,11 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  // The Gmail widget's default mode: read the inbox's Atom feed with the Google sign-in already in Lumen's normal session.
+  googleMail: {
+    fetch: (url) => (TEST && global.__googleMailFake ? global.__googleMailFake(url) : googleMailFeed(url)),
+    openSignIn: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); openTab(url); },
+  },
   spotifyWebStatus: () => spotifyWeb.status(),
   spotifyWebReload: () => spotifyWeb.reload(),
   // The Status mode: the Apple Music engine (features/apple-music-engine.js). Tests may stand in a fake for any of its calls.
@@ -6780,6 +6785,37 @@ const widgets = createWidgets({
 aiStatusSoon = widgets.aiStatusSoon;
 setInterval(() => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, 15e3).unref?.(); // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
+
+// [widgets] Gmail through the Google sign-in in Lumen (features/gmail-atom.js): one GET of an account's inbox Atom feed,
+// read with the normal session's cookies. Only https://mail.google.com/mail/u/N/feed/atom (checked again here), no
+// redirect is followed (a sign-in redirect reads as signed out), answer capped at 1 MB. Nothing is logged.
+function googleMailFeed(url) {
+  return new Promise((resolve, reject) => {
+    if (!require('./features/gmail-atom').isFeedUrl(url)) return reject(new Error('Not a Gmail feed address.'));
+    const req = net.request({ url, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'manual', cache: 'no-store' });
+    req.setHeader('Accept', 'application/atom+xml, application/xml;q=0.9, */*;q=0.1');
+    const timer = setTimeout(() => { req.abort(); reject(new Error('Gmail took too long')); }, 15e3);
+    const done = (fn, v) => { clearTimeout(timer); fn(v); };
+    req.on('redirect', (status) => { req.abort(); done(resolve, { status, body: '' }); });
+    req.on('response', (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > 1 << 20) { req.abort(); done(reject, new Error('Gmail sent too much')); } else chunks.push(c); });
+      res.on('end', () => done(resolve, { status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      res.on('error', (e) => done(reject, e));
+    });
+    req.on('error', (e) => done(reject, e));
+    req.end();
+  });
+}
+// A Google sign-in appearing or ending in Lumen's session (its main session cookies, not the rotating timestamp ones)
+// makes Gmail cards that read through it look again.
+const GOOGLE_SIGNIN_COOKIES = new Set(['SID', '__Secure-1PSID', '__Secure-3PSID']);
+app.whenReady().then(() => {
+  session.defaultSession.cookies.on('changed', (_e, cookie) => {
+    if (GOOGLE_SIGNIN_COOKIES.has(cookie?.name) && /(^|\.)google\.[a-z.]+$/.test(String(cookie.domain))) widgets.googleSessionChanged();
+  });
+});
 
 // [widgets] The user's TradingView watchlists, for the TradingView widget's import and sync: one fixed
 // address (features/tradingview-view.js ACCOUNT_URL), GET only, read with the normal session's cookies so
