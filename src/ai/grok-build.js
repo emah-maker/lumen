@@ -188,6 +188,8 @@ const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
+const authSync = require('./auth-sync');
+const { isSignedOutText } = authSync;
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { isLimitText, limitOf } = require('../features/grok-limit');
 const { toolImagePaths } = require('../features/gen-images');
@@ -232,7 +234,7 @@ async function findGrok() {
 function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
   if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Grok Build', setting: 'Give Grok Build full access to this computer' }); if (rejected) return rejected; }
-  if (/not logged in|please (run|sign) in|run `grok login`|log ?in|oauth|authenticat/i.test(t)) {
+  if (isSignedOutText(t, /not logged in|please (run|sign) in|run `grok login`|b401b|unauthori[sz]ed|token (has )?(expired|been revoked)|refresh token/i, /log ?in|oauth|authenticat/i)) {
     return { text: 'Grok Build is not signed in. Open a terminal, run `grok login`, and sign in with your SuperGrok or X Premium+ account. Lumen never sees your Grok login.' };
   }
   if (isLimitText(t)) {
@@ -591,27 +593,35 @@ function toolWatch({ terminal = true } = {}) {
 // for settleAuth after the run.
 const statOf = (p) => { try { return fs.statSync(p, { bigint: true }); } catch { return null; } };
 const sameFile = (a, b) => Boolean(a && b && a.ino === b.ino && a.dev === b.dev);
+// Grok rotates its refresh token on every refresh, so the newest auth.json (by modification time) is the live one. A file of Lumen's
+// that is newer than the user's (Grok refreshed it and the run's copy-back never happened: Lumen quit, crashed, or the copy failed) is
+// carried back before anything replaces it; an older one never overwrites a newer one.
+const newerThan = (a, b) => Boolean(a && b && a.mtimeNs > b.mtimeNs);
 function linkAuth(userHome, home) {
   const real = path.join(userHome, 'auth.json');
   const own = path.join(home, 'auth.json');
-  const before = statOf(real);
-  if (sameFile(before, statOf(own))) return before;
-  fs.rmSync(own, { force: true });
-  if (!before) return null; // signed out: the run itself reports "not signed in"
-  try { fs.linkSync(real, own); } catch { fs.copyFileSync(real, own); fs.chmodSync(own, 0o600); }
+  let before = statOf(real);
+  const mine = statOf(own);
+  if (sameFile(before, mine)) return before;
+  if (before && newerThan(mine, before)) { try { authSync.copyAtomicSync(own, real, fs.statSync(own)); before = statOf(real); } catch { /* the next settle tries again */ } }
+  if (!before) { fs.rmSync(own, { force: true }); return null; } // signed out: the run itself reports "not signed in"
+  // Swapped in whole (a temp link or copy renamed over it): a Grok already running never finds auth.json missing in between.
+  const tmp = `${own}.lumen-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try { fs.linkSync(real, tmp); } catch { fs.copyFileSync(real, tmp); fs.chmodSync(tmp, 0o600); try { fs.utimesSync(tmp, before.atime, before.mtime); } catch { /* keeps the copy's time */ } }
+  try { fs.renameSync(tmp, own); } catch { fs.rmSync(own, { force: true }); fs.renameSync(tmp, own); }
   return before;
 }
-// After a run: if Grok replaced Lumen's auth.json (a token refresh) and the user's own file is
-// untouched since linkAuth, the newer one goes back so a rotated refresh token isn't lost.
+// After a run: if Grok replaced Lumen's auth.json (a token refresh) and it is newer than the user's own file, it goes back so a
+// rotated refresh token isn't lost. A sign-in the user made meanwhile (a newer file of theirs) is never overwritten.
 function settleAuth(userHome, home, before) {
   const real = path.join(userHome, 'auth.json');
   const own = path.join(home, 'auth.json');
   const now = statOf(real);
   const mine = statOf(own);
   if (!before || !now || !mine || sameFile(now, mine)) return false;
-  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile
-  if (fs.readFileSync(own).equals(fs.readFileSync(real))) return false;
-  fs.copyFileSync(own, real);
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile: theirs stays
+  if (!newerThan(mine, now)) return false;
+  authSync.copyAtomicSync(own, real, fs.statSync(own));
   return true;
 }
 
@@ -621,11 +631,14 @@ async function linkAuthAsync(userHome, home) {
   const stat = (p) => fsp.stat(p, { bigint: true }).catch(() => null);
   const real = path.join(userHome, 'auth.json');
   const own = path.join(home, 'auth.json');
-  const before = await stat(real);
-  if (sameFile(before, await stat(own))) return before;
-  await fsp.rm(own, { force: true });
-  if (!before) return null;
-  try { await fsp.link(real, own); } catch { await fsp.copyFile(real, own); await fsp.chmod(own, 0o600); }
+  let before = await stat(real);
+  const mine = await stat(own);
+  if (sameFile(before, mine)) return before;
+  if (before && newerThan(mine, before)) { try { await authSync.copyAtomic(own, real, await fsp.stat(own)); before = await stat(real); } catch { /* the next settle tries again */ } }
+  if (!before) { await fsp.rm(own, { force: true }); return null; }
+  const tmp = `${own}.lumen-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try { await fsp.link(real, tmp); } catch { await fsp.copyFile(real, tmp); await fsp.chmod(tmp, 0o600); try { await fsp.utimes(tmp, before.atime, before.mtime); } catch { /* keeps the copy's time */ } }
+  try { await fsp.rename(tmp, own); } catch { await fsp.rm(own, { force: true }); await fsp.rename(tmp, own); }
   return before;
 }
 async function settleAuthAsync(userHome, home, before) {
@@ -635,10 +648,9 @@ async function settleAuthAsync(userHome, home, before) {
   const own = path.join(home, 'auth.json');
   const [now, mine] = [await stat(real), await stat(own)];
   if (!before || !now || !mine || sameFile(now, mine)) return false;
-  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false;
-  const [a, b] = await Promise.all([fsp.readFile(own), fsp.readFile(real)]);
-  if (a.equals(b)) return false;
-  await fsp.copyFile(own, real);
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile: theirs stays
+  if (!newerThan(mine, now)) return false;
+  await authSync.copyAtomic(own, real, await fsp.stat(own));
   return true;
 }
 
