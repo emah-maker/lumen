@@ -4172,7 +4172,10 @@ const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
 // agent feature opening the sidebar for the tab in front) and applies the front tab's answer from every tabs state.
 const sidebarTabs = sidebarTabsLib.create();
-const sidebarSharers = (tabId) => { const c = chatBind.chatOf(tabId); return c ? chatBind.tabsOf(c).filter((t) => t !== tabId) : []; };
+// A tab that only carries the chat you were in (no chat of its own: followTabChat) keeps its own sidebar state: it neither takes
+// nor gives the open/closed answer of the tabs showing the same chat, so each tab's sidebar stays as the user left it.
+const carriedTabs = new Set();
+const sidebarSharers = (tabId) => { const c = chatBind.chatOf(tabId); return c && !carriedTabs.has(tabId) ? chatBind.tabsOf(c).filter((t) => t !== tabId && !carriedTabs.has(t)) : []; };
 const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
 function setTabSidebar(tabId, open) {
   const hit = tabAnywhere(tabId);
@@ -4242,7 +4245,7 @@ function pushChatView(wc) {
 function followTabChat(tab, { push = true } = {}) {
   if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings || tab.rec?.agent) return; // the chat page and Settings keep whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
   const own = chatBind.chatOf(tab.id) || pinnedChat(tab.id);
-  const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId) });
+  const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId), carry: readSettings().oneChatPerTab !== true });
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
   const unseen = (id) => unreadChats.has(id) && !sidebarOpen; // a finished reply stays "done" on its tab until the sidebar is looked at
   if (plan.chat) {
@@ -4251,6 +4254,9 @@ function followTabChat(tab, { push = true } = {}) {
     if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
+  } else if (plan.carry) {
+    carriedTabs.add(tab.id);
+    chatBind.bind(tab.id, plan.carry, { share: true }); // the chat carries on in this tab; its home moves here when a message is sent from it (agent:ask)
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
   } else {
@@ -4293,6 +4299,7 @@ function refreshSidebars() {
 }
 // The open chat now belongs to the tab in front ("Move chat to this tab", a chat chosen from the list, a new chat).
 function bindOpenChatHere(sender) {
+  carriedTabs.delete(activeId);
   const run = chatRuns.get(chatId);
   chatBind.move(chatId, activeId);
   if (run && !run.deleted) {
@@ -4331,6 +4338,7 @@ function chatTabGone(id, goneRec = null) {
   warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
   grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
+  carriedTabs.delete(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
@@ -7394,6 +7402,7 @@ ipcMain.handle('agent:rewind', (_e, expected) => {
 ipcMain.on('agent:reset', (event) => {
   syncToSender(event);
   switchChat(null);
+  carriedTabs.delete(activeId);
   chatBind.bind(activeId, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
   if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
   pushAttention();
@@ -7456,6 +7465,7 @@ ipcMain.handle('chats:share', (event, id) => {
   syncToSender(event);
   const view = switchChat(String(id));
   if (view) {
+    carriedTabs.delete(activeId);
     chatBind.bind(activeId, chatId, { share: true });
     if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
     pushAttention();
