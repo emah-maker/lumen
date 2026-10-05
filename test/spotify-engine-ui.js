@@ -8,6 +8,7 @@
 // changes nothing; the view is never shown for a status card. THIS IS A STAND-IN: that the real, signed-in Spotify page still matches the
 // selector table can only be shown with an account. Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin).
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep screenshots.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

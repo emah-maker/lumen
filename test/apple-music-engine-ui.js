@@ -6,6 +6,7 @@
 // lists, junk or forged messages from the page change nothing, the hidden view is never shown, and music continues when the page
 // is left. Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin).
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep screenshots.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

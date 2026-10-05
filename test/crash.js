@@ -1,6 +1,7 @@
 // Hard-kill the app, relaunch on the same profile: it must open (orphaned child processes from
 // the killed instance used to hold the profile lock). Also: a risky download isn't saved while
 // its warning is unanswered.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

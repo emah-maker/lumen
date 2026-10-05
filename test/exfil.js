@@ -3,6 +3,7 @@
 // freely; outside (MCP) agents are always asked; an approved host redirecting to a new one asks too;
 // web_search asks before sending the query; run_script and each batch step are gated per site;
 // list_tabs hides query strings and Lumen's own tabs.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -72,7 +73,7 @@ const path = require('path');
       return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
     } } } });
     const events = [];
-    await agent.run('do it', (e) => {
+    await agent.run(pageContext ? 'do it on this page' : 'do it', (e) => {
       events.push(e);
       if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, answer), 20);
     });
@@ -161,7 +162,7 @@ const path = require('path');
   ] });
   check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.url === `${other}/landing-allowed` && !r.results[1]?.error, JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
-    { name: 'navigate', input: { url: bounce('/landing-untainted') } },
+    { name: 'navigate', input: { url: bounce('/landing-untainted'), read: false } }, // (navigate returns the page head by default, which counts as reading it (e7c240b); read:false keeps the run untainted)
   ] });
   check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.url === `${other}/landing-untainted`, JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [

@@ -4,6 +4,7 @@
 //  - one-shot runs (cli-json.js) follow the same rule
 //  - a kept (warm) process is keyed by the setting, so changing it starts another one
 //  - a failed start that looks like a sign-in / credential / proxy problem is retried once with the user's settings, with a notice
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

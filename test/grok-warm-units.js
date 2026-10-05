@@ -8,6 +8,7 @@
 // that isn't Lumen's running, the turn cap, the watchdog), full access and a chosen effort served by a kept process of their
 // own kind (never shared with the locked-down one), the fallbacks to a headless run (images, a session
 // Grok doesn't know), idle timeout, the process cap, drop / disposeAll, the agent profile and environment.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

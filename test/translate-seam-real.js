@@ -6,6 +6,7 @@
 // (groupItems -> engine -> splitSegment). Progress goes to stderr, the report to stdout:
 //   LUMEN_REAL_ENGINE=1 node test/translate-seam-real.js > docs/translate-seam-measurement.md
 //   PAIRS=fr>en,en>ar  limits it to some pairs.   (needs the network; about 35 MB per pack)
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

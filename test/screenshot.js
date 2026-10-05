@@ -3,6 +3,7 @@
 // and invisible (LUMEN_TEST_BACKGROUND: a window that is never shown can hand back blank frames), the
 // save folder redirected to a temp dir, and no real mouse: the area picker is driven with events
 // dispatched in the overlay page itself.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -8,6 +8,7 @@
 //  - two clients get two windows; a window ends with its session (after a grace), unless the user used it
 //  - the window closes by hand and the next call makes a new one; it is not in the saved session
 //  - the agent's pages are muted, ask nothing (alert/confirm/popups), and keep working while the window is minimized
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { spawn } = require('child_process');
 const path = require('path');

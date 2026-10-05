@@ -1,5 +1,6 @@
 // Image generation routing (ai/image-router.js, ai/image-grok.js, the generate_image tool, Settings > AI > Image generation),
 // plain Node: no Electron, no network, no key, no CLI. Fake providers stand in for every backend.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

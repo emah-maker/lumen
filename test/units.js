@@ -2,6 +2,7 @@
 // settings file, Safari import, the Grok Build engine's argv/env/home and its own tool check (runs
 // against a fake grok child), and both CLI engines' model choice (--model in the argv, `grok models`
 // parsing, the picker entries).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -191,6 +192,8 @@ try {
 
   // Sign-in: only auth.json is shared, and a refreshed token goes back to the user's file.
   const userHome = path.join(gbData, 'user-grok');
+  // A refresh always lands later than the link; on a fast disk the test's writes can share one timestamp tick, so say so explicitly.
+  const laterMtime = (file, seconds) => { const t = new Date(Date.now() + seconds * 1000); fs.utimesSync(file, t, t); };
   const home = gb.grokHomeFor(gbData);
   fs.mkdirSync(userHome); fs.mkdirSync(home);
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-1');
@@ -200,10 +203,12 @@ try {
   check('Grok Build does not copy the user\'s config.toml', !fs.existsSync(path.join(home, 'config.toml')), fs.readdirSync(home).join(','));
   fs.rmSync(path.join(home, 'auth.json')); // Grok replacing the file on a token refresh
   fs.writeFileSync(path.join(home, 'auth.json'), 'token-2');
+  laterMtime(path.join(home, 'auth.json'), 1);
   check('Grok Build copies a refreshed token back when the user\'s file is unchanged', gb.settleAuth(userHome, home, before) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-2', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
   const again = gb.linkAuth(userHome, home);
   fs.rmSync(path.join(home, 'auth.json'));
   fs.writeFileSync(path.join(home, 'auth.json'), 'token-3');
+  laterMtime(path.join(home, 'auth.json'), 2);
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-new-login-longer'); // the user signed in again meanwhile
   check('Grok Build never overwrites a newer sign-in of the user\'s', !gb.settleAuth(userHome, home, again) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-new-login-longer', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
   fs.rmSync(path.join(userHome, 'auth.json'));

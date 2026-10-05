@@ -7,6 +7,7 @@
 // The on-device engine (Bergamot) is stood in for by a fake with the same interface (a test hook), so its
 // choice, the download card, progress, no-consent rule, cancel, pivot-free fallback to the AI and caching all
 // run; the real engine and models are exercised by test/translate-local-real.js (network).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

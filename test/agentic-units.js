@@ -3,6 +3,7 @@
 // early step rows, HTTP MCP config and the stdio fallback), compact-read dedupe, batch's baseline,
 // the registry-only page script, routing pinned per session, transcript exchange resets, the
 // DuckDuckGo HTML parser and the after-action settle.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

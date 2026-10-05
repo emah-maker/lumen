@@ -1,6 +1,7 @@
 // PDFs and local files: the built-in PDF viewer renders (electron-chrome-extensions used to leave it
 // on "loading" with 0 pages), and local files open from a typed path, Finder ('open-file'), a drop
 // on the window and File > Open. Offline: a local server and a temp folder.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');

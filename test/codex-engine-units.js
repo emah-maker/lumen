@@ -5,6 +5,7 @@
 //  - a run against a fake child process: streaming text, per-run MCP token (opened, closed, never in argv/config), thread id for resume,
 //    stop kills the tree, usage and plan limit, failure texts, temp folder cleanup, the models list from Codex's cache;
 //  - the picker entries (tiers for Auto), the interrupted-reply note on the next message.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 const fs = require('fs');

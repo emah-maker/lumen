@@ -1,6 +1,7 @@
 // Tab groups: opener groups, same-site auto groups, user choices respected, collapse, restore,
 // "Organize Tabs with AI" with a fake model, the group_tabs / ungroup_tabs tools, and topic groups
 // (local clusters, protection of tabs the user grouped or dragged, undo, automatic, and with AI).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

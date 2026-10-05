@@ -12,6 +12,7 @@
 //
 // Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin). Set LUMEN_SPOTIFY_SHOTS=<dir> to
 // keep a screenshot of each card size.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

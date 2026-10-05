@@ -2,6 +2,7 @@
 // tab strip, tabs, buttons, toolbar and address field, and that the strip's drag gutter keeps its width (and stays
 // on screen, clear of the caption buttons) with 1, 20 and 60 tabs. With WINDOWDRAG_SHOTS=<dir> it also saves
 // screenshots with the drag regions outlined (outline added by the test only, never in the app).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

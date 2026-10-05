@@ -9,6 +9,7 @@
 //     must deny it before it runs: the file must not exist.
 //  3. A gate Grok can't reach, same loosened rules: nothing may run (the file must not exist).
 // Skipped when grok isn't installed or signed in.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');

@@ -6,6 +6,7 @@
 // The renderer's drag messages (tab:dragstart / dragend / dragcancel) are sent straight to main.js and the
 // cursor is scripted (__windows.setCursor), so nothing moves the real mouse. Windows are invisible
 // (LUMEN_TEST_BACKGROUND) apart from the private one.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -100,6 +101,16 @@ const http = require('http');
 
     // ---- drag out of the strip: a card follows the cursor; the tab stays in its window until the release
     const win1Tabs = () => windows().then((l) => winOf(l, win1).tabs.map((t) => t.id));
+    // A tab opened by code lands in the window that is current, which follows the OS focus and so can be another test window: put it where the check needs it.
+    const openTabIn = async (win, url) => {
+      const tab = await openTab(url);
+      const at = (await windows()).find((w) => w.tabs.some((x) => x.id === tab.id));
+      if (at && at.windowId !== win) {
+        await app.evaluate((_e, [from, id, to]) => global.__windows.moveTo(from, id, to), [at.windowId, tab.id, win]);
+        await waitFor(async () => winOf(await windows(), win)?.tabs.some((x) => x.id === tab.id));
+      }
+      return tab;
+    };
     const uiCount = (windowId, selector) => app.evaluate(({ BrowserWindow }, [id, sel]) => BrowserWindow.fromId(id).webContents.executeJavaScript(`document.querySelectorAll(${JSON.stringify(sel)}).length`), [windowId, selector]);
     // The open drop slot in a window's strip: the id of the tab right after it ('end' if none), or null.
     const slotBefore = (windowId) => app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).webContents.executeJavaScript(`(() => {
@@ -133,7 +144,7 @@ const http = require('http');
     check('it holds the same WebContents, still pinned, ungrouped; the source keeps its other tabs', w2?.tabs[0].contentsId === a.contentsId && w2.tabs[0].pinned && !w2.tabs[0].groupId && winOf(dropped, win1).tabs.some((t) => t.id === b.id), JSON.stringify(dropped));
     check('the page was not reloaded', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     check('the new window opens with the tab under the release point (grab offset kept)', Boolean(await boundsAt(w2id, 1100 - 150, 600 - 15)), JSON.stringify(await winBounds(w2id)));
-    check('...at the size of the window it came from', (await winBounds(w2id)).width === srcSize.width && (await winBounds(w2id)).height === srcSize.height, JSON.stringify([await winBounds(w2id), srcSize]));
+    check('...at the size of the window it came from (give or take a pixel: display scaling rounds window sizes)', Math.abs((await winBounds(w2id)).width - srcSize.width) <= 2 && Math.abs((await winBounds(w2id)).height - srcSize.height) <= 2, JSON.stringify([await winBounds(w2id), srcSize]));
     await cursor({ x: 200, y: 200 });
     await sleep(150);
     check('and nothing follows the cursor after the release', Boolean(await boundsAt(w2id, 950, 585)), JSON.stringify(await winBounds(w2id)));
@@ -168,8 +179,8 @@ const http = require('http');
 
     // ---- over its own strip: the tab moves along it
     await emit(win1, 'tab:switch', initialId);
-    const c = await openTab(`${base}/c`);
-    const beforeOwn = await win1Tabs();
+    const c = await openTabIn(win1, `${base}/c`);
+    const beforeOwn = (await waitFor(async () => { const l = await win1Tabs(); return l.length === 2 && l[1] === c.id ? l : null; })) || await win1Tabs(); // (the strip learns of the new tab a moment after it loads)
     check('(a second tab in the source window to reorder)', beforeOwn.length === 2 && beforeOwn[1] === c.id, JSON.stringify(beforeOwn));
     await cursor({ x: 900, y: 500 });
     await emit(win1, 'tab:dragstart', c.id, { x: 300, y: 15, stripX: 150 });
@@ -290,12 +301,18 @@ const http = require('http');
 
     // ---- a multi-selection travels together: dragged into another window, all of it goes, in order
     {
-      const list0 = await windows();
-      const home = list0.find((w) => w.windowId === win1) || list0[0];
-      const away = list0.find((w) => w.windowId !== home.windowId);
+      // (Tabs the test opens land in the window that is current, so find the window that got them rather than assume the first; and make sure there are two.)
+      if ((await windows()).length < 2) {
+        const extra = await openTab(`${base}/away`);
+        await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 1150, y: 150 }), [(await windows())[0].windowId, extra.id]);
+        await waitFor(async () => (await windows()).length >= 2);
+      }
       const m1 = await openTab(`${base}/m1`);
       const m2 = await openTab(`${base}/m2`);
-      const homeNow = winOf(await windows(), home.windowId);
+      const list0 = await windows();
+      const home = list0.find((w) => w.tabs.some((x) => x.id === m1.id)) || list0[0];
+      const away = list0.find((w) => w.windowId !== home.windowId);
+      const homeNow = winOf(list0, home.windowId);
       if (away && homeNow && homeNow.tabs.some((t) => t.id === m1.id)) {
         await app.evaluate((_e, [w, ids]) => global.__windows.setSelection(w, ids), [home.windowId, [m1.id, m2.id]]);
         await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [home.windowId, away.windowId]);
@@ -317,13 +334,12 @@ const http = require('http');
 
     // ---- a group dragged by its label back into its own strip, somewhere else, stays one whole group
     {
-      const list0 = await windows();
-      const home = list0[0];
-      const g1 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g1`);
-      const g2 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g2`);
+      const home = (await windows()).find((w) => w.windowId === win1) || (await windows())[0];
+      const g1 = (await openTabIn(home.windowId, `${base}/g1`)).id;
+      const g2 = (await openTabIn(home.windowId, `${base}/g2`)).id;
       const w = winOf(await windows(), home.windowId);
       const inHome = w && w.tabs.some((t) => t.id === g1) && w.tabs.some((t) => t.id === g2);
-      if (inHome && w.tabs.length >= 4) {
+      if (inHome && w.tabs.length >= 3) { // (the two group tabs and at least one loose tab to move in front of)
         const gid = await app.evaluate((_e, [win, ids]) => global.__windows.group(win, ids, 'Pair'), [home.windowId, [g1, g2]]);
         const first = winOf(await windows(), home.windowId).tabs.find((t) => t.id !== g1 && t.id !== g2 && !t.pinned);
         await cursor({ x: 700, y: 500 });

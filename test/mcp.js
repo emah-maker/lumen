@@ -1,5 +1,6 @@
 // AI agents over MCP: start Lumen, then start the bridge exactly as a CLI agent would
 // (`electron . --mcp`) and speak MCP over its stdio.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const { spawn } = require('child_process');
@@ -115,6 +116,8 @@ const os = require('os');
   check('tool calls appear as sidebar steps', steps.some((s) => s.startsWith('Claude Code:')), JSON.stringify(steps));
 
   // Approval: with auto-approve off, a click shows the card; denying returns isError.
+  // Outside agents act without a card in their own window by default (08ec84a, setting agentsNoAsk); turning it off brings the card back.
+  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false));
   await app.evaluate(() => { global.__agent.browser.autoApprove = () => false; });
   const clickPromise = call('click', { text: 'More information' });
   await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});

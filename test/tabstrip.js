@@ -1,6 +1,7 @@
 // The tab strip under load and the basics around it: clicks that land while tabs are updating,
 // scrolling a strip that overflows, pinned tabs, restoring a session lazily (and pinned tabs with
 // it), favicons, the History page, zoom reset to the default, F11, and dialogs from a popup window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

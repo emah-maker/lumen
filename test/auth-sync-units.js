@@ -2,6 +2,7 @@
 // The fake CLI's token file holds a refresh token that is SINGLE USE, as with the real CLIs: refreshing rotates it and the old one is
 // dead from then on ("refresh token already used" -> the user has to sign in again). A refresh with a dead token is the bug these
 // suites guard against, so every scenario counts them (`dead`) and a run that ends with one fails.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

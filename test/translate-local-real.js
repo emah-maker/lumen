@@ -2,6 +2,7 @@
 // French -> English pack from Mozilla into a throwaway profile, translates a French page with Bergamot in
 // the utility process, and measures. `SHOTS=<dir>` saves screenshots (before, download, after).
 // `SITE=<url>` also translates a real page (any language the packs cover) and reports its timings.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

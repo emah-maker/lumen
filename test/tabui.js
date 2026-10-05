@@ -3,6 +3,7 @@
 // closes a tab, the hover card under a tab you rest on, Shift/Ctrl/Cmd+click multi-selection, and
 // closing a run of tabs with their ✕ without the tabs resizing under the pointer.
 // `TABUI_SHOTS=<dir>` also saves screenshots of the strip there (light and dark).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

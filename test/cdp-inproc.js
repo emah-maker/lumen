@@ -5,6 +5,7 @@
 // Part 1 starts Lumen the way a user does (a plain process, no Playwright attached) and checks nothing
 // but the proxy listens, then drives it with Playwright's connectOverCDP. Part 2 runs under Playwright's
 // _electron (which adds its own debugging switches, so no port check there) for open-url and quitting.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron, chromium } = require('playwright-core');
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
@@ -120,6 +121,17 @@ function quit(pid) {
     await pageA.goto(`${site}/a`);
     check('inproc: newPage opens a tab and navigates', (await pageA.title()) === 'Fixture /a' && (await list()).length === first.length + 1, await pageA.title());
     check('inproc: evaluate', (await pageA.evaluate(() => 6 * 7)) === 42, 'wrong');
+    const activate = async (context, page) => { // Target.createTarget opens behind the user's tab (background by default), and Playwright cannot click a hidden page: ask the browser endpoint to bring it forward
+          const target = (await fetch(`${root}/json/list`).then((r) => r.json())).find((x) => x.url === page.url());
+          const { webSocketDebuggerUrl } = await fetch(`${root}/json/version`).then((r) => r.json());
+          const ws = new WebSocket(webSocketDebuggerUrl);
+          await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+          const answered = new Promise((resolve) => { ws.onmessage = resolve; });
+          ws.send(JSON.stringify({ id: 1, method: 'Target.activateTarget', params: { targetId: target.id } }));
+          await answered;
+          ws.close();
+        };
+    await activate(context, pageA);
     await pageA.click('button');
     check('inproc: click', (await pageA.title()) === 'clicked', await pageA.title());
     await pageA.fill('body', '').catch(() => {});

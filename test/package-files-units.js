@@ -5,6 +5,7 @@
 // the top-level filters or the default excludes, and the Mac app got the whole checkout (.git, test/, docs/...)
 // and codesign stopped on .git's read-only pack files. Windows-only koffi is dropped from the Mac app by
 // scripts/after-pack.js instead. No network, no Electron, no packaging.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

@@ -1,6 +1,7 @@
 // New-tab "Edit layout": every card must sit exactly where it does with edit mode off (same cell, same pixels),
 // at several window widths; chrome may overlay but never moves a card. Moving a card in edit mode and leaving
 // keeps exactly the edited cell. Offline; a throwaway profile; LUMEN_TEST_BACKGROUND keeps the window off-screen.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

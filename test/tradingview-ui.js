@@ -3,6 +3,7 @@
 // market overview. The account answer is global.__tvLists (main.js only uses it in test mode), so no
 // TradingView sign-in or request is involved in the import; the card's frame is TradingView's own page.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

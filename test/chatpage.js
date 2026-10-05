@@ -5,6 +5,7 @@
 // approval cards from the page, Stop, the page's own list, Back to sidebar, a private window that
 // can't open it, a page that can't navigate to it, a preload with only the chat calls, and the page
 // coming back after a restart.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

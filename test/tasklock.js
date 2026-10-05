@@ -23,10 +23,13 @@ const path = require('path');
   await ui.waitForSelector('.tab');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // The checks about the sidebar following a tab are about a chat per tab: the old behaviour, now a setting (a8a1251; the chat otherwise carries on across tabs).
+  await app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true));
   const picked = await ui.evaluate(async () => (await window.assistant.getSettings()).model);
   const used = await app.evaluate(() => global.__agent.getOptions().model);
-  check('with only an OpenAI key, the picker shows an OpenAI model', /^openai:/.test(String(picked)), picked);
-  check('and the agent uses that same model (not Claude)', used === picked, `${used} vs ${picked}`);
+  // A profile that never chose a model starts on Auto once more than one model is on offer (main.js effectiveModel): the pick is 'auto', and the model that answers is an OpenAI one.
+  check('with only an OpenAI key, the picker shows Auto or an OpenAI model, never Claude', picked === 'auto' || /^openai:/.test(String(picked)), picked);
+  check('and the agent uses that same model (not Claude)', used === picked && !/claude/i.test(String(used)), `${used} vs ${picked}`);
 
   // Tab lock. Tab A is in front when the task starts; the user switches to tab B while the model is
   // thinking; the click the model then asks for must land in tab A.

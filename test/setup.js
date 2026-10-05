@@ -1,5 +1,6 @@
 // "Set up an AI": nothing connected hides the picker and shows three equal ways in; connecting any
 // one provider (API key, or the user's own Claude Code) shows only its models and hides the card.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -5,6 +5,7 @@
 //   after Allow: 'granted' in both APIs (and a PermissionStatus fires 'change'); after Don't Allow: 'denied';
 //   decisions are per origin and survive a reload; screen wake lock is granted without a prompt;
 //   SpeechRecognition is hidden so sites use their fallback.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -3,6 +3,7 @@
 // then signed in against a stand-in feed (main.js's TEST hook global.__googleMailFake), what Settings shows for
 // each mode, the account picker and the client-JSON box of the Advanced setup. Never signs in to anything.
 // SHOTS=<dir> saves screenshots of the card and Settings there.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

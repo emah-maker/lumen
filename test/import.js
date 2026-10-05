@@ -1,4 +1,5 @@
 // Search-engine picker and importing from other browsers (fake Chrome and Firefox profiles).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const { DatabaseSync } = require('node:sqlite');

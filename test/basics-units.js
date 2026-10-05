@@ -2,6 +2,7 @@
 // crash recovery's decision and marker (features/crash-recovery.js), page info's menu
 // (features/page-info.js), the link and image menu items and "Save … As" marks (features/link-menu.js),
 // per-site zoom (features/site-zoom.js), and that every string these use is in locales/en.json.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

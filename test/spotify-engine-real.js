@@ -4,6 +4,7 @@
 // out, whether anything can be searched or played signed out, and the sign-in window with Spotify's own login page in it. Signed-in
 // behaviour (the playbar's testids, mediaSession, Connect) can't be checked without an account: test/spotify-engine-ui.js uses a stand-in.
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep screenshots.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

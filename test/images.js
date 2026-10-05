@@ -1,4 +1,5 @@
 // Pasting and dropping images into the Claude sidebar, through to the request Claude receives.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

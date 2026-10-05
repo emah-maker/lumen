@@ -2,6 +2,7 @@
 // one, the images APIs and the streamed chat form with fake clients, the saved store (encrypted, per chat, cleaned up), the
 // "draw a cat" request, web pictures, pictures a CLI engine names by path, markdown images, and how a made picture enters the
 // chat, its history and its export. Each backend is a row in the PR's audit table; the checks here are its evidence.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

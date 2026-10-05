@@ -3,6 +3,7 @@
 // no about:blank in its back list, Chrome's identity from its first request, its title and address in the strip; that
 // an address typed into the new-tab page lands in the same tab (Back returns to a new-tab page), a load that never
 // commits leaves the new-tab page as it was, and a restored tab wakes in it.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

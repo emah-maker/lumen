@@ -5,6 +5,7 @@
 // operating system sees a media session for the playing page (Windows: through the helper of features/apple-music-native.js with
 // its Apple filter off). Signed-in playback (a library, full songs, Widevine) can't be tried without an Apple account.
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep screenshots.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

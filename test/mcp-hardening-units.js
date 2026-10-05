@@ -3,6 +3,7 @@
 //    and that a valid challenge-response still works afterwards,
 //  - the HTTP endpoint (mcp-http.js startHttp): a handler that throws answers 500 instead of hanging, and does not reach
 //    the process's unhandledRejection.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const net = require('net');
 const os = require('os');

@@ -1,6 +1,7 @@
 // Claude Code's per-process temp folder (os.tmpdir()/lumen-cc-*, holding mcp.json with a bearer token) is removed when its
 // process ends (exit, kill, idle timeout, warm-pool eviction, quit) and never while the process runs; the start-up sweep
 // removes only old folders with exactly that name pattern. Plain Node: fake CLI processes, TEMP pointed at a scratch folder.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

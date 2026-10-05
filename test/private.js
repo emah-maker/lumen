@@ -5,6 +5,7 @@
 // are listed in that window only, never in Lumen's downloads list; nothing survives the window.
 // (test/windows.js covers the session, history, the AI's tools and restore; test/safe-browsing.js the
 // Safe Browsing warning in a private tab.)
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -4,6 +4,7 @@
 // Reopen Closed Tab; Cmd+Option+Arrows, Cmd+Shift+[ ], Ctrl+PageUp/Down, Cmd+1…9, Cmd+Shift+R and
 // Cmd+Shift+D; and the macOS menu bar's Tab menu. The menu is a native one, so the tests build its
 // template (global.__tabMenu) and click its items rather than popping it up.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

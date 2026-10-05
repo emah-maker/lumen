@@ -1,6 +1,7 @@
 // Private windows (features/private-window.js): Ctrl+Shift+N opens one; its cookies, history and
 // tabs stay out of the normal profile, the AI's tools and session restore; closing it clears its
 // session; and its UI bridge answers only its own window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

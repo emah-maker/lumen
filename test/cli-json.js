@@ -2,6 +2,7 @@
 // an API key: the argv gives no tools and no MCP servers, answers are parsed and shape-checked, and
 // real child processes (a fake CLI run by Node) are fed stdin, timed out and stopped. Plain Node, no
 // Electron, and nothing touches the user's own ~/.claude or ~/.grok.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

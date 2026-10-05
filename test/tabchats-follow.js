@@ -3,6 +3,7 @@
 // a message sent in B goes to that chat and the AI works in B; a tab C with a chat of its own still shows it;
 // closing a tab never takes a chat other tabs show; "One chat per tab" on gives the old behaviour (every tab starts empty).
 // LUMEN_SHOTS=<dir> also saves screenshots of the sidebar.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');

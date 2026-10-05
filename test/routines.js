@@ -5,6 +5,7 @@
 // 'resume'); never two copies at once; the concurrency cap; offline waits; approvals pause it with a
 // notification; a disabled routine doesn't run; history is capped; an AI-off start page fails clearly;
 // /routine and "Save as routine" open the editor; a private window can't reach the routines calls.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

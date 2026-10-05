@@ -1,5 +1,6 @@
 // Sign in with the Anthropic CLI: signed-in detection, a real install of `ant` from the official
 // release (checksum-verified), and the settings UI. The browser OAuth step itself needs a person.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const path = require('path');

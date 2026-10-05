@@ -7,6 +7,7 @@
 //  - Grok Build: the turn resolves on `result`, the process tree is killed in the background, and the prompt file, the sign-in
 //    copy-back and the next message's process all wait for its exit;
 //  - Codex: the turn resolves on turn.completed, the temp folder and the sign-in copy-back wait for the process, the next message too.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { EventEmitter } = require('events');
 const { PassThrough, Writable } = require('stream');
 const fs = require('fs');

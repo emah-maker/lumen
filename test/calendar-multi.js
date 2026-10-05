@@ -3,6 +3,7 @@
 // throwaway certificate; Lumen runs with a throwaway profile. Checks: the card shows one merged, time-ordered agenda with
 // each event's calendar colour and name, the legend toggles (remembered per card), a failing calendar gets a note while
 // the others show, an older single-address card is unchanged, and the Settings editor edits the list of calendars.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

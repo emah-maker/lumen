@@ -1,7 +1,10 @@
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 // Page context (Comet-style): each sidebar message carries the current tab's title, URL and text;
 // the "Using: <page>" chip shows which tab, follows tab switches, and can exclude the page.
 const { _electron: electron } = require('playwright-core');
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 
 (async () => {
@@ -19,7 +22,10 @@ const path = require('path');
 
   // Any existing file counts as an installed Claude Code (the engine itself is faked below), so the
   // claudecode case runs on machines without it, like the release builders.
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_CLAUDE_BIN: process.execPath, ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x', XAI_API_KEY: 'x', GEMINI_API_KEY: 'x', OPENROUTER_API_KEY: 'x' } });
+  // A fresh profile with several keys starts on Auto (main.js effectiveModel), which would route to a real provider; this suite stubs the Claude client, so it picks Claude.
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-pagecontext-'));
+  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ model: 'claude-opus-5' }));
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_CLAUDE_BIN: process.execPath, ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x', XAI_API_KEY: 'x', GEMINI_API_KEY: 'x', OPENROUTER_API_KEY: 'x' } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
