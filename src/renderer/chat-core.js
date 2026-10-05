@@ -1945,9 +1945,9 @@ async function reconcile() {
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
-  const live = Boolean(view.live);
-  if (view.id === shownChatId && live === running) return true;
-  if (!shownChatId && live === running) { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
+  const action = window.runState.reconcileAction(view, shownChatId, running);
+  if (action === 'keep') return true;
+  if (action === 'adopt') { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
@@ -1963,6 +1963,7 @@ messages.addEventListener('click', (e) => {
 
 new ResizeObserver(() => {
   chatRoot.style.setProperty('--composer-h', `${$('composer').offsetHeight}px`);
+  if ($('composer').offsetHeight && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
 
 function autosize() {
@@ -1988,6 +1989,15 @@ const prewarm = (force = false) => {
 };
 let prewarmSent = '';
 prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
+// A view that comes back (window focus, the page visible) asks main what runs.
+window.addEventListener('focus', () => { if (running) reconcile(); });
+let sidebarWasHidden = document.body.classList.contains('sidebar-hidden');
+new MutationObserver(() => {
+  const hidden = document.body.classList.contains('sidebar-hidden');
+  if (sidebarWasHidden && !hidden && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
+  sidebarWasHidden = hidden;
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && running) reconcile(); });
 prompt.addEventListener('focus', () => { prewarm(); if (running) reconcile(); }); // (a Stop button that belongs to another chat goes as soon as the box is used)
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
@@ -2012,7 +2022,12 @@ prompt.addEventListener('keydown', (e) => {
 });
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (running) { window.assistant.stop(); return; } // the button, while running, is Stop
+  if (running) {
+    // The Stop shown may be stale (the reply ended while this view was hidden and missed it): main's truth decides, and a
+    // click on a stale Stop is a Send. A really running reply is stopped.
+    const settled = await reconcile();
+    if (running) { if (settled) window.assistant.stop(); return; }
+  }
   sendComposer();
 });
 sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
