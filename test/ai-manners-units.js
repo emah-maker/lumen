@@ -114,6 +114,33 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('tool layer: once the user takes the tab, the AI is refused again', /Hands-off mode is on/.test(await refused(() => inTab(1, () => ask('click', { element_id: 1 }))) || ''));
   }
 
+
+  // [mcp] An outside agent in its own window with "Agents in their own window don't ask" on acts without a card;
+  // without the flag it still asks, and the user's own blocks still refuse.
+  {
+    const state = { active: 1, open: new Set([1, 2]), ai: new Set(), handsOff: false };
+    const agent = newAgent(state);
+    const signal = new AbortController().signal;
+    let cards = 0;
+    agent.askApproval = async () => { cards++; return false; };
+    const chat = () => { const m = []; m.settings = { model: 'claude-opus-5' }; return m; };
+    const inTab = (id, fn) => agent.inTask(id, signal, fn, chat());
+    const outside = (noAsk) => ({ hosts: new Set(), who: 'Codex', external: true, noAsk, input: { element_id: 1 }, run: { tainted: false } });
+    check('own-window agents: autoAllows is on for noAsk, off for an outside agent without it', agent.autoAllows({ external: true, noAsk: true }) === true && agent.autoAllows({ external: true }) === false);
+    const quiet = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
+    check('own-window agents: a click with noAsk runs with no card', quiet === null && cards === 0, `${quiet} cards=${cards}`);
+    const asked = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(false))));
+    check('own-window agents: without noAsk an outside agent still gets a card', cards === 1 && /did not allow Codex/.test(asked || ''), `${asked} cards=${cards}`);
+    state.off = new Set([1]);
+    const kept = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
+    check('own-window agents: noAsk never gets past a tab the user keeps the AI off', /kept the AI off this tab/.test(kept || ''), kept);
+    state.off = new Set();
+    state.handsOff = true;
+    const hands = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
+    check('own-window agents: noAsk never gets past hands-off mode', /Hands-off mode is on/.test(hands || ''), hands);
+    const src = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8');
+    check('own-window agents: noAsk is set only for a call in the agent\'s own window, from the setting (on unless turned off)', /noAsk: Boolean\(agentRec\) && agentsNoAsk\(\)/.test(src) && /readSettings\(\)\.agentsNoAsk !== false/.test(src));
+  }
   // The system prompt names the mode, so the model plans around it
   {
     const { systemFor } = require('../src/ai/agent');

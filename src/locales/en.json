@@ -1641,6 +1641,8 @@
   "welcome.default.devBuild": "This copy runs from source: use an installed Lumen to make it the default.",
   "welcome.default.ask": "Want links from other apps to open here?",
   "settings.default.button": "Make default",
+  "settings.ai.agentsNoAsk": "Agents in their own window don’t ask",
+  "settings.ai.agentsNoAskDesc": "A connected agent clicks, types and opens sites in its own Lumen window without asking you first, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach. Turn this off to approve each new site.",
   "settings.ai.handsOff": "Don’t let the AI act on my pages",
   "settings.ai.handsOffDesc": "The AI can read pages you share but won’t click, type or navigate in your tabs, and the Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.",
   "settings.ai.stayOnMyTab": "Never switch away from my tab",
