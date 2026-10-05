@@ -14,6 +14,7 @@ const { requestedHints, withHints } = require('../browser/chrome-identity');
 const { createSiteZoom } = require('../features/site-zoom');
 const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
+const permissionMode = require('../features/permission-mode'); // [bypass permissions]
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -21,7 +22,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ask-before-acting', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
   'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
   'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
@@ -130,6 +131,8 @@ const DEFAULTS = {
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
   agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
+  askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
+  bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
@@ -309,7 +312,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p) };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -643,12 +646,19 @@ function create(deps) {
       case 'performanceMode': deps.performance?.refresh(); break;
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'aiHandsOff', 'hideAiTabs'].includes(key)) (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key)) (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
   async function set(key, value) {
+    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI's Ask / Auto-allow / Bypass choice: both settings change together
+      const patch = permissionMode.patchOf(value);
+      if (!patch) throw new Error(`Invalid value for ${key}`);
+      writeSettings({ ...readSettings(), ...patch });
+      await apply('bypassPermissions');
+      return state();
+    }
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
@@ -664,7 +674,7 @@ function create(deps) {
   function state() {
     const p = prefs();
     return {
-      prefs: p,
+      prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
       accent: accentOf(p.accentColor), // [look]

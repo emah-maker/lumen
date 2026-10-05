@@ -3272,38 +3272,110 @@ function finishReply(bubble, source, { latest = false } = {}) {
   bubble.append(button);
 }
 
-// ---------- auto-allow actions: the sidebar's AI acts on any site without asking ----------
+// ---------- permissions: how much the sidebar's AI asks (the bolt in the sidebar head) ----------
+// Three levels (features/permission-mode.js): Ask (default), Auto-allow actions (no per-site cards), Bypass permissions (every
+// approval card is answered allow, and a step says so; agent.js askApproval). The bolt opens a small menu; turning a level up takes
+// a second click on the same line within 4 s, turning it down takes one. The composer shows a badge while Bypass is on.
 
-let autoAllow = false;
-function renderAutoAllow() {
-  const button = $('auto-allow');
-  button.setAttribute('aria-pressed', String(autoAllow));
-  button.title = autoAllow
-    ? t('sidebar.autoAllow.on')
-    : t('sidebar.autoAllow.off');
+const PERM_MODES = ['ask', 'auto', 'bypass'];
+let permMode = 'ask';
+let permArmed = null; // { mode, timer }: the level waiting for its confirming click
+const permMenu = Object.assign(document.createElement('div'), { className: 'perm-menu', id: 'perm-menu', hidden: true });
+permMenu.setAttribute('role', 'menu');
+permMenu.setAttribute('aria-label', t('sidebar.perm.title'));
+const permItems = new Map();
+for (const mode of PERM_MODES) {
+  const item = Object.assign(document.createElement('button'), { type: 'button', className: 'perm-item', id: `perm-${mode}` });
+  item.dataset.mode = mode;
+  item.setAttribute('role', 'menuitemradio');
+  item.innerHTML = '<span class="perm-name"></span><span class="perm-desc"></span>';
+  item.onclick = () => chooseMode(mode);
+  permItems.set(mode, item);
+  permMenu.append(item);
 }
-async function setAutoAllow(on) {
-  autoAllow = Boolean(await window.assistant.autoAllow?.(on));
-  renderAutoAllow();
+permMenu.append(Object.assign(document.createElement('p'), { className: 'perm-note', id: 'perm-note', textContent: t('sidebar.perm.note') }));
+const permButton = $('auto-allow');
+(permButton.closest('.sidebar-head') || permButton.parentElement).append(permMenu);
+permButton.setAttribute('aria-haspopup', 'menu');
+permButton.setAttribute('aria-expanded', 'false');
+
+// The composer's persistent indicator: only while Bypass is on; it opens the setting.
+const permBadge = document.createElement('button');
+permBadge.type = 'button';
+permBadge.className = 'bypass-badge';
+permBadge.id = 'bypass-badge';
+permBadge.hidden = true;
+permBadge.title = t('composer.bypass.title');
+permBadge.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg><span></span>';
+permBadge.lastChild.textContent = t('composer.bypass');
+permBadge.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('ask-before-acting'));
+$('hands-off')?.after(permBadge);
+
+function disarmPerm() {
+  if (permArmed) clearTimeout(permArmed.timer);
+  permArmed = null;
 }
-// Turning on "act on any site without asking" takes a second click within 4 s (turning it off takes one).
-let autoArmed = 0;
-$('auto-allow').onclick = () => {
-  const btn = $('auto-allow');
-  if (autoAllow) { setAutoAllow(false); return; }
-  if (!autoArmed) {
-    btn.classList.add('armed');
-    btn.title = t('sidebar.autoAllow.confirm');
-    btn.dataset.confirm = t('sidebar.autoAllow.confirm');
-    autoArmed = setTimeout(() => { autoArmed = 0; btn.classList.remove('armed'); renderAutoAllow(); }, 4000);
+function renderPerm() {
+  permButton.dataset.mode = permMode;
+  permButton.setAttribute('aria-pressed', String(permMode !== 'ask'));
+  permButton.title = t(`sidebar.perm.btn.${permMode}`);
+  permBadge.hidden = permMode !== 'bypass';
+  for (const [mode, item] of permItems) {
+    const armed = permArmed?.mode === mode;
+    item.setAttribute('aria-checked', String(mode === permMode));
+    item.classList.toggle('armed', armed);
+    item.classList.toggle('danger', mode === 'bypass');
+    item.querySelector('.perm-name').textContent = t(`sidebar.perm.${mode}`);
+    item.querySelector('.perm-desc').textContent = armed ? t('sidebar.perm.confirm') : t(`sidebar.perm.${mode}.desc`);
+  }
+}
+async function setPermMode(mode) {
+  const got = await window.assistant.permissionMode?.(mode);
+  permMode = PERM_MODES.includes(got) ? got : permMode;
+  renderPerm();
+}
+function chooseMode(mode) {
+  if (mode === permMode) { closePermMenu(); return; }
+  const raising = PERM_MODES.indexOf(mode) > PERM_MODES.indexOf(permMode);
+  if (raising && permArmed?.mode !== mode) {
+    disarmPerm();
+    permArmed = { mode, timer: setTimeout(() => { permArmed = null; renderPerm(); }, 4000) };
+    renderPerm();
     return;
   }
-  clearTimeout(autoArmed);
-  autoArmed = 0;
-  btn.classList.remove('armed');
-  setAutoAllow(true);
-};
-window.assistant.autoAllow?.().then((on) => { autoAllow = Boolean(on); renderAutoAllow(); });
+  disarmPerm();
+  setPermMode(mode);
+  closePermMenu();
+}
+function openPermMenu() {
+  permMenu.hidden = false;
+  permButton.setAttribute('aria-expanded', 'true');
+  renderPerm();
+  permItems.get(permMode)?.focus();
+}
+function closePermMenu(refocus = true) {
+  if (permMenu.hidden) return;
+  permMenu.hidden = true;
+  disarmPerm();
+  permButton.setAttribute('aria-expanded', 'false');
+  renderPerm();
+  if (refocus) permButton.focus();
+}
+permButton.onclick = () => (permMenu.hidden ? openPermMenu() : closePermMenu());
+document.addEventListener('mousedown', (e) => { if (!permMenu.hidden && !permMenu.contains(e.target) && !permButton.contains(e.target)) closePermMenu(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !permMenu.hidden) { e.preventDefault(); closePermMenu(); } });
+permMenu.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = [...permItems.values()];
+  const at = items.indexOf(document.activeElement);
+  items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+});
+// A card's "Allow on all sites" turns Auto-allow on (it never lowers Bypass).
+const setAutoAllow = (on) => setPermMode(on ? 'auto' : 'ask');
+window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permMode = e.detail; renderPerm(); } }); // Settings → AI changed it
+window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permMode = mode; renderPerm(); });
+renderPerm();
 
 // ---------- inline approval before Claude acts on a new site ----------
 
@@ -9273,6 +9345,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (stripCue) { stripCue.hidden = !p.handsOff; cueTitle(); }
     const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
+    if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
     accent = p.accent || null;
     applyAccent();
   };

@@ -14,7 +14,7 @@ The AI can never name a file on your computer. A page can try to talk the AI int
 - **Acting rules apply first.** `upload_file` is an acting tool like `click`: a site with AI turned off, a tab you keep the AI from acting on, and hands-off mode all refuse it before any card, for every engine and for outside agents.
 - **Site approval.** The first action on a site in a chat asks as usual ("Allow … to interact with <site>?").
 - **Upload card.** The first upload of attached files to a site in a chat shows a card with the file names and the site: **Upload** or **Don't upload**. Allowing it covers further uploads of your attached files to that site until you start a new chat; each later upload is a step in the reply naming the files and the site. Uploads are listed under what **Undo** can't take back.
-- **Auto-allow and "Agents in their own window don't ask"** skip the site approval and the upload card for files you attached. They never skip the need for you to have attached or picked the file, and never skip the **Choose file…** card.
+- **Auto-allow and "Agents in their own window don't ask"** skip the site approval and the upload card for files you attached. They never skip the need for you to have attached or picked the file, and never skip the **Choose file…** card. **Bypass permissions** also answers the upload card for you (a step says so); it still never picks a file for you, so with no attached file the **Choose file…** card appears as usual, and a path the model names is still refused.
 - Outside agents (MCP) have no chat, so they have no attached files: for them `upload_file` always asks you to choose. Background tasks don't have the tool.
 
 ## How it works

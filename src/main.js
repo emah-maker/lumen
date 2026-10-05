@@ -94,6 +94,7 @@ const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html'
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
+const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
@@ -208,7 +209,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set',
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
@@ -6477,6 +6478,7 @@ const agent = new Agent({
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
+  bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
@@ -7669,8 +7671,22 @@ aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).
 ipcMain.handle('agent:auto-allow', (_e, on) => {
-  if (typeof on === 'boolean') writeSettings({ ...readSettings(), askBeforeActing: !on });
+  if (typeof on === 'boolean') {
+    const was = permissionModes.modeOf(readSettings());
+    if (!(on === false && was === 'bypass')) writeSettings({ ...readSettings(), ...permissionModes.patchOf(on ? 'auto' : 'ask') }); // (a card's "Allow on all sites" never lowers Bypass)
+    try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
+  }
   return readSettings().askBeforeActing === false;
+});
+// [bypass permissions] The bolt menu in the sidebar head (and Settings → AI): 'ask' | 'auto' | 'bypass'. No argument: just read it.
+// Both views follow through prefs:ui. Bypass answers every approval card allow (agent.js askApproval); see features/permission-mode.js.
+ipcMain.handle('agent:permission-mode', (_e, mode) => {
+  const patch = permissionModes.patchOf(mode);
+  if (patch) {
+    writeSettings({ ...readSettings(), ...patch });
+    try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
+  }
+  return permissionModes.modeOf(readSettings());
 });
 
 // The model the picker shows and the agent uses: one answer, so they can never disagree. A saved
