@@ -135,7 +135,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('own-window agents: without noAsk an outside agent still gets a card', cards === 1 && /did not allow Codex/.test(asked || ''), `${asked} cards=${cards}`);
     state.off = new Set([1]);
     const kept = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
-    check('own-window agents: noAsk never gets past a tab the user keeps the AI off', /kept the AI off this tab/.test(kept || ''), kept);
+    check('own-window agents: noAsk never gets past a tab the user keeps the AI from acting on', /keeps the AI from acting on this tab/.test(kept || ''), kept);
     state.off = new Set();
     state.handsOff = true;
     const hands = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
