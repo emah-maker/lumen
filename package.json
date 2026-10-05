@@ -37,7 +37,7 @@
     "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.15.3",
     "eslint": "^10.11.0",
-    "globals": "^17.12.0",
+    "globals": "^17.13.0",
     "playwright-core": "^1.63.0"
   },
   "author": "Lumen",
