@@ -15,6 +15,7 @@ const KINDS = {
   todoist: ['Todoist', 'Your tasks'],
   feed: ['Headlines', 'News from an RSS or Atom feed'],
   spotify: ['Spotify', 'What is playing, with play and skip'],
+  applemusic: ['Apple Music', 'The Apple Music web player'],
   gmail: ['Gmail', 'Unread count and latest messages'],
   slack: ['Slack', 'Unread direct messages, mentions and channels'],
   github: ['GitHub', 'Review requests, assigned items, notifications'],
@@ -30,7 +31,7 @@ const KINDS = {
   embed: ['Web page', 'Any page that allows being shown in a frame'],
 };
 // The order the Add widget picker lists them in: everyday first, accounts and keys after.
-const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
+const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
 
 const kindName = (type) => (KINDS[type] ? KINDS[type][0] : String(type || 'Widget'));
 const kindHint = (type) => (KINDS[type] ? KINDS[type][1] : 'Set up in Settings');
@@ -146,6 +147,7 @@ function widgetSummary(w, ctx = {}) {
       case 'countdown': { const c = w.cd || {}; parts.push([c.date, c.time].filter(Boolean).join(' ') || 'No date yet'); break; }
       case 'timer': { const t = w.tm || {}; parts.push(t.pomodoro === false ? `${t.work || 25} minutes` : `${t.work || 25} min focus · ${t.rest || 5} min break`); break; }
       case 'aistatus': parts.push('Ready, working and limits'); break;
+      case 'applemusic': parts.push('Web player'); break;
       case 'custom': { const r = w.recipe || {}; parts.push(host(r.url) || 'No recipe yet'); if (r.every) parts.push(`every ${r.every} min`); break; }
       case 'muse': {
         if (!acct.connected) { parts.push(acct.text); break; }

@@ -88,6 +88,7 @@ const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which cha
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
+const AMW = require('./features/apple-music-web'); // [widgets] the Apple Music widget: music.apple.com in a view over the card (same view code, features/web-player.js)
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -851,7 +852,7 @@ function setupPermissions() {
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
-    if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
+    if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
     if (SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked())) return callback(true);
@@ -880,7 +881,7 @@ function setupPermissions() {
   });
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
-    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
   SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
@@ -1673,15 +1674,16 @@ function layout() {
     }
   }
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
+  appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
   raiseOverlays();
 }
 const { overlaysToRaise } = require('./features/overlay-order');
-// Layering (bottom to top): the UI view, tab views, Spotify card, suggestions, downloads panel, tool overlay, dialogs. A tab view added later
+// Layering (bottom to top): the UI view, tab views, Spotify and Apple Music cards, suggestions, downloads panel, tool overlay, dialogs. A tab view added later
 // (a new tab, a woken one) lands above an overlay that is showing and would hide it; put those back on top, in order.
 function raiseOverlays() {
   if (!win || win.isDestroyed()) return;
-  // Fixed order, bottom to top: spotify, suggestions, downloads, tool overlay (dialogs: dialogs.raise below).
-  const order = [spotifyWeb.view(), suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  // Fixed order, bottom to top: spotify, apple music, suggestions, downloads, tool overlay (dialogs: dialogs.raise below).
+  const order = [spotifyWeb.view(), appleMusicWeb.view(), suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
   // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
   for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
@@ -6751,6 +6753,9 @@ const widgets = createWidgets({
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   spotifyWebStatus: () => spotifyWeb.status(),
   spotifyWebReload: () => spotifyWeb.reload(),
+  appleMusicWebSignedIn: () => appleMusicWeb.isSignedIn(),
+  appleMusicWebStatus: () => appleMusicWeb.status(),
+  appleMusicWebReload: () => appleMusicWeb.reload(),
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
@@ -6799,21 +6804,24 @@ function tradingviewAccountLists() {
     req.end();
   });
 }
-// [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
-const spotifyWeb = SW.createSpotifyWeb({
+// [widgets] The music cards' Web players (features/web-player.js): the Spotify widget's (features/spotify-web.js) and the
+// Apple Music widget's (features/apple-music-web.js), one persistent view each, in the normal session.
+const musicWebDeps = (hasWidget, testUrl, drmProbe) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
   getBounds: () => contentBounds,
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
-  hasWidget: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'),
+  hasWidget,
   openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
   onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   onStatus: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); }, // loading, offline, no Widevine: the card says which
-  testUrl: () => (TEST && global.__spotifyWebUrl) || '', // tests serve a stand-in for open.spotify.com; nothing else can
-  drmProbe: (wc) => (TEST && global.__spotifyDrmProbe ? global.__spotifyDrmProbe(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
+  testUrl: () => (TEST && testUrl()) || '', // tests serve a stand-in for the site; nothing else can
+  drmProbe: (wc) => (TEST && drmProbe() ? drmProbe()(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
-if (TEST) global.__spotifyWeb = spotifyWeb;
-app.on('before-quit', () => spotifyWeb.destroy());
+const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe));
+const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe));
+if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
+app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicWeb.destroy(); });
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
 // Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,

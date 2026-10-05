@@ -1,5 +1,5 @@
 // [widgets] Adding and editing widgets on the new-tab page itself, for the kinds with no key, sign-in
-// or private address (features/widgets.js INLINE: Notes, Countdown, Timer, TradingView, Custom, Web
+// or private address (features/widgets.js INLINE: Notes, Countdown, Timer, Apple Music, TradingView, Custom, Web
 // page). The form is a small dialog; Save sends its input as ?widget=<id|wcreate>&do=setup&cfg=<json>
 // (the browser cancels that navigation), main.js checks it exactly as Settings would and answers
 // through window.widgetSetupResult({ ok, message, id }). Weather, World clock, Calendar and Feed are edited
@@ -10,9 +10,9 @@
 (function () {
 'use strict';
 
-const KINDS = ['notes', 'countdown', 'timer', 'aistatus', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
+const KINDS = ['notes', 'countdown', 'timer', 'aistatus', 'applemusic', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
 const EDIT_ONLY = ['crypto']; // edited here, added in Settings (the optional key lives there)
-const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
+const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', applemusic: 'Apple Music', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
 const CLOCKS = [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 // features/feed.js PRESETS (test/widget-config-units.js keeps the two lists the same).
 const FEEDS = [['bloomberg-markets', 'Bloomberg Markets'], ['bloomberg-technology', 'Bloomberg Technology'], ['bloomberg-politics', 'Bloomberg Politics'], ['hn', 'Hacker News'], ['hn-frontpage', 'Hacker News (hnrss.org)'], ['npr', 'NPR News']];
@@ -81,6 +81,7 @@ const bool = (v) => v === 'on';
 const FORMS = {
   notes: () => ({ nodes: [el('p', 'ws-note', 'Type straight on the card. It saves as you go and stays on this computer.')], read: () => ({}) }),
   aistatus: () => ({ nodes: [el('p', 'ws-note', 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer.')], read: () => ({}) }),
+  applemusic: () => ({ nodes: [el('p', 'ws-note', 'Shows Apple Music’s web player (music.apple.com). Sign in there once; Lumen never sees your Apple ID or password.')], read: () => ({}) }),
   countdown(s) {
     const cd = s.cd || {};
     const label = input('text', cd.label, { maxlength: '60', placeholder: 'Vacation' });
