@@ -438,6 +438,7 @@ function create(deps) {
       anthropicAuth: () => deps.anthropicAuth?.(),
       aiOff: (url) => deps.aiOff?.(url),
       autoApprove: () => false, // never, whatever the sidebar's switch says
+      bypassPermissions: () => false, // [bypass permissions] nor this: nobody is there to watch an unattended task
       maxSteps: () => (rt.kind === 'judge' ? 8 : bg.backgroundStepLimit(deps.maxSteps?.())),
     };
   }

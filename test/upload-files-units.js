@@ -176,7 +176,7 @@ const OTHER = '0123456789abcdef';
 
   // ---- the tool layer, with a stand-in tab
   {
-    const state = { url: 'https://jobs.example.com/apply', aiOff: new Set(), off: new Set(), handsOff: false, auto: false, probe: null, calls: [], report: null };
+    const state = { url: 'https://jobs.example.com/apply', aiOff: new Set(), off: new Set(), handsOff: false, auto: false, bypass: false, probe: null, calls: [], report: null };
     const probeOf = (over) => ({ status: 'input', how: 'input', label: 'Resume', tag: 'input', accept: '.pdf', multiple: false, disabled: false, directory: false, ...over });
     state.probe = probeOf();
     const dbg = {
@@ -196,7 +196,7 @@ const OTHER = '0123456789abcdef';
     const browser = {
       activeTab: () => tab, tabById: (id) => (id === 1 ? tab : null), listTabs: () => [{ id: 1, title: 't', url: state.url, active: true }],
       effectiveModel: (m) => m, aiOff: (url) => state.aiOff.has(new URL(url).host), noTabReason: () => 'No tab open.', maxSteps: () => 0,
-      autoApprove: () => state.auto, handsOff: () => state.handsOff, isAiTab: () => false, tabOff: (id) => state.off.has(id), typingText: () => '',
+      autoApprove: () => state.auto, bypassPermissions: () => state.bypass, handsOff: () => state.handsOff, isAiTab: () => false, tabOff: (id) => state.off.has(id), typingText: () => '',
     };
     const agent = new Agent(browser, () => null, () => ({ model: 'claude-opus-5' }));
     agent.closeSignedInTabs = () => {};
@@ -220,7 +220,7 @@ const OTHER = '0123456789abcdef';
     }, chatMessages(), null, chat ? { chatId: chat, hosts } : { hosts });
     const cards = () => events.filter((e) => e.type === 'approval' && /^upload/.test(e.action));
     const sets = () => state.calls.filter(([m]) => m === 'DOM.setFileInputFiles');
-    const reset = () => { events.length = 0; state.calls.length = 0; hosts = new Set(); state.aiOff.clear(); state.off.clear(); state.handsOff = false; state.auto = false; state.probe = probeOf(); state.report = null; answerCards = (card) => { agent.resolveApproval(card.approvalId, true); }; };
+    const reset = () => { events.length = 0; state.calls.length = 0; hosts = new Set(); state.aiOff.clear(); state.off.clear(); state.handsOff = false; state.auto = false; state.bypass = false; state.probe = probeOf(); state.report = null; answerCards = (card) => { agent.resolveApproval(card.approvalId, true); }; };
 
     // refusals that come before anything is asked or set
     reset();
@@ -304,6 +304,42 @@ const OTHER = '0123456789abcdef';
     check('without files the user is asked to choose one: the card carries the field\'s label and accepted types', pick.length === 1 && pick[0].action === 'upload-pick' && pick[0].upload.label === 'Resume' && pick[0].upload.accept === '.pdf' && pick[0].upload.multiple === false && pick[0].upload.acceptText === 'PDF', J(pick));
     check('the picked file is what is set, and the model learns only its name', sets().length === 1 && sets()[0][1].files[0] === path.join(tmp, 'chosen.pdf') && /chosen\.pdf/.test(out) && !out.includes(tmp), out);
     check('the picker is not skipped by auto-allow or noAsk', await (async () => { reset(); state.auto = true; answerCards = (card) => agent.resolveApproval(card.approvalId, false); const m = await refused(() => call({ element_id: 1 }, { noAsk: true })); return /declined to choose a file/.test(m || '') && cards().length === 1 && sets().length === 0; })());
+    // [bypass permissions] The upload card for a file the user attached is allowed by itself (with a step); the picker, the
+    // attached-files-only rule and the user's own blocks are not.
+    reset();
+    state.bypass = true;
+    out = await call({ element_id: 1, files: [pdfRef] });
+    const autoUp = events.filter((e) => e.type === 'tool' && e.name === 'auto_allowed');
+    check('bypass on: an attached file uploads with no card, and a step says "Allowed automatically: upload resume.pdf to jobs.example.com"', cards().length === 0 && sets().length === 1 && autoUp.some((e) => /Allowed automatically: upload resume\.pdf to jobs\.example\.com/.test(e.label)), J({ cards: cards(), autoUp }));
+    reset();
+    state.bypass = true;
+    answerCards = (card) => agent.resolveApproval(card.approvalId, false);
+    msg = await refused(() => call({ element_id: 1 }));
+    check('bypass on: with no attached file the "Choose file…" card still appears, and nothing is uploaded without a pick', cards().length === 1 && cards()[0].action === 'upload-pick' && /declined to choose a file/.test(msg || '') && sets().length === 0, J({ cards: cards(), msg }));
+    reset();
+    state.bypass = true;
+    answerCards = (card) => { const f = path.join(tmp, 'bypass-chosen.pdf'); fs.writeFileSync(f, '%PDF b'); agent.pickUpload(card.approvalId, [f]); };
+    out = await call({ element_id: 1 });
+    check('bypass on: a file the user picks is uploaded, and the model learns only its name', cards().length === 1 && sets().length === 1 && /bypass-chosen\.pdf/.test(out) && !out.includes(tmp), out);
+    reset();
+    state.bypass = true;
+    msg = await refused(() => call({ element_id: 1, files: ['C:\\x\\y.pdf'] }));
+    check('bypass on: a path the model names is still not a file ref (uploads only use attached or picked files)', /not a file ref/.test(msg || '') && sets().length === 0, msg);
+    reset();
+    state.bypass = true;
+    state.aiOff.add('jobs.example.com');
+    msg = await refused(() => call({ element_id: 1, files: [pdfRef] }));
+    check('bypass on: a site with AI off still refuses the upload', /turned off AI on/.test(msg || '') && sets().length === 0, msg);
+    reset();
+    state.bypass = true;
+    state.off.add(1);
+    msg = await refused(() => call({ element_id: 1, files: [pdfRef] }));
+    check('bypass on: a tab kept off still refuses the upload', /keeps the AI from acting on this tab/.test(msg || '') && sets().length === 0, msg);
+    reset();
+    state.bypass = true;
+    state.handsOff = true;
+    msg = await refused(() => call({ element_id: 1, files: [pdfRef] }));
+    check('bypass on: hands-off mode still refuses the upload', /Hands-off mode is on/.test(msg || '') && sets().length === 0, msg);
     reset();
     answerCards = (card) => agent.resolveApproval(card.approvalId, false);
     msg = await refused(() => call({ element_id: 1 }));

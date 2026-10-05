@@ -990,6 +990,23 @@ const hostOf = (url) => {
 };
 const quote = (s, max = 40) => `“${s.length > max ? `${s.slice(0, max - 1)}…` : s}”`;
 
+// [bypass permissions] The step shown for a card that was answered allow by itself: what the card asked, in a few words.
+// Cards that carry a "<who> wants to <what>" title say it in their own words; the rest are named by their action.
+function bypassLabel(host, { action = 'interact', who = null, title = null, query = null, args = null } = {}) {
+  const wants = (text) => (/^.{1,40}? wants to (.+)$/s.exec(String(text || '')) || [])[1];
+  const clip = (text, max) => (String(text).length > max ? `${String(text).slice(0, max - 1)}…` : String(text));
+  let what;
+  if (action === 'pdf') what = `reading ${host}`;
+  else if (action === 'signin') what = `using your signed-in ${host} account`;
+  else if (action === 'script') what = `running a script on ${host}`;
+  else if (action === 'terminal') what = `${wants(title) || 'run a terminal command'}${args ? `: ${clip(String(args).replace(/\s+/g, ' ').trim(), 80)}` : ''}`;
+  else if (action === 'open' && String(host).startsWith('image prompt:')) what = 'sending a picture request to an image AI';
+  else if (action === 'open' && query !== null && query !== undefined && !wants(title)) what = `sending “${clip(query, 60)}” to the web`;
+  else if (action === 'open' || action === 'tool' || action === 'upload') what = wants(title) || (action === 'open' ? `open ${host}` : `${action} ${host}`);
+  else what = `${who || 'Claude'} interacting with ${host}`;
+  return `Allowed automatically: ${what}`;
+}
+
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
 async function readInBackground(url, guard = () => null) {
@@ -2974,7 +2991,7 @@ ${prompt}` : prompt), historyImages: [] };
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
       if (!host || hosts.has(keyOf(host))) return;
-      const ok = this.autoAllows(gate) ? true : await this.askApproval(host, emit, signal, scripted ? { action: 'script', who } : undefined);
+      const ok = this.autoAllows(gate) ? true : await this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who });
       if (!ok) throw new Error(scripted
         ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
         : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
@@ -3214,6 +3231,13 @@ ${prompt}` : prompt), historyImages: [] };
     return Boolean(noAsk) || (!external && Boolean(this.browser.autoApprove?.()));
   }
 
+  // [bypass permissions] Settings → AI → "Bypass permissions" (the bolt menu in the sidebar head): askApproval answers every card
+  // "allow" itself, for every engine and for outside agents too, and shows a step saying what it allowed. Only the card that needs
+  // the user's hands (the "Choose file…" picker) still asks. A background task never bypasses (nobody is there to watch).
+  bypassOn() {
+    return Boolean(this.browser.bypassPermissions?.());
+  }
+
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
   // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
   // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
@@ -3259,7 +3283,7 @@ ${prompt}` : prompt), historyImages: [] };
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
         host = parsed.host;
       } catch { return; }
-      if (gate.hosts.has(host) || this.autoAllows(gate)) return;
+      if (gate.hosts.has(host) || this.autoAllows(gate) || this.bypassOn()) return;
       event.preventDefault();
       blocked ||= { url, host };
     };
@@ -3454,10 +3478,20 @@ ${out.text}${note}
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null } = {}) {
+    // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
+    // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
+    if (action !== 'upload-pick' && this.bypassOn()) {
+      const id = `auto-allow-${++this.approvalSeq}`;
+      try {
+        emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });
+        emit({ type: 'tool_done', id, ok: true });
+      } catch { /* a closed view: the allow still stands */ }
+      return Promise.resolve(true);
+    }
     const approvalId = ++this.approvalSeq;
     emit(action === 'upload' || action === 'upload-pick' // [uploads] the files and field the card is about (see uploadFile)
       ? { type: 'approval', approvalId, host, action, title, upload }
-      : action === 'tool' // [mcp client] a tool from an MCP server the user added
+      : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
       ? { type: 'approval', approvalId, host, action, title, args, tainted }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }

@@ -105,7 +105,8 @@ These are set from the sidebar rather than the settings page:
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|
-| Ask before acting on a new site | `askBeforeActing` | on | Off means the sidebar AI may act on any site without an approval card. Outside agents (MCP) are always asked. |
+| Ask before acting on a new site | `askBeforeActing` | on | Off means the sidebar AI may act on any site without an approval card (the bolt menu's **Auto-allow actions**). Outside agents (MCP) are asked unless they work in their own window. |
+| Bypass permissions | `bypassPermissions` | off | Every approval card is answered Allow for you (a PDF, a signed-in account, an upload of a file you attached, an MCP tool, Grok Build's terminal commands, new sites, leaving with what it read), for the sidebar AI on every model and for connected agents, and each one shows as a step ("Allowed automatically: …"). Chosen from the bolt menu in the sidebar head or Settings → AI → **Asking before it acts** (**Ask** / **Auto-allow actions** / **Bypass permissions**); the three levels are one choice. Sites with AI off, tabs kept off and hands-off mode still apply, uploads still use only files you attached or picked, and the **Choose file…** card still waits for you. Background tasks never bypass. |
 | Using: *page* | `pageContext` | on | Sends the current page to the sidebar AI with each message. |
 
 ## Appearance
