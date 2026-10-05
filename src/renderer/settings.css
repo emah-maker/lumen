@@ -311,6 +311,7 @@ body.interstitial { display: block; }
 .wi-calendar { background: linear-gradient(160deg, #ff6b6b, #ff3b30); }
 .wi-todoist { background: linear-gradient(160deg, #f0735f, #db4c3f); }
 .wi-spotify { background: linear-gradient(160deg, #2fd066, #1a9a48); }
+.wi-applemusic { background: linear-gradient(160deg, #ff6b81, #fa233b); }
 .wi-gmail { background: linear-gradient(160deg, #ea6a5e, #c5372c); }
 .wi-github { background: linear-gradient(160deg, #57606a, #24292f); }
 .wi-feed { background: linear-gradient(160deg, #ffb340, #e8850c); }

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New Apple Music widget.** Add it from the new-tab page's Add widget menu (or Settings) to get Apple Music's web player (music.apple.com) as a card. Apple doesn't allow being framed, so, like the Spotify Web player, the page is shown in a view laid over the card; it keeps playing when you leave the new-tab page. Sign in on Apple's own site once, in the card or from the "Open in a tab to sign in" button; Lumen never sees your Apple ID or password. Sound needs Lumen's Widevine component, and the card says so when it isn't there yet. Spotify's Web player and this card now share one piece of code and can both be on the page.
+
 ## 0.5.12 (2026-10-04)
 
 - **Math in replies lines up and renders more often.** A long formula in a sentence ("Revolutions: N = 90 rev/min × 1 min = 90 rev.") sat raised above the words around it; it now sits on the line. A formula that starts with a relation ("Work $= 2\pi N\tau \approx 15{,}834$ ft·lbf") used to show its raw LaTeX; it is typeset now.

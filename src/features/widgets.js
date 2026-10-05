@@ -58,6 +58,7 @@ const ST = require('./widget-stacks'); // several same-size widgets in one place
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = lazy(() => require('./spotify-view'));
 const SW = lazy(() => require('./spotify-web'));
+const AM = lazy(() => require('./apple-music-web'));
 const GV = lazy(() => require('./gmail-view'));
 const SL = lazy(() => require('./slack-view'));
 const OA = lazy(() => require('./oauth'));
@@ -99,6 +100,7 @@ const ENDPOINTS = {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
+  applemusic: () => ({}),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -865,6 +867,20 @@ const CONNECTORS = {
     present: (c, d, ctx) => ctx.aiStatus(),
   },
 
+  // Apple Music (features/apple-music-web.js): music.apple.com in a view over the card, like the Spotify widget's Web
+  // player. No account, key or request from here: the user signs in on Apple's own site, and the card only learns from
+  // main.js (present) whether that site is signed in and what its view is doing.
+  applemusic: {
+    label: 'Apple Music',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' }; },
+    title: () => 'Apple Music',
+    summary: () => 'Apple Music web player',
+    async fetch() { return { url: AM.WEB_URL }; },
+    present: (c, d, ctx) => ({ ...d, signedIn: ctx.appleMusicSignedIn, view: ctx.appleMusicView || null }),
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -1259,6 +1275,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         appleMusicWebSignedIn()?, appleMusicWebStatus()?, appleMusicWebReload()? (the same three for the Apple Music card),
 //         spotifyWebStatus()? ({ state: 'loading'|'ready'|'offline'|'failed', drm: 'unknown'|'ok'|'missing' }: the Web player's view), spotifyWebReload()?,
 //         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
@@ -1539,7 +1556,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -2187,7 +2204,8 @@ function createWidgets(deps) {
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     if (action.do === 'signin') return gmailSignInFromPage(w);
-    if (action.do === 'reload') { // the Spotify Web player's "Try again": load open.spotify.com in its view again
+    if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
+      if (w.type === 'applemusic') { deps.appleMusicWebReload?.(); return true; }
       if (w.type !== 'spotify' || w.mode !== 'web') return false;
       deps.spotifyWebReload?.();
       return true;

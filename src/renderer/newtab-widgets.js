@@ -179,6 +179,40 @@ function agoText(ms) {
 }
 
 // ---- the renderers, one per connector type ----
+// A music site's own web player in the card (Spotify's Web player, Apple Music): main.js lays a native view over
+// the .sp-web-slot placeholder (features/web-player.js). The page only draws the header buttons, the slot and what main
+// says about the view; `name` and `site` are constants of ours.
+function webPlayerCard(w, card, name, site) {
+  const d = w.data;
+  card.el.classList.add('sp-web');
+  card.head.append(openLink(site, `Open in ${name}`));
+  if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
+    const signIn = link(site, 'Open in a tab to sign in', 'w-btn primary');
+    signIn.classList.add('sp-web-signin');
+    card.head.append(signIn);
+  }
+  // What main knows about the view: it can't load (offline, the site down), or this Lumen has no Widevine, so the site
+  // can't play. Say so instead of leaving a blank frame.
+  const v = d.view && typeof d.view === 'object' ? d.view : {};
+  const down = v.state === 'offline' || v.state === 'failed';
+  if (v.drm === 'missing' && !down) {
+    const note = el('p', 'w-note sp-drm', `${name} can’t play sound here yet: Lumen’s Widevine component, which protected audio needs, isn’t available. It may still be installing; if this stays, restart Lumen. You can still browse ${name}.`);
+    note.setAttribute('role', 'status');
+    card.body.append(note);
+  }
+  const slot = el('div', 'sp-web-slot', down ? '' : `Loading ${name}…`);
+  slot.setAttribute('role', 'status');
+  if (down) {
+    slot.classList.add('sp-web-down');
+    slot.append(el('span', 'sp-web-msg', v.state === 'offline' ? `Can’t reach ${name}. Check your internet connection.` : `${name} didn’t load.`));
+    const retry = el('button', 'w-btn', 'Try again');
+    retry.type = 'button';
+    retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
+    slot.append(retry);
+  }
+  card.body.append(slot);
+}
+
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -317,40 +351,14 @@ const WIDGET_RENDERERS = {
     if (typeof d.hereNote === 'string' && d.hereNote && places.length) card.body.append(el('p', 'w-note small', text(d.hereNote, 200)));
   },
 
+  // Apple Music: music.apple.com in the card, the same kind of view as Spotify's Web player (features/apple-music-web.js).
+  applemusic(w, card) { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/'); },
+
   // Now playing. Everything is a checked string or number set with textContent; the album picture is a
   // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
   spotify(w, card) {
     const d = w.data;
-    if (d.mode === 'web') { // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
-      card.el.classList.add('sp-web');
-      card.head.append(openLink('https://open.spotify.com/', 'Open in Spotify'));
-      if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
-        const signIn = link('https://open.spotify.com/', 'Open in a tab to sign in', 'w-btn primary');
-        signIn.classList.add('sp-web-signin');
-        card.head.append(signIn);
-      }
-      // What main knows about the view: it can't load (offline, Spotify down), or this Lumen has no Widevine, so Spotify
-      // can't play. Say so instead of leaving a blank frame.
-      const v = d.view && typeof d.view === 'object' ? d.view : {};
-      const down = v.state === 'offline' || v.state === 'failed';
-      if (v.drm === 'missing' && !down) {
-        const note = el('p', 'w-note sp-drm', 'Spotify can’t play sound here yet: Lumen’s Widevine component, which protected audio needs, isn’t available. It may still be installing; if this stays, restart Lumen. You can still browse Spotify.');
-        note.setAttribute('role', 'status');
-        card.body.append(note);
-      }
-      const slot = el('div', 'sp-web-slot', down ? '' : 'Loading Spotify…');
-      slot.setAttribute('role', 'status');
-      if (down) {
-        slot.classList.add('sp-web-down');
-        slot.append(el('span', 'sp-web-msg', v.state === 'offline' ? 'Can’t reach Spotify. Check your internet connection.' : 'Spotify didn’t load.'));
-        const retry = el('button', 'w-btn', 'Try again');
-        retry.type = 'button';
-        retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
-        slot.append(retry);
-      }
-      card.body.append(slot);
-      return;
-    }
+    if (d.mode === 'web') { webPlayerCard(w, card, 'Spotify', 'https://open.spotify.com/'); return; } // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
     card.head.append(refreshButton(w));
     const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
     if (open) card.head.append(openLink(open, 'Open in Spotify'));
@@ -1656,7 +1664,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {

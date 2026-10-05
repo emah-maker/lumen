@@ -826,7 +826,7 @@ async function buildHome(card) {
   );
   renderTiles();
   const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
+  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify apple music gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
   try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
@@ -840,6 +840,7 @@ const WIDGET_ICONS = {
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
   spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
+  applemusic: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 11.5V3.8l6-1.3v7.7"/><circle cx="4.5" cy="11.6" r="1.7"/><circle cx="10.5" cy="10.3" r="1.7"/></svg>',
   gmail: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="2"/><path d="m2.4 4.4 5.6 4.2 5.6-4.2"/></svg>',
   slack: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 2 5 14M11 2l-1.2 12M2.6 5.6h11.2M2.2 10.4h11.2"/></svg>',
   github: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="6" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.7c0 2.4-3.2 2-6 3.4"/></svg>',
@@ -1488,6 +1489,8 @@ async function buildWidgets(card) {
         marketFields(same);
       } else if (type === 'notes') {
         fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
+      } else if (type === 'applemusic') {
+        fields.replaceChildren(section('Apple Music', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'The card shows music.apple.com, Apple’s own web player. Sign in there once, in the card; Lumen never sees your Apple ID or password.' }))]));
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
