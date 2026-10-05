@@ -138,7 +138,7 @@ async function connectorChecks(check) {
   const before = fake.log.length;
   const test = await w.test({ type: 'spotify', clientId: CLIENT });
   check('spotify Settings: Check says who is connected (one call, the access token from sign-in)', test.ok && /Connected as Ann/.test(test.message) && fake.log.length === before + 1 && fake.log.at(-1).path === '/v1/me', plain(test));
-  const noClient = await w.test({ type: 'spotify', clientId: '' });
+  const noClient = await w.test({ type: 'spotify', mode: 'api', clientId: '' });
   check('spotify Settings: no Client ID of the user’s own falls back to Lumen’s built-in app', noClient.ok && /Connected as Ann/.test(noClient.message) && SV.pickClientId({}) === SV.BUILTIN_SPOTIFY_CLIENT_ID && /^[0-9a-f]{32}$/.test(SV.BUILTIN_SPOTIFY_CLIENT_ID), plain(noClient));
   const saved = await w.save({ type: 'spotify', clientId: CLIENT, art: true, colors: 'match' });
   const id = saved.widget.id;
@@ -255,14 +255,14 @@ async function connectorChecks(check) {
 async function webChecks(check) {
   check('spotify web: an explicit mode wins', SW.cleanMode({ mode: 'web', clientId: CLIENT }) === 'web' && SW.cleanMode({ mode: 'api' }) === 'api', '');
   check('spotify web: a widget saved before modes existed stays the API card', SW.cleanMode({ clientId: CLIENT, art: true }) === 'api' && SW.cleanMode({ art: false }) === 'api', '');
-  check('spotify web: a new widget (no mode, no API fields) or a bad mode is web', SW.cleanMode({}) === 'web' && SW.cleanMode(null) === 'web' && SW.cleanMode({ mode: 'evil' }) === 'web', '');
+  check('spotify web: a new widget (no mode, no API fields) or a bad mode is the engine card (status)', SW.cleanMode({}) === 'status' && SW.cleanMode(null) === 'status' && SW.cleanMode({ mode: 'evil' }) === 'status', '');
   const list = cleanList([
     { id: 'wold1', type: 'spotify', clientId: CLIENT, art: true },
     { id: 'wnew1', type: 'spotify', mode: 'web' },
     { id: 'wbad1', type: 'spotify', mode: '<x>' },
   ]);
   const by = Object.fromEntries(list.map((x) => [x.id, x]));
-  check('spotify web: cleanList keeps saved widgets as api, web as web, garbage as web', by.wold1.mode === 'api' && by.wnew1.mode === 'web' && by.wbad1.mode === 'web' && by.wold1.clientId === CLIENT, JSON.stringify(list.map((x) => x.mode)));
+  check('spotify web: cleanList keeps saved widgets as api, web as web, garbage as status', by.wold1.mode === 'api' && by.wnew1.mode === 'web' && by.wbad1.mode === 'status' && by.wold1.clientId === CLIENT, JSON.stringify(list.map((x) => x.mode)));
   check('spotify web: cleanList does not drop the widget for lacking a Client ID', Boolean(by.wnew1) && by.wnew1.clientId === '', '');
 
   const ok = ['https://open.spotify.com/', 'https://open.spotify.com/playlist/abc?si=1', 'https://accounts.spotify.com/en/login?continue=x'];

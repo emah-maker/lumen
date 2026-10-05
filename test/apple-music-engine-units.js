@@ -52,7 +52,7 @@ module.exports = async function appleMusicEngineUnits(check) {
     setInterval: (f) => { intervalFn = f; return { unref() {} }; },
   });
   const page = () => player.wc;
-  const sentCmds = () => (page() ? page().sent.filter((s) => s[0] === 'amusic:cmd').map((s) => s[1]) : []);
+  const sentCmds = () => (page() ? page().sent.filter((s) => s[0] === 'musicengine:cmd').map((s) => s[1]) : []);
 
   // ---- not loaded until something asks ----
   check('apple engine: nothing is loaded until a card reads it', player.ensured === 0 && player.wc === null, '');
@@ -82,7 +82,7 @@ module.exports = async function appleMusicEngineUnits(check) {
 
   // ---- play something ----
   check('apple engine: playItem sends the fixed command', e.playItem('song', '1440933651') === true && JSON.stringify(sentCmds().at(-1)) === '{"cmd":"playItem","kind":"song","id":"1440933651"}', '');
-  check('apple engine: a bad kind or id is not sent', e.playItem('artist', '1') === false && e.playItem('song', 'a b') === false && sentCmds().at(-1).cmd === 'playItem' && sentCmds().filter((c) => c.cmd === 'playItem').length === 1, '');
+  check('apple engine: a bad kind or id is not sent', e.playItem('format', '1') === false && e.playItem('song', 'a b') === false && sentCmds().at(-1).cmd === 'playItem' && sentCmds().filter((c) => c.cmd === 'playItem').length === 1, '');
   const n0 = changes.n;
   e.onMessage(state());
   const playing = await e.read();

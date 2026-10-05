@@ -14,7 +14,7 @@ const KINDS = {
   calendar: ['Calendar', 'Upcoming events from a calendar link'],
   todoist: ['Todoist', 'Your tasks'],
   feed: ['Headlines', 'News from an RSS or Atom feed'],
-  spotify: ['Spotify', 'What is playing, with play and skip'],
+  spotify: ['Spotify', 'Plays in Lumen, with what is playing and a search'],
   applemusic: ['Apple Music', 'What is playing in the Apple Music app, or its web player'],
   gmail: ['Gmail', 'Unread count and latest messages'],
   slack: ['Slack', 'Unread direct messages, mentions and channels'],
@@ -47,7 +47,7 @@ function accountStatus(w, ctx = {}) {
   const secrets = ctx.secrets || {};
   switch (w && w.type) {
     case 'spotify': {
-      if (w.mode === 'web') return null; // Spotify's own site in the card: nothing to connect here
+      if (w.mode === 'web' || w.mode === 'status') return null; // Spotify's own page in the card or in the engine: nothing to connect here
       const on = Boolean(secrets.spotify);
       const name = ctx.spotify && ctx.spotify.name;
       return { connected: on, text: on ? (name ? `Connected as ${name}` : 'Connected') : 'Not connected' };
@@ -110,7 +110,7 @@ function widgetSummary(w, ctx = {}) {
         if (t.max) parts.push(`${t.max} shown`);
         break;
       }
-      case 'spotify': if (!acct) { parts.push('Web player'); break; } parts.push(acct.text); if (acct.connected && w.art === false) parts.push('no album art'); break;
+      case 'spotify': if (!acct) { parts.push(w.mode === 'status' ? 'Plays in Lumen' : 'Web player'); if (w.mode === 'status' && w.art === false) parts.push('no album art'); break; } parts.push(acct.text); if (acct.connected && w.art === false) parts.push('no album art'); break;
       case 'gmail': parts.push(acct.text); if (acct.connected && w.count) parts.push(`${w.count} latest`); break;
       case 'slack': parts.push(acct.text); break;
       case 'github': {

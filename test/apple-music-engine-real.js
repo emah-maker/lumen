@@ -37,15 +37,15 @@ if (shots) fs.mkdirSync(shots, { recursive: true });
   const mkVersion = await engine('window.MusicKit && MusicKit.version');
   check('real: it is MusicKit JS v3', /^3\./.test(String(mkVersion)), String(mkVersion));
   check('real: the engine view is hidden (not on screen), never shown for a status card', await app.evaluate(() => { const v = global.__appleMusicWeb.view(); return !v || !v.getVisible(); }), '');
-  check('real: signed out is known from MusicKit (no cookie guessing) and the card offers Sign in and a search', (await status()).signedIn === false && await waitFor(`Boolean(${card}.querySelector('.am-signin')) && Boolean(${card}.querySelector('.am-search input'))`), JSON.stringify(await status()));
+  check('real: signed out is known from MusicKit (no cookie guessing) and the card offers Sign in and a search', (await status()).signedIn === false && await waitFor(`Boolean(${card}.querySelector('.am-signin')) && Boolean(${card}.querySelector('.am-searchfield input'))`), JSON.stringify(await status()));
   await shot('engine-signed-out.png');
 
   // search (works signed out) and play a preview
-  await page(`(() => { const i = ${card}.querySelector('.am-search input'); i.value = 'shake it off taylor swift'; ${card}.querySelector('.am-search').requestSubmit(); })()`);
-  check('real: a catalog search through MusicKit shows results on the card', await waitFor(`${card}.querySelectorAll('.am-row').length > 0`, 80), await page(`${card}.textContent`));
-  const rowText = await page(`${card}.querySelector('.am-row')?.textContent || ''`);
+  await page(`(() => { ${card}.querySelector('.am-searchbtn').click(); const i = ${card}.querySelector('.am-searchfield input'); i.value = 'shake it off taylor swift'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  check('real: a catalog search through MusicKit shows results on the card', await waitFor(`${card}.querySelectorAll('.am-opt:not(.am-opt-recent)').length > 0`, 80), await page(`${card}.textContent`));
+  const rowText = await page(`${card}.querySelector('.am-opt:not(.am-opt-recent)')?.textContent || ''`);
   await shot('engine-results.png');
-  await page(`${card}.querySelector('.am-row').click()`);
+  await page(`${card}.querySelector('.am-opt:not(.am-opt-recent)').click()`);
   check('real: clicking a result plays it (a 30-second preview when signed out) and the card follows', await waitFor(`${card}.querySelector('.sp-title')?.textContent && ${card}.querySelector('.sp-controls button[aria-label="Pause"]')`, 80), await page(`${card}.textContent.slice(0, 200)`));
   const playing = await page(`({ title: ${card}.querySelector('.sp-title')?.textContent, artist: ${card}.querySelector('.sp-artist')?.textContent, album: ${card}.querySelector('.sp-album')?.textContent, note: ${card}.querySelector('.am-note')?.textContent || '', slider: ${card}.querySelector('.sp-bar')?.getAttribute('role'), hasArt: Boolean(${card}.querySelector('img.sp-art')) })`);
   check('real: the card shows title, artist and album from MusicKit, a seekable bar and the preview note', Boolean(playing.title) && Boolean(playing.artist) && playing.slider === 'slider' && /preview/i.test(playing.note), JSON.stringify(playing) + ' row=' + rowText);
@@ -63,15 +63,20 @@ if (shots) fs.mkdirSync(shots, { recursive: true });
     const np = createNowPlaying({ platform: 'win32', any: true, resizeArt: null });
     const d = await np.read();
     console.log(`      (Windows media sessions, any app, while the engine plays: ${JSON.stringify({ state: d.state, title: d.title, artist: d.artist })})`);
-    check('real: Windows sees a media session for the engine page (media keys and the volume flyout can control it)', d.state === 'playing' || d.state === 'paused', JSON.stringify(d).slice(0, 200));
-    // The same path the media keys use (System Media Transport Controls): pressing Pause there pauses the engine page, and Play resumes it
-    const paused = await np.control('pause');
-    let ps = 0;
-    for (let i = 0; i < 20 && ps !== 3; i++) { ps = await engine('MusicKit.getInstance().playbackState'); if (ps !== 3) await sleep(150); }
-    check('real: a Pause sent through the Windows media controls (what a media key does) pauses the engine page', paused === true && ps === 3, `${paused} ${ps}`);
-    const resumed = await np.control('play');
-    for (let i = 0; i < 20 && ps !== 2; i++) { ps = await engine('MusicKit.getInstance().playbackState'); if (ps !== 2) await sleep(150); }
-    check('real: …and Play through them resumes it', resumed === true && ps === 2, `${resumed} ${ps}`);
+    const engineTitle = await engine('MusicKit.getInstance().nowPlayingItem && MusicKit.getInstance().nowPlayingItem.title');
+    const mine = d.title === engineTitle; // (the session list is the whole machine's: only ever press buttons on the session that is this test's own page)
+    if (!mine) console.log('      (another media app is playing on this computer, so which session is the engine session can not be told here: its session was left alone and no button was pressed; this part is skipped)');
+    else {
+      check('real: Windows sees a media session for the engine page (media keys and the volume flyout can control it)', d.state === 'playing' || d.state === 'paused', JSON.stringify(d).slice(0, 200));
+      // The same path the media keys use (System Media Transport Controls): pressing Pause there pauses the engine page, and Play resumes it
+      const paused = await np.control('pause');
+      let ps = 0;
+      for (let i = 0; i < 40 && ps !== 3; i++) { ps = await engine('MusicKit.getInstance().playbackState'); if (ps !== 3) await sleep(150); }
+      check('real: a Pause sent through the Windows media controls (what a media key does) pauses the engine page', paused === true && ps === 3, `${paused} ${ps}`);
+      const resumed = await np.control('play');
+      for (let i = 0; i < 40 && ps !== 2; i++) { ps = await engine('MusicKit.getInstance().playbackState'); if (ps !== 2) await sleep(150); }
+      check('real: …and Play through them resumes it', resumed === true && ps === 2, `${resumed} ${ps}`);
+    }
     np.destroy();
   }
 

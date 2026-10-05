@@ -6741,6 +6741,8 @@ function aiStatusFacts() {
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
 // several widgets often finish together).
 let widgetRefreshTimer = null;
+// The widgets' view of an engine (features/music-engine.js): its calls, with a test fake able to stand in for any of them.
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : engine()[name](...args))]));
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),
@@ -6753,7 +6755,9 @@ const widgets = createWidgets({
   spotifyWebStatus: () => spotifyWeb.status(),
   spotifyWebReload: () => spotifyWeb.reload(),
   // The Status mode: the Apple Music engine (features/apple-music-engine.js). Tests may stand in a fake for any of its calls.
-  appleMusic: Object.fromEntries(['read', 'control', 'seek', 'playItem', 'search', 'signIn', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && global.__appleMusicFake?.[name] ? global.__appleMusicFake[name](...args) : appleMusicEngine[name](...args))])),
+  appleMusic: engineFacade(() => appleMusicEngine, () => global.__appleMusicFake),
+  spotifyEngine: engineFacade(() => spotifyEngine, () => global.__spotifyEngineFake),
+  spotifyEngineSignedIn: () => spotifyEngine.signedIn(),
   appleMusicWebSignedIn: () => appleMusicEngine.signedIn(),
   appleMusicWebStatus: () => appleMusicWeb.status(),
   appleMusicWebReload: () => appleMusicWeb.reload(),
@@ -6807,7 +6811,7 @@ function tradingviewAccountLists() {
 }
 // [widgets] The music cards' Web players (features/web-player.js): the Spotify widget's (features/spotify-web.js) and the
 // Apple Music widget's (features/apple-music-web.js), one persistent view each, in the normal session.
-const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive) => ({
+const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive, onAuth) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
   getBounds: () => contentBounds,
@@ -6815,12 +6819,12 @@ const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive) => ({
   hasWidget,
   keepAlive,
   openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
-  onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  onSignIn: () => { try { onAuth?.(); } catch { /* the engine is not up yet */ } clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   onStatus: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); }, // loading, offline, no Widevine: the card says which
   testUrl: () => (TEST && testUrl()) || '', // tests serve a stand-in for the site; nothing else can
   drmProbe: (wc) => (TEST && drmProbe() ? drmProbe()(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
-const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe));
+const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe, () => true, () => spotifyEngine.authChanged())); // (the engine keeps the page, hidden, with no web card)
 const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe, () => true)); // (the engine keeps the page, hidden, with no web card)
 if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
@@ -6835,7 +6839,7 @@ const resizeArt = (bytes) => {
 const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
   any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
   resizeArt,
-  onChange: () => widgets.appleMusicChanged(),
+  onChange: () => widgets.engineChanged(),
 });
 const appleMusicEngine = require('./features/apple-music-engine').createEngine({
   player: appleMusicWeb,
@@ -6845,14 +6849,35 @@ const appleMusicEngine = require('./features/apple-music-engine').createEngine({
   BrowserWindow,
   getParent: () => win,
   hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
-  onChange: () => widgets.appleMusicChanged(),
+  onChange: () => widgets.engineChanged(),
 });
 if (TEST) global.__appleMusicEngine = appleMusicEngine;
-// The engine page's bridge: only the hidden view's own music.apple.com page may fetch the script or send state.
-const amusicSender = (event) => { const wc = appleMusicWeb.webContents(); let origin = ''; try { origin = TEST && global.__appleMusicWebUrl ? new URL(global.__appleMusicWebUrl).origin : ''; } catch { /* no stand-in */ } return Boolean(wc) && event.sender === wc && event.senderFrame === wc.mainFrame && AMW.isEnginePage(event.senderFrame.url, origin); };
-ipcMain.on('amusic:bridge-source', (event) => { event.returnValue = amusicSender(event) ? require('./features/apple-music-bridge').BRIDGE_SOURCE : ''; });
-ipcMain.on('amusic:msg', (event, raw) => { if (amusicSender(event)) appleMusicEngine.onMessage(raw); });
-app.on('before-quit', () => { spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
+// [widgets] The Spotify engine (features/spotify-engine.js): Spotify's own web player in the hidden open.spotify.com view above.
+const spotifyEngine = require('./features/spotify-engine').createEngine({
+  player: spotifyWeb,
+  resizeArt,
+  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
+  BrowserWindow,
+  getParent: () => win,
+  hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
+  playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
+  onChange: () => widgets.engineChanged(),
+});
+if (TEST) global.__spotifyEngine = spotifyEngine;
+// The engines' bridges: only a hidden view's own page (the service's real address, or in tests a stand-in) may fetch its script or send state.
+const engineSender = (event) => {
+  for (const [web, engine, bridge, isPage, stand] of [[appleMusicWeb, appleMusicEngine, require('./features/apple-music-bridge'), AMW.isEnginePage, () => global.__appleMusicWebUrl], [spotifyWeb, spotifyEngine, require('./features/spotify-bridge'), SW.isEnginePage, () => global.__spotifyWebUrl]]) {
+    const wc = web.webContents();
+    if (!wc || event.sender !== wc || event.senderFrame !== wc.mainFrame) continue;
+    let origin = '';
+    try { origin = TEST && stand() ? new URL(stand()).origin : ''; } catch { /* no stand-in */ }
+    return isPage(event.senderFrame.url, origin) ? { engine, bridge } : null;
+  }
+  return null;
+};
+ipcMain.on('musicengine:bridge-source', (event) => { event.returnValue = engineSender(event)?.bridge.BRIDGE_SOURCE || ''; });
+ipcMain.on('musicengine:msg', (event, raw) => { engineSender(event)?.engine.onMessage(raw); });
+app.on('before-quit', () => { spotifyEngine.destroy(); spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
 // Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,

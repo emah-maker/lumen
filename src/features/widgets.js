@@ -93,6 +93,39 @@ const ENDPOINTS = {
   twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
+// A page action on an engine card (Apple Music's and Spotify's status modes: features/music-engine.js): play, pause, next, previous, seek
+// (seconds), playitem and playnext/playlater (a search result, a recent play, a playlist), esearch, esignin (the sign-in window) and
+// elists (look at the recent plays and playlists again). `am` is the engine's facade (deps.appleMusic, deps.spotifyEngine).
+async function engineAct(am, name, action, x, cached) {
+  if (action.do === 'esignin') { am.signIn(); return { local: true }; }
+  if (action.do === 'elists') { am.refreshLists(); return { local: true }; }
+  if (action.do === 'esearch') { am.search(action.text); return { local: true }; }
+  if (action.do === 'playitem') {
+    if (!am.playItem(action.kind, action.item)) throw new Error(`${name} isn’t ready yet. Try again in a moment.`);
+    return { delay: 1500 };
+  }
+  if (action.do === 'playnext' || action.do === 'playlater') {
+    if (!(action.do === 'playnext' ? am.playNext : am.playLater)(action.kind, action.item)) throw new Error('That can’t be queued here.');
+    return { notice: action.do === 'playnext' ? 'Playing next.' : 'Added to the queue.', local: true };
+  }
+  if (action.do === 'seek') {
+    if (!am.seek(action.sec)) return false;
+    cached.progressMs = Math.round(action.sec * 1000);
+    cached.at = x.now();
+    return { local: true };
+  }
+  const button = AMV.actionOf(action.do);
+  if (!button) return false;
+  if (!(await am.control(button))) throw new Error(`${name} didn’t answer. Is it ready?`);
+  if ((button === 'play' || button === 'pause') && (cached.state === 'playing' || cached.state === 'paused')) {
+    cached.progressMs = Math.round(AMV.progressNow(cached, x.now()));
+    cached.at = x.now();
+    cached.state = button === 'play' ? 'playing' : 'paused';
+  }
+  delete cached.notice;
+  return { delay: 600 };
+}
+
 // Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
 // them has a key or a sign-in, so their settings may be shown to the page. The value picks what the
 // page's form starts from. Weather, World clock, Calendar and Feed are edited the same way, but their
@@ -449,8 +482,8 @@ const CONNECTORS = {
   // to the page as a data: URL, so the page never learns an address or a token.
   spotify: {
     label: 'Spotify',
-    ttl: 20e3,
-    minRefresh: 4e3, // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s
+    ttl: (d) => (d && d.mode === 'status' ? 4e3 : 20e3),
+    minRefresh: (d) => (d && d.mode === 'status' ? 300 : 4e3), // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s; the engine card is local, so quicker
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
@@ -458,8 +491,10 @@ const CONNECTORS = {
     },
     async resolve(input, x) {
       const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
-      // Web player: Spotify's own site in the card, nothing to check here (the user signs in on the site itself).
-      if (SW.cleanMode(input) === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
+      // Status (the engine's now-playing card) and Web player: nothing to check here (the user signs in on Spotify's own site).
+      const mode = ['status', 'web', 'api'].includes(input.mode) ? input.mode : clientId ? 'api' : 'status'; // (a form always says; without one, an own Client ID means the API card, as before, else the engine's)
+      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
+      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
       if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
       if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
@@ -469,9 +504,14 @@ const CONNECTORS = {
       return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
-    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : `Now playing${c.art ? '' : ' · no album art'}`),
+    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : c.mode === 'status' ? `Plays inside Lumen${c.art ? '' : ' · no album art'}` : `Now playing${c.art ? '' : ' · no album art'}`),
     async fetch(c, x) {
       if (c.mode === 'web') return { mode: 'web', url: SW.WEB_URL }; // the card is Spotify's own site (features/spotify-web.js)
+      if (c.mode === 'status') { // the engine's card (features/spotify-engine.js)
+        if (!x.spotifyEngine) return AMV.unavailable('unsupported', x.now());
+        const d = await x.spotifyEngine.read();
+        return c.art === false ? { ...d, art: '' } : d;
+      }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
       if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
@@ -489,6 +529,7 @@ const CONNECTORS = {
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
+      if (c.mode === 'status') return x.spotifyEngine ? engineAct(x.spotifyEngine, 'Spotify', action, x, cached) : false;
       const req = SV.actionRequest(action.do);
       if (!req) return false;
       const res = await spotifyCall(x, c, req.method, req.path);
@@ -896,30 +937,7 @@ const CONNECTORS = {
     // amsignin (the sign-in window) and amlists (look at the recent plays and playlists again).
     async act(c, action, x, cached) {
       if (c.mode === 'web' || !x.appleMusic) return false;
-      const am = x.appleMusic;
-      if (action.do === 'amsignin') { am.signIn(); return { local: true }; }
-      if (action.do === 'amlists') { am.refreshLists(); return { local: true }; }
-      if (action.do === 'amsearch') { am.search(action.text); return { local: true }; }
-      if (action.do === 'playitem') {
-        if (!am.playItem(action.kind, action.item)) throw new Error('Apple Music isn’t ready yet. Try again in a moment.');
-        return { delay: 1500 };
-      }
-      if (action.do === 'seek') {
-        if (!am.seek(action.sec)) return false;
-        cached.progressMs = Math.round(action.sec * 1000);
-        cached.at = x.now();
-        return { local: true };
-      }
-      const name = AMV.actionOf(action.do);
-      if (!name) return false;
-      if (!(await am.control(name))) throw new Error('Apple Music didn’t answer. Is it ready?');
-      if ((name === 'play' || name === 'pause') && (cached.state === 'playing' || cached.state === 'paused')) {
-        cached.progressMs = Math.round(AMV.progressNow(cached, x.now()));
-        cached.at = x.now();
-        cached.state = name === 'play' ? 'playing' : 'paused';
-      }
-      delete cached.notice;
-      return { delay: 600 };
+      return engineAct(x.appleMusic, 'Apple Music', action, x, cached);
     },
   },
 
@@ -1317,6 +1335,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         spotifyEngine? (the same calls for Spotify's engine, features/spotify-engine.js), spotifyEngineSignedIn()?,
 //         appleMusic? ({ read({ app }), control(name), seek(sec), playItem(kind, id), search(term), signIn(), refreshLists(), reload() }: the Apple Music
 //         engine, features/apple-music-engine.js),
 //         appleMusicWebSignedIn()?, appleMusicWebStatus()?, appleMusicWebReload()? (the same three for the Apple Music card),
@@ -1462,7 +1481,8 @@ function createWidgets(deps) {
       },
       backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       googleClient,
-      appleMusic: deps.appleMusic || null, // the Apple Music app's now-playing interface (features/apple-music-native.js)
+      appleMusic: deps.appleMusic || null,
+      spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js) // the Apple Music app's now-playing interface (features/apple-music-native.js)
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -1583,7 +1603,7 @@ function createWidgets(deps) {
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
-    if (fresh && (!force || age < (c.minRefresh ?? MIN_REFRESH))) return Promise.resolve(false);
+    if (fresh && (!force || age < (typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH)))) return Promise.resolve(false);
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
@@ -2063,7 +2083,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|amsearch|amsignin|amlists)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|elists)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2090,12 +2110,12 @@ function createWidgets(deps) {
       action.sec = Number(params.get('arg'));
       if (!Number.isFinite(action.sec) || action.sec < 0 || action.sec > 48 * 3600) return { invalid: true };
     }
-    if (action.do === 'playitem') {
+    if (action.do === 'playitem' || action.do === 'playnext' || action.do === 'playlater') {
       action.kind = params.get('kind');
       action.item = params.get('arg');
       if (!AMB.KINDS.includes(action.kind) || !AMB.ID_RE.test(action.item || '')) return { invalid: true };
     }
-    if (action.do === 'amsearch') action.text = AMB.clip(params.get('arg') || '', 80); // may be empty: clears the search
+    if (action.do === 'esearch') action.text = AMB.clip(params.get('arg') || '', 80); // may be empty: clears the search
     if (action.do === 'note') action.text = (params.get('text') || '').slice(0, LW.MAX_NOTE); // may be empty: the note was cleared
     if (action.do === 'tvinterval') {
       action.arg = params.get('arg');
@@ -2261,6 +2281,7 @@ function createWidgets(deps) {
     if (action.do === 'signin') return gmailSignInFromPage(w);
     if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
       if (w.type === 'applemusic') { if (w.mode === 'web') deps.appleMusicWebReload?.(); else deps.appleMusic?.reload?.(); return true; }
+      if (w.type === 'spotify' && w.mode === 'status') { deps.spotifyEngine?.reload?.(); return true; }
       if (w.type !== 'spotify' || w.mode !== 'web') return false;
       deps.spotifyWebReload?.();
       return true;
@@ -2320,10 +2341,10 @@ function createWidgets(deps) {
     }
   }
 
-  // The Apple Music app changed what it is playing (deps.appleMusic told main.js): the status cards look again at once.
-  function appleMusicChanged() {
+  // An engine (or the desktop Apple Music app) changed what it is playing, as main.js heard: the status cards look again at once.
+  function engineChanged() {
     for (const w of list()) {
-      if (w.type !== 'applemusic' || w.mode === 'web') continue;
+      if (!((w.type === 'applemusic' && w.mode !== 'web') || (w.type === 'spotify' && w.mode === 'status'))) continue;
       // A change that comes right after another look is not dropped: it is looked at again a moment later.
       refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 350); }, () => {});
     }
@@ -2346,7 +2367,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, appleMusicChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

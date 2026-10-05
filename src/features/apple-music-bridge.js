@@ -4,17 +4,19 @@
 // every message it sends is parsed and bounded here, and every command main sends is picked from a fixed set with validated
 // arguments (the script runs no text it is given; it only reads a JSON object and switches on a fixed name).
 //
-// Wire: main -> page: JSON string {cmd, ...} as the `detail` of a 'lumen-am-in' DOM event (the preload dispatches it);
-//       page -> main: JSON string as the `detail` of a 'lumen-am-out' event (the preload forwards it by IPC).
+// Wire: main -> page: JSON string {cmd, ...} as the `detail` of a 'lumen-engine-in' DOM event (the preload dispatches it);
+//       page -> main: JSON string as the `detail` of a 'lumen-engine-out' event (the preload forwards it by IPC).
 'use strict';
 
 const MAX_MESSAGE = 200000;
-const KINDS = ['song', 'album', 'playlist', 'station']; // what setQueue can be given
+const KINDS = ['song', 'album', 'playlist', 'station', 'artist']; // what playItem takes (an artist plays its top songs)
+const QUEUE_KINDS = ['song', 'album', 'playlist']; // what playNext and playLater take
+const CAPS = { search: true, lists: true, seek: true, queue: true }; // what this service's card can offer
 const LISTS = ['recent', 'playlists'];
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const STOREFRONT_RE = /^[a-z]{2}$/;
 const ART_HOST_RE = /^[a-z0-9-]+\.mzstatic\.com$/;
-const MAX_ITEMS = 12;
+const MAX_ITEMS = 40;
 
 const clip = (v, max = 200) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const num = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : 0);
@@ -50,7 +52,7 @@ function cleanItem(i) {
   const kind = kindOf(i.type);
   const title = clip(i.title, 120);
   if (!kind || !title) return null;
-  return { id: i.id, kind, title, sub: clip(i.sub, 120) };
+  return { id: i.id, kind, title, sub: clip(i.sub, 120), ms: Math.round(num(i.ms, 0, 48 * 3600e3)), art: artUrl(i.art, 64) };
 }
 
 // A page message (the JSON text) -> a checked object of ours, or null. Never throws.
@@ -102,6 +104,10 @@ function cleanCommand(c) {
       if (!KINDS.includes(c.kind) || typeof c.id !== 'string' || !ID_RE.test(c.id)) return null;
       return JSON.stringify({ cmd: 'playItem', kind: c.kind, id: c.id });
     }
+    case 'playNext': case 'playLater': {
+      if (!QUEUE_KINDS.includes(c.kind) || typeof c.id !== 'string' || !ID_RE.test(c.id)) return null;
+      return JSON.stringify({ cmd: c.cmd, kind: c.kind, id: c.id });
+    }
     case 'list': {
       if (!LISTS.includes(c.kind)) return null;
       return JSON.stringify({ cmd: 'list', kind: c.kind, rid: Math.round(num(c.rid, 0, 1e9)) });
@@ -134,8 +140,8 @@ function toCard(m, now, art = '') {
 // It only reads MusicKit and calls the player's own methods; it makes no request of its own except Apple's API through MusicKit,
 // at three fixed paths (the storefront is checked to be two letters; the search term travels as a parameter, not in the path).
 const BRIDGE_SOURCE = `(function () {
-  var OUT = 'lumen-am-out', IN = 'lumen-am-in';
-  var KINDS = ${JSON.stringify(KINDS)}, LISTS = ${JSON.stringify(LISTS)};
+  var OUT = 'lumen-engine-out', IN = 'lumen-engine-in';
+  var KINDS = ${JSON.stringify(KINDS)}, QUEUE = ${JSON.stringify(QUEUE_KINDS)}, LISTS = ${JSON.stringify(LISTS)};
   var ID = /^[A-Za-z0-9._-]{1,64}$/, STORE = /^[a-z]{2}$/;
   var mk = null, lastProgress = 0;
   function out(o) { try { document.dispatchEvent(new CustomEvent(OUT, { detail: JSON.stringify(o) })); } catch (e) {} }
@@ -153,7 +159,7 @@ const BRIDGE_SOURCE = `(function () {
   function map(data) {
     return (data || []).map(function (d) {
       var a = d.attributes || {};
-      return { id: String(d.id || ''), type: String(d.type || ''), title: String(a.name || ''), sub: String(a.artistName || a.curatorName || (a.playParams && a.playParams.kind) || '') };
+      return { id: String(d.id || ''), type: String(d.type || ''), title: String(a.name || ''), sub: String(a.artistName || a.curatorName || ''), ms: num(a.durationInMillis), art: String((a.artwork && a.artwork.url) || '') };
     });
   }
   function list(kind, rid) {
@@ -164,12 +170,21 @@ const BRIDGE_SOURCE = `(function () {
       out({ t: 'list', kind: kind, rid: rid, ok: false, signedOut: !mk.isAuthorized || (e && (e.status === 403 || e.status === 401)), items: [] });
     });
   }
+  function playArtist(id) {
+    var store = String(mk.storefrontId || 'us');
+    if (!STORE.test(store)) store = 'us';
+    mk.api.music('/v1/catalog/' + store + '/artists/' + id + '/view/top-songs', { limit: 15 }).then(function (r) {
+      var ids = ((r && r.data && r.data.data) || []).map(function (d) { return String(d.id || ''); }).filter(function (x) { return ID.test(x); });
+      if (!ids.length) throw new Error('No songs for that artist');
+      return mk.setQueue({ songs: ids }).then(function () { return mk.play(); });
+    }).catch(fail);
+  }
   function search(term, rid) {
     var store = String(mk.storefrontId || 'us');
     if (!STORE.test(store)) store = 'us';
-    mk.api.music('/v1/catalog/' + store + '/search', { term: term, types: 'songs,albums,playlists', limit: 4 }).then(function (r) {
+    mk.api.music('/v1/catalog/' + store + '/search', { term: term, types: 'songs,albums,artists,playlists', limit: 8 }).then(function (r) {
       var res = (r && r.data && r.data.results) || {};
-      var items = [].concat(map(res.songs && res.songs.data), map(res.albums && res.albums.data), map(res.playlists && res.playlists.data));
+      var items = [].concat(map(res.songs && res.songs.data), map(res.albums && res.albums.data), map(res.artists && res.artists.data), map(res.playlists && res.playlists.data));
       out({ t: 'list', kind: 'search', rid: rid, ok: true, items: items });
     }, function () { out({ t: 'list', kind: 'search', rid: rid, ok: false, items: [] }); });
   }
@@ -184,8 +199,15 @@ const BRIDGE_SOURCE = `(function () {
         case 'seek': if (typeof c.sec === 'number' && c.sec >= 0) mk.seekToTime(c.sec).catch(fail); break;
         case 'playItem': {
           if (KINDS.indexOf(c.kind) < 0 || typeof c.id !== 'string' || !ID.test(c.id)) break;
+          if (c.kind === 'artist') { playArtist(c.id); break; }
           var q = {}; q[c.kind] = c.id;
           mk.setQueue(q).then(function () { return mk.play(); }).catch(fail);
+          break;
+        }
+        case 'playNext': case 'playLater': {
+          if (QUEUE.indexOf(c.kind) < 0 || typeof c.id !== 'string' || !ID.test(c.id)) break;
+          var qq = {}; qq[c.kind] = c.id;
+          (c.cmd === 'playNext' ? mk.playNext(qq) : mk.playLater(qq)).catch(fail);
           break;
         }
         case 'list': if (LISTS.indexOf(c.kind) >= 0) list(c.kind, num(c.rid)); break;
@@ -212,4 +234,4 @@ const BRIDGE_SOURCE = `(function () {
   }, 500);
 })();`;
 
-module.exports = { MAX_MESSAGE, KINDS, LISTS, ID_RE, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };
+module.exports = { MAX_MESSAGE, KINDS, QUEUE_KINDS, CAPS, LISTS, ID_RE, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };

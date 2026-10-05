@@ -210,6 +210,7 @@ function createWebPlayer(deps, spec) {
       setStatus('ready');
       if (drm !== 'ok') { drmTries = 0; checkDrm(); }
     });
+    hookCookies(); // (a player kept hidden by an engine, with no card to place, still learns whether the user is signed in)
     load();
     return view;
   }

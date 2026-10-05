@@ -81,13 +81,13 @@ window.__authorize = () => { mk.isAuthorized = true; fire('authorizationStatusDi
   await app.evaluate(() => global.__wtab.webContents.reload());
   check('engine: with a card on the page the hidden page loads and the bridge finds MusicKit', await waitMain(() => global.__appleMusicEngine.status().ready), JSON.stringify(await status()));
   check('engine: the view is never shown for a status card', await app.evaluate(() => { const v = global.__appleMusicWeb.view(); return Boolean(v) && !v.getVisible(); }), '');
-  check('engine: signed out comes from MusicKit and the idle card offers Sign in and a search', (await status()).signedIn === false && await waitFor(`Boolean(${card}.querySelector('.am-signin')) && Boolean(${card}.querySelector('.am-search input'))`), JSON.stringify(await status()));
+  check('engine: signed out comes from MusicKit and the idle card offers Sign in and a search', (await status()).signedIn === false && await waitFor(`Boolean(${card}.querySelector('.am-signin')) && Boolean(${card}.querySelector('.am-searchfield input'))`), JSON.stringify(await status()));
   check('engine: signed out, the lists are not shown (MusicKit refused them) and nothing is wrong', !(await page(`Boolean(${card}.querySelector('.am-row'))`)), '');
 
   // search -> results -> play
-  await page(`(() => { const f = ${card}.querySelector('.am-search'); f.querySelector('input').value = 'fixture'; f.requestSubmit(); })()`);
-  check('engine: a search goes through the bridge to MusicKit\'s API at the catalog path and the results come back as rows', await waitFor(`${card}.querySelectorAll('.am-row').length === 1`, 60) && (await engine('__cmds')).includes('api:/v1/catalog/us/search'), JSON.stringify(await engine('__cmds')));
-  await page(`${card}.querySelector('.am-row').click()`);
+  await page(`(() => { ${card}.querySelector('.am-searchbtn').click(); const i = ${card}.querySelector('.am-searchfield input'); i.value = 'fixture'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  check('engine: a search goes through the bridge to MusicKit\'s API at the catalog path and the results come back as rows', await waitFor(`${card}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 1`, 60) && (await engine('__cmds')).includes('api:/v1/catalog/us/search'), JSON.stringify(await engine('__cmds')));
+  await page(`${card}.querySelector('.am-opt:not(.am-opt-recent)').click()`);
   check('engine: clicking a result sets that queue and plays (the kind and id are exact)', await waitFor(`${card}.querySelector('.sp-title')?.textContent === 'Fixture Song'`, 60) && (await engine('__cmds')).includes('queue:{"song":"1"}'), JSON.stringify(await engine('__cmds')));
   check('engine: the card shows title, artist, album, a seekable bar and the preview note (signed out)', await page(`${card}.querySelector('.sp-artist').textContent === 'Fixture Artist' && ${card}.querySelector('.sp-album').textContent === 'Fixture Album' && ${card}.querySelector('.sp-bar').getAttribute('role') === 'slider' && /Preview only/.test(${card}.textContent)`), await page(`${card}.textContent.slice(0, 200)`));
   await shot('engine-fixture-playing.png');
@@ -110,7 +110,7 @@ window.__authorize = () => { mk.isAuthorized = true; fire('authorizationStatusDi
 
   // junk and forged messages from the page change nothing
   const before = JSON.stringify(await status());
-  await engine(`(() => { for (const d of ['nope', '{"t":"list","kind":"recent","rid":1,"ok":true,"items":[{"id":"../x","type":"songs","title":"Bad"}]}', '[]', '{"t":"error","message":"' + 'x'.repeat(5000) + '"}']) document.dispatchEvent(new CustomEvent('lumen-am-out', { detail: d })); })()`);
+  await engine(`(() => { for (const d of ['nope', '{"t":"list","kind":"recent","rid":1,"ok":true,"items":[{"id":"../x","type":"songs","title":"Bad"}]}', '[]', '{"t":"error","message":"' + 'x'.repeat(5000) + '"}']) document.dispatchEvent(new CustomEvent('lumen-engine-out', { detail: d })); })()`);
   await sleep(500);
   const afterForged = await app.evaluate(() => ({ s: global.__appleMusicEngine.status() }));
   check('engine: junk messages from the page (not JSON, a list with a path-like id, a 5000-character error) change nothing: still ready, same state, no row with the bad id', afterForged.s.ready === true && JSON.stringify(afterForged.s) === before && !(await page(`/Bad/.test(${card}.textContent)`)), before + ' ' + JSON.stringify(afterForged));
