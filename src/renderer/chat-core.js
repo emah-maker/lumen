@@ -1110,6 +1110,9 @@ window.assistant.onEvent((event) => {
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
+  // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
+  // text): drawn under that reply, not dropped with the finished turn.
+  if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1313,6 +1316,17 @@ function lateDone(event) {
   if (event.undo) window.showRunUndo?.(append, event.undo);
   aiTabsRunId = event.runId;
   if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId);
+}
+
+// A picture for a reply that already ended early (see onEvent): placed after that reply's text (or its last late picture), so a
+// message sent meanwhile stays below it; with no anchor left on screen it goes at the end like a live one.
+function latePicture(event) {
+  const pic = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
+  pic.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}), ...(event.caption ? { caption: event.caption } : {}) }));
+  const anchor = earlyEnded.pics || earlyEnded.bubble;
+  if (anchor?.isConnected) anchor.after(pic); else append(pic);
+  earlyEnded.pics = pic;
+  announce(t('genimg.made'));
 }
 
 // While a reply streams, hold back a trailing link that hasn't finished arriving
