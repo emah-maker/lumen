@@ -2540,7 +2540,7 @@ function queueControls(entry) {
   edit.onclick = () => {
     drop();
     prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text; // (a draft is kept)
-    if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_IMAGES); renderAttachments(); }
+    if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_ATTACH); renderAttachments(); }
     autosize();
     updateSend();
     prompt.focus();
@@ -3789,7 +3789,7 @@ function clearChatView() {
     const texts = unsent.map((q) => q.text).filter(Boolean);
     if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
     const images = unsent.flatMap((q) => q.images || []);
-    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_IMAGES); renderAttachments(); }
+    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
     autosize();
     updateSend();
   }
@@ -8101,8 +8101,8 @@ $('agent-stop')?.addEventListener('click', () => {
     return result;
   };
   const resolveBase = window.resolveApproval;
-  window.resolveApproval = function resolveApproval(approvalId, ok) {
-    const result = resolveBase(approvalId, ok);
+  window.resolveApproval = function resolveApproval(approvalId, ok, ...rest) {
+    const result = resolveBase(approvalId, ok, ...rest);
     pending.delete(approvalId);
     syncBadge();
     return result;

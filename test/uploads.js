@@ -37,7 +37,15 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   const shot = async (locator, name) => { if (!process.env.SHOTS) return; fs.mkdirSync(process.env.SHOTS, { recursive: true }); await locator.screenshot({ path: path.join(process.env.SHOTS, name) }); };
 
   // ---- the page, and ids from a read
-  await app.evaluate(async (_e, u) => { await global.__agent.browser.activeTab().webContents.loadURL(u); }, base);
+  // (the first tab may still be loading the new-tab page: wait for it, and try again if that load was cut short)
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const loaded = await app.evaluate(async (_e, u) => {
+      const wc = global.__agent.browser.activeTab().webContents;
+      for (let i = 0; i < 100 && wc.isLoading(); i++) await new Promise((r) => setTimeout(r, 50));
+      try { await wc.loadURL(u); return true; } catch { return false; }
+    }, base);
+    if (loaded) break;
+  }
   const tabId = await app.evaluate(() => global.__agent.browser.activeTab().id);
   const outline = () => app.evaluate(async () => global.__agent.execute('read_page', { mode: 'compact' }));
   const idOf = async (re) => { const m = new RegExp(`\\[(\\d+)\\] ${re}`).exec(await outline()); if (!m) throw new Error(`no element ${re} in ${await outline()}`); return Number(m[1]); };
@@ -201,7 +209,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   await send('upload my resume to this job form');
   const siteCard = await waitFor(() => ui.locator('.approval:not(.resolved):not(.approval-upload)').count().then((n) => n > 0));
   check('the site approval comes first, as for a click', siteCard);
-  check('the sent message shows the file as a chip under the words', (await ui.locator('.msg.user .msg-file').count()) === 1 && /resume\.pdf/.test(await ui.locator('.msg.user .msg-file').first().innerText()), await ui.locator('.msg.user').first().innerText());
+  await waitFor(() => ui.locator('.msg.user .msg-file').count().then((n) => n === 1));
+  check('the sent message shows the file as a chip under the words', (await ui.locator('.msg.user .msg-file').count()) === 1 && /resume\.pdf/.test(await ui.locator('.msg.user .msg-file').first().innerText()), `${await ui.locator('.msg.user').count()} user bubbles; chat: ${(await ui.locator('#messages').innerText()).slice(0, 400)}`);
   await ui.locator('.approval:not(.resolved):not(.approval-upload) .btn.primary').click();
   const uploadCard = await waitFor(() => ui.locator('.approval-upload:not(.resolved)').count().then((n) => n > 0));
   check('then the upload card: the file names and the site, with Upload / Don\'t upload', uploadCard && /resume\.pdf/.test(await ui.locator('.approval-upload .approval-files').innerText()) && new RegExp(`upload resume\\.pdf to ${host.replace('.', '\\.')}`).test(await ui.locator('.approval-upload .approval-title').innerText()) && (await ui.locator('.approval-upload .btn').allInnerTexts()).join('|') === 'Don’t upload|Upload', uploadCard ? await ui.locator('.approval-upload').innerText() : 'no card');
