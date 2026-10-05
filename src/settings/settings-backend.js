@@ -863,12 +863,19 @@ function create(deps) {
     handle('prefs:widget-gmail-connect', async (input) => { const out = await deps.widgets.gmailConnect(input); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
+    // Gmail's default mode: sign in to Google in a Lumen tab, which accounts are signed in, and the client-file reader of the Advanced setup.
+    handle('prefs:widget-gmail-signin', () => deps.widgets.gmailOpenSignIn());
+    handle('prefs:widget-gmail-accounts', () => deps.widgets.gmailAccounts());
+    handle('prefs:widget-gmail-parse-client', (text) => require('../features/google-client').parseClientJson(typeof text === 'string' ? text : ''));
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
     handle('prefs:widget-tv-lists', () => deps.widgets.tradingviewLists());
     // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
     const WIDGET_HELP = {
       todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
       coingecko: 'https://www.coingecko.com/en/api', muse: 'https://dev.meta.ai', spotify: 'https://developer.spotify.com/dashboard', gmail: 'https://console.cloud.google.com/apis/credentials',
+      // The guided setup of Gmail's Advanced mode (your own Google Cloud client), one page per step.
+      gmailProject: 'https://console.cloud.google.com/projectcreate', gmailApi: 'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+      gmailConsent: 'https://console.cloud.google.com/apis/credentials/consent', gmailClient: 'https://console.cloud.google.com/apis/credentials/oauthclient',
       slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
     };
     handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });

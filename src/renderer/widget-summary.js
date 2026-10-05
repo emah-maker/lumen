@@ -52,7 +52,14 @@ function accountStatus(w, ctx = {}) {
       const name = ctx.spotify && ctx.spotify.name;
       return { connected: on, text: on ? (name ? `Connected as ${name}` : 'Connected') : 'Not connected' };
     }
-    case 'gmail': { const on = Boolean(ctx.connections && ctx.connections.gmail); return { connected: on, text: on ? 'Connected' : 'Not connected' }; }
+    case 'gmail': {
+      if (w.mode !== 'oauth') { // the default: the Google sign-in already in Lumen
+        const g = ctx.gmailGoogle || {};
+        return g.signedIn === false ? { connected: false, text: 'Sign in to Google in Lumen' } : { connected: true, text: g.email ? `Using ${g.email}` : 'Uses your Google sign-in in Lumen' };
+      }
+      const on = Boolean(ctx.connections && ctx.connections.gmail);
+      return { connected: on, text: on ? 'Connected' : 'Not connected' };
+    }
     case 'slack': {
       const s = ctx.slack || {};
       if (s.connected && s.reconnect) return { connected: false, text: 'Needs to be connected again' };

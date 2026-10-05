@@ -207,7 +207,7 @@ async function builtinRuns(check) {
     if (u.pathname.endsWith('/messages')) return json(200, { messages: [] });
     return json(404, {});
   };
-  let settings = { homeWidgets: [{ id: 'wgmailb1', type: 'gmail', count: 3 }] };
+  let settings = { homeWidgets: [{ id: 'wgmailb1', type: 'gmail', mode: 'oauth', count: 3 }] };
   const secrets = {};
   let opened = [];
   let configured;
@@ -247,7 +247,7 @@ async function builtinRuns(check) {
   page = await shown(w);
   check('gmail built-in: the card then shows the inbox, and neither settings.json nor the page carries the built-in secret or a token',
     page.data?.state === 'ok' && !/GOCSPX|REFRESH-B|ACCESS-B/.test(JSON.stringify(settings) + JSON.stringify(w.forPage())), JSON.stringify(page.data).slice(0, 120));
-  const saved = await w.save({ type: 'gmail', clientId: '', count: 4 });
+  const saved = await w.save({ type: 'gmail', mode: 'oauth', clientId: '', count: 4 });
   check('gmail built-in: Save with no Client ID keeps the built-in sign-in and writes no Client ID', saved.widget.clientId === '' && OA.decodeCreds(secrets.gmail).refresh === 'REFRESH-B', JSON.stringify(saved.widget));
   opened = [];
   await w.act(action);
