@@ -89,6 +89,30 @@ const USAGE_TEXT = [
   for (let i = 0; i < 30 && !(meter && !meter.hidden && /Plan 34%/.test(meter.text)); i++) { await sleep(200); meter = await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return m && { hidden: m.hidden, text: m.textContent }; }); }
   check('the sidebar shows the plan meter with Lumen\'s share', meter && !meter.hidden && /Plan 34%/.test(meter.text) && /Lumen ≈4/.test(meter.text), JSON.stringify(meter));
 
+  // ---- the popover a click on the meter opens (not Settings): windows, what Lumen counted, link to Settings → Usage
+  const pop = () => ui.evaluate(() => { const p = document.getElementById('usage-popover'); const m = document.getElementById('usage-meter'); return { open: Boolean(p && !p.hidden), expanded: m.getAttribute('aria-expanded'), focusInside: Boolean(p && p.contains(document.activeElement)) || document.activeElement === p, focusOnMeter: document.activeElement === m, text: p ? p.textContent : '', bars: p ? p.querySelectorAll('[role=progressbar]').length : 0, link: Boolean(p && p.querySelector('.up-link')) }; });
+  await ui.evaluate(() => { const t = document.getElementById('toggle-sidebar'); if (t.getAttribute('aria-pressed') !== 'true') t.click(); });
+  await ui.evaluate(() => { const sel = document.getElementById('model'); if (![...sel.options].some((o) => o.value === 'claudecode:default')) sel.append(new Option('Claude Code', 'claudecode:default')); sel.value = 'claudecode:default'; sel.dispatchEvent(new Event('change')); }); // (the model list was reloaded when the sidebar opened)
+  await sleep(600);
+  const clickMeter = async () => { await ui.evaluate(() => document.getElementById('usage-meter').click()); await sleep(250); }; // (the strip is still settling after the sidebar opens, so a pointer click is never "stable")
+  for (let i = 0; i < 25 && !(await ui.isVisible('#usage-meter')); i++) await sleep(200);
+  await clickMeter();
+  let popup = await pop();
+  check('clicking the plan meter opens a popover with both bars and the Settings link, not a page', popup.open && popup.expanded === 'true' && popup.bars >= 1 && popup.link && /resets/.test(popup.text) && /Today/.test(popup.text) && /Usage settings/.test(popup.text), JSON.stringify(popup));
+  check('the popover takes focus', popup.focusInside, JSON.stringify(popup));
+  if (process.env.LUMEN_SHOT) await ui.screenshot({ path: process.env.LUMEN_SHOT });
+  await ui.keyboard.press('Escape');
+  popup = await pop();
+  check('Esc closes the popover and focus returns to the meter', !popup.open && popup.expanded === 'false' && popup.focusOnMeter, JSON.stringify(popup));
+  await clickMeter();
+  await clickMeter();
+  popup = await pop();
+  check('clicking the meter again closes the popover', !popup.open, JSON.stringify(popup));
+  await clickMeter();
+  await ui.evaluate(() => document.getElementById('messages').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  popup = await pop();
+  check('clicking outside closes the popover', !popup.open, JSON.stringify(popup));
+
   // ---- Settings → Usage
   await app.evaluate(() => global.__settings.open('usage'));
   let page = null;

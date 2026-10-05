@@ -30,7 +30,8 @@
   // publishes no plan limits, shows the chat's context-window fill with today's tokens and cost, a
   // progress bar toward the budget the user set, or "limit reached" with its reset time; never a
   // plan percentage. With nothing real yet it shows a hint instead of a bar. Live during a Claude turn (rate_limit_event),
-  // refreshed after each one; a click opens Settings → Usage.
+  // refreshed after each one; a click opens a small popover with the details (limit windows, what Lumen counted, rate
+  // limits) and a link to Settings → Usage (renderer/usage-popover.js works out what it says).
   const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
   const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
   const meterFill = document.createElement('i');
@@ -46,7 +47,8 @@
   if ($('prompt')) $('prompt').before(strip);
   else $('composer')?.prepend(strip);
   const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
-  meter.addEventListener('click', () => extras.openUsage?.());
+  meter.setAttribute('aria-haspopup', 'dialog');
+  meter.setAttribute('aria-expanded', 'false');
   let usage = null;
   // Every AI has a bar: the CLIs by their prefix, an API provider by its prefix or (a bare Claude model id) Anthropic; Auto has none.
   const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex', antigravity: 'Antigravity', anthropic: 'Claude', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
@@ -105,6 +107,7 @@
     const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
     meter.hidden = off || (!bar && !hint);
     syncStrip();
+    if (meter.hidden) closePopover(false); else if (!pop.hidden) renderPopover();
     meter.classList.toggle('hint', hint);
     if (hint) {
       meterBar.hidden = true;
@@ -154,7 +157,96 @@
     usage = await extras.usage(force).catch(() => usage);
     renderMeter();
   }
-  select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
+  // ---------- [usage] the popover a click on the plan meter opens ----------
+  // Above the strip, not a page change: the limit windows with their exact reset times, what Lumen counted today and
+  // over 7 days, the plan, an API key's per-minute limits, when the numbers were read, and a link to Settings → Usage.
+  // It only reads the summary already loaded (`usage`). Esc, a click outside or the meter again closes it, and focus
+  // goes into it and back to the meter.
+  const pop = Object.assign(document.createElement('div'), { id: 'usage-popover', className: 'usage-popover', hidden: true, tabIndex: -1 });
+  pop.setAttribute('role', 'dialog');
+  meter.setAttribute('aria-controls', 'usage-popover');
+  strip.append(pop);
+  let popTimer = null;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  // One row: a label and value, a thin bar (through the CSSOM: a page's CSP may drop inline style attributes), a line of detail.
+  function barRow(label, percent, level, detail, valueText) {
+    const row = el('div', 'up-row');
+    const top = el('div', 'up-line');
+    top.append(el('span', 'up-label', label), el('span', 'up-value', valueText));
+    const track = el('span', 'up-bar');
+    track.dataset.level = level;
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.round(percent)));
+    track.setAttribute('aria-label', label);
+    const fill = document.createElement('i');
+    fill.style.width = `${Math.round(percent)}%`;
+    track.append(fill);
+    row.append(top, track);
+    if (detail) row.append(el('div', 'up-sub', detail));
+    return row;
+  }
+  function renderPopover() {
+    const key = engineKey();
+    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key] }) : null;
+    if (!v) { closePopover(false); return; }
+    pop.replaceChildren();
+    const label = window.t('usage.bar.labelFor', { name: v.name });
+    pop.setAttribute('aria-label', label);
+    const head = el('div', 'up-head');
+    head.append(el('span', 'up-title', label));
+    if (v.plan) head.append(el('span', 'up-plan', v.plan));
+    pop.append(head);
+    if (v.message) pop.append(el('p', 'up-note', v.message));
+    for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
+    if (v.rates.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.rates')));
+      for (const r of v.rates) pop.append(barRow(r.label, r.percent, window.usageBars?.levelOf(r.percent) || 'ok', r.text, window.t('usage.bar.used', { percent: Math.round(r.percent) })));
+    }
+    if (v.note && !v.windows.length) pop.append(el('p', 'up-note', v.note));
+    if (v.counted.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.counted')));
+      for (const c of v.counted) {
+        const line = el('div', 'up-line up-count');
+        line.append(el('span', 'up-label', c.label), el('span', 'up-value', c.text));
+        pop.append(line);
+      }
+    } else if (!v.windows.length && !v.rates.length && !v.note) pop.append(el('p', 'up-note', window.t('usage.pop.none')));
+    const foot = el('div', 'up-foot');
+    foot.append(el('span', 'up-updated', v.updated));
+    const link = Object.assign(document.createElement('button'), { type: 'button', className: 'up-link', textContent: window.t('usage.pop.settings') });
+    link.addEventListener('click', () => { closePopover(true); extras.openUsage?.(); });
+    foot.append(link);
+    pop.append(foot);
+  }
+  function openPopover() {
+    if (!pop.hidden || !usage) return;
+    renderPopover();
+    if (!pop.childNodes.length) return;
+    pop.hidden = false;
+    meter.setAttribute('aria-expanded', 'true');
+    pop.focus({ preventScroll: true });
+    clearInterval(popTimer);
+    popTimer = setInterval(renderPopover, 30000); // "in 12 m" and "updated 3 min ago" stay honest while it is open
+    document.addEventListener('pointerdown', onOutside, true);
+  }
+  function closePopover(refocus) {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    meter.setAttribute('aria-expanded', 'false');
+    clearInterval(popTimer);
+    document.removeEventListener('pointerdown', onOutside, true);
+    if (refocus) meter.focus({ preventScroll: true });
+  }
+  function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+  meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+  const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
+  pop.addEventListener('keydown', escape);
+  meter.addEventListener('keydown', escape);
+  strip.addEventListener('focusout', (e) => { if (!pop.hidden && e.relatedTarget && !strip.contains(e.relatedTarget)) closePopover(false); });
+
+  select?.addEventListener('change', () => { closePopover(false); setTimeout(() => refreshUsage(false)); });
   // Another chat is open (New chat, one from the chat list, or a new topic starting its own chat):
   // Grok's context bar is that chat's, empty for a new one. Main has switched chats by then.
   $('new-chat')?.addEventListener('click', () => setTimeout(() => refreshUsage(false), 50));

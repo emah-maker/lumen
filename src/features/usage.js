@@ -169,7 +169,7 @@ function barFor(engine, s) {
     const w = c.fiveHour && !c.fiveHour.expired ? c.fiveHour : c.weekly && !c.weekly.expired ? c.weekly : null;
     if (!w) return null;
     const wk = c.weekly && !c.weekly.expired ? c.weekly : null;
-    return { engine, kind: 'plan', percent: Math.max(0, Math.min(100, w.percent)), level: levelOf(w.percent), resetsAt: w.resetsAt || null, resetsText: null, weekly: wk && wk !== w ? { percent: Math.max(0, Math.min(100, wk.percent)), resetsText: null } : null, lumenPoints: null };
+    return { engine, kind: 'plan', percent: Math.max(0, Math.min(100, w.percent)), level: levelOf(w.percent), resetsAt: w.resetsAt || null, resetsText: null, weekly: wk && wk !== w ? { percent: Math.max(0, Math.min(100, wk.percent)), resetsText: null, resetsAt: wk.resetsAt || null } : null, lumenPoints: null };
   }
   const { limit, windows, budget, rate } = ownOf(engine, s);
   if (limit) return { engine, kind: 'limit', percent: 100, level: 'high', resetsAt: limit.resetsAt || null, message: limit.text || '', model: limit.model || null, windows };
