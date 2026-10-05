@@ -45,8 +45,15 @@ const path = require('path');
   check('Auto is the default on a fresh profile (more than one model is connected)', (await ui.inputValue('#model')) === 'auto', await ui.inputValue('#model'));
 
   // [usage bars] A Claude API key has no plan window: its group in the picker carries no bar, and opening it asks for nothing new.
-  await ui.evaluate(() => modelPicker.open());
-  await ui.waitForSelector('.picker-menu:not([hidden]) .picker-group', { state: 'attached' });
+  // Opened up to three times: right after start-up something may close it again before it is read (seen about once in seven
+  // runs on a busy machine, never caught in 30+ traced runs); a menu that won't stay open at all still fails, with its state.
+  let opened = false;
+  for (let i = 0; i < 3 && !opened; i++) {
+    await ui.evaluate(() => modelPicker.open());
+    opened = await ui.waitForSelector('.picker-menu:not([hidden]) .picker-group', { state: 'attached', timeout: 5000 }).then(() => true, () => false);
+  }
+  if (!opened) console.log('picker state: ' + JSON.stringify(await ui.evaluate(() => ({ menus: [...document.querySelectorAll('.picker-menu')].map((m) => ({ hidden: m.hidden, kids: m.children.length })), options: document.querySelectorAll('#model option').length }))));
+  check('the model menu opens (and stays open to be read)', opened, 'never opened in 3 tries');
   const apiBars = await ui.evaluate(() => document.querySelectorAll('.picker-menu:not([hidden]) .ubar').length);
   await ui.evaluate(() => modelPicker.close(false));
   check('usage bars: a provider with no usage numbers (an API key) shows no bar in the model picker', apiBars === 0, String(apiBars));
