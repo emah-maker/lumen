@@ -466,7 +466,8 @@ async function buildAi(card) {
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen, with your OK for each new site. Off by default.', mcpToggle));
+  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
+  agents.append(toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Agents in their own window don’t ask'), tr('settings.ai.agentsNoAskDesc', 'A connected agent clicks, types and opens sites in its own Lumen window without asking you first, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach. Turn this off to approve each new site.'), null, { fallback: true }));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();

@@ -2897,11 +2897,11 @@ ${prompt}` : prompt), historyImages: [] };
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
   // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
-  async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
+  async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, noAsk = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     this.offTabCheck(name, input); // [ai off-tab] ...nor a tab the user keeps the AI off
     this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
-    const gate = { emit, signal, hosts, who, external, run };
+    const gate = { emit, signal, hosts, who, external, noAsk, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
@@ -2934,7 +2934,7 @@ ${prompt}` : prompt), historyImages: [] };
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
       if (!host || hosts.has(keyOf(host))) return;
-      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal, scripted ? { action: 'script', who } : undefined);
+      const ok = this.autoAllows(gate) ? true : await this.askApproval(host, emit, signal, scripted ? { action: 'script', who } : undefined);
       if (!ok) throw new Error(scripted
         ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
         : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
@@ -2949,7 +2949,7 @@ ${prompt}` : prompt), historyImages: [] };
   async allowStep(name, input) {
     const gate = taskScope.getStore()?.gate;
     if (!gate) return;
-    await this.ensureAllowed(name, gate.emit, gate.signal, { hosts: gate.hosts, who: gate.who, external: gate.external, input, run: gate.run });
+    await this.ensureAllowed(name, gate.emit, gate.signal, { hosts: gate.hosts, who: gate.who, external: gate.external, noAsk: gate.noAsk, input, run: gate.run });
   }
 
   // ---- [ai controls] Per-site AI switch (features/ai-sites.js; browser.aiOff(url)). A tab on such a
@@ -3168,12 +3168,19 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/ai controls]
 
+  // Approves without a card: the sidebar's AI with "Ask before acting" off, or an outside agent in its own Lumen window with
+  // Settings → AI → "Agents in their own window don't ask" on (noAsk, set by features/ai-agents.js mcpCallTool). The user's own
+  // blocks (AI off on a site, a tab kept off, hands-off mode) are checked before any card and still apply.
+  autoAllows({ external = false, noAsk = false } = {}) {
+    return Boolean(noAsk) || (!external && Boolean(this.browser.autoApprove?.()));
+  }
+
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
   // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
   // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
-  async askOpen(host, { emit, signal, hosts, who, external }, card = null) {
+  async askOpen(host, { emit, signal, hosts, who, external, noAsk }, card = null) {
     if (hosts.has(host)) return true;
-    if (!external && this.browser.autoApprove?.()) {
+    if (this.autoAllows({ external, noAsk })) {
       hosts.add(host);
       return true;
     }
@@ -3213,7 +3220,7 @@ ${prompt}` : prompt), historyImages: [] };
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
         host = parsed.host;
       } catch { return; }
-      if (gate.hosts.has(host) || (!gate.external && this.browser.autoApprove?.())) return;
+      if (gate.hosts.has(host) || this.autoAllows(gate)) return;
       event.preventDefault();
       blocked ||= { url, host };
     };
@@ -3366,9 +3373,9 @@ ${rendered.text}
     return { wc, url };
   }
 
-  async allowPdf(input, { emit, signal, who, run }) {
+  async allowPdf(input, { emit, signal, who, run, noAsk = false }) {
     const { url } = await this.pdfTarget(input);
-    const ok = await pdfText.requirePdfPermission(taintHolder(run), url, (name) => this.askApproval(name, emit, signal, { action: 'pdf', who, title: `Allow the AI to read ${name}?` }));
+    const ok = await pdfText.requirePdfPermission(taintHolder(run), url, (name) => (noAsk ? true : this.askApproval(name, emit, signal, { action: 'pdf', who, title: `Allow the AI to read ${name}?` })));
     if (!ok) throw new Error(`The user did not allow reading ${pdfText.pdfName(url)}. Ask them what to do instead.`);
   }
 
