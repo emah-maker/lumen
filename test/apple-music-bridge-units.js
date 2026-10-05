@@ -17,14 +17,14 @@ function pageHarness({ authorized = false, withKit = true } = {}) {
   class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } }
   const document = {
     addEventListener: (t, f) => { (listeners[t] ||= []).push(f); },
-    dispatchEvent: (e) => { if (e.type === 'lumen-am-out') out.push(JSON.parse(e.detail)); (listeners[e.type] || []).forEach((f) => f(e)); return true; },
+    dispatchEvent: (e) => { if (e.type === 'lumen-engine-out') out.push(JSON.parse(e.detail)); (listeners[e.type] || []).forEach((f) => f(e)); return true; },
   };
   const ok = (...a) => { calls.push(a); return Promise.resolve(); };
   const kit = {
     isAuthorized: authorized, playbackState: 0, currentPlaybackTime: 0, currentPlaybackDuration: 0, storefrontId: 'us', nowPlayingItem: null,
     addEventListener: (ev, f) => { (kitEvents[ev] ||= []).push(f); },
     play: () => ok('play'), pause: () => { calls.push(['pause']); }, skipToNextItem: () => ok('next'), skipToPreviousItem: () => ok('previous'),
-    seekToTime: (s) => ok('seek', s), setQueue: (q) => ok('setQueue', q),
+    seekToTime: (s) => ok('seek', s), setQueue: (q) => ok('setQueue', q), playNext: (q) => ok('playNext', q), playLater: (q) => ok('playLater', q),
     api: { music: (path, params) => { calls.push(['api', path, params]); return kit.apiAnswer(path, params); } },
     apiAnswer: () => Promise.resolve({ data: { data: [] } }),
   };
@@ -32,7 +32,7 @@ function pageHarness({ authorized = false, withKit = true } = {}) {
   const ctx = vm.createContext({ document, CustomEvent, JSON, String, Boolean, Date, Array, isFinite, window: withKit ? { MusicKit: { getInstance: () => kit } } : {}, setInterval: (f) => { intervals.push(f); return intervals.length; }, clearInterval: () => {} });
   vm.runInContext(AMB.BRIDGE_SOURCE, ctx);
   const tick = () => intervals.forEach((f) => f());
-  const send = (obj) => document.dispatchEvent(new CustomEvent('lumen-am-in', { detail: typeof obj === 'string' ? obj : JSON.stringify(obj) }));
+  const send = (obj) => document.dispatchEvent(new CustomEvent('lumen-engine-in', { detail: typeof obj === 'string' ? obj : JSON.stringify(obj) }));
   const fire = (ev) => (kitEvents[ev] || []).forEach((f) => f({}));
   return { kit, out, calls, tick, send, fire, listeners };
 }
@@ -46,7 +46,7 @@ module.exports = async function appleMusicBridgeUnits(check) {
   check('apple bridge: artwork from any other host, scheme, port, credentials or with odd characters is refused', badArt.every((u) => A(u) === ''), badArt.filter((u) => A(u) !== '').join(' '));
 
   // ---- kinds and playback states ----
-  check('apple bridge: API types map to what setQueue takes (library ones too); others are null', ['songs', 'albums', 'playlists', 'stations', 'library-playlists', 'library-albums', 'song'].every((t) => AMB.kindOf(t)) && AMB.kindOf('library-playlists') === 'playlist' && AMB.kindOf('songs') === 'song' && ['artists', 'music-videos', '', null, 'constructor', '__proto__'].every((t) => AMB.kindOf(t) === null), '');
+  check('apple bridge: API types map to what setQueue takes (library ones too); others are null', ['songs', 'albums', 'artists', 'playlists', 'stations', 'library-playlists', 'library-albums', 'song'].every((t) => AMB.kindOf(t)) && AMB.kindOf('library-playlists') === 'playlist' && AMB.kindOf('songs') === 'song' && AMB.kindOf('artists') === 'artist' && ['music-videos', 'apple-curators', '', null, 'constructor', '__proto__'].every((t) => AMB.kindOf(t) === null), '');
   check('apple bridge: playback states map (loading and stalled are about to play; seeking is its own; the rest idle)', [2, 1, 8, 9].every((n) => AMB.playbackKind(n) === 'playing') && AMB.playbackKind(3) === 'paused' && AMB.playbackKind(6) === 'seeking' && [0, 4, 5, 10, 99, -1, NaN].every((n) => AMB.playbackKind(n) === 'idle'), '');
 
   // ---- messages from the page ----
@@ -56,9 +56,9 @@ module.exports = async function appleMusicBridgeUnits(check) {
   check('apple bridge: text is flattened and bounded; a bad id is blanked; no title means no item', AMB.parseMessage(stateMsg({ item: { id: 'a b<', type: 'song', title: ' <b>Hi</b>\u0000\n there ', artist: 'A'.repeat(900) } })).item.title === '<b>Hi</b> there' && AMB.parseMessage(stateMsg({ item: { id: 'a b<', type: 'song', title: 'T' } })).item.id === '' && AMB.parseMessage(stateMsg({ item: { id: '1', type: 'song', title: '' } })).item === null && AMB.parseMessage(stateMsg({ item: { id: 'a b<', type: 'song', title: 'T', artist: 'A'.repeat(900) } })).item.artist.length === 120, '');
   check('apple bridge: numbers are bounded (NaN, negative or huge become 0); a store is two letters or empty', (() => { const x = AMB.parseMessage(stateMsg({ pos: -5, dur: 1e12, state: 'x', store: 'USA' })); return x.pos === 0 && x.dur === 0 && x.state === 0 && x.store === ''; })(), '');
   check('apple bridge: "auth" is true only for true (not "yes" or 1)', AMB.parseMessage(stateMsg({ auth: true })).auth === true && AMB.parseMessage(stateMsg({ auth: 'yes' })).auth === false && AMB.parseMessage(stateMsg({ auth: 1 })).auth === false, '');
-  const L = AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'recent', rid: 4, ok: true, items: [{ id: 'l.abc', type: 'library-albums', title: 'Quiet', sub: 'Ann' }, { id: 'bad id', type: 'songs', title: 'x' }, { id: '5', type: 'artists', title: 'x' }, { id: '6', type: 'songs', title: '' }, null, 3] }));
+  const L = AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'recent', rid: 4, ok: true, items: [{ id: 'l.abc', type: 'library-albums', title: 'Quiet', sub: 'Ann' }, { id: 'bad id', type: 'songs', title: 'x' }, { id: '5', type: 'music-videos', title: 'x' }, { id: '6', type: 'songs', title: '' }, null, 3] }));
   check('apple bridge: a list keeps only items with a safe id, a playable kind and a title', L.t === 'list' && L.items.length === 1 && L.items[0].id === 'l.abc' && L.items[0].kind === 'album' && L.rid === 4 && L.ok === true, JSON.stringify(L));
-  check('apple bridge: a list is cut at 12 items, and only known list kinds are accepted', AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'search', items: Array.from({ length: 50 }, (_, i) => ({ id: `s${i}`, type: 'songs', title: 'T' })) })).items.length === 12 && AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'secrets', items: [] })) === null, '');
+  check('apple bridge: a list is cut at 40 items, and only known list kinds are accepted', AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'search', items: Array.from({ length: 80 }, (_, i) => ({ id: `s${i}`, type: 'songs', title: 'T' })) })).items.length === 40 && AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'secrets', items: [] })) === null, '');
   check('apple bridge: ready and error messages are parsed; an error text is bounded', AMB.parseMessage('{"t":"ready"}').t === 'ready' && AMB.parseMessage(JSON.stringify({ t: 'error', message: 'x'.repeat(900) })).message.length === 200, '');
   check('apple bridge: junk is dropped (not JSON, arrays, null, unknown kinds, non-strings, oversized)', ['', 'nope', '[]', 'null', '5', '{"t":"nope"}', '{}', '{"t":"state"', null, undefined, 5, {}, 'x'.repeat(AMB.MAX_MESSAGE + 1), JSON.stringify({ t: 'ready', pad: 'x'.repeat(AMB.MAX_MESSAGE) })].every((x) => AMB.parseMessage(x) === null), '');
   check('apple bridge: prototype-pollution looking keys do nothing', (() => { const x = AMB.parseMessage('{"t":"state","__proto__":{"polluted":1},"item":{"__proto__":{"x":1},"title":"T"}}'); return x && ({}).polluted === undefined && x.item.title === 'T' && !('__proto__' in JSON.parse(JSON.stringify(x)) && Object.prototype.hasOwnProperty.call(x, 'polluted')); })(), '');
@@ -67,9 +67,18 @@ module.exports = async function appleMusicBridgeUnits(check) {
   const cc = (c) => AMB.cleanCommand(c);
   check('apple bridge: the four buttons are commands with no arguments', ['play', 'pause', 'next', 'previous'].every((c) => cc({ cmd: c, extra: 'x' }) === JSON.stringify({ cmd: c })), '');
   check('apple bridge: seek takes seconds (rounded) in range only', cc({ cmd: 'seek', sec: 12.6 }) === '{"cmd":"seek","sec":13}' && [{ cmd: 'seek', sec: -1 }, { cmd: 'seek', sec: NaN }, { cmd: 'seek', sec: Infinity }, { cmd: 'seek', sec: '5' }, { cmd: 'seek', sec: 1e9 }, { cmd: 'seek' }].every((c) => cc(c) === null), '');
-  check('apple bridge: playItem takes a fixed kind and a safe id', cc({ cmd: 'playItem', kind: 'playlist', id: 'p.AbC-1_2' }) === '{"cmd":"playItem","kind":"playlist","id":"p.AbC-1_2"}' && [{ kind: 'artist', id: '1' }, { kind: 'song', id: '' }, { kind: 'song', id: 'a b' }, { kind: 'song', id: 'a/../b' }, { kind: 'song', id: '1;alert(1)' }, { kind: 'song', id: 'x'.repeat(65) }, { kind: 'song', id: 5 }, { kind: 'song' }, { id: '1' }].every((c) => cc({ cmd: 'playItem', ...c }) === null), '');
+  check('apple bridge: playItem takes a fixed kind and a safe id', cc({ cmd: 'playItem', kind: 'playlist', id: 'p.AbC-1_2' }) === '{"cmd":"playItem","kind":"playlist","id":"p.AbC-1_2"}' && [{ kind: 'genre', id: '1' }, { kind: 'song', id: '' }, { kind: 'song', id: 'a b' }, { kind: 'song', id: 'a/../b' }, { kind: 'song', id: '1;alert(1)' }, { kind: 'song', id: 'x'.repeat(65) }, { kind: 'song', id: 5 }, { kind: 'song' }, { id: '1' }].every((c) => cc({ cmd: 'playItem', ...c }) === null), '');
   check('apple bridge: list takes recent or playlists; search takes a bounded term', cc({ cmd: 'list', kind: 'recent', rid: 3 }) === '{"cmd":"list","kind":"recent","rid":3}' && cc({ cmd: 'list', kind: 'secrets' }) === null && JSON.parse(cc({ cmd: 'search', term: ` ${'a'.repeat(200)}\u0000 `, rid: 2 })).term.length === 80 && cc({ cmd: 'search', term: '   ' }) === null && cc({ cmd: 'search', term: 5 }) === null, '');
   check('apple bridge: anything else is not a command (eval, unknown names, no object)', [{ cmd: 'eval', code: '1' }, { cmd: 'constructor' }, { cmd: '__proto__' }, { cmd: 'toString' }, { cmd: 'Play' }, {}, null, undefined, 'play', 5, []].every((c) => cc(c) === null), '');
+
+  const S = AMB.parseMessage(JSON.stringify({ t: 'list', kind: 'search', rid: 2, ok: true, items: [
+    { id: '1', type: 'songs', title: 'Shake It Off', sub: 'Taylor Swift', ms: 219200, art: ART },
+    { id: '2', type: 'albums', title: '1989', sub: 'Taylor Swift', ms: 0, art: 'https://evil.example/{w}x{h}.jpg' },
+    { id: '3', type: 'artists', title: 'Taylor Swift', ms: -5 },
+    { id: '4', type: 'playlists', title: 'Hits', sub: 'Apple Music', art: 'javascript:1' }] }));
+  check('apple bridge: search results carry a duration and a small picture address (mzstatic only); evil pictures and bad durations are dropped', S.items.length === 4 && S.items[0].ms === 219200 && S.items[0].art.endsWith('/64x64bb.jpg') && S.items[1].art === '' && S.items[2].ms === 0 && S.items[3].art === '' && S.items.map((i) => i.kind).join() === 'song,album,artist,playlist', JSON.stringify(S.items));
+  check('apple bridge: playNext and playLater take a song, album or playlist with a safe id only', cc({ cmd: 'playNext', kind: 'song', id: '7' }) === '{"cmd":"playNext","kind":"song","id":"7"}' && cc({ cmd: 'playLater', kind: 'playlist', id: 'p.1' }) === '{"cmd":"playLater","kind":"playlist","id":"p.1"}' && [{ kind: 'artist', id: '1' }, { kind: 'station', id: '1' }, { kind: 'song', id: 'a b' }, { kind: 'song' }, { id: '1' }].every((c) => cc({ cmd: 'playNext', ...c }) === null && cc({ cmd: 'playLater', ...c }) === null), '');
+  check('apple bridge: the service offers search, lists, seek and the queue', AMB.CAPS.search && AMB.CAPS.lists && AMB.CAPS.seek && AMB.CAPS.queue, JSON.stringify(AMB.CAPS));
 
   // ---- the card's data ----
   const NOW = 1e12;
@@ -80,7 +89,7 @@ module.exports = async function appleMusicBridgeUnits(check) {
 
   // ---- the page script itself ----
   check('apple bridge: the page script is plain code: no eval, Function, fetch, XHR, innerHTML, document.write, import or WebSocket', !/\b(eval|Function|fetch|XMLHttpRequest|innerHTML|outerHTML|document\.write|import\s*\(|WebSocket|localStorage|sessionStorage|cookie|postMessage)\b/.test(AMB.BRIDGE_SOURCE), '');
-  check('apple bridge: the page script names exactly three Apple API paths', (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).sort().join() === "'/v1/catalog/','/v1/me/library/playlists','/v1/me/recent/played'", (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).join());
+  check('apple bridge: the page script names exactly these Apple API path templates (search, an artist top songs, recent plays, playlists)', (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).sort().join() === "'/v1/catalog/','/v1/catalog/','/v1/me/library/playlists','/v1/me/recent/played'", (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).join());
   check('apple bridge: the page script compiles', (() => { try { new vm.Script(AMB.BRIDGE_SOURCE); return true; } catch { return false; } })(), '');
 
   const h = pageHarness();
@@ -116,11 +125,23 @@ module.exports = async function appleMusicBridgeUnits(check) {
   check('apple bridge (page): seek calls seekToTime with a good number only', JSON.stringify(h.calls) === '[["seek",41]]', JSON.stringify(h.calls));
   h.calls.length = 0;
   h.send({ cmd: 'playItem', kind: 'playlist', id: 'p.abc' });
-  h.send({ cmd: 'playItem', kind: 'artist', id: '1' });
+  h.send({ cmd: 'playItem', kind: 'genre', id: '1' });
   h.send({ cmd: 'playItem', kind: 'song', id: 'a b' });
   h.send({ cmd: 'playItem', kind: 'song', id: '1/../2' });
   await flush();
   check('apple bridge (page): playItem sets that queue and plays; a bad kind or id does nothing', JSON.stringify(h.calls) === '[["setQueue",{"playlist":"p.abc"}],["play"]]', JSON.stringify(h.calls));
+  h.calls.length = 0;
+  h.kit.apiAnswer = () => Promise.resolve({ data: { data: [{ id: '11', type: 'songs' }, { id: '12', type: 'songs' }, { id: 'bad id', type: 'songs' }] } });
+  h.send({ cmd: 'playItem', kind: 'artist', id: '5478' });
+  await flush(); await flush(); await flush();
+  check('apple bridge (page): an artist plays its top songs (one fixed catalog path with the validated id, then those song ids)', JSON.stringify(h.calls.map((c) => c[0] === 'api' ? [c[0], c[1]] : c)) === '[["api","/v1/catalog/us/artists/5478/view/top-songs"],["setQueue",{"songs":["11","12"]}],["play"]]', JSON.stringify(h.calls));
+  h.calls.length = 0;
+  h.send({ cmd: 'playNext', kind: 'song', id: '77' });
+  h.send({ cmd: 'playLater', kind: 'album', id: 'l.5' });
+  h.send({ cmd: 'playNext', kind: 'artist', id: '1' });
+  h.send({ cmd: 'playLater', kind: 'song', id: 'a b' });
+  await flush();
+  check('apple bridge (page): playNext and playLater call MusicKit\'s own methods with that item (songs, albums, playlists only)', JSON.stringify(h.calls) === '[["playNext",{"song":"77"}],["playLater",{"album":"l.5"}]]', JSON.stringify(h.calls));
   h.calls.length = 0;
   for (const bad of ['{"cmd":"eval","code":"1"}', '{"cmd":"constructor"}', '{"cmd":"__proto__"}', 'not json', '', '{"cmd":"setQueue","q":{"song":"1"}}', '{"cmd":"authorize"}', '{"cmd":"signOut"}', '{"cmd":"unauthorize"}']) h.send(bad);
   h.send({ cmd: 'play', extra: 'x' });
@@ -143,7 +164,7 @@ module.exports = async function appleMusicBridgeUnits(check) {
   h.send({ cmd: 'search', term: 'shake it off / ../../v1/me?x=1', rid: 9 });
   await flush(); await flush();
   const sc = h.calls.find((c) => c[0] === 'api');
-  check('apple bridge (page): search goes to the catalog path of the storefront with the term as a parameter, never in the path', sc && sc[1] === '/v1/catalog/us/search' && sc[2].term === 'shake it off / ../../v1/me?x=1' && sc[2].types === 'songs,albums,playlists' && sc[2].limit === 4, JSON.stringify(sc));
+  check('apple bridge (page): search goes to the catalog path of the storefront with the term as a parameter, never in the path', sc && sc[1] === '/v1/catalog/us/search' && sc[2].term === 'shake it off / ../../v1/me?x=1' && sc[2].types === 'songs,albums,artists,playlists' && sc[2].limit === 8, JSON.stringify(sc));
   check('apple bridge (page): search results come back as one list', (() => { const l = AMB.parseMessage(JSON.stringify(h.out.find((x) => x.t === 'list'))); return l && l.kind === 'search' && l.rid === 9 && l.items.map((i) => i.kind).join() === 'song,album'; })(), JSON.stringify(h.out));
   h.kit.storefrontId = '../../evil';
   h.calls.length = 0;

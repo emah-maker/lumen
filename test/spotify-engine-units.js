@@ -1,0 +1,171 @@
+// The Spotify engine (features/spotify-engine.js on features/music-engine.js) and the Spotify widget's new default mode, without Electron,
+// Spotify or the network: a fake web player (the hidden page), a fake sign-in window and clock. What differs from Apple Music's: signed in
+// comes from Spotify's cookie (not the page), the page-changed self-test, remote playback (Spotify Connect), search without lists or a
+// queue; and the widget: new cards default to the engine, saved modes are kept, the card data, the buttons and search through it.
+// Runs on its own (npm run test:units picks up test/*-units.js).
+const { EventEmitter } = require('events');
+const { createEngine } = require('../src/features/spotify-engine');
+const { createWidgets, cleanList } = require('../src/features/widgets');
+const SW = require('../src/features/spotify-web');
+
+const ART = 'https://i.scdn.co/image/ab67616d00001e02abc';
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const CLIENT = '0123456789abcdef0123456789abcdef';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const state = (o = {}) => JSON.stringify({ t: 'state', state: 2, pos: 12, dur: 200, device: '', player: true, item: { title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', art: ART, ms: 200000 }, ...o });
+
+function fakePlayer() {
+  const p = {
+    destroyed: 0, signed: false, pinned: null, released: 0, reloaded: 0, st: { state: 'ready', drm: 'ok' }, wc: null,
+    ensure() { if (!p.wc) p.wc = { sent: [], send: (ch, json) => p.wc.sent.push([ch, JSON.parse(json)]) }; return {}; },
+    webContents: () => p.wc, status: () => p.st, isSignedIn: () => p.signed,
+    destroy() { p.destroyed++; p.wc = null; }, showIn(win, rect) { p.pinned = { win, rect }; }, release() { p.released++; p.pinned = null; }, reload() { p.reloaded++; },
+  };
+  return p;
+}
+function fakeWin() {
+  const w = new EventEmitter();
+  w.destroyed = false; w.closed = 0;
+  w.isDestroyed = () => w.destroyed; w.focus = () => {}; w.getContentSize = () => [560, 740]; w.removeMenu = () => {};
+  w.close = () => { w.closed++; w.emit('close'); w.destroyed = true; };
+  return w;
+}
+
+module.exports = async function spotifyEngineUnits(check) {
+  let t = 1e12;
+  const changes = { n: 0 };
+  const player = fakePlayer();
+  const wins = [];
+  const fetched = [];
+  const e = createEngine({
+    player, now: () => t, fetchBytes: async (url) => { fetched.push(url); return PNG; }, resizeArt: (b) => b,
+    BrowserWindow: function BrowserWindow(opts) { const w = fakeWin(); w.opts = opts; wins.push(w); return w; },
+    getParent: () => null, hasCard: () => true, onChange: () => { changes.n++; }, setInterval: () => ({ unref() {} }),
+  });
+  const sent = () => (player.wc ? player.wc.sent.map((s) => s[1]) : []);
+
+  await e.read();
+  e.onMessage('{"t":"ready"}');
+  // ---- signed out: no player controls on the page, and that is not "changed" ----
+  e.onMessage(state({ state: 0, item: null, player: false }));
+  const out = await e.read();
+  check('spotify engine: signed out is known from Spotify\'s own cookie (the page does not say), the idle card offers Sign in, and says nothing is wrong', out.signedIn === false && out.state === 'idle' && out.pageChanged === false && out.engine === 'ready', JSON.stringify(out).slice(0, 200));
+  t += 60e3;
+  e.onMessage(state({ state: 0, item: null, player: false }));
+  check('spotify engine: a signed-out page without the player controls is never reported as changed, however long', (await e.read()).pageChanged === false, '');
+  check('spotify engine: it offers search, seek and nothing else (no lists, no queue)', JSON.stringify((await e.read()).can) === '{"search":true,"lists":false,"seek":true,"queue":false}', JSON.stringify((await e.read()).can));
+  check('spotify engine: lists are never asked for, and play next / add to queue are refused', sent().filter((c) => c.cmd === 'list').length === 0 && e.playNext('song', '1') === false && e.playLater('song', '1') === false && (e.refreshLists(), sent().filter((c) => c.cmd === 'list').length === 0), JSON.stringify(sent()));
+
+  // ---- signing in: the cookie ----
+  check('spotify engine: Sign in opens the window with the engine page in it', e.signIn() === true && wins.length === 1 && wins[0].opts.title === 'Sign in to Spotify' && player.pinned.rect.width === 560, '');
+  player.signed = true;
+  e.authChanged();
+  check('spotify engine: when the cookie says signed in, the window closes by itself and the page goes back', wins[0].closed === 1 && player.released === 1 && e.signedIn() === true, `${wins[0].closed} ${player.released}`);
+
+  // ---- the self-test: signed in, but the page shows no player ----
+  const n0 = changes.n;
+  e.onMessage(state({ state: 0, item: null, player: false }));
+  check('spotify engine: signed in with no player controls is not yet "changed" (the page may still be loading)', (await e.read()).pageChanged === false, '');
+  t += 30e3;
+  e.onMessage(state({ state: 0, item: null, player: false }));
+  const broken = await e.read();
+  check('spotify engine: …after a while it is: the card is told Spotify changed its page, and the page is redrawn for it', broken.pageChanged === true && changes.n > n0, JSON.stringify([broken.pageChanged, changes.n - n0]));
+  e.onMessage(state({ state: 0, item: null, player: true }));
+  check('spotify engine: the player controls showing up clears it', (await e.read()).pageChanged === false, '');
+
+  // ---- playing here, then on another device ----
+  e.onMessage(state());
+  const here = await e.read();
+  check('spotify engine: playing here: the card, a picture asked from scdn.co only, no preview, no device', here.state === 'playing' && here.title === 'Night Shift' && here.device === '' && here.preview === false && fetched.length === 1 && fetched[0] === ART, JSON.stringify([here.state, here.device, fetched]));
+  await sleep(20);
+  check('spotify engine: the picture arrives as a data: URL', (await e.read()).art.startsWith('data:image/png;base64,'), '');
+  e.onMessage(state({ device: 'Kitchen speaker', pos: 70 }));
+  const remote = await e.read();
+  check('spotify engine: playing on another device (Spotify Connect): the card names it and carries the state', remote.state === 'playing' && remote.device === 'Kitchen speaker' && remote.progressMs === 70000, JSON.stringify([remote.device, remote.progressMs]));
+  await e.control('pause'); await e.control('next'); await e.control('previous');
+  check('spotify engine: the buttons go to the page (which presses the remote session\'s buttons)', sent().slice(-3).map((c) => c.cmd).join() === 'pause,next,previous', JSON.stringify(sent().slice(-3)));
+  check('spotify engine: seek goes to the page', e.seek(40) === true && JSON.stringify(sent().at(-1)) === '{"cmd":"seek","sec":40}', '');
+  const c1 = changes.n;
+  e.onMessage(state({ device: 'Kitchen speaker', pos: 72 }));
+  check('spotify engine: a playhead that moved on as expected is not a change; a new device is', changes.n === c1 && (e.onMessage(state({ device: 'Desk', pos: 74 })), changes.n > c1), '');
+  e.onMessage(state({ state: 3, device: 'Desk' }));
+  check('spotify engine: paused is paused', (await e.read()).state === 'paused', '');
+
+  // ---- search ----
+  e.onMessage(state({ state: 0, item: null }));
+  check('spotify engine: search sends the fixed command with a fresh request id', e.search(' shake it off ') === true && sent().at(-1).cmd === 'search' && sent().at(-1).term === 'shake it off' && (await e.read()).searching === true, JSON.stringify(sent().at(-1)));
+  const rid = sent().at(-1).rid;
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid - 1, ok: true, items: [{ id: 'old', kind: 'song', title: 'Old' }] }));
+  check('spotify engine: an older search answer is ignored', (await e.read()).results.length === 0, '');
+  const before = fetched.length;
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid, ok: true, items: [{ id: '4uLU6hMCjMI75M1A2tKUQC', kind: 'song', title: 'Shake It Off', sub: 'Taylor Swift', ms: 219000, art: ART }, { id: '2QJmrSgbdM35R67eoGQo4j', kind: 'album', title: '1989', sub: '', ms: 0, art: 'https://mosaic.scdn.co/64/x' }, { id: '06HL4z0CvFAxyc27GXpf02', kind: 'artist', title: 'Taylor Swift' }] }));
+  const res = await e.read();
+  check('spotify engine: results (song, album, artist) with duration; the card is told', res.results.length === 3 && res.results[0].ms === 219000 && res.results[2].kind === 'artist' && res.query === 'shake it off' && res.searching === false && res.searchOk === true, JSON.stringify(res.results));
+  await sleep(30);
+  const withThumbs = await e.read();
+  check('spotify engine: small pictures for the results are fetched (scdn.co only) and then shown as data: URLs', fetched.length > before && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && withThumbs.results[0].thumb.startsWith('data:image/') && withThumbs.results[1].thumb.startsWith('data:image/') && withThumbs.results[2].thumb === '', JSON.stringify(withThumbs.results.map((r) => r.thumb.slice(0, 20))));
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid, ok: false, items: [] }));
+  check('spotify engine: a search the page could not answer is flagged (the card says Spotify may have changed)', (await e.read()).searchOk === false, '');
+  check('spotify engine: playItem sends kind and id; artist is a kind here too', e.playItem('artist', '06HL4z0CvFAxyc27GXpf02') === true && JSON.stringify(sent().at(-1)) === '{"cmd":"playItem","kind":"artist","id":"06HL4z0CvFAxyc27GXpf02"}' && e.playItem('station', '1') === false, '');
+
+  // ---- the widget ----
+  check('spotify widget: a new card is in engine mode (status); a saved mode is kept; a card saved before modes stays the API card', SW.cleanMode({}) === 'status' && SW.cleanMode(null) === 'status' && SW.cleanMode({ mode: 'web' }) === 'web' && SW.cleanMode({ mode: 'api' }) === 'api' && SW.cleanMode({ mode: 'status' }) === 'status' && SW.cleanMode({ clientId: CLIENT, art: true }) === 'api' && SW.cleanMode({ mode: '<x>' }) === 'status', '');
+  const list = cleanList([{ id: 'wold1', type: 'spotify', clientId: CLIENT, art: true }, { id: 'wweb1', type: 'spotify', mode: 'web' }, { id: 'wnew1', type: 'spotify' }, { id: 'wst01', type: 'spotify', mode: 'status', art: false }]);
+  const by = Object.fromEntries(list.map((x) => [x.id, x]));
+  check('spotify widget: cleanList keeps every saved mode', by.wold1.mode === 'api' && by.wweb1.mode === 'web' && by.wnew1.mode === 'status' && by.wst01.mode === 'status' && by.wst01.art === false, JSON.stringify(list.map((x) => x.mode)));
+
+  let settings = {};
+  const fake = { reads: 0, pressed: [], sought: [], played: [], searched: [], signIns: 0, reloads: 0, last: undefined };
+  const card = () => ({ mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art: 'data:image/jpeg;base64,AAAA', device: '', signedIn: true });
+  let apiCalls = 0;
+  const w = createWidgets({
+    readSettings: () => settings, writeSettings: (s) => { settings = JSON.parse(JSON.stringify(s)); },
+    fetch: async () => { apiCalls++; throw new Error('the engine card must not call Spotify\'s API'); },
+    getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}),
+    spotifyEngine: {
+      read: async () => { fake.reads++; return card(); }, control: async (n) => { fake.pressed.push(n); return true; }, seek: (s) => { fake.sought.push(s); return true; },
+      playItem: (k, id) => { fake.played.push(`${k}:${id}`); return true; }, playNext: () => false, playLater: () => false, search: (q) => { fake.searched.push(q); return true; },
+      signIn: () => { fake.signIns++; return true; }, refreshLists: () => {}, reload: () => { fake.reloads++; },
+    },
+  });
+  const saved = await w.save({ type: 'spotify' }).catch((er) => ({ error: er.message }));
+  const id = w.list()[0]?.id;
+  check('spotify widget: saving a new card needs no Client ID, no sign-in and no network, and is in engine mode', !saved.error && w.list()[0].mode === 'status' && w.list()[0].art === true && apiCalls === 0, saved.error || JSON.stringify(w.list()[0]));
+  await w.refresh(w.list()[0]);
+  const get = () => w.forPage().find((c) => c.id === id);
+  check('spotify widget: the card data is the engine\'s (no Spotify API call)', get().data.state === 'playing' && get().data.title === 'Night Shift' && fake.reads === 1 && apiCalls === 0, JSON.stringify(get().data).slice(0, 120));
+  check('spotify widget: the Settings summary says it plays in Lumen', /plays inside lumen/i.test(w.state().widgets.find((x) => x.id === id).summary) && w.state().widgets.find((x) => x.id === id).mode === 'status', JSON.stringify(w.state().widgets.find((x) => x.id === id)));
+  await w.act({ id, do: 'pause' });
+  check('spotify widget: Pause goes to the engine, not the Web API, and shows paused at once', fake.pressed.join() === 'pause' && get().data.state === 'paused' && apiCalls === 0, JSON.stringify(fake.pressed));
+  const url = (q) => `file:///newtab.html?widget=${id}&do=${q}`;
+  await w.act({ id, do: 'seek', ...w.actionFrom(url('seek&arg=77')) });
+  await w.act({ id, do: 'playitem', ...w.actionFrom(url('playitem&kind=song&arg=4uLU6hMCjMI75M1A2tKUQC')) });
+  await w.act({ id, do: 'esearch', ...w.actionFrom(url('esearch&arg=shake')) });
+  await w.act({ id, do: 'esignin' });
+  check('spotify widget: seek, play an item, search and sign-in go to the engine', fake.sought.join() === '77' && fake.played.join() === 'song:4uLU6hMCjMI75M1A2tKUQC' && fake.searched.join() === 'shake' && fake.signIns === 1, JSON.stringify([fake.sought, fake.played, fake.searched, fake.signIns]));
+  await w.act({ id, do: 'playnext', ...w.actionFrom(url('playnext&kind=song&arg=1')) });
+  check('spotify widget: "play next" where the service has no queue says so on the card', /can.t be queued/.test(get().data.notice || ''), JSON.stringify(get().data.notice));
+  check('spotify widget: "Try again" (do=reload) reloads the engine in this mode', (await w.act({ id, do: 'reload' })) === true && fake.reloads === 1, String(fake.reloads));
+  await sleep(400);
+  const reads = fake.reads;
+  w.engineChanged();
+  await sleep(30);
+  check('spotify widget: when the engine changes, the engine card is fetched again at once', fake.reads > reads, `${reads} -> ${fake.reads}`);
+  await w.save({ type: 'spotify', mode: 'web' }, id);
+  const r2 = fake.reads;
+  await w.refresh(w.list()[0], { force: true });
+  w.engineChanged();
+  check('spotify widget: in Web player mode the engine is not read, and the card is the web card\'s', get().data.mode === 'web' && fake.reads === r2, JSON.stringify(get().data));
+  check('spotify widget: the page action list accepts the engine\'s actions for it', ['esignin', 'elists'].every((a) => w.actionFrom(url(a))?.do === a) && w.actionFrom(url('playlater&kind=playlist&arg=p.1'))?.item === 'p.1', '');
+  await w.save({ type: 'spotify', mode: 'api', clientId: CLIENT }).then(() => check('spotify widget: API mode still asks to log in first', false, 'saved'), (er) => check('spotify widget: API mode still asks to log in first', /Log in with Spotify first/.test(er.message), er.message));
+  const w2 = createWidgets({ readSettings: () => ({ homeWidgets: [{ id: 'wapi00001', type: 'spotify', mode: 'api', clientId: CLIENT, art: false, x: 0, y: 0, w: 4, h: 3 }] }), writeSettings: () => {}, fetch: async () => { throw new Error('offline'); }, getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}) });
+  check('spotify widget: an existing API-mode card keeps its mode and Client ID', w2.list()[0].mode === 'api' && w2.list()[0].clientId === CLIENT && w2.list()[0].art === false, JSON.stringify(w2.list()[0]));
+};
+
+if (require.main === module) {
+  let failed = 0;
+  let total = 0;
+  module.exports((name, ok, detail) => { total++; if (!ok) { failed++; console.log(`FAIL ${name}${detail ? ` -- ${detail}` : ''}`); } })
+    .then(() => { console.log(`${total - failed}/${total} passed`); process.exit(failed ? 1 : 0); })
+    .catch((err) => { console.error(err); process.exit(1); });
+}

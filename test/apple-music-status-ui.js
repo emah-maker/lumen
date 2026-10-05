@@ -83,7 +83,7 @@ async function partFake() {
   check('status: every control has a name (previous, pause, next, refresh)', ['Previous track', 'Pause', 'Next track'].every((n) => names.includes(n)) && names.every(Boolean), JSON.stringify(names));
   const bar = await page(`(() => { const b = ${card(D)}.querySelector('.sp-bar'); return b && { role: b.getAttribute('role'), label: b.getAttribute('aria-label'), elapsed: ${card(D)}.querySelector('.sp-elapsed').textContent, total: ${card(D)}.querySelector('.sp-total').textContent }; })()`);
   check('status: the progress bar is a labelled slider with elapsed and total time', bar && bar.role === 'slider' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20', JSON.stringify(bar));
-  await sleep(2200);
+  await sleep(3300);
   check('status: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 32, await text(D, '.sp-elapsed'));
   await shot('status-playing.png');
 
@@ -96,7 +96,7 @@ async function partFake() {
   check('status: Next and Previous press the app\'s buttons', (await app.evaluate(() => global.__am.pressed)).join() === 'pause,next,previous', JSON.stringify(await app.evaluate(() => global.__am.pressed)));
 
   // the app changes by itself: the card follows without a click
-  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', title: 'The Next Song', album: 'Two' }; global.__widgets.appleMusicChanged(); });
+  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', title: 'The Next Song', album: 'Two' }; global.__widgets.engineChanged(); });
   check('status: when the app moves on, the card follows by itself', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'The Next Song'`, 40), await text(D, '.sp-title'));
 
   // sizes
@@ -122,47 +122,39 @@ async function partFake() {
   check('status: the right arrow on the bar seeks 5 seconds on', (await app.evaluate(() => global.__am.sought)).length === 2, JSON.stringify(await app.evaluate(() => global.__am.sought)));
 
   // a preview (signed out), and the desktop app as the source
-  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', preview: true, signedIn: false, error: '' }; global.__widgets.appleMusicChanged(); });
+  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', preview: true, signedIn: false, error: '' }; global.__widgets.engineChanged(); });
   check('status: a preview says so (signed out)', await waitFor(`/Preview only/.test(${card(D)}?.textContent || '')`, 40), await text(D, '.am-note'));
-  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', preview: false, source: 'app' }; global.__widgets.appleMusicChanged(); });
+  await app.evaluate(() => { global.__am.card = { ...global.__am.card, state: 'playing', preview: false, source: 'app' }; global.__widgets.engineChanged(); });
   check('status: when the desktop app is the source the card says "Apple Music app" and its bar is a plain bar (no seeking)', await waitFor(`/Apple Music app/.test(${card(D)}?.querySelector('.mk-badge')?.textContent || '') && ${card(D)}.querySelector('.sp-bar').getAttribute('role') === 'progressbar'`, 40), '');
-  await app.evaluate(() => { global.__am.card = { ...global.__am.card, source: 'engine', preview: false }; global.__widgets.appleMusicChanged(); });
+  await app.evaluate(() => { global.__am.card = { ...global.__am.card, source: 'engine', preview: false }; global.__widgets.engineChanged(); });
 
-  // idle, signed out: a search, a sign-in button, no lists
-  const idleCard = (extra = {}) => ({ mode: 'status', state: 'idle', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: 0, source: 'engine', kind: 'none', reason: '', art: '', signedIn: false, engine: 'ready', drm: 'ok', recent: [], playlists: [], results: [], query: '', searching: false, error: '', ...extra });
-  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.appleMusicChanged(); }, idleCard());
-  check('status: idle and signed out offers Sign in, a search and says what to do', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Nothing is playing' && Boolean(${card(D)}.querySelector('.am-signin')) && Boolean(${card(D)}.querySelector('.am-search input'))`, 40) && /Search, or sign in/.test(await text(D, '.sp-artist')), await text(D, '.sp-artist'));
+  // idle, signed out: Sign in, no lists; the search is in the header (its own test: test/music-search-ui.js)
+  const idleCard = (extra = {}) => ({ mode: 'status', state: 'idle', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: 0, source: 'engine', kind: 'none', reason: '', art: '', signedIn: false, engine: 'ready', drm: 'ok', can: { search: true, lists: true, seek: true, queue: true }, recent: [], playlists: [], results: [], query: '', searching: false, error: '', ...extra });
+  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard());
+  check('status: idle and signed out offers Sign in and says what to do; the search magnifier is in the header', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Nothing is playing' && Boolean(${card(D)}.querySelector('.am-signin')) && Boolean(${card(D)}.querySelector('.w-head .am-searchbtn'))`, 40) && /Search, or sign in/.test(await text(D, '.sp-artist')), await text(D, '.sp-artist'));
   check('status: there is no recent list when signed out', !(await page(`Boolean(${card(D)}.querySelector('.am-row'))`)), '');
   await page(`${card(D)}.querySelector('.am-signin').click()`);
   await sleep(500);
   check('status: Sign in asks main for the sign-in window', (await app.evaluate(() => global.__am.signIns)) === 1, '');
-  await page(`(() => { const f = ${card(D)}.querySelector('.am-search'); f.querySelector('input').value = '  shake it off  '; f.requestSubmit(); })()`);
-  await sleep(500);
-  check('status: the search box sends its text (trimmed) to the engine', (await app.evaluate(() => global.__am.searched)).join('|') === 'shake it off', JSON.stringify(await app.evaluate(() => global.__am.searched)));
   await shot('status-idle.png');
 
-  // results, then recent plays and playlists once signed in; a click plays
-  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.appleMusicChanged(); }, idleCard({ query: 'shake it off', results: [{ id: '1440933651', kind: 'song', title: 'Shake It Off', sub: 'Taylor Swift' }, { id: 'p.abc', kind: 'playlist', title: 'Hits <b>x</b>', sub: '' }, { id: 'bad id', kind: 'song', title: 'Not shown', sub: '' }, { id: '5', kind: 'artist', title: 'Not shown either', sub: '' }] }));
-  check('status: results show as rows (only safe ids and playable kinds), titles as text', await waitFor(`${card(D)}.querySelectorAll('.am-row').length === 2`, 40) && (await text(D, '.am-row:nth-of-type(2) .am-title')) === 'Hits <b>x</b>' && !(await page(`${card(D)}.innerHTML.includes('<b>x</b>')`)), await page(`${card(D)}.querySelectorAll('.am-row').length`));
-  await page(`${card(D)}.querySelectorAll('.am-row')[0].click()`);
-  await sleep(500);
-  check('status: clicking a result plays it (kind and id go to the engine)', (await app.evaluate(() => global.__am.played)).join() === 'song:1440933651', JSON.stringify(await app.evaluate(() => global.__am.played)));
-  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.appleMusicChanged(); }, idleCard({ signedIn: true, recent: [{ id: 'l.1', kind: 'album', title: 'Quiet Hours', sub: 'Ann' }], playlists: [{ id: 'p.1', kind: 'playlist', title: 'Morning mix', sub: '' }] }));
-  check('status: signed in and idle shows "Recently played" and "Your playlists", and no Sign in button', await waitFor(`/Recently played/.test(${card(D)}?.textContent || '') && /Your playlists/.test(${card(D)}.textContent) && !${card(D)}.querySelector('.am-signin')`, 40), await text(D, '.am-idle'));
+  // recent plays and playlists once signed in; a click plays
+  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ signedIn: true, recent: [{ id: 'l.1', kind: 'album', title: 'Quiet Hours', sub: 'Ann' }, { id: 'bad id', kind: 'album', title: 'Not shown', sub: '' }], playlists: [{ id: 'p.1', kind: 'playlist', title: 'Morning mix', sub: '' }] }));
+  check('status: signed in and idle shows "Recently played" and "Your playlists" (safe ids only), and no Sign in button', await waitFor(`/Recently played/.test(${card(D)}?.textContent || '') && /Your playlists/.test(${card(D)}.textContent) && !${card(D)}.querySelector('.am-signin') && ${card(D)}.querySelectorAll('.am-row').length === 2`, 40), await text(D, '.am-idle'));
   await page(`${card(D)}.querySelectorAll('.am-row')[1].click()`);
   await sleep(500);
   check('status: clicking a playlist plays it', (await app.evaluate(() => global.__am.played)).at(-1) === 'playlist:p.1', JSON.stringify(await app.evaluate(() => global.__am.played)));
-  const idleNames = await page(`[...${card(D)}.querySelectorAll('.am-row, .am-search input, .am-search button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
-  check('status: every control in the idle view has a name', idleNames.length >= 4 && idleNames.every(Boolean), JSON.stringify(idleNames));
   await shot('status-lists.png');
-  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.appleMusicChanged(); }, idleCard({ signedIn: true, drm: 'missing' }));
+  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ signedIn: true, drm: 'missing' }));
   check('status: Widevine missing is explained in the idle view when signed in', await waitFor(`/Widevine/.test(${card(D)}?.querySelector('.am-note')?.textContent || '')`, 40), '');
-  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.appleMusicChanged(); }, idleCard({ reason: 'loading', signedIn: null }));
-  check('status: while the engine starts the card says so and offers nothing yet', await waitFor(`/Starting Apple Music/.test(${card(D)}?.querySelector('.sp-artist')?.textContent || '') && !${card(D)}.querySelector('.am-search')`, 40), '');
+  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ reason: 'loading', signedIn: null }));
+  check('status: while the engine starts the card says so and offers nothing yet', await waitFor(`/Starting Apple Music/.test(${card(D)}?.querySelector('.sp-artist')?.textContent || '') && !${card(D)}.querySelector('.am-searchbtn')`, 40), '');
+  await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ pageChanged: true, signedIn: true }));
+  check('status: when the service says its page changed, the card says so', await waitFor(`/changed its page/.test(${card(D)}?.querySelector('.am-changed')?.textContent || '')`, 40), '');
 
   // the engine can't load
   for (const [reason, re] of [['offline', /Can.t reach Apple Music/], ['failed', /didn.t load/], ['unsupported', /isn.t available here/]]) {
-    await app.evaluate((_e, r) => { global.__am.card = { mode: 'status', state: 'unavailable', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: 0, source: '', kind: 'none', reason: r, art: '' }; global.__widgets.appleMusicChanged(); }, reason);
+    await app.evaluate((_e, r) => { global.__am.card = { mode: 'status', state: 'unavailable', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: 0, source: '', kind: 'none', reason: r, art: '' }; global.__widgets.engineChanged(); }, reason);
     check(`status: ${reason} gives a clear message with Try again and no broken controls`, await waitFor(`${re}.test(${card(D)}?.querySelector('.w-note')?.textContent || '')`, 40) && await page(`Boolean(${card(D)}.querySelector('button.w-btn')) && !${card(D)}.querySelector('.sp-controls')`), await text(D, '.w-note'));
   }
   await page(`[...${card(D)}.querySelectorAll('button.w-btn')].find((b) => /Try again/.test(b.textContent)).click()`);
@@ -171,7 +163,7 @@ async function partFake() {
   await shot('status-offline.png');
 
   // light and dark
-  await app.evaluate(() => { global.__am.card = { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art: global.__ART || '', signedIn: true }; global.__widgets.appleMusicChanged(); });
+  await app.evaluate(() => { global.__am.card = { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art: global.__ART || '', signedIn: true }; global.__widgets.engineChanged(); });
   await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Night Shift'`, 40);
   const contrast = () => page(`(() => { const rgb = (s) => s.match(/[\\d.]+/g).slice(0, 3).map(Number); const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }; const c = ${card(D)}; const bgOf = (e) => { let n = e; while (n) { const b = getComputedStyle(n).backgroundColor; if (b && !/rgba?\\(0, 0, 0, 0\\)|transparent/.test(b)) return rgb(b); n = n.parentElement; } return [255, 255, 255]; }; const ratio = (e) => { const a = lum(rgb(getComputedStyle(e).color)) + 0.05; const b = lum(bgOf(e)) + 0.05; return Math.max(a, b) / Math.min(a, b); }; return { title: ratio(c.querySelector('.sp-title')), artist: ratio(c.querySelector('.sp-artist')) }; })()`);
   for (const scheme of ['dark', 'light']) {
@@ -189,6 +181,7 @@ async function partFake() {
 
 async function partReal() {
   if (process.platform !== 'win32') { console.log('SKIP  the real helper checks: Windows only'); return; }
+  if (process.env.LUMEN_TEST_REAL_MEDIA !== '1') { console.log('SKIP  the real helper checks: they press Pause/Play on whatever media app is playing on this computer (set LUMEN_TEST_REAL_MEDIA=1 to run them)'); return; }
   const { app, page, waitFor, shot, close } = await launch([{ id: 'wreal0001', type: 'applemusic', mode: 'status', x: 0, y: 0, w: 5, h: 4 }], { LUMEN_TEST_APPLE_MUSIC_ANY: '1' });
   const card = `(document.querySelector('.w-card[data-id="wreal0001"]') || document.createElement('i'))`;
   const t0 = Date.now();

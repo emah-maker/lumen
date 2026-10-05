@@ -1129,9 +1129,10 @@ async function buildWidgets(card) {
       const sp = () => ws.spotify || {};
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Your own Spotify app’s Client ID' });
       inputs.art = tog('widget-spotify-art', 'Album art', same ? same.art !== false : true);
-      // 'web' shows Spotify's own site in the card (sign in there, nothing to set up); 'api' is Lumen's own now-playing card.
-      inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['web', 'Web player'], ['api', 'Now playing card']], same ? same.mode || 'api' : 'web');
-      const modeRow = block('How to show Spotify', 'Web player: Spotify’s own site in the card. You sign in on Spotify’s site and there is nothing to set up (recommended). Now playing card: Lumen’s own card, using Spotify’s API.', inputs.mode);
+      // 'status' plays Spotify inside Lumen (a hidden page) and shows a now-playing card; 'web' shows Spotify's own site in the card; 'api' is the
+      // now-playing card driven by Spotify's API with your own app (a widget saved before modes existed stays 'api').
+      inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['status', 'Plays in Lumen'], ['web', 'Web player'], ['api', 'Now playing (API)']], same ? same.mode || 'api' : 'status');
+      const modeRow = block('How to show Spotify', 'Plays in Lumen: Spotify plays in a hidden page inside Lumen and the card shows what is playing, with controls and a search (recommended). You sign in on Spotify’s site once. Web player: Spotify’s own site in the card. Now playing (API): Lumen’s own card driven by Spotify’s API with your own Spotify app, for music playing on your other devices.', inputs.mode);
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-spotify-status' });
       const login = h('button', { id: 'widget-spotify-connect', class: 'primary big', text: 'Log in with Spotify' });
       const disconnect = h('button', { id: 'widget-spotify-disconnect', class: 'danger', text: 'Disconnect' });
@@ -1179,13 +1180,14 @@ async function buildWidgets(card) {
       drawStatus();
       const apiBox = h('div', { class: 'wf-mode-api' },
         section('Account', [loginRow]),
-        section('Can’t sign in? Use your own Spotify app', [steps]),
-        section('Show', [inputs.art]));
+        section('Can’t sign in? Use your own Spotify app', [steps]));
+      const showBox = section('Show', [inputs.art]);
+      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them.' });
       const webNote = h('p', { class: 'wf-foot wf-mode-web', text: 'The card shows open.spotify.com. Sign in there once; Lumen never sees your Spotify password or token.' });
-      const syncMode = () => { apiBox.hidden = inputs.mode.value !== 'api'; webNote.hidden = inputs.mode.value !== 'web'; };
+      const syncMode = () => { apiBox.hidden = inputs.mode.value !== 'api'; webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
       inputs.mode.addEventListener('change', syncMode);
       syncMode();
-      fields.replaceChildren(section('Mode', [modeRow]), webNote, apiBox);
+      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox);
     }
     // ---- gmail: your Google sign-in in Lumen (default), or your own Google Cloud client (Advanced) ----
     function gmailFields(same) {

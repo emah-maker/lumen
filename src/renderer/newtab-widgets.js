@@ -318,6 +318,254 @@ function webPlayerCard(w, card, name, site, { signInTab = true } = {}) {
   card.body.append(slot);
 }
 
+// ---- the engine cards (Apple Music's and Spotify's status modes: features/music-engine.js) ----
+// What differs between the two services; everything else is one card.
+const ENGINES = {
+  applemusic: {
+    name: 'Apple Music', site: 'https://music.apple.com/', signIn: 'Sign in to Apple Music',
+    reasons: { offline: 'Can’t reach Apple Music. Check your internet connection.', failed: 'Apple Music didn’t load.', unsupported: 'The Apple Music status card isn’t available here. Use the web player mode instead.' },
+    idleHint: (signedIn, loading) => (loading ? 'Starting Apple Music…' : signedIn ? 'Pick something to play' : 'Search, or sign in to play more'),
+    preview: 'Preview only. Sign in to Apple Music for full songs.',
+    searchNote: (d) => (d.signedIn === false ? 'Not signed in: songs play as short previews.' : ''),
+    changed: 'Apple Music changed its page, so Lumen can’t read it. Use the Web player mode for now.',
+  },
+  spotify: {
+    name: 'Spotify', site: 'https://open.spotify.com/', signIn: 'Sign in to Spotify',
+    reasons: { offline: 'Can’t reach Spotify. Check your internet connection.', failed: 'Spotify didn’t load.', unsupported: 'The Spotify status card isn’t available here. Use the web player mode instead.' },
+    idleHint: (signedIn, loading) => (loading ? 'Starting Spotify…' : signedIn ? 'Search, or play on any Spotify device' : 'Sign in to play music here'),
+    preview: '',
+    searchNote: (d) => (d.signedIn === false ? 'Sign in to Spotify to play these.' : ''),
+    changed: 'Spotify changed its page, so Lumen can’t read it. Open this card’s settings and choose Web player or Now playing card.',
+  },
+};
+const ICON_SEARCH = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3.2"/><path d="m7.5 7.5 3 3"/></svg>';
+const SEARCH_GROUPS = [['song', 'Songs', 'am-songs'], ['album', 'Albums', 'am-albums'], ['artist', 'Artists', 'am-artists'], ['playlist', 'Playlists', 'am-playlists']];
+const searchUi = new Map(); // widget id -> { open, term, timer, active }: the typing survives the card being drawn again
+const RECENT_MAX = 5;
+const recentSearches = (id) => { try { const v = JSON.parse(localStorage.getItem(`lumen-music-recent:${id}`) || '[]'); return Array.isArray(v) ? v.filter((t) => typeof t === 'string' && t.length > 0 && t.length <= 80).slice(0, RECENT_MAX) : []; } catch { return []; } };
+function rememberSearch(id, term) {
+  const t = String(term || '').trim().slice(0, 80);
+  if (!t) return;
+  try { localStorage.setItem(`lumen-music-recent:${id}`, JSON.stringify([t, ...recentSearches(id).filter((x) => x.toLowerCase() !== t.toLowerCase())].slice(0, RECENT_MAX))); } catch { /* private window: no history */ }
+}
+const SEARCH_DEBOUNCE_MS = 250;
+const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
+const thumbOk = (v) => typeof v === 'string' && v.length < 12000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(v);
+
+// The search: a magnifier in the header that opens a field, live results (after a short pause in typing) in a panel laid over the card,
+// grouped, songs first, with arrow keys, Enter and Escape. `d.results` / `d.query` come from the engine; the typing itself stays here.
+function searchBox(w, card, o, d) {
+  const ui = searchUi.get(w.id) || { open: false, term: '', timer: null, active: -1 };
+  searchUi.set(w.id, ui);
+  const field = el('div', 'am-searchfield');
+  const input = el('input');
+  input.type = 'search';
+  input.maxLength = 80;
+  input.placeholder = `Search ${o.name}`;
+  input.setAttribute('aria-label', `Search ${o.name}`);
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.value = ui.term;
+  field.append(input);
+  const pop = el('div', 'am-pop');
+  pop.id = `am-pop-${w.id}`;
+  pop.setAttribute('role', 'listbox');
+  pop.setAttribute('aria-label', `${o.name} search results`);
+  input.setAttribute('aria-controls', pop.id);
+  const toggle = iconButton(ICON_SEARCH, `Search ${o.name}`, () => { ui.open ? close() : open(); });
+  toggle.classList.add('am-searchbtn');
+  toggle.setAttribute('aria-expanded', 'false');
+  card.head.append(toggle, field);
+  card.el.append(pop);
+
+  const options = () => [...pop.querySelectorAll('.am-opt')];
+  const setActive = (n) => {
+    const list = options();
+    ui.active = list.length ? Math.max(-1, Math.min(list.length - 1, n)) : -1;
+    list.forEach((b, i) => { b.classList.toggle('active', i === ui.active); b.setAttribute('aria-selected', String(i === ui.active)); });
+    if (ui.active >= 0) { input.setAttribute('aria-activedescendant', list[ui.active].id); list[ui.active].scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
+  };
+  function play(kind, id) { rememberSearch(w.id, ui.term); widgetAct(w.id, 'playitem', { kind, arg: id }); close(); }
+  function draw() {
+    pop.replaceChildren();
+    card.el.classList.toggle('am-search-open', ui.open);
+    toggle.setAttribute('aria-expanded', String(ui.open));
+    input.setAttribute('aria-expanded', String(ui.open));
+    pop.hidden = !ui.open;
+    if (!ui.open) return;
+    const term = ui.term.trim();
+    const note = o.searchNote(d);
+    let n = 0;
+    const optionButton = (item, group) => {
+      const row = el('div', 'am-optrow');
+      const b = el('button', 'am-opt');
+      b.type = 'button';
+      b.id = `am-opt-${w.id}-${n++}`;
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', 'false');
+      b.tabIndex = -1;
+      if (thumbOk(item.thumb)) { const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.src = item.thumb; b.append(img); } else b.append(el('span', 'am-thumb none'));
+      const text1 = el('span', 'am-opt-text');
+      text1.append(el('span', 'am-title', text(item.title, 120)));
+      if (text(item.sub, 120)) text1.append(el('span', 'am-sub', text(item.sub, 120)));
+      b.append(text1);
+      if (Number.isFinite(item.ms) && item.ms > 0) b.append(el('span', 'am-dur', spClock(item.ms)));
+      b.addEventListener('click', () => play(item.kind, item.id));
+      b.addEventListener('mousemove', () => { const i = options().indexOf(b); if (i !== ui.active) setActive(i); });
+      row.append(b);
+      if (d.can && d.can.queue && ['song', 'album', 'playlist'].includes(item.kind)) { // "Play next" and "Add to queue", where the service has them
+        const acts = el('span', 'am-opt-acts');
+        for (const [act, label, aria] of [['playnext', 'Next', 'Play next'], ['playlater', 'Queue', 'Add to queue']]) {
+          const a = el('button', 'am-act', label);
+          a.type = 'button';
+          a.setAttribute('aria-label', `${aria}: ${text(item.title, 60)}`);
+          a.addEventListener('click', (e) => { e.stopPropagation(); rememberSearch(w.id, ui.term); widgetAct(w.id, act, { kind: item.kind, arg: item.id }); });
+          acts.append(a);
+        }
+        row.append(acts);
+      }
+      group.append(row);
+    };
+    let group;
+    if (!term) { // focused and empty: the last searches
+      const recent = recentSearches(w.id);
+      if (!recent.length) { pop.append(el('p', 'w-note am-pop-note', `Type to search ${o.name}.`)); }
+      else {
+        const g = el('div', 'am-group am-recent');
+        g.append(el('div', 'am-heading', 'Recent searches'));
+        for (const t of recent) {
+          const b = el('button', 'am-opt am-opt-recent', t);
+          b.type = 'button';
+          b.id = `am-opt-${w.id}-${n++}`;
+          b.setAttribute('role', 'option');
+          b.setAttribute('aria-selected', 'false');
+          b.tabIndex = -1;
+          b.addEventListener('click', () => { ui.term = t; input.value = t; input.focus(); search(true); });
+          g.append(b);
+        }
+        pop.append(g);
+      }
+      if (note) pop.append(el('p', 'w-note am-pop-note', note));
+      return;
+    }
+    if (d.searching === true || d.query !== term) { pop.append(el('p', 'w-note am-pop-note', 'Searching…')); if (note) pop.append(el('p', 'w-note am-pop-note', note)); return; }
+    const results = (Array.isArray(d.results) ? d.results : []).filter((i) => i && typeof i.id === 'string' && SAFE_ID.test(i.id) && typeof i.title === 'string');
+    if (d.searchOk === false) pop.append(el('p', 'w-note am-pop-note', `${o.name} didn’t answer the search. It may have changed its page; try again.`));
+    else if (!results.length) pop.append(el('p', 'w-note am-pop-note', 'No results.'));
+    for (const [kind, heading, cls] of SEARCH_GROUPS) {
+      const items = results.filter((i) => i.kind === kind).slice(0, 8);
+      if (!items.length) continue;
+      group = el('div', `am-group ${cls}`);
+      group.append(el('div', 'am-heading', heading));
+      for (const item of items) optionButton(item, group);
+      pop.append(group);
+    }
+    if (note) pop.append(el('p', 'w-note am-pop-note', note));
+  }
+  function search(now) {
+    clearTimeout(ui.timer);
+    const term = ui.term.trim();
+    const send = () => { ui.timer = null; widgetAct(w.id, 'esearch', { arg: term.slice(0, 80) }); };
+    if (now) send(); else ui.timer = setTimeout(send, SEARCH_DEBOUNCE_MS);
+    draw();
+  }
+  function open() { ui.open = true; draw(); input.focus(); }
+  function close() { clearTimeout(ui.timer); ui.timer = null; ui.open = false; ui.active = -1; draw(); input.blur(); }
+  input.addEventListener('focus', () => { if (!ui.open) { ui.open = true; draw(); } });
+  input.addEventListener('input', () => { ui.term = input.value.slice(0, 80); ui.active = -1; search(false); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const list = options(); if (!list.length) return; const next = ui.active < 0 ? (e.key === 'ArrowDown' ? 0 : list.length - 1) : (ui.active + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length; setActive(next); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const list = options();
+      const pick = ui.active >= 0 ? list[ui.active] : list.find((b) => !b.classList.contains('am-opt-recent'));
+      if (pick) { pick.click(); return; }
+      if (ui.term.trim()) { rememberSearch(w.id, ui.term); search(true); }
+      return;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); toggle.focus(); }
+  });
+  pop.addEventListener('mousedown', (e) => e.preventDefault()); // clicking a result must not blur the field first
+  card.el.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.open) { close(); } });
+  ui.close = close;
+  draw();
+  if (ui.open) requestAnimationFrame(() => { if (input.isConnected) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } });
+  return ui;
+}
+
+document.addEventListener('pointerdown', (e) => { // a click outside the card closes its search
+  for (const [id, ui] of searchUi) {
+    if (!ui.open || !ui.close) continue;
+    const c = document.querySelector(`.w-card[data-id="${id}"]`);
+    if (c && !c.contains(e.target)) ui.close();
+  }
+}, true);
+
+// The card for an engine status mode: now playing (the shared now-playing card, with a seekable bar), the search, and when idle what to play.
+function engineCard(w, card, o) {
+  const d = w.data;
+  if (d.state === 'unavailable') { // the engine can't load, or there is nothing to run it on: say why, offer the way on
+    card.head.append(refreshButton(w));
+    card.el.classList.add('sp-card-idle');
+    const msg = el('p', 'w-note', o.reasons[d.reason] || `Lumen couldn’t start ${o.name}. Try again.`);
+    msg.setAttribute('role', 'status');
+    card.body.append(msg);
+    const retry = el('button', 'w-btn', 'Try again');
+    retry.type = 'button';
+    retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
+    card.body.append(retry);
+    return;
+  }
+  const playing = d.state === 'playing' || d.state === 'paused';
+  const signedIn = d.signedIn === true;
+  const loading = d.reason === 'loading';
+  const canSearch = !d.can || d.can.search !== false;
+  if (d.source === 'app') card.head.append(el('span', 'mk-badge', 'Apple Music app')); // the desktop app is the one playing, not Lumen
+  else if (typeof d.device === 'string' && d.device) card.head.append(el('span', 'mk-badge', `On ${text(d.device, 40)}`)); // playing on another device (Spotify Connect)
+  card.el.classList.add('am-card');
+  nowPlayingCard(w, card, {
+    name: o.name, playLabel: null, openUrl: () => null, seek: d.source !== 'app' && (!d.can || d.can.seek !== false),
+    idleHint: () => o.idleHint(signedIn, loading),
+  });
+  if (canSearch && !loading) searchBox(w, card, o, d);
+  if (d.pageChanged === true) card.body.append(el('p', 'w-note am-note am-changed', o.changed)); // the page's own player controls never showed up
+  if (playing) {
+    if (d.preview === true && d.source !== 'app' && o.preview) card.body.append(el('p', 'w-note am-note', o.preview));
+    if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120)));
+    return;
+  }
+  if (loading) return;
+  const wrap = el('div', 'am-idle');
+  if (!signedIn && d.signedIn === false) {
+    const signIn = el('button', 'w-btn primary am-signin', o.signIn);
+    signIn.type = 'button';
+    signIn.addEventListener('click', () => widgetAct(w.id, 'esignin'));
+    wrap.append(signIn);
+  }
+  const rows = (heading, items) => {
+    const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && SAFE_ID.test(i.id) && ['song', 'album', 'playlist', 'station', 'artist'].includes(i.kind) && typeof i.title === 'string').slice(0, 8);
+    if (!list.length) return;
+    const section = el('div', 'am-section');
+    section.append(el('div', 'am-heading', heading));
+    for (const i of list) {
+      const b = el('button', 'am-row');
+      b.type = 'button';
+      b.append(el('span', 'am-title', text(i.title, 120)));
+      if (text(i.sub, 120)) b.append(el('span', 'am-sub', text(i.sub, 120)));
+      b.addEventListener('click', () => widgetAct(w.id, 'playitem', { kind: i.kind, arg: i.id }));
+      section.append(b);
+    }
+    wrap.append(section);
+  };
+  if (signedIn) { rows('Recently played', d.recent); rows('Your playlists', d.playlists); }
+  if (signedIn && d.drm === 'missing') wrap.append(el('p', 'w-note am-note', 'Full songs need Lumen’s Widevine component, which isn’t available yet. It may still be installing; if this stays, restart Lumen.'));
+  if (d.appDenied === true) wrap.append(el('p', 'w-note am-note', 'To also show the Apple Music app, allow Lumen in System Settings > Privacy & Security > Automation.'));
+  card.body.append(wrap);
+}
+
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -460,80 +708,7 @@ const WIDGET_RENDERERS = {
   applemusic(w, card) {
     const d = w.data;
     if (d.mode === 'web') { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/', { signInTab: false }); return; } // sign-in happens inside the card's own page
-    if (d.state === 'unavailable') { // the engine can't load, or there is nothing to run it on: say why, offer the way on
-      card.head.append(refreshButton(w));
-      card.el.classList.add('sp-card-idle');
-      const reasons = {
-        offline: 'Can’t reach Apple Music. Check your internet connection.',
-        failed: 'Apple Music didn’t load.',
-        unsupported: 'The Apple Music status card isn’t available here. Use the web player mode instead.',
-      };
-      const msg = el('p', 'w-note', reasons[d.reason] || 'Lumen couldn’t start Apple Music. Try again.');
-      msg.setAttribute('role', 'status');
-      card.body.append(msg);
-      const retry = el('button', 'w-btn', 'Try again');
-      retry.type = 'button';
-      retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
-      card.body.append(retry);
-      return;
-    }
-    const playing = d.state === 'playing' || d.state === 'paused';
-    const signedIn = d.signedIn === true;
-    const loading = d.reason === 'loading';
-    card.el.classList.add('am-card');
-    if (d.source === 'app') card.head.append(el('span', 'mk-badge', 'Apple Music app')); // the desktop app is the one playing, not Lumen
-    nowPlayingCard(w, card, {
-      name: 'Apple Music', playLabel: null, openUrl: () => null, seek: d.source !== 'app',
-      idleHint: () => (loading ? 'Starting Apple Music…' : signedIn ? 'Pick something to play' : 'Search, or sign in to play more'),
-    });
-    if (playing) {
-      if (d.preview === true && d.source !== 'app') card.body.append(el('p', 'w-note am-note', 'Preview only. Sign in to Apple Music for full songs.'));
-      if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120)));
-      return;
-    }
-    if (loading) return;
-    const wrap = el('div', 'am-idle');
-    const form = el('form', 'am-search');
-    const input = el('input');
-    input.type = 'search';
-    input.maxLength = 80;
-    input.placeholder = 'Search Apple Music';
-    input.value = text(d.query, 80);
-    input.setAttribute('aria-label', 'Search Apple Music');
-    const go = el('button', 'w-btn', 'Search');
-    go.type = 'submit';
-    form.append(input, go);
-    form.addEventListener('submit', (e) => { e.preventDefault(); widgetAct(w.id, 'amsearch', { arg: input.value.trim().slice(0, 80) }); });
-    wrap.append(form);
-    if (!signedIn && d.signedIn === false) {
-      const signIn = el('button', 'w-btn primary am-signin', 'Sign in to Apple Music');
-      signIn.type = 'button';
-      signIn.addEventListener('click', () => widgetAct(w.id, 'amsignin'));
-      wrap.append(signIn);
-    }
-    const kinds = ['song', 'album', 'playlist', 'station'];
-    const rows = (heading, items) => {
-      const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(i.id) && kinds.includes(i.kind) && typeof i.title === 'string').slice(0, 8);
-      if (!list.length) return;
-      const section = el('div', 'am-section');
-      section.append(el('div', 'am-heading', heading));
-      for (const i of list) {
-        const b = el('button', 'am-row');
-        b.type = 'button';
-        b.append(el('span', 'am-title', text(i.title, 120)));
-        if (text(i.sub, 120)) b.append(el('span', 'am-sub', text(i.sub, 120)));
-        b.addEventListener('click', () => widgetAct(w.id, 'playitem', { kind: i.kind, arg: i.id }));
-        section.append(b);
-      }
-      wrap.append(section);
-    };
-    if (d.searching === true) wrap.append(el('p', 'w-note', 'Searching…'));
-    else if (Array.isArray(d.results) && d.results.length) rows('Results', d.results);
-    else if (text(d.query, 80)) wrap.append(el('p', 'w-note', 'No results.'));
-    else if (signedIn) { rows('Recently played', d.recent); rows('Your playlists', d.playlists); }
-    if (signedIn && d.drm === 'missing') wrap.append(el('p', 'w-note am-note', 'Full songs need Lumen’s Widevine component, which isn’t available yet. It may still be installing; if this stays, restart Lumen. Previews and search still work.'));
-    if (d.appDenied === true) wrap.append(el('p', 'w-note am-note', 'To also show the Apple Music app, allow Lumen in System Settings > Privacy & Security > Automation.'));
-    card.body.append(wrap);
+    engineCard(w, card, ENGINES.applemusic);
   },
 
   // Now playing. Everything is a checked string or number set with textContent; the album picture is a
@@ -541,6 +716,7 @@ const WIDGET_RENDERERS = {
   spotify(w, card) {
     const d = w.data;
     if (d.mode === 'web') { webPlayerCard(w, card, 'Spotify', 'https://open.spotify.com/'); return; } // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
+    if (d.mode === 'status') { engineCard(w, card, ENGINES.spotify); return; } // the engine's card (features/spotify-engine.js)
     nowPlayingCard(w, card, {
       name: 'Spotify', playLabel: 'Play on Spotify',
       openUrl: (x) => (typeof x.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(x.url) ? x.url : null),
