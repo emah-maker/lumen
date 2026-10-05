@@ -11,7 +11,12 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+    ask: (text, runId, images, tabIds, files) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files),
+    uploads: {
+      stash: (file) => ipcRenderer.invoke('uploads:stash', file),
+      discard: (ref) => ipcRenderer.send('uploads:discard', ref),
+      choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
+    },
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: () => ipcRenderer.send('agent:stop'),
     resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)

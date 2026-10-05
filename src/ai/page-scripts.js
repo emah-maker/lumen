@@ -6,6 +6,8 @@
 // frames.js reading every embedded frame in its own isolated world (readPage(..., { frames: false })),
 // each frame keeps its own registry and the walk stops at iframes.
 
+const { resolveUploadTarget } = require('../features/upload-files');
+
 const TEXT_CHUNK = 12000;
 const ELEMENT_PAGE = 150;
 
@@ -103,7 +105,9 @@ function readPage(textOffset, elementOffset, { frames = true, list = true } = {}
     ].join(',');
     const registry = [];
     let crossOriginFrames = 0;
-    const walk = (root, chain) => {
+    // A styled label is often the only visible part of a file upload (its input is hidden): it can be named to upload_file.
+    const fileLabel = (el) => el.tagName === 'LABEL' && Boolean(el.control) && el.control.tagName === 'INPUT' && el.control.type === 'file';
+    const walk =(root, chain) => {
       for (const el of root.querySelectorAll('*')) {
         if (el.shadowRoot) walk(el.shadowRoot, chain);
         if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
@@ -113,7 +117,7 @@ function readPage(textOffset, elementOffset, { frames = true, list = true } = {}
           else if (isVisible(el)) crossOriginFrames++;
           continue;
         }
-        if (!el.matches(selector) || el.disabled || !isVisible(el)) continue;
+        if (!(el.matches(selector) || fileLabel(el)) || el.disabled || !isVisible(el)) continue;
         registry.push({ el, chain });
       }
     };
@@ -532,6 +536,61 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
+// ---- upload_file (features/upload-files.js)
+// Finds the file input behind element `id` (the input itself, its label, a button that has one inside or beside it) and
+// marks it with `token` (an attribute the DevTools side finds it by; uploadCleanup takes it off), counting the input and
+// change events it gets. { status: 'missing' | 'click' (no input found: a click should open the page's file chooser) | 'input', ... }
+function uploadProbe(id, token) {
+  return `(() => {
+    ${HELPERS}
+    const entry = entryFor(${id});
+    if (!entry) return { status: 'missing' };
+    const found = (${resolveUploadTarget.toString()})(entry.el);
+    const base = { label: (entry.label || accessibleName(entry.el) || '').slice(0, 80), tag: entry.el.tagName.toLowerCase() };
+    if (!found.input) return { ...base, status: 'click', ambiguous: Boolean(found.ambiguous) };
+    const input = found.input;
+    const events = { input: 0, change: 0 };
+    input.addEventListener('input', () => { events.input++; });
+    input.addEventListener('change', () => { events.change++; });
+    window.__claudeUploads = window.__claudeUploads || {};
+    window.__claudeUploads[${JSON.stringify(token)}] = { el: input, events };
+    input.setAttribute('data-lumen-upload', ${JSON.stringify(token)});
+    if (!base.label) base.label = (accessibleName(input) || input.name || '').slice(0, 80);
+    return { ...base, status: 'input', how: found.how, accept: input.accept || '', multiple: input.multiple, disabled: input.disabled, directory: Boolean(input.webkitdirectory) };
+  })()`;
+}
+
+// After the files were set: makes sure the page got the input and change events a real selection fires (the DevTools
+// command normally fires them; one missing is sent), then reports what the field holds and what the page shows.
+function uploadReport(token, names) {
+  return `(() => {
+    ${HELPERS}
+    const rec = (window.__claudeUploads || {})[${JSON.stringify(token)}] || null; // (none when a file chooser was answered: no field to read back)
+    const el = rec ? rec.el : null;
+    const files = el ? Array.prototype.slice.call(el.files || []).map((f) => f.name) : null;
+    if (el && files.length) {
+      if (!rec.events.input) el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      if (!rec.events.change) el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return new Promise((resolve) => setTimeout(() => {
+      const text = (document.body && document.body.innerText) || '';
+      const wanted = ${JSON.stringify(names)};
+      const scope = (el && el.closest('form')) || document.body;
+      const alerts = Array.prototype.slice.call(scope.querySelectorAll('[role=alert], [aria-invalid=true], [class*=error], [class*=invalid]'))
+        .filter((e) => e !== el && isVisible(e)).map((e) => clean(e.innerText)).filter(Boolean).slice(0, 3).map((s) => s.slice(0, 160));
+      resolve({ files, shown: wanted.map((n) => text.includes(n)), alerts, events: rec ? { ...rec.events } : null });
+    }, 400));
+  })()`;
+}
+
+function uploadCleanup(token) {
+  return `(() => {
+    const rec = (window.__claudeUploads || {})[${JSON.stringify(token)}];
+    if (rec) { try { rec.el.removeAttribute('data-lumen-upload'); } catch {} delete window.__claudeUploads[${JSON.stringify(token)}]; }
+    return true;
+  })()`;
+}
+
 // What read_page returns: the page's facts as JSON, then its text.
 function formatFull(page) {
   const { text, ...rest } = page;
@@ -543,4 +602,4 @@ ${text}
 </untrusted_page_content>`;
 }
 
-module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe };
+module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };

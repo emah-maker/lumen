@@ -23,13 +23,15 @@ function autoTitle(snapshot) {
     const text = blocks.filter((b) => b.type === 'text').map((b) => String(b.text)
       .replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/g, '')
       .replace(/<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g, '')
+      .replace(/<attached_files>[\s\S]*?<\/attached_files>\s*/g, '') // [uploads] the names and refs of attached files
       .replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/g, '')
       // A skill's message (features/skills.js) is titled by the skill and what was typed after it, not its prompt.
       .replace(/<skill_request name="[^"]*" title="([^"]*)" input="([^"]*)">[\s\S]*?<\/skill_request>\s*/g, (_m, title, input) => `${title}${input ? `: ${input}` : ''} `)).join(' ').replace(/\s+/g, ' ').trim();
-    if (text && text !== 'The user attached the image(s) above without a message.') {
+    if (text && text !== 'The user attached the image(s) above without a message.' && text !== 'The user attached the file(s) listed below without a message.') {
       return text.length > TITLE_CHARS ? `${text.slice(0, TITLE_CHARS - 1).trimEnd()}…` : text;
     }
     if (blocks.some((b) => b.type === 'image')) return 'Image';
+    if (blocks.some((b) => b.type === 'text' && /<attached_files>/.test(String(b.text)))) return 'File';
   }
   return 'New chat';
 }
