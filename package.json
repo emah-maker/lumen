@@ -27,7 +27,7 @@
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.10",
     "koffi": "^3.3.2",
-    "openai": "^7.23.0",
+    "openai": "^7.27.0",
     "qrcode-generator": "^2.0.4",
     "tldts-experimental": "^7.4.16"
   },
