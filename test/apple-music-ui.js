@@ -50,7 +50,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function run(base, shots) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-applemusic-profile-'));
     const widgets = [
-      { id: 'wapple001', type: 'applemusic', x: 0, y: 0, w: 4, h: 5 },
+      { id: 'wapple001', type: 'applemusic', mode: 'web', x: 0, y: 0, w: 4, h: 5 },
       { id: 'wspotweb1', type: 'spotify', mode: 'web', x: 6, y: 0, w: 4, h: 4 },
     ];
     fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ homeWidgets: widgets, newTabFavorites: false, newTabFrequent: false, newTabPrivacy: false }));

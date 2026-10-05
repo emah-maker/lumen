@@ -1490,7 +1490,15 @@ async function buildWidgets(card) {
       } else if (type === 'notes') {
         fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
       } else if (type === 'applemusic') {
-        fields.replaceChildren(section('Apple Music', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'The card shows music.apple.com, Apple’s own web player. Sign in there once, in the card; Lumen never sees your Apple ID or password.' }))]));
+        inputs.mode = segment('widget-applemusic-mode', 'How Apple Music is shown', [['status', 'Status card'], ['web', 'Web player']], same?.mode === 'web' ? 'web' : 'status');
+        inputs.art = tog('widget-applemusic-art', 'Album art', same ? same.art !== false : true);
+        const modeRow = block('How to show Apple Music', 'Status card: what the Apple Music app on this computer is playing, with play, pause, next and previous (Windows and Mac). Web player: Apple’s own site in the card; you sign in there and Lumen never sees your Apple ID.', inputs.mode);
+        const statusNote = h('p', { class: 'wf-foot', text: 'Reads the Apple Music app (or iTunes on Windows) through the system’s now-playing controls. Nothing is sent anywhere and no account is needed. On a Mac, macOS asks once to let Lumen control Music.' });
+        const showBox = section('Show', [inputs.art]);
+        const syncMode = () => { statusNote.hidden = showBox.hidden = inputs.mode.value !== 'status'; };
+        inputs.mode.addEventListener('change', syncMode);
+        syncMode();
+        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox);
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
@@ -1610,6 +1618,7 @@ async function buildWidgets(card) {
         } };
       }
       if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
+      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art) };
       if (type === 'gmail') {
         return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
       }

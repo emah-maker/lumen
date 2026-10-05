@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **New Apple Music widget.** Add it from the new-tab page's Add widget menu (or Settings) to get Apple Music's web player (music.apple.com) as a card. Apple doesn't allow being framed, so, like the Spotify Web player, the page is shown in a view laid over the card; it keeps playing when you leave the new-tab page. Sign in on Apple's own site once, in the card or from the "Open in a tab to sign in" button; Lumen never sees your Apple ID or password. Sound needs Lumen's Widevine component, and the card says so when it isn't there yet. Spotify's Web player and this card now share one piece of code and can both be on the page.
+- **New Apple Music widget: what is playing, with controls.** Add it from the new-tab page's Add widget menu (or Settings). By default it is a now-playing card like the Spotify one: album art, title, artist, album, a progress bar and play, pause, next and previous, read from the Apple Music app on your computer (Windows: the system's media controls, which also covers iTunes; Mac: the Music app, where macOS asks once to let Lumen control Music). No account, key or network is involved, and the card says so when the app isn't installed or open, or when Lumen isn't allowed to control it, with an Open Apple Music button. The other mode, Web player, shows music.apple.com in the card (you sign in on Apple's own site; Lumen never sees your Apple ID) and keeps playing when you leave the new-tab page. Spotify's Web player and this card share one piece of code and can both be on the page.
 
 ## 0.5.12 (2026-10-04)
 

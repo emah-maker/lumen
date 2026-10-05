@@ -34,7 +34,7 @@ module.exports = async function appleMusicUnits(check) {
   check('web player: the card class goes into the probe as given', WP.probeScript('applemusic').includes('.w-card.applemusic .sp-web-slot'), '');
 
   // The widget in the layout, the lists and the page's setup kinds
-  check('apple music layout: it has size limits and a default size of its own (taller than Spotify\'s now-playing card)', WL.limitsOf('applemusic').minW >= 2 && WL.defaultSize('applemusic').h >= 4 && WL.defaultSize('applemusic', 12).w === 4, JSON.stringify(WL.defaultSize('applemusic')));
+  check('apple music layout: it has size limits and the Spotify card\'s default size', WL.limitsOf('applemusic').minW >= 2 && WL.defaultSize('applemusic').h === 3 && WL.defaultSize('applemusic', 12).w === 4, JSON.stringify(WL.defaultSize('applemusic')));
   check('apple music: the picker lists it with a name and a plain line, after Spotify', WS.kindName('applemusic') === 'Apple Music' && /Apple Music/.test(WS.kindHint('applemusic')) && WS.ORDER.indexOf('applemusic') === WS.ORDER.indexOf('spotify') + 1, WS.kindHint('applemusic'));
 
   // The connector: nothing to sign in to here, nothing fetched from Apple
@@ -55,7 +55,7 @@ module.exports = async function appleMusicUnits(check) {
     appleMusicWebReload: () => { reloads++; },
   });
   check('apple music: the type is offered in Settings\' picker', w.state().types.some((t) => t.type === 'applemusic' && t.label === 'Apple Music'), JSON.stringify(w.state().types.map((t) => t.type)));
-  const saved = await w.save({ type: 'applemusic' }).catch((e) => ({ error: e.message }));
+  const saved = await w.save({ type: 'applemusic', mode: 'web' }).catch((e) => ({ error: e.message }));
   check('apple music: saving needs no key, no account and no network', !saved.error && w.list()[0]?.type === 'applemusic' && calls === 0, saved.error || '');
   const id = w.list()[0].id;
   await w.refresh(w.list()[0]);
@@ -70,9 +70,9 @@ module.exports = async function appleMusicUnits(check) {
   check('apple music: "Try again" (do=reload) reloads Apple Music\'s view, not Spotify\'s', w.actionFrom(`file:///newtab.html?widget=${id}&do=reload`)?.do === 'reload' && (await w.act({ id, do: 'reload' })) === true && reloads === 1 && spotifyReloads === 0, `${reloads} ${spotifyReloads}`);
   check('apple music: an unknown card is refused', (await w.act({ id: 'wnope0001', do: 'reload' })) === false && reloads === 1, String(reloads));
   const entry = w.state().widgets.find((x) => x.id === id);
-  check('apple music: the Settings list says Web player and offers no account to connect', /web player/i.test(entry?.summary || '') && WS.accountStatus({ type: 'applemusic' }, {}) === null, JSON.stringify(entry));
-  const kept = cleanList([{ id: 'wapple001', type: 'applemusic', colors: 'mono', x: 0, y: 0, w: 4, h: 5 }, { id: 'wapple002', type: 'applemusic', colors: '<x>' }]);
-  check('apple music: cleanList keeps the card and its color mode, and a bad color mode falls back', kept.length === 2 && kept[0].colors === 'mono' && kept[1].colors !== '<x>' && kept[0].w === 4 && kept[0].h === 5, JSON.stringify(kept));
+  check('apple music: the Settings list says Web player in web mode and offers no account to connect', /web player/i.test(entry?.summary || '') && WS.accountStatus({ type: 'applemusic' }, {}) === null, JSON.stringify(entry));
+  const kept = cleanList([{ id: 'wapple001', type: 'applemusic', mode: 'web', colors: 'mono', x: 0, y: 0, w: 4, h: 5 }, { id: 'wapple002', type: 'applemusic', colors: '<x>' }]);
+  check('apple music: cleanList keeps the card and its color mode, and a bad color mode falls back', kept.length === 2 && kept[0].colors === 'mono' && kept[1].colors !== '<x>' && kept[0].w === 4 && kept[0].h === 5 && kept[0].mode === 'web' && kept[1].mode === 'status' && kept[1].art === true, JSON.stringify(kept));
 };
 
 if (require.main === module) {
