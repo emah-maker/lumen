@@ -1,6 +1,6 @@
 // The Apple Music widget's Status mode, without Electron, PowerShell or osascript: the pure part (which media session is
 // Apple's, what the helper and osascript print, the card's states, the constant scripts), the process part against a fake
-// helper and a fake osascript (features/apple-music-native.js), and the connector (default mode, art off, buttons, "Open").
+// helper and a fake osascript (features/apple-music-native.js), and the connector (default mode, art and app options, buttons).
 // Runs on its own (npm run test:units picks up test/*-units.js).
 const { EventEmitter } = require('events');
 const AMV = require('../src/features/apple-music-view');
@@ -116,15 +116,9 @@ module.exports = async function appleMusicStatusUnits(check) {
     const before = helpers[0].written.length;
     check('apple status (win): an unknown button writes nothing', (await np.control('delete')) === false && (await np.control('')) === false && helpers[0].written.length === before, '');
 
-    // "Open Apple Music" launches by the app's id, validated; anything else says web
-    const spawned = [];
-    const np2 = createNowPlaying({ platform: 'win32', spawn: (cmd, args) => { if (/explorer/i.test(cmd)) { spawned.push([cmd, args]); return Object.assign(new EventEmitter(), { unref() {} }); } const h = fakeHelper(); queueMicrotask(() => { h.send({ t: 'sessions', list: [] }); h.send({ t: 'hello', installed: true, launchId: AM_ID }); }); helpers.push(h); return h; } });
-    await np2.read();
-    check('apple status (win): "Open" starts the app through explorer with its start-menu id', (await np2.open()) === 'opened' && spawned.length === 1 && spawned[0][1][0] === `shell:AppsFolder\\${AM_ID}`, JSON.stringify(spawned));
-    np2.destroy();
     const np3 = createNowPlaying({ platform: 'win32', spawn: () => { const h = fakeHelper(); queueMicrotask(() => { h.send({ t: 'sessions', list: [] }); h.send({ t: 'hello', installed: false, launchId: null }); }); helpers.push(h); return h; } });
     const none = await np3.read();
-    check('apple status (win): not installed says so, and "Open" answers web (the caller opens music.apple.com)', none.state === 'unavailable' && none.reason === 'not-installed' && (await np3.open()) === 'web', JSON.stringify(none));
+    check('apple status (win): not installed says so, ', none.state === 'unavailable' && none.reason === 'not-installed', JSON.stringify(none));
     np3.destroy();
 
     np.destroy();
@@ -142,7 +136,7 @@ module.exports = async function appleMusicStatusUnits(check) {
   {
     // not Windows or macOS
     const np = createNowPlaying({ platform: 'linux' });
-    check('apple status: on another system the card says it is not supported', (await np.read()).reason === 'unsupported' && (await np.control('play')) === false && (await np.open()) === 'web', '');
+    check('apple status: on another system the card says it is not supported', (await np.read()).reason === 'unsupported' && (await np.control('play')) === false, '');
   }
 
   // ---- the process part: macOS, against a fake osascript ----
@@ -153,7 +147,6 @@ module.exports = async function appleMusicStatusUnits(check) {
     let removed = 0;
     const execFile = (cmd, args, opts, cb) => {
       calls.push([cmd, args]);
-      if (cmd === 'open') { cb(null, '', ''); return; }
       const script = args.join('\n');
       if (script.includes('raw data of artwork')) { cb(null, artReply, ''); return; }
       if (reply.ok) cb(null, reply.stdout, ''); else cb(Object.assign(new Error('x'), { code: 1 }), '', reply.stderr);
@@ -178,22 +171,28 @@ module.exports = async function appleMusicStatusUnits(check) {
     let msg = '';
     await np.control('play').catch((e) => { msg = e.message; });
     check('apple status (mac): a refused button explains where to allow it', /System Settings/.test(msg) && /Automation/.test(msg), msg);
-    check('apple status (mac): "Open" runs open -a Music (a fixed argument list)', (await np.open()) === 'opened' && calls.at(-1)[0] === 'open' && calls.at(-1)[1].join(' ') === '-a Music', JSON.stringify(calls.at(-1)));
     np.destroy();
   }
 
   // ---- the connector ----
   {
     let settings = {};
-    const fake = { state: 'playing', reads: 0, pressed: [], opened: 0, openResult: 'opened', press: true };
-    const card = (extra = {}) => ({ mode: 'status', state: fake.state, title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'Apple Music', kind: 'track', reason: '', art: 'data:image/jpeg;base64,AAAA', ...extra });
-    let tabs = [];
+    const fake = { state: 'playing', reads: 0, pressed: [], sought: [], played: [], searched: [], signIns: 0, lists: 0, reloads: 0, press: true, last: null };
+    const card = (extra = {}) => ({ mode: 'status', state: fake.state, title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art: 'data:image/jpeg;base64,AAAA', ...extra });
     const w = createWidgets({
       readSettings: () => settings, writeSettings: (s) => { settings = JSON.parse(JSON.stringify(s)); },
       fetch: async () => { throw new Error('the Status card must not use the network'); },
       getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}),
-      appleMusic: { read: async () => { fake.reads++; return card(); }, control: async (n) => { fake.pressed.push(n); return fake.press; }, open: async () => { fake.opened++; return fake.openResult; } },
-      openWebTab: (u) => tabs.push(u),
+      appleMusic: {
+        read: async (o) => { fake.reads++; fake.last = o; return card(); },
+        control: async (n) => { fake.pressed.push(n); return fake.press; },
+        seek: (sec) => { fake.sought.push(sec); return true; },
+        playItem: (kind, id) => { fake.played.push([kind, id]); return fake.ready !== false; },
+        search: (t) => { fake.searched.push(t); return true; },
+        signIn: () => { fake.signIns++; return true; },
+        refreshLists: () => { fake.lists++; },
+        reload: () => { fake.reloads++; },
+      },
     });
     const saved = await w.save({ type: 'applemusic' }).catch((e) => ({ error: e.message }));
     const id = w.list()[0]?.id;
@@ -212,12 +211,24 @@ module.exports = async function appleMusicStatusUnits(check) {
     await w.act({ id, do: 'play' });
     check('apple status: a button the app didn\'t take shows a notice on the card', /didn.t answer/.test(get().data.notice || ''), JSON.stringify(get().data.notice));
     fake.press = true;
-    check('apple status: the page action list accepts do=open, play, pause, next and previous', ['open', 'play', 'pause', 'next', 'previous'].every((a) => w.actionFrom(`file:///newtab.html?widget=${id}&do=${a}`)?.do === a), '');
-    check('apple status: Open starts the app', (await w.act({ id, do: 'open' })) === true && fake.opened === 1 && tabs.length === 0, '');
-    fake.openResult = 'web';
-    await w.act({ id, do: 'open' });
-    check('apple status: with no app installed, Open opens the web player in a tab and says so', tabs.join() === 'https://music.apple.com/' && /web player/.test(get().data.notice || ''), JSON.stringify([tabs, get().data.notice]));
-    check('apple status: "Try again" (do=reload) belongs to the web player only', (await w.act({ id, do: 'reload' })) === false, '');
+    const url = (q) => `file:///newtab.html?widget=${id}&do=${q}`;
+    check('apple status: the page action list accepts play, pause, next, previous, seek, playitem, amsearch, amsignin and amlists', ['play', 'pause', 'next', 'previous', 'amsignin', 'amlists'].every((a) => w.actionFrom(url(a))?.do === a) && w.actionFrom(url('seek&arg=12'))?.sec === 12 && w.actionFrom(url('amsearch&arg=shake'))?.text === 'shake' && w.actionFrom(url('playitem&kind=song&arg=1440933651'))?.item === '1440933651', '');
+    check('apple status: bad seek, kind or id values are refused by the page action parser (and "open" is gone)', [url('seek&arg=-1'), url('seek&arg=abc'), url('seek&arg=999999'), url('playitem&kind=evil&arg=1'), url('playitem&kind=song&arg=a%20b'), url('playitem&kind=song'), url('playitem&kind=song&arg=' + 'x'.repeat(70)), url('open')].every((u) => { const a = w.actionFrom(u); return a === null || a.invalid === true; }), '');
+    check('apple status: the widget id is not overwritten by an item id', w.actionFrom(url('playitem&kind=song&arg=123')).id === id, '');
+    await w.act({ id, do: 'seek', ...w.actionFrom(url('seek&arg=77')) });
+    check('apple status: Seek goes to the engine and the card moves its playhead at once', fake.sought.join() === '77' && get().data.progressMs === 77000, JSON.stringify(fake.sought));
+    await w.act({ id, do: 'playitem', kind: 'playlist', item: 'p.AbC-1' });
+    check('apple status: playitem starts a recent play or a search result', fake.played.join('|') === 'playlist,p.AbC-1', JSON.stringify(fake.played));
+    fake.ready = false;
+    await w.act({ id, do: 'playitem', kind: 'song', item: '1' });
+    check('apple status: playitem before the engine is ready says so on the card', /isn.t ready/.test(get().data.notice || ''), JSON.stringify(get().data.notice));
+    fake.ready = true;
+    await w.act({ id, do: 'amsearch', text: 'shake it off' });
+    await w.act({ id, do: 'amsignin' });
+    await w.act({ id, do: 'amlists' });
+    check('apple status: search, sign-in and the lists go to the engine', fake.searched.join() === 'shake it off' && fake.signIns === 1 && fake.lists === 1, '');
+    check('apple status: "Try again" (do=reload) reloads the engine in status mode', (await w.act({ id, do: 'reload' })) === true && fake.reloads === 1, String(fake.reloads));
+    check('apple status: the card asks the engine whether to include the desktop app (default yes)', fake.last && fake.last.app === true, JSON.stringify(fake.last));
     await sleep(400);
     const reads = fake.reads;
     w.appleMusicChanged();
@@ -225,12 +236,17 @@ module.exports = async function appleMusicStatusUnits(check) {
     check('apple status: when the app changes, the status card is fetched again at once', fake.reads > reads, `${reads} -> ${fake.reads}`);
     await w.save({ type: 'applemusic', art: false }, id);
     await w.refresh(w.list()[0], { force: true });
+    await sleep(350);
+    await w.save({ type: 'applemusic', art: false, app: false }, id);
+    await w.refresh(w.list()[0], { force: true });
+    check('apple status: switching "also show the app" off tells the engine', fake.last.app === false && w.list()[0].app === false, JSON.stringify(fake.last));
     check('apple status: art switched off sends none', get().data.art === '' && w.list()[0].art === false, JSON.stringify(get().data).slice(0, 100));
     await w.save({ type: 'applemusic', mode: 'web' }, id);
     const r2 = fake.reads;
     await w.refresh(w.list()[0], { force: true });
     w.appleMusicChanged();
-    check('apple status: in web mode the card is the web player\'s and the app is not read', get().data.mode === 'web' && fake.reads === r2, JSON.stringify(get().data));
+    check('apple status: in web mode the card is the web player\'s and the engine is not read', get().data.mode === 'web' && fake.reads === r2, JSON.stringify(get().data));
+    check('apple status: "Try again" in web mode reloads the web view, not the engine', (await w.act({ id, do: 'reload' })) === true && fake.reloads === 1, String(fake.reloads));
   }
   {
     let st = {};
