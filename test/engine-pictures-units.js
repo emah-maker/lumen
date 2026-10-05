@@ -109,6 +109,16 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-enginepics-'));
   check('markdown: never an <img> or a loadable address for a local file', !/<img|src=|file:\/\//.test(html('![x](file:///C:/a/b.png)') + html('![x](C:\\a\\b.png)') + html('![x](/etc/passwd.png)')));
   check('markdown: a local path that is not a picture type, and web pictures, are as before', !/md-img-local/.test(html('![x](C:\\a\\b.txt)')) && /md-img-remote/.test(html('![x](https://example.com/a.png)')));
 
+  // A Claude Code reply ends early (reply_complete) before agent.js enginePictures runs: its picture event must still be drawn.
+  {
+    const core = fs.readFileSync(path.join(__dirname, '../src/renderer/chat-core.js'), 'utf8').replace(/\r\n/g, '\n');
+    const lateAt = core.indexOf("if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId)");
+    const guardAt = core.indexOf('if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;');
+    check('renderer: a picture arriving after an early-ended reply is handled before the finished-turn guard drops it', lateAt > 0 && guardAt > 0 && lateAt < guardAt, `${lateAt} ${guardAt}`);
+    check('renderer: the late picture is placed after that reply (latePicture), not dropped', /function latePicture\(event\)/.test(core) && /anchor\.after\(pic\)/.test(core));
+    const bundle = fs.readFileSync(path.join(__dirname, '../src/renderer/ui.bundle.js'), 'utf8');
+    check('renderer: the committed bundle has the late-picture handling', bundle.includes('function latePicture(event)'));
+  }
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
