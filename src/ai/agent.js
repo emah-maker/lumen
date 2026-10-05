@@ -226,7 +226,7 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: "Put the user's file into a page's file upload: element_id of the file input, its button/label or drop zone. files: refs of files the user attached (<attached_files>); omit to ask the user to choose one. Does not submit.",
+    description: "Put the user's file into a page's file upload (element_id: the file input, its button/label or drop zone). files: refs from <attached_files>; omit to ask the user to pick. Does not submit.",
     input_schema: {
       type: 'object',
       properties: {
