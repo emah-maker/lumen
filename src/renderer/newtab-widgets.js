@@ -220,6 +220,7 @@ function nowPlayingCard(w, card, o) {
     };
     const controls = el('div', 'sp-controls');
     if (state === 'idle') { // nothing to skip: Play resumes (Spotify on the last device, and says if there is none)
+      if (!o.playLabel) return; // (Apple Music: nothing to resume; the card offers a search and what to play instead)
       controls.append(button('play', o.playLabel, 'play', 'sp-btn main'));
       card.body.append(controls);
       return;
@@ -240,10 +241,21 @@ function nowPlayingCard(w, card, o) {
       const bar = el('div', 'sp-bar');
       const fill = document.createElement('i');
       bar.append(fill);
-      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('role', o.seek ? 'slider' : 'progressbar');
       bar.setAttribute('aria-label', `${title} progress`);
       bar.setAttribute('aria-valuemin', '0');
       bar.setAttribute('aria-valuemax', '100');
+      if (o.seek) { // Apple Music: click the bar, or use the arrow keys (5 seconds), to move the playhead
+        bar.classList.add('sp-seek');
+        bar.tabIndex = 0;
+        const seekTo = (ms) => widgetAct(w.id, 'seek', { arg: String(Math.round(Math.max(0, Math.min(duration, ms)) / 1000)) });
+        bar.addEventListener('click', (e) => { const r = bar.getBoundingClientRect(); if (r.width > 0) seekTo(((e.clientX - r.left) / r.width) * duration); });
+        bar.addEventListener('keydown', (e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          seekTo(draw() + (e.key === 'ArrowRight' ? 5000 : -5000));
+        });
+      }
       const elapsed = el('span', 'sp-elapsed');
       const total = el('span', 'sp-total', spClock(duration));
       const progress = el('div', 'sp-progress');
@@ -275,11 +287,11 @@ function nowPlayingCard(w, card, o) {
 // A music site's own web player in the card (Spotify's Web player, Apple Music): main.js lays a native view over
 // the .sp-web-slot placeholder (features/web-player.js). The page only draws the header buttons, the slot and what main
 // says about the view; `name` and `site` are constants of ours.
-function webPlayerCard(w, card, name, site) {
+function webPlayerCard(w, card, name, site, { signInTab = true } = {}) {
   const d = w.data;
   card.el.classList.add('sp-web');
   card.head.append(openLink(site, `Open in ${name}`));
-  if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
+  if (signInTab && d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
     const signIn = link(site, 'Open in a tab to sign in', 'w-btn primary');
     signIn.classList.add('sp-web-signin');
     card.head.append(signIn);
@@ -447,32 +459,81 @@ const WIDGET_RENDERERS = {
   // Apple Music: music.apple.com in the card, the same kind of view as Spotify's Web player (features/apple-music-web.js).
   applemusic(w, card) {
     const d = w.data;
-    if (d.mode === 'web') { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/'); return; }
-    if (d.state === 'unavailable') { // no Apple Music app to read (not installed, not allowed, not this system): say why, offer the way on
+    if (d.mode === 'web') { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/', { signInTab: false }); return; } // sign-in happens inside the card's own page
+    if (d.state === 'unavailable') { // the engine can't load, or there is nothing to run it on: say why, offer the way on
       card.head.append(refreshButton(w));
       card.el.classList.add('sp-card-idle');
       const reasons = {
-        'not-installed': 'The Apple Music app isn’t installed on this computer. You can use the web player instead.',
-        denied: 'Lumen isn’t allowed to control Music. Allow it in System Settings > Privacy & Security > Automation, then press refresh.',
-        unsupported: 'The Apple Music status card works on Windows and macOS. Use the web player mode instead.',
+        offline: 'Can’t reach Apple Music. Check your internet connection.',
+        failed: 'Apple Music didn’t load.',
+        unsupported: 'The Apple Music status card isn’t available here. Use the web player mode instead.',
       };
-      const msg = el('p', 'w-note', reasons[d.reason] || 'Lumen couldn’t read what Apple Music is playing. Press refresh to try again.');
+      const msg = el('p', 'w-note', reasons[d.reason] || 'Lumen couldn’t start Apple Music. Try again.');
       msg.setAttribute('role', 'status');
       card.body.append(msg);
-      card.body.append(link('https://music.apple.com/', 'Open the web player', 'w-btn'));
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
+      card.body.append(retry);
       return;
     }
-    const idle = d.state !== 'playing' && d.state !== 'paused';
+    const playing = d.state === 'playing' || d.state === 'paused';
+    const signedIn = d.signedIn === true;
+    const loading = d.reason === 'loading';
+    card.el.classList.add('am-card');
+    if (d.source === 'app') card.head.append(el('span', 'mk-badge', 'Apple Music app')); // the desktop app is the one playing, not Lumen
     nowPlayingCard(w, card, {
-      name: 'Apple Music', playLabel: 'Play in Apple Music', openUrl: () => null,
-      idleHint: () => (text(d.reason, 20) === 'not-running' ? 'Open Apple Music and press play' : 'Press play in Apple Music'),
+      name: 'Apple Music', playLabel: null, openUrl: () => null, seek: d.source !== 'app',
+      idleHint: () => (loading ? 'Starting Apple Music…' : signedIn ? 'Pick something to play' : 'Search, or sign in to play more'),
     });
-    if (idle) { // nothing playing: a way to start the app
-      const open = el('button', 'w-btn sp-open', 'Open Apple Music');
-      open.type = 'button';
-      open.addEventListener('click', () => widgetAct(w.id, 'open'));
-      card.body.append(open);
+    if (playing) {
+      if (d.preview === true && d.source !== 'app') card.body.append(el('p', 'w-note am-note', 'Preview only. Sign in to Apple Music for full songs.'));
+      if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120)));
+      return;
     }
+    if (loading) return;
+    const wrap = el('div', 'am-idle');
+    const form = el('form', 'am-search');
+    const input = el('input');
+    input.type = 'search';
+    input.maxLength = 80;
+    input.placeholder = 'Search Apple Music';
+    input.value = text(d.query, 80);
+    input.setAttribute('aria-label', 'Search Apple Music');
+    const go = el('button', 'w-btn', 'Search');
+    go.type = 'submit';
+    form.append(input, go);
+    form.addEventListener('submit', (e) => { e.preventDefault(); widgetAct(w.id, 'amsearch', { arg: input.value.trim().slice(0, 80) }); });
+    wrap.append(form);
+    if (!signedIn && d.signedIn === false) {
+      const signIn = el('button', 'w-btn primary am-signin', 'Sign in to Apple Music');
+      signIn.type = 'button';
+      signIn.addEventListener('click', () => widgetAct(w.id, 'amsignin'));
+      wrap.append(signIn);
+    }
+    const kinds = ['song', 'album', 'playlist', 'station'];
+    const rows = (heading, items) => {
+      const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(i.id) && kinds.includes(i.kind) && typeof i.title === 'string').slice(0, 8);
+      if (!list.length) return;
+      const section = el('div', 'am-section');
+      section.append(el('div', 'am-heading', heading));
+      for (const i of list) {
+        const b = el('button', 'am-row');
+        b.type = 'button';
+        b.append(el('span', 'am-title', text(i.title, 120)));
+        if (text(i.sub, 120)) b.append(el('span', 'am-sub', text(i.sub, 120)));
+        b.addEventListener('click', () => widgetAct(w.id, 'playitem', { kind: i.kind, arg: i.id }));
+        section.append(b);
+      }
+      wrap.append(section);
+    };
+    if (d.searching === true) wrap.append(el('p', 'w-note', 'Searching…'));
+    else if (Array.isArray(d.results) && d.results.length) rows('Results', d.results);
+    else if (text(d.query, 80)) wrap.append(el('p', 'w-note', 'No results.'));
+    else if (signedIn) { rows('Recently played', d.recent); rows('Your playlists', d.playlists); }
+    if (signedIn && d.drm === 'missing') wrap.append(el('p', 'w-note am-note', 'Full songs need Lumen’s Widevine component, which isn’t available yet. It may still be installing; if this stays, restart Lumen. Previews and search still work.'));
+    if (d.appDenied === true) wrap.append(el('p', 'w-note am-note', 'To also show the Apple Music app, allow Lumen in System Settings > Privacy & Security > Automation.'));
+    card.body.append(wrap);
   },
 
   // Now playing. Everything is a checked string or number set with textContent; the album picture is a

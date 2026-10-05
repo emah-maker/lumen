@@ -199,20 +199,8 @@ function createNowPlaying(deps = {}) {
     return ack;
   }
 
-  // Open the Apple Music app. Resolves 'opened', or 'web' when it isn't installed (the caller opens music.apple.com instead).
-  async function open() {
-    if (platform === 'darwin') {
-      const r = await new Promise((resolve) => { try { execFile('open', ['-a', 'Music'], { timeout: 8000 }, (err) => resolve(!err)); } catch { resolve(false); } });
-      return r ? 'opened' : 'web';
-    }
-    if (platform === 'win32' && hello?.launchId && AMV.LAUNCH_ID_RE.test(hello.launchId)) {
-      try { spawn('explorer.exe', [`shell:AppsFolder\\${hello.launchId}`], { windowsHide: true, stdio: 'ignore' }).on('error', () => {}).unref?.(); return 'opened'; } catch { return 'web'; }
-    }
-    return 'web';
-  }
-
   function destroy() { destroyed = true; stop(); }
-  return { read, control, open, stop, destroy, running: () => Boolean(helper) || Boolean(macTimer) };
+  return { read, control, stop, destroy, running: () => Boolean(helper) || Boolean(macTimer) };
 }
 
 module.exports = { createNowPlaying, IDLE_MS };

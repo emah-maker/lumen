@@ -17,12 +17,14 @@ const MODES = ['status', 'web'];
 const ACTIONS = ['play', 'pause', 'next', 'previous'];
 const MAX_TEXT = 200;
 
-// The widget's mode: 'status' (the now-playing card, the default) or 'web' (music.apple.com in the card).
+// The widget's mode: 'status' (the now-playing card, the default) or 'web' (music.apple.com in the card). `app`: also show the
+// desktop Apple Music app when the card's own player is idle.
 function cleanMode(c) {
   return c && typeof c === 'object' && MODES.includes(c.mode) ? c.mode : 'status';
 }
 function cleanConfig(c) {
-  return { mode: cleanMode(c), art: !(c && typeof c === 'object') || c.art !== false };
+  const ok = c && typeof c === 'object';
+  return { mode: cleanMode(c), art: !ok || c.art !== false, app: !ok || c.app !== false };
 }
 
 // ---- which Windows media session is Apple Music ----

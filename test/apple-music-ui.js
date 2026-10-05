@@ -3,7 +3,7 @@
 // view load a stand-in address only in test mode (global.__appleMusicWebUrl).
 //
 // Checks: the view over the card, a load that fails (offline, a 500) saying so with Try again, Widevine missing saying
-// so, the card learning that someone signed in elsewhere, and that it lives next to a Spotify Web player card
+// so, and that it lives next to a Spotify Web player card
 // (two views, independent). Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin).
 // Set LUMEN_APPLEMUSIC_SHOTS=<dir> to keep a screenshot of the card.
 const { _electron: electron } = require('playwright-core');
@@ -101,21 +101,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page(`document.querySelector('${AM} .sp-web-down button').click()`);
     check('apple music: …and recovers when Apple Music does', await waitMain(() => global.__appleMusicWeb.status().state === 'ready'), JSON.stringify(await status()));
 
-    // Signing in elsewhere (the "Open in a tab to sign in" tab) reloads the player so it isn't left on its login page
-    check('apple music: signed out is known (the card offers a sign-in tab)', await waitFor(`Boolean(document.querySelector('${AM} .sp-web-signin'))`), JSON.stringify(await status()));
-    const hits1 = world.hits;
-    await app.evaluate(async ({ session }) => { await session.defaultSession.cookies.set({ url: 'https://music.apple.com/', name: 'media-user-token', value: 'fixture', domain: '.music.apple.com', secure: true }); });
-    check('apple music: a sign-in elsewhere reloads the player, and the card drops the sign-in button', await waitMain(() => global.__appleMusicWeb.isSignedIn() === true) && await waitFor(`!document.querySelector('${AM} .sp-web-signin')`) && await (async () => { for (let i = 0; i < 40 && world.hits <= hits1; i++) await sleep(150); return world.hits > hits1; })(), `hits ${hits1} -> ${world.hits}`);
-    check('apple music: Spotify\'s card did not learn anything from Apple\'s cookie', (await app.evaluate(() => global.__spotifyWeb.isSignedIn())) !== true, '');
-    await sleep(500);
-    const hits2 = world.hits;
-    await app.evaluate(async ({ session }) => { await session.defaultSession.cookies.set({ url: 'https://music.apple.com/', name: 'media-user-token', value: 'fixture-2', domain: '.music.apple.com', secure: true }); });
-    await sleep(1200);
-    check('apple music: a cookie replaced in place is not a sign-out and does not reload the player', (await app.evaluate(() => global.__appleMusicWeb.isSignedIn())) === true && world.hits === hits2, `hits ${hits2} -> ${world.hits}`);
-
     // Removing the card: its view goes away (the Spotify one stays)
     await app.evaluate(() => { global.__widgets.remove('wapple001'); });
-    check('apple music: removing the card closes its view and leaves Spotify\'s', await waitMain(() => global.__appleMusicWeb.view() === null) && await app.evaluate(() => global.__spotifyWeb.view() !== null), '');
+    check('apple music: removing the web card hides its view (the engine keeps the page a while) and leaves the Spotify one', await waitMain(() => { const v = global.__appleMusicWeb.view(); return !v || !v.getVisible(); }) && await app.evaluate(() => global.__spotifyWeb.view() !== null), '');
 
     const errs = await app.evaluate(() => global.__errs);
     check('apple music: no console errors on the new-tab page', errs.length === 0, JSON.stringify(errs));

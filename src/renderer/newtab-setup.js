@@ -84,15 +84,16 @@ const FORMS = {
   applemusic(s) {
     const mode = select([['status', 'Status card: what the Apple Music app is playing'], ['web', 'Web player: music.apple.com in the card']], s.mode === 'web' ? 'web' : 'status');
     const art = select([['on', 'Show album art'], ['off', 'No album art']], s.art === false ? 'off' : 'on');
+    const app = select([['on', 'Yes'], ['off', 'No']], s.app === false ? 'off' : 'on');
     const note = el('p', 'ws-note');
     const sync = () => {
-      art.parentElement.hidden = mode.value !== 'status';
-      note.textContent = mode.value === 'web' ? 'Shows Apple Music’s web player (music.apple.com). Sign in there once; Lumen never sees your Apple ID or password.' : 'Reads the Apple Music app on this computer (Windows or Mac) and shows what is playing, with play, pause, next and previous. Nothing is sent anywhere.';
+      art.parentElement.hidden = app.parentElement.hidden = mode.value !== 'status';
+      note.textContent = mode.value === 'web' ? 'Shows Apple Music’s web player (music.apple.com). Sign in there once; Lumen never sees your Apple ID or password.' : 'Plays Apple Music inside Lumen and shows what is playing, with play, pause, next, previous and seek, your recent plays and playlists, and a search. Sign in on Apple’s site once; Lumen never sees your Apple ID.';
     };
     mode.addEventListener('change', sync);
-    const nodes = [field('Show', mode), field('Album art', art), note];
+    const nodes = [field('Show', mode), field('Album art', art), field('Also show the Apple Music app', app, 'When nothing plays inside Lumen but the app does.'), note];
     sync();
-    return { nodes, read: () => ({ mode: mode.value, art: art.value === 'on' }), first: mode };
+    return { nodes, read: () => ({ mode: mode.value, art: art.value === 'on', app: app.value === 'on' }), first: mode };
   },
   countdown(s) {
     const cd = s.cd || {};
