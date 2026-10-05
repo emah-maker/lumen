@@ -130,8 +130,12 @@
     boxEl().style.height = list.length ? `${Math.ceil(bottom + 32 + slack)}px` : '';
     shiftMain(WL.bannerRows(list, o));
   }
+  // Edit layout frees the page's sections into cards, so the centre column's obstacle shrinks to the header and search
+  // box: the cards are held where they were drawn when it began (WE.holdBase / holdItems), until a change is saved.
+  let editBase = null;
+  const heldItems = () => WE.holdItems(items, editBase);
   function layoutNow() {
-    view = WL.resolve(items, o);
+    view = WL.resolve(heldItems(), o);
     place(view);
     if (firstLayout && items.length) {
       firstLayout = false;
@@ -451,6 +455,7 @@
   function setEditing(on) {
     measure();
     if (on === editing || (on && stacked())) return;
+    editBase = on ? WE.holdBase(view, items, WS.isSystemId) : null;
     if (on) window.newtabSystem?.freeAll(); // every section becomes a card where it stands
     editing = on;
     relayout(); // the page's extra room below the cards comes and goes with Edit layout
@@ -626,7 +631,7 @@
       const now = o;
       ({ m, o } = keep);
       const floor = floorOb === undefined ? null : floorOb;
-      lastBlockers = now.obstacle ? WL.movedBy(items, now, now.obstacle, floor) : [];
+      lastBlockers = now.obstacle ? WL.movedBy(heldItems(), now, now.obstacle, floor) : [];
       return lastBlockers.length === 0;
     },
     // The column at its smallest (newtab-system paints it, then calls this): what "moved" is measured against.
