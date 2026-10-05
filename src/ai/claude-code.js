@@ -21,6 +21,7 @@ const path = require('path');
 const { removeDir, removeDirSync } = require('./temp-dirs');
 const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
+const { isSignedOutText } = require('./auth-sync');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 
@@ -55,7 +56,7 @@ async function findClaude() {
 // Turns a CLI failure into what the user should do about it.
 function describeFailure(text, code) {
   const t = String(text || '').trim();
-  if (/not logged in|please run \/login|\/login|invalid api key|oauth|authenticat|credentials/i.test(t)) {
+  if (isSignedOutText(t, /not logged in|please run \/login|\/login|invalid api key|b401b|token (has )?(expired|been revoked)/i, /oauth|authenticat|credentials/i)) {
     return { text: 'Claude Code is not signed in. Open a terminal, run `claude` once, then type /login. Lumen never sees your Claude login.' };
   }
   if (/usage limit|limit reached|rate.?limit|out of (extra )?usage|resets? (at|in)|quota/i.test(t)) {

@@ -61,6 +61,8 @@ const os = require('os');
 const path = require('path');
 const { exists, killTree, validModel, fullAccessRejected } = require('./cli-utils');
 const { removeDir, removeDirSync } = require('./temp-dirs');
+const authSync = require('./auth-sync');
+const { isSignedOutText } = authSync;
 const locate = require('./codex-locate');
 const codexUsage = require('./codex-usage');
 const codexConfig = require('./codex-config');
@@ -74,7 +76,7 @@ const SIGN_IN_HINT = 'Open a terminal, run `codex login` (or run `codex` and cho
 function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
   if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Codex', setting: 'Give Codex full access to this computer' }); if (rejected) return rejected; }
-  if (/not (logged|signed) in|please (log|sign) ?in|codex login|log ?in required|unauthori[sz]ed|\b401\b|refresh token|invalid (api )?key|incorrect api key|missing (bearer|api key)|authentication (failed|required)|no credentials/i.test(t)) {
+  if (isSignedOutText(t, /not (logged|signed) in|please (log|sign) ?in|codex login|log ?in required|unauthori[sz]ed|\b401\b|refresh token (was )?(already )?(used|reused|expired|revoked|invalid)|invalid (api )?key|incorrect api key|missing (bearer|api key)|no credentials/i, /refresh token|authentication (failed|required)/i)) {
     return { text: `Codex is not signed in. ${SIGN_IN_HINT} Lumen never sees your OpenAI login.` };
   }
   if (codexUsage.limitMessage(t) || /usage limit|rate.?limit|limit reached|quota|insufficient|credits?|resource[_ ]exhausted|too many requests|\b429\b/i.test(t)) {
@@ -133,24 +135,21 @@ const chatHomeFor = (userData, chatId) => (chatId ? path.join(chatsDirFor(userDa
 const SAFE_SESSION = /^[A-Za-z0-9_.-]{8,128}$/;
 const AUTH_FILES = ['auth.json'];
 
-async function copyIfNewer(from, to) {
-  try {
-    const src = await fs.promises.stat(from);
-    let dst = null;
-    try { dst = await fs.promises.stat(to); } catch { /* none yet */ }
-    if (dst && dst.mtimeMs >= src.mtimeMs) return false;
-    await fs.promises.mkdir(path.dirname(to), { recursive: true });
-    const tmp = `${to}.lumen-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-    await fs.promises.copyFile(from, tmp);
-    await fs.promises.chmod(tmp, 0o600).catch(() => {});
-    await fs.promises.utimes(tmp, src.atime, src.mtime);
-    await fs.promises.rename(tmp, to);
-    return true;
-  } catch { return false; }
+const copyIfNewer = authSync.copyIfNewer;
+// Every sign-in copy Lumen keeps for this Codex: the user's, the one in `home`, and the other chats' (and the shared home's) beside it.
+// Codex rotates its refresh token, so every copy must be the newest one: a chat whose copy is stale would refresh with a dead token.
+function authPeers({ userHome, home }) {
+  const out = [path.join(userHome, 'auth.json'), path.join(home, 'auth.json')];
+  const dir = path.dirname(path.resolve(home));
+  if (path.basename(dir) === 'codex-chats') {
+    out.push(path.join(path.dirname(dir), 'codex-home', 'auth.json'));
+    try { for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(dir, e.name, 'auth.json')); } catch { /* none yet */ }
+  }
+  return out;
 }
-// The sign-in goes in before a run (when the user's own is newer) and back after it (when Codex refreshed its token): contents never read.
-async function pullAuth({ userHome, home }) { for (const f of AUTH_FILES) await copyIfNewer(path.join(userHome, f), path.join(home, f)); }
-async function returnAuth({ userHome, home }) { for (const f of AUTH_FILES) await copyIfNewer(path.join(home, f), path.join(userHome, f)); }
+// The sign-in goes in before a run and back after it, newest wins both ways and reaches every copy: contents never read.
+async function pullAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home })); }
+async function returnAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home })); }
 
 async function removeChatHome(userData, chatId) {
   const home = chatHomeFor(userData, chatId);
