@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Claude Code no longer forgets a message that failed.** When a message got no reply (Claude Code stopped responding, hit a limit, or you stopped it before it said anything), the next message was added to it in the chat, and only the new words went to Claude Code: if its session had never recorded the first one, it never learned what you had said, even though the chat still showed it (and a restored chat showed the two as one bubble). The next message now carries the unanswered one along, for a new session and a resumed one, on Auto and every other Claude Code pick. Checked end to end on Claude Code Auto with the model changing between messages (Haiku, then a stronger model, then back), with the composer's warm-up, full access on and off, the process ended between messages, a session the CLI had lost, and Send now: every message reached a Claude Code that knew all the earlier ones.
+
 ## 0.5.14 (2026-10-05)
 
 - **Pictures from Claude Code show in the chat.** When Claude Code made a picture (with your own tools, under full access) and named its file in the reply, Lumen saved the picture but the chat only showed the file address: the reply was already marked finished, and the picture that came a moment later was dropped. It now appears under the reply; reopening the chat was showing it before.
