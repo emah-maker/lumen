@@ -10,7 +10,10 @@
 // reloaded per new tab, so the music keeps playing.
 //
 // A player is described by a spec: { url, hosts (a Set: the pages the view may show), cardClass (the card's
-// class on the page), signIn: { cookie, domain (RegExp) } (the cookie the site keeps while someone is signed in) }.
+// class on the page), signIn?: { cookie, domain (RegExp) } (the cookie the site keeps while someone is signed in; a
+// player that learns it another way leaves it out), preload?: the path of a preload script of ours for the view (the Apple
+// Music engine's bridge), popups?: true (sign-in pages on the allowed hosts open as windows of their own, so they can
+// answer the page that opened them) }.
 //
 // The pure parts (address allow-list, permissions, geometry) come first so the tests can exercise them without
 // Electron; createWebPlayer() is the Electron part main.js instantiates.
@@ -94,7 +97,8 @@ function viewBounds(probe, bounds) {
 //         activeNewTab() (the visible new-tab page's webContents, or null), hasWidget() (is this player's card
 //         configured), openTab(url), isWebUrl(url), onSignIn(), onStatus() (the view's state changed: the card
 //         says so), testUrl() (tests only: an https stand-in for the site, on any host), drmProbe(wc)?
-//         (tests only: replaces the Widevine check) }
+//         (tests only: replaces the Widevine check), keepAlive()? (the view is wanted even with no card to show it on: it
+//         is made on demand by ensure() and kept, hidden) }
 function createWebPlayer(deps, spec) {
   let view = null;
   let host = null;
@@ -145,7 +149,7 @@ function createWebPlayer(deps, spec) {
   }
 
   function hookCookies() {
-    if (cookiesHooked) return;
+    if (cookiesHooked || !spec.signIn) return;
     cookiesHooked = true;
     const ses = deps.session;
     const set = (v) => {
@@ -169,13 +173,25 @@ function createWebPlayer(deps, spec) {
     view = new deps.WebContentsView({
       // The user's normal session (no partition), a page like any tab's: sandboxed, isolated, no Node, and no
       // preload of ours. Music must not be throttled or stopped for lack of a gesture or while hidden.
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false },
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false, ...(spec.preload ? { preload: spec.preload } : {}) },
     });
     const wc = view.webContents;
     const leave = (url) => { if (deps.isWebUrl(url)) deps.openTab(url); };
     wc.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
     wc.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
-    wc.setWindowOpenHandler(({ url }) => { leave(url); return { action: 'deny' }; });
+    // A sign-in page the site opens (Apple's) is a real window, so it can tell the page that opened it when you are in; its own
+    // navigation stays on the allowed hosts. Everything else opens as a tab, in the same session.
+    const guard = (child) => {
+      child.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
+      child.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
+      child.setWindowOpenHandler(({ url }) => { leave(url); return { action: 'deny' }; });
+    };
+    wc.setWindowOpenHandler(({ url }) => {
+      if (spec.popups && allowed(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } } };
+      leave(url);
+      return { action: 'deny' };
+    });
+    wc.on('did-create-window', (child) => guard(child.webContents));
     wc.on('render-process-gone', () => destroy());
     // A blank frame says nothing: when the page can't load, the card says why (and tries again).
     let failedLoad = false; // Chromium finishes loading its own error page afterwards: that is not the site being ready
@@ -215,7 +231,29 @@ function createWebPlayer(deps, spec) {
     if (alive()) view.setVisible(false); // stays loaded and playing
   }
 
+  // The view in a window of its own (a sign-in window), until release(): the card's placing leaves it alone meanwhile.
+  let pinned = false;
+  function showIn(win, rect) {
+    if (!win || win.isDestroyed()) return null;
+    const v = ensure();
+    if (host && host !== win) { try { host.contentView.removeChildView(v); } catch { /* that window is gone */ } }
+    host = win;
+    pinned = true;
+    win.contentView.addChildView(v);
+    v.setBounds(rect);
+    v.setVisible(true);
+    return v;
+  }
+  function release() {
+    pinned = false;
+    if (!alive()) return;
+    view.setVisible(false);
+    try { host?.contentView.removeChildView(view); } catch { /* the window is gone */ }
+    host = null;
+  }
+
   function place(rect) {
+    if (pinned) return;
     if (!rect || state === 'offline' || state === 'failed') { hide(); return; } // a failed load: the card's message shows, not an error page
     const win = deps.getWindow();
     if (!win || win.isDestroyed()) return;
@@ -247,7 +285,8 @@ function createWebPlayer(deps, spec) {
 
   // Called whenever the layout changes (a tab switch, the sidebar) and by the poll below.
   function sync() {
-    if (!deps.hasWidget()) { stop(); destroy(); return; }
+    if (pinned) return;
+    if (!deps.hasWidget()) { stop(); if (deps.keepAlive?.()) hide(); else destroy(); return; }
     hookCookies();
     const nt = deps.activeNewTab();
     if (!nt || nt.isDestroyed()) { stop(); hide(); return; }
@@ -260,9 +299,11 @@ function createWebPlayer(deps, spec) {
     sync,
     status,
     reload() { if (alive()) load(); else sync(); },
-    destroy: () => { stop(); destroy(); },
+    destroy: () => { stop(); pinned = false; destroy(); },
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,
     isSignedIn: () => signedIn,
+    ensure, showIn, release,
+    webContents: () => (alive() ? view.webContents : null),
     view: () => (alive() ? view : null), // for the window's overlay stacking (main.js raiseOverlays)
   };
 }
