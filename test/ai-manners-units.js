@@ -50,18 +50,20 @@ const J = (v) => JSON.stringify(v);
   check('hands-off: the refusal tells the model what to do instead', /open_tab/.test(M.handsOffRefusal('click')) && /Reading/.test(M.handsOffRefusal('click')));
 }
 
-// ---- [ai off-tab] "Keep the AI off this tab": the pure part
+// ---- [ai off-tab] "Keep the AI from acting on this tab" (read-only for the AI): the pure part
 {
   const tab = { id: 1 };
   check('off-tab: a tab is not kept off by default', M.isKeptOff(tab) === false && M.isKeptOff(null) === false);
   M.keepOff(tab);
   check('off-tab: keepOff marks the tab, and keepOff(tab, false) clears it', M.isKeptOff(tab) === true && M.isKeptOff(M.keepOff(tab, false)) === false);
-  check('off-tab: the refusal is the same clear text for every caller', M.offTabCheck({ offTab: true }) === M.offTabRefusal() && /kept the AI off this tab/.test(M.offTabRefusal()) && /ask the user/.test(M.offTabRefusal()));
-  check('off-tab: nothing is refused on a tab that is not kept off', M.offTabCheck({ offTab: false }) === null && M.offTabCheck() === null);
-  check('off-tab: the list note says what it is', /off limits/.test(M.OFF_TAB_NOTE) && /keeps the AI off this tab/.test(M.OFF_TAB_NOTE));
+  check('off-tab: the refusal is the same clear text for every caller, and says reading is fine', M.offTabCheck({ offTab: true, tool: 'click' }) === M.offTabRefusal() && /keeps the AI from acting on this tab/.test(M.offTabRefusal()) && /You can read it/.test(M.offTabRefusal()) && /ask the user/.test(M.offTabRefusal()));
+  check('off-tab: nothing is refused on a tab that is not kept off', M.offTabCheck({ offTab: false, tool: 'click' }) === null && M.offTabCheck() === null);
+  check('off-tab: every tool that acts is refused on the tab (run_script and close_tab included), the reading ones are not', [...M.ACTION_TOOLS].every((tool) => M.offTabCheck({ offTab: true, tool }) === M.offTabRefusal()) && M.ACTION_TOOLS.has('run_script') && ['read_page', 'find', 'screenshot', 'read_pdf', 'read_tabs', 'list_tabs', 'switch_tab', 'wait_for'].every((tool) => M.offTabCheck({ offTab: true, tool }) === null));
+  check('off-tab: the list note says what it is', /read-only/.test(M.OFF_TAB_NOTE) && /keeps the AI from acting on this tab/.test(M.OFF_TAB_NOTE));
   const v = (extra) => M.automationVerdict({ method: 'Page.captureScreenshot', ...extra });
-  check('off-tab: the CDP verdict refuses even a read, with hands-off off and on a tab the AI opened', v({ offTab: true }).error && v({ offTab: true, handsOff: false, ownTab: true }).error && v({ offTab: true, handsOff: true, ownTab: true }).error);
-  check('off-tab: the CDP verdict refuses every command, init no-ops and domain enables included', ['Runtime.enable', 'Page.addScriptToEvaluateOnNewDocument', 'Runtime.evaluate', 'Target.closeTarget'].every((method) => M.automationVerdict({ method, offTab: true }).error));
+  check('off-tab: the CDP verdict lets a read through, with hands-off off and on, and on a tab the AI opened', v({ offTab: true }).ok === true && v({ offTab: true, handsOff: false, ownTab: true }).ok === true && v({ offTab: true, handsOff: true, ownTab: true }).ok === true && M.automationVerdict({ method: 'Runtime.enable', offTab: true }).ok === true && M.automationVerdict({ method: 'Accessibility.getFullAXTree', offTab: true }).ok === true);
+  check('off-tab: the CDP verdict no-ops the init calls like hands-off mode', M.automationVerdict({ method: 'Page.addScriptToEvaluateOnNewDocument', offTab: true }).noop === true);
+  check('off-tab: the CDP verdict refuses every command that acts', ['Runtime.evaluate', 'Page.navigate', 'Input.dispatchMouseEvent', 'Input.insertText', 'Target.closeTarget', 'Fetch.enable'].every((method) => M.automationVerdict({ method, offTab: true }).error), J(['Runtime.evaluate', 'Page.navigate', 'Input.dispatchMouseEvent', 'Input.insertText', 'Target.closeTarget', 'Fetch.enable'].map((method) => M.automationVerdict({ method, offTab: true }))));
   check('off-tab: without the mark the verdict is as before', v({}).ok === true && v({ handsOff: true }).ok === true);
 }
 
@@ -133,7 +135,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('own-window agents: without noAsk an outside agent still gets a card', cards === 1 && /did not allow Codex/.test(asked || ''), `${asked} cards=${cards}`);
     state.off = new Set([1]);
     const kept = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
-    check('own-window agents: noAsk never gets past a tab the user keeps the AI off', /kept the AI off this tab/.test(kept || ''), kept);
+    check('own-window agents: noAsk never gets past a tab the user keeps the AI from acting on', /keeps the AI from acting on this tab/.test(kept || ''), kept);
     state.off = new Set();
     state.handsOff = true;
     const hands = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
@@ -347,7 +349,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
   }
 
-  // ---- [ai off-tab]: every tool of the tool layer is refused on a tab the user keeps the AI off, reading included
+  // ---- [ai off-tab]: read-only: the tools that act are refused on a tab the user keeps the AI from acting on, reading is not
   {
     const state = { active: 1, open: new Set([1, 2, 3]), ai: new Set(), handsOff: false, off: new Set([1]) };
     const agent = newAgent(state);
@@ -355,46 +357,48 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const chat = () => { const m = []; m.settings = { model: 'claude-opus-5' }; return m; };
     const inTab = (id, fn) => agent.inTask(id, signal, fn, chat());
     const ask = (name, input = {}) => agent.ensureAllowed(name, () => {}, signal, { input });
-    const TEXT = /kept the AI off this tab/;
-    const working = [['read_page', {}], ['find', { text: 'x' }], ['screenshot', {}], ['click', { element_id: 1 }], ['click_at', { x: 1, y: 1 }], ['type_text', { element_id: 1, text: 'x' }], ['fill_form', { fields: [] }], ['press_key', { key: 'Enter' }], ['scroll', { direction: 'down' }], ['hover', { element_id: 1 }], ['navigate', { url: 'https://example.com' }], ['reload', {}], ['go_back', {}], ['go_forward', {}], ['run_script', { code: '1' }], ['wait_for', { text: 'x' }], ['batch', { steps: [] }]];
-    for (const [name, input] of working) {
+    const TEXT = /keeps the AI from acting on this tab/;
+    const acting = [['click', { element_id: 1 }], ['click_at', { x: 1, y: 1 }], ['type_text', { element_id: 1, text: 'x' }], ['fill_form', { fields: [] }], ['press_key', { key: 'Enter' }], ['scroll', { direction: 'down' }], ['hover', { element_id: 1 }], ['navigate', { url: 'https://example.com' }], ['reload', {}], ['go_back', {}], ['go_forward', {}], ['run_script', { code: '1' }]];
+    for (const [name, input] of acting) {
       const viaAllowed = await refused(() => inTab(1, () => ask(name, input)));
       const viaExecute = await refused(() => inTab(1, () => agent.execute(name, input)));
       check(`off-tab: ${name} on the tab is refused (ensureAllowed and execute), hands-off off`, TEXT.test(viaAllowed || '') && TEXT.test(viaExecute || ''), `${viaAllowed} | ${viaExecute}`);
     }
-    check('off-tab: ...and in another tab the same tools are not refused', (await refused(() => inTab(2, () => ask('read_page')))) === null && (await refused(() => inTab(2, () => ask('click', { element_id: 1 })))) === null);
-    for (const [name, input] of [['switch_tab', { tab_id: 1 }], ['close_tab', { tab_id: 1 }], ['group_tabs', { tab_ids: [2, 1], name: 'x' }], ['ungroup_tabs', { tab_ids: [1] }], ['read_pdf', { tab_id: 1 }]]) {
+    check('off-tab: a batch step goes through allowStep and execute, which both check the tab', /await agent\.allowStep\(\.\.\.tool\);\n\s*const result = await agent\.execute\(\.\.\.tool\);/.test(fs.readFileSync(path.join(__dirname, '../src/ai/snapshot.js'), 'utf8').replace(/\r\n/g, '\n')));
+    for (const [name, input] of [['read_page', {}], ['find', { text: 'x' }], ['screenshot', {}], ['wait_for', { text: 'x' }], ['read_pdf', {}], ['read_tabs', { tab_ids: [1] }], ['read_pdf', { tab_id: 1 }], ['switch_tab', { tab_id: 1 }]]) {
+      check(`off-tab: ${name} on the tab is not refused for being kept off`, !TEXT.test((await refused(() => inTab(1, () => ask(name, input)))) || '') && !TEXT.test((await refused(() => inTab(2, () => ask(name, input)))) || ''));
+    }
+    check('off-tab: ...and in another tab the acting tools are not refused', (await refused(() => inTab(2, () => ask('click', { element_id: 1 })))) === null && (await refused(() => inTab(2, () => ask('run_script', { code: '1' })))) === null);
+    for (const [name, input] of [['close_tab', { tab_id: 1 }], ['group_tabs', { tab_ids: [2, 1], name: 'x' }], ['ungroup_tabs', { tab_ids: [1] }]]) {
       check(`off-tab: ${name} naming the tab is refused, from another tab`, TEXT.test(await refused(() => inTab(2, () => ask(name, input))) || ''));
     }
     check('off-tab: tools that name no tab still work while the task sits on that tab (open_tab, list_tabs, read_tabs, web_search)', (await refused(() => inTab(1, () => ask('open_tab', { url: 'https://example.com' })))) === null && (await refused(() => inTab(1, () => ask('list_tabs')))) === null && (await refused(() => inTab(1, () => ask('read_tabs', { tab_ids: [2] })))) === null && (await refused(() => inTab(1, () => ask('web_search', { query: 'x' })))) === null);
     check('off-tab: switch_tab / close_tab of other tabs are fine', (await refused(() => inTab(2, () => ask('switch_tab', { tab_id: 3 })))) === null && (await refused(() => inTab(2, () => ask('close_tab', { tab_id: 3 })))) === null);
     state.off.clear();
-    check('off-tab: once the user lets the AI back in, the tab works again', (await refused(() => inTab(1, () => ask('read_page')))) === null);
+    check('off-tab: once the user lets the AI back in, the tab can be acted on again', (await refused(() => inTab(1, () => ask('click', { element_id: 1 })))) === null);
     state.off.add(1);
     state.ai.add(1);
-    check('off-tab: a tab the AI opened can still be kept off', TEXT.test(await refused(() => inTab(1, () => ask('read_page'))) || ''));
+    check('off-tab: a tab the AI opened can still be kept off', TEXT.test(await refused(() => inTab(1, () => ask('click', { element_id: 1 }))) || ''));
 
     // list_tabs lists the tab, marked
     const listed = JSON.parse(await inTab(2, () => agent.executeGuarded('list_tabs', {})));
-    check('off-tab: list_tabs lists the tab and marks it; the others are plain', listed.find((t) => t.id === 1)?.off_limits === M.OFF_TAB_NOTE && listed.find((t) => t.id === 1)?.url && !listed.find((t) => t.id === 2)?.off_limits, J(listed));
+    check('off-tab: list_tabs lists the tab and marks it read-only; the others are plain', listed.find((t) => t.id === 1)?.off_limits === M.OFF_TAB_NOTE && listed.find((t) => t.id === 1)?.url && !listed.find((t) => t.id === 2)?.off_limits, J(listed));
 
-    // read_tabs / the attached "@" tabs: reported per tab, text never read
+    // read_tabs / the attached "@" tabs: read like any tab
     let read = false;
-    const secret = { isDestroyed: () => false, executeJavaScript: () => { read = true; return Promise.resolve({}); }, getURL: () => 'https://t1.test/', getTitle: () => 'Secret' };
+    const secret = { isDestroyed: () => false, executeJavaScript: () => { read = true; return Promise.resolve({}); }, executeJavaScriptInIsolatedWorld: () => { read = true; return Promise.resolve({}); }, getURL: () => 'https://t1.test/', getTitle: () => 'Secret' };
     agent.browser.askTabs = () => [{ id: 1, title: 'Secret', url: 'https://t1.test/', webContents: secret }, { id: 2, title: 'Fine', url: 'https://t2.test/', sleeping: true }];
     const entries = await agent.readTabEntries([1, 2]);
-    check('off-tab: a tab kept off is skipped by read_tabs with a reason and never read; the others are not', /keeps the AI off/.test(entries[0].skipped || '') && !entries[0].text && read === false && entries[1].asleep === true, J(entries));
+    check('off-tab: a tab kept off is read by read_tabs like any other (the read is attempted, it is not skipped for being kept off)', read === true && !/keeps the AI/.test(entries[0].skipped || '') && entries[1].asleep === true, J(entries));
 
-    // the page's text is not attached to a sidebar message
-    const asked = [];
-    const wasOff = agent.browser.tabOff;
-    agent.browser.tabOff = (id) => { asked.push(id); return wasOff(id); };
-    check('off-tab: pageContextFor attaches nothing for the tab (and asks about that tab)', (await agent.pageContextFor({ id: 1, webContents: secret }, {})) === '' && asked.includes(1) && read === false);
+    // the page's text is attached to a sidebar message like any tab's
+    read = false;
+    await agent.pageContextFor({ id: 1, webContents: secret }, {}).catch(() => {});
+    check('off-tab: pageContextFor reads the tab', read === true);
 
     const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
-    const at = src.indexOf("this.browser.tabOff?.(tab.id)) return ''");
-    check('off-tab: pageContextFor refuses before it reads the page', at > 0 && at < src.indexOf('page = await readPageText(wc, { chars: PAGE_CONTEXT_CHARS'));
-    check('off-tab: the browser state tells the model the tab is off limits', /The user keeps the AI off this tab: its content is not shared/.test(src));
+    check('off-tab: pageContextFor does not ask the tab flag', !/async pageContextFor[\s\S]*?tabOff[\s\S]*?page = await readPageText\(wc, \{ chars: PAGE_CONTEXT_CHARS/.test(src));
+    check('off-tab: the browser state tells the model the tab is read-only', /OFF_TAB_NOTE\} You can read this tab, but tools that click, type, navigate or run scripts are refused there/.test(src));
     check('off-tab: both gates (ensureAllowed and execute) call offTabCheck, before any card', /this\.offTabCheck\(name, input\); \/\/ \[ai off-tab\] \.\.\.nor/.test(src) && /this\.offTabCheck\(name, input\); \/\/ \[ai off-tab\]\n/.test(src));
   }
 
@@ -407,8 +411,8 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8').replace(/\r\n/g, '\n'));
     check('off-tab wiring: the tab strip state carries the flag, awake and asleep', (mainSrc.match(/aiKeepOff: manners\.isKeptOff\(t\)/g) || []).length === 2);
     check('off-tab wiring: saved with the tab in the session and restored with it; a duplicate keeps it', /aiKeepOff: saved\.map/.test(mainSrc) && /saved\.aiKeepOff\?\.\[i\] === true\) manners\.keepOff\(tab\)/.test(mainSrc) && /manners\.keepOff\(copy, manners\.isKeptOff\(tab\)\)/.test(mainSrc));
-    check('off-tab wiring: the agent, the CDP proxy and the skills reader all ask the tab', /tabOff: \(id\) => manners\.isKeptOff\(tabAnywhere\(id\)\?\.t\)/.test(mainSrc) && /offTab: Boolean\(deps\.tabOff\?\.\(tabId\)\)/.test(agents) && /skillTabOk = \(tab\) => [^\n]*isKeptOff\(tab\)/.test(mainSrc));
-    check('off-tab wiring: the grouping AI gets no page text from such a tab (not read, not sent)', /textOf: \(t\) => \(manners\.isKeptOff\(t\) \? ''/.test(mainSrc) && /manners\.isKeptOff\(tab\)\) return; \/\/ \[ai off-tab\] not read/.test(mainSrc));
+    check('off-tab wiring: the agent, the CDP proxy and the skills reader both ask the tab', /tabOff: \(id\) => manners\.isKeptOff\(tabAnywhere\(id\)\?\.t\)/.test(mainSrc) && /offTab: Boolean\(deps\.tabOff\?\.\(tabId\)\)/.test(agents) && !/skillTabOk = \(tab\) => [^\n]*isKeptOff\(tab\)/.test(mainSrc));
+    check('off-tab wiring: the grouping AI and the skills read such a tab like any other', /textOf: \(t\) => t\.pageText \|\| ''/.test(mainSrc) && !/readPageText\(tab\) \{[\s\S]{0,300}isKeptOff/.test(mainSrc));
     check('off-tab wiring: only an IPC from the UI and the tab menu set it (no tool, no MCP path)', /ipcMain\.on\('tab:ai-off'/.test(mainSrc) && !/keepOff\(/.test(agents) && !/keepOff\(/.test(agentSrc) && !/keepOff|aiKeepOff/.test(mcpSrc));
     check('off-tab wiring: the button and menu strings exist in English', ['toolbar.aiOffTab.off', 'toolbar.aiOffTab.on', 'menu.keepAiOffTab', 'menu.allowAiTab', 'tabs.aiKeptOff'].every((k) => typeof en[k] === 'string' && en[k]));
     const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8');

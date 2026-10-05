@@ -1625,19 +1625,10 @@ class Agent {
     }
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
     const tabOff = tab && this.browser.tabOff?.(tab.id); // [ai off-tab]
-    const state = tabOff
-      ? `<browser_state>
-Active tab id: ${tab.id}
-Title: ${tab.webContents.getTitle()}
-URL: ${tab.webContents.getURL()}
-The user keeps the AI off this tab: its content is not shared, and tools can't use it.
-</browser_state>
-
-`
-      : aiOff
+    const state = aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
       : tab
-      ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
+      ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n${tabOff ? `${manners.OFF_TAB_NOTE} You can read this tab, but tools that click, type, navigate or run scripts are refused there.\n` : ''}</browser_state>\n\n`
       : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`;
     const note = images.length && !userText.trim() ? 'The user attached the image(s) above without a message.' : userText;
     // ---- [claude code engine] + [grok build engine] + [page context]
@@ -1780,7 +1771,6 @@ The user keeps the AI off this tab: its content is not shared, and tools can't u
     const url = wc.getURL();
     if (!/^https?:/i.test(url)) return '';
     if (this.browser.aiOff?.(url)) return ''; // [ai controls]
-    if (this.browser.tabOff?.(tab.id)) return ''; // [ai off-tab] the page's text is never attached to a message while the user keeps the AI off this tab
     let page;
     // (Read at once even while the page still loads: Electron's own isolated-world call waited for the load,
     // up to these 4 s, and then sent no page at all. See page-text.js.)
@@ -2982,17 +2972,16 @@ ${prompt}` : prompt), historyImages: [] };
     }
   }
 
-  // ---- [ai off-tab] "Keep the AI off this tab" (the button in the address bar; browser.tabOff(id), per tab). Stricter than hands-off
-  // mode: reading is refused as well, and it needs no setting. Same reach as aiOffCheck (every caller comes through ensureAllowed and
-  // execute): a tool that works in the task's tab, and a tool that names a tab. read_tabs and list_tabs name tabs too but report
-  // per tab (readTabEntries, list_tabs) instead of failing the whole call. The refusal is the same text everywhere.
+  // ---- [ai off-tab] "Keep the AI from acting on this tab" (the button in the address bar; browser.tabOff(id), per tab). Read-only: the
+  // tools that act (manners.isActionTool, run_script included) are refused on that tab, reading tools are not touched, and it needs no
+  // setting. Same reach as aiOffCheck (every caller comes through ensureAllowed and execute): a tool that acts in the task's tab, and
+  // an acting tool that names a tab (close_tab, group_tabs, ungroup_tabs). The refusal is the same text everywhere.
   offTabCheck(name, input = {}) {
     const off = this.browser.tabOff;
-    if (!off) return;
+    if (!off || !manners.isActionTool(name)) return;
     const refuse = () => { throw new Error(manners.offTabRefusal()); };
-    const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
-      : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : [])
-        : name === 'read_pdf' && input.tab_id !== undefined ? [input.tab_id] : [];
+    const named = name === 'close_tab' ? [input.tab_id]
+      : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
     for (const id of named) if (id !== undefined && id !== null && off(id)) refuse();
     if (TAB_FREE_TOOLS.has(name)) return;
     let id = null;
@@ -3328,7 +3317,7 @@ ${prompt}` : prompt), historyImages: [] };
     const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
       const tab = open.find((t) => t.id === id);
       if (!tab) return { id, title: '', url: '', skipped: 'no open tab of this window has that id' };
-      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url), keptOff: this.browser.tabOff?.(tab.id) }, ctx); // [ai off-tab]
+      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url) }, ctx);
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
       try {
@@ -3999,7 +3988,7 @@ ${same}
           .map((t) => {
             const view = pinned === null ? t : { ...t, active: t.id === pinned, ...(t.active && t.id !== pinned ? { in_front: true } : {}) };
             if (this.browser.aiOff?.(t.url)) return { id: t.id, active: view.active, ai_off: true };
-            return this.browser.tabOff?.(t.id) ? { ...view, off_limits: manners.OFF_TAB_NOTE } : view; // [ai off-tab] listed, but marked
+            return this.browser.tabOff?.(t.id) ? { ...view, off_limits: manners.OFF_TAB_NOTE } : view; // [ai off-tab] listed, read-only
           }));
       }
       case 'open_tab': {

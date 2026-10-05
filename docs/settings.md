@@ -65,7 +65,7 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 
 Off by default, and each command-line AI has its own switch (plus the master switch above). Turning one on runs only that CLI's sidebar chats the way the CLI runs in your terminal, from the next message: its own tools (shell commands, reading and changing any file) work without asking, and Lumen's approval cards and **Don't let the AI act on my pages** do not apply to those tools. Background tasks and Routines never get full access, and the one-shot helpers (Organize Tabs, naming) stay tool-less.
 
-What does not change: Lumen's browser tools are still Lumen's. They go through Lumen's MCP server, so site approvals, the approval card, hands-off mode and the sites where you turned AI off still apply to them, and the page text sent with your message is still labelled untrusted data. For Grok Build and Antigravity Lumen's tool gate still fails closed for anything named like one of Lumen's tools that isn't one. A web page the AI reads could still try to trick it into using its own tools, which is why this is opt-in.
+What does not change: Lumen's browser tools are still Lumen's. They go through Lumen's MCP server, so site approvals, the approval card, hands-off mode, tabs you keep the AI from acting on and the sites where you turned AI off still apply to them, and the page text sent with your message is still labelled untrusted data. For Grok Build and Antigravity Lumen's tool gate still fails closed for anything named like one of Lumen's tools that isn't one. A web page the AI reads could still try to trick it into using its own tools, which is why this is opt-in.
 
 | CLI | What full access passes | Verified |
 |---|---|---|
