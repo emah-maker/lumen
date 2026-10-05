@@ -5,6 +5,7 @@
 // in two tabs on one Agent without sharing a tab, a page text or an approval.
 const TC = require('../src/features/tab-chats');
 const { Agent } = require('../src/ai/agent');
+const { DEFAULTS, validate } = require('../src/settings/settings-backend');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
@@ -349,11 +350,28 @@ const J = (v) => JSON.stringify(v);
   check('place: where a chat lives', TC.chatPlace({}) === 'none' && TC.chatPlace({ tabId: 2 }) === 'other' && TC.chatPlace({ tabId: 2, here: true }) === 'here');
   const b = TC.createBindings();
   b.bind(1, 'c1');
-  const plan = (tabId, open, idle = true) => TC.followPlan({ tabId, chatOf: b.chatOf, claimed: b.claimed, openChatId: open, openIdle: idle });
+  const plan = (tabId, open, idle = true, carry = true) => TC.followPlan({ tabId, chatOf: b.chatOf, claimed: b.claimed, openChatId: open, openIdle: idle, carry });
   check('follow: a tab shows its own chat', J(plan(1, 'c9')) === '{"chat":"c1"}');
-  check('follow: a new tab gets its own empty chat while the open chat belongs to another tab', J(plan(2, 'c1')) === '{"fresh":true}');
-  check('follow: the one chat no tab holds (the last chat after a restart) is adopted by the tab you are on', J(plan(2, 'orphan')) === '{"adopt":"orphan"}');
-  check('follow: ... unless it is working: it is never taken from the run that started it', J(plan(2, 'orphan', false)) === '{"fresh":true}');
+  check('follow: a tab with no chat of its own carries the open chat on, even one another tab holds', J(plan(2, 'c1')) === '{"carry":"c1"}');
+  check('follow: ... also a chat that is working (the sidebar keeps showing it)', J(plan(2, 'c1', false)) === '{"carry":"c1"}');
+  check('follow: ... and the chat no tab holds', J(plan(2, 'orphan')) === '{"carry":"orphan"}');
+  check('follow: with no open chat there is nothing to carry', J(plan(2, null)) === '{"fresh":true}');
+  check('follow (one chat per tab): a tab with no chat gets its own empty chat while the open chat belongs to another tab', J(plan(2, 'c1', true, false)) === '{"fresh":true}');
+  check('follow (one chat per tab): the one chat no tab holds is adopted by the tab you are on', J(plan(2, 'orphan', true, false)) === '{"adopt":"orphan"}');
+  check('follow (one chat per tab): ... unless it is working', J(plan(2, 'orphan', false, false)) === '{"fresh":true}');
+  check('follow (one chat per tab): a tab with its own chat still shows it', J(plan(1, 'c9', true, false)) === '{"chat":"c1"}');
+  check('setting: One chat per tab is off by default and a real on/off setting', DEFAULTS.oneChatPerTab === false && validate('oneChatPerTab', true) === true && validate('oneChatPerTab', 'yes') === null, J([DEFAULTS.oneChatPerTab, validate('oneChatPerTab', true), validate('oneChatPerTab', 'yes')]));
+  // Carrying a chat into a new tab (bind with share), then sending from it (bind: the home moves) and closing tabs
+  const c = TC.createBindings();
+  c.bind(1, 'x');
+  c.bind(2, 'x', { share: true });
+  check('carry: the new tab joins the chat; the home stays until a message is sent there', c.chatOf(2) === 'x' && c.homeOf('x') === 1);
+  c.bind(2, 'x');
+  check('carry: a message sent in the new tab makes it the working tab (the AI acts on the tab in front)', c.homeOf('x') === 2 && J(c.tabsOf('x')) === '[1,2]', J(c.entries()));
+  c.unbindTab(2);
+  check('carry: closing that tab leaves the chat in the other tab, with a home', c.chatOf(1) === 'x' && c.homeOf('x') === 1);
+  c.bind(3, 'y'); c.bind(4, 'x', { share: true });
+  check('carry: a tab with its own chat is left alone when another tab joins a chat', c.chatOf(3) === 'y' && c.chatOf(4) === 'x');
 }
 
 // ---- the agent: tools go to the chat's own tab, two chats run side by side

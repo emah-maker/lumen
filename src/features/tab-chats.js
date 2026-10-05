@@ -9,10 +9,10 @@
 //   tabStatus()        the little mark a tab shows: working, waiting its turn, or done and not viewed
 //   followPlan()       what the sidebar shows when a tab comes to the front
 //
-// The model, in short: a tab is bound to a chat id. A new tab starts with its own empty chat (the
-// chat it would be bound to is created when it is first needed); the only exception is the one chat
-// nobody else holds (the last chat after a restart, or one whose tab closed), which the tab you are
-// on adopts so the sidebar never opens empty on a chat that still has a history.
+// The model, in short: a tab is bound to a chat id. A tab with no chat of its own (a new tab, one you opened by hand,
+// one the AI opened) joins the chat the sidebar is showing, so the conversation follows you; a tab that has a chat of
+// its own shows that one. With "One chat per tab" on, such a tab starts with its own empty chat instead (the only
+// exception is the one chat nobody else holds, which the tab you are on adopts).
 
 const DEFAULT_MAX_RUNS = 0; // 0: no limit (every chat that is sent a message works at once)
 const MAX_RUNS_LIMIT = 8;
@@ -229,12 +229,16 @@ function chatPlace({ tabId = null, here = false } = {}) {
 // ---- following the front tab
 // What the sidebar should show when tab `tabId` comes to the front.
 //   { chat: id }      the tab's own chat
-//   { adopt: id }     no chat of its own, and the open chat belongs to no tab and is idle: the tab takes it
-//   { fresh: true }   an empty chat of its own
+//   { carry: id }     no chat of its own: the chat the sidebar shows carries on in this tab (the default; the tab joins it,
+//                     and a message sent here makes this tab its working tab)
+//   { adopt: id }     (one chat per tab) no chat of its own, and the open chat belongs to no tab and is idle: the tab takes it
+//   { fresh: true }   (one chat per tab) an empty chat of its own
 // `openChatId`/`openIdle`: the chat the sidebar holds now and whether it is not working.
-function followPlan({ tabId, chatOf, claimed, openChatId = null, openIdle = true, exists = () => true } = {}) {
+// `carry`: false is the "One chat per tab" setting: a tab with no chat of its own starts empty.
+function followPlan({ tabId, chatOf, claimed, openChatId = null, openIdle = true, exists = () => true, carry = true } = {}) {
   const own = chatOf(tabId);
   if (own && exists(own)) return { chat: own };
+  if (carry && openChatId) return { carry: openChatId };
   if (openChatId && openIdle && !claimed(openChatId)) return { adopt: openChatId };
   return { fresh: true };
 }

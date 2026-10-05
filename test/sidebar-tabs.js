@@ -28,6 +28,8 @@ const launch = (profile) => electron.launch({
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sidebartabs-'));
   let app = await launch(profile);
+  const oneChatPerTab = () => app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true)); // these checks are about tabs with a chat each (the old behaviour)
+  await oneChatPerTab();
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const errors = [];
@@ -177,6 +179,7 @@ const launch = (profile) => electron.launch({
   await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
   await app.close();
   app = await launch(profile);
+  await oneChatPerTab();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const stateOf = () => app.evaluate(() => { const w = global.__windows.list().find((x) => x.current) || global.__windows.list()[0]; return { active: w.activeId, tabs: w.tabs.map((t) => t.id) }; });
