@@ -28,7 +28,7 @@ const page = () => `<!doctype html><meta charset="utf-8"><title>Stand-in Spotify
 <main id="main"><h1>Stand-in Spotify</h1><a href="https://accounts.spotify.com/">Log in here</a></main>
 ${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer>` : ''}
 <script>
-window.__log = [];
+window.__log = ['width:' + innerWidth];
 window.__sp = { signed: ${world.signedIn}, title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', artists: ['Ann'], playing: true, pos: 31, dur: 200, device: '', local: true, art: 'https://i.scdn.co/image/ab67616d00001e02fixture' };
 const sp = window.__sp;
 function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
@@ -38,7 +38,7 @@ function mediaSession() {
 }
 function drawFoot() {
   const foot = document.getElementById('foot');
-  if (!foot) return;
+  if (!foot || innerWidth < 400) return; // (a page laid out at no width draws no playbar)
   foot.innerHTML = '<div data-testid="now-playing-widget"><a data-testid="context-item-link" href="/track/x1">' + sp.title + '</a>'
     + sp.artists.map((a) => '<a href="/artist/a1">' + a + '</a>').join('<span>, </span>') + '<img data-testid="cover-art-image" src="' + sp.art + '"></div>'
     + '<button data-testid="control-button-skip-back" aria-label="Previous"></button>'
@@ -46,7 +46,12 @@ function drawFoot() {
     + '<button data-testid="control-button-skip-forward" aria-label="Next"></button>'
     + '<div data-testid="playback-progressbar"><span data-testid="playback-position">' + fmt(sp.pos) + '</span><input type="range" min="0" max="' + (sp.dur * 1000) + '" value="' + (sp.pos * 1000) + '"><span data-testid="playback-duration">' + fmt(sp.dur) + '</span></div>'
     + (sp.device ? '<div data-testid="connect-bar">Listening on ' + sp.device + '</div>' : '');
-  foot.querySelector('[data-testid=control-button-playpause]').onclick = () => { __log.push('playpause'); sp.playing = !sp.playing; drawFoot(); };
+  // Spotify's player refuses to start without user activation (what Chromium's autoplay rules ask of a page): a script-made click is not enough.
+  foot.querySelector('[data-testid=control-button-playpause]').onclick = () => {
+    if (sp.ignore) { __log.push('ignored:playpause'); return; }
+    if (!navigator.userActivation.isActive) { __log.push('blocked:playpause'); return; }
+    __log.push('playpause'); sp.playing = !sp.playing; drawFoot();
+  };
   foot.querySelector('[data-testid=control-button-skip-forward]').onclick = () => { __log.push('next'); };
   foot.querySelector('[data-testid=control-button-skip-back]').onclick = () => { __log.push('previous'); };
   const r = foot.querySelector('input');
@@ -109,6 +114,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await app.evaluate(() => global.__widgets.save({ type: 'spotify', mode: 'status' }));
   await reloadNewTab();
   check('spotify engine: with a card on the page the hidden page loads and the bridge says ready', await waitMain(() => global.__spotifyEngine.status().ready), JSON.stringify(await status()));
+  check('spotify engine: the first load already sees the real window size (the own start-up code of the page gets 1280 wide, not 0)', (await engine('window.__log[0]')) === 'width:1280', String(await engine('window.__log[0]')));
   check('spotify engine: the view is never shown for a status card', await app.evaluate(() => { const v = global.__spotifyWeb.view(); return Boolean(v) && !v.getVisible(); }), '');
 
   // ---- signed out ----
@@ -141,6 +147,32 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await engine('(() => { const b = document.querySelector("[data-testid=control-button-playpause]"); b.click(); })()');
   check('spotify engine: a change made in the page itself (its own button, a media key) shows on the card by itself', await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 60), '');
   await engine('(() => { document.querySelector("[data-testid=control-button-playpause]").click(); })()');
+
+  // ---- the two causes of "it doesn't play": no window size, no user activation ----
+  check('spotify engine: the hidden engine page is laid out at a real window size (1280 wide), not 0 (the stand-in draws no playbar below 400)', (await engine('innerWidth')) === 1280, String(await engine('innerWidth')));
+  await sleep(6500); // (user activation lasts a few seconds after the last press)
+  await engine('window.__log.length = 0');
+  await engine(`document.dispatchEvent(new CustomEvent('lumen-engine-in', { detail: JSON.stringify({ cmd: 'pause' }) }))`);
+  await sleep(700);
+  check('spotify engine: a command with no user gesture (how it used to be delivered) is refused by an activation-guarded player: nothing happens (the bug)', (await engine('__log')).includes('blocked:playpause') && !(await engine('__log')).includes('playpause'), JSON.stringify(await engine('__log')));
+  await engine('window.__log.length = 0');
+  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  check('spotify engine: the same press from the card goes with a user gesture, so the guarded player does it', await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 60) && (await engine('__log')).includes('playpause') && !(await engine('__log')).includes('blocked:playpause'), JSON.stringify(await engine('__log')));
+  await pageJs(`${card}.querySelector('[aria-label="Play"]').click()`);
+  await waitFor(`Boolean(${card}.querySelector('[aria-label="Pause"]'))`, 60);
+  // a player that ignores the button: the card says so and offers the player itself
+  await app.evaluate(() => { global.__respondMs = 1500; });
+  await engine('window.__sp.ignore = true');
+  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  check('spotify engine: a button the player ignores: the card says Spotify did not respond, with an Open player button', await waitFor(`/didn.t respond/.test(${card}.querySelector('.am-warn')?.textContent || '') && Boolean(${card}.querySelector('.am-warn button'))`, 80), await pageJs(`${card}.textContent.slice(0, 200)`));
+  await shot('spotify-engine-unresponsive.png');
+  await pageJs(`${card}.querySelector('.am-warn button').click()`);
+  check('spotify engine: Open player shows the engine page in a small window (titled Spotify player) and the warning goes', await waitMain(async ({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w) => /Spotify player/.test(w.getTitle()) && w.isVisible())) && await app.evaluate(() => global.__spotifyWeb.view().getVisible()) && await waitFor(`!${card}.querySelector('.am-warn')`, 40), '');
+  await shot('spotify-engine-open-player.png');
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (/Spotify player/.test(w.getTitle())) w.close(); });
+  await engine('window.__sp.ignore = false');
+  check('spotify engine: closing it puts the page back, hidden, at its hidden size again', await waitMain(() => !global.__spotifyWeb.view().getVisible()) && (await engine('innerWidth')) === 1280, String(await engine('innerWidth')));
+  await app.evaluate(() => { global.__respondMs = 0; });
 
   // ---- playback on another device (Spotify Connect) ----
   await engine('window.__sp.setRemote("Kitchen speaker")');

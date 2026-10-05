@@ -12,7 +12,8 @@
 // A player is described by a spec: { url, hosts (a Set: the pages the view may show), cardClass (the card's
 // class on the page), signIn?: { cookie, domain (RegExp) } (the cookie the site keeps while someone is signed in; a
 // player that learns it another way leaves it out), preload?: the path of a preload script of ours for the view (the Apple
-// Music engine's bridge), popups?: true (sign-in pages on the allowed hosts open as windows of their own, so they can
+// Music engine's bridge), hiddenViewport?: { width, height } (the size the page is laid out at while the view is not on screen: an
+// unattached view is 0 by 0, and a music site's player lays itself out, or starts its player, for a window that has a size), popups?: true (sign-in pages on the allowed hosts open as windows of their own, so they can
 // answer the page that opened them) }.
 //
 // The pure parts (address allow-list, permissions, geometry) come first so the tests can exercise them without
@@ -168,6 +169,20 @@ function createWebPlayer(deps, spec) {
     ses.cookies.get({ url: spec.url, name: spec.signIn.cookie }).then((list) => set(list.length > 0)).catch(() => {});
   }
 
+  // A view that is not on screen is laid out at spec.hiddenViewport (device emulation: a real window size for the page, whatever the view's
+  // own bounds); on screen it has its own size, so the emulation is off then.
+  let emulating = false;
+  function emulate(on) {
+    if (!spec.hiddenViewport || !alive()) return;
+    const wc = view.webContents;
+    try {
+      if (on && !emulating) {
+        const { width, height } = spec.hiddenViewport;
+        wc.enableDeviceEmulation({ screenPosition: 'desktop', screenSize: { width, height }, viewPosition: { x: 0, y: 0 }, viewSize: { width, height }, deviceScaleFactor: 1, scale: 1 });
+        emulating = true;
+      } else if (!on && emulating) { wc.disableDeviceEmulation(); emulating = false; }
+    } catch { /* the page is going away */ }
+  }
   function ensure() {
     if (alive()) return view;
     view = new deps.WebContentsView({
@@ -211,6 +226,8 @@ function createWebPlayer(deps, spec) {
       if (drm !== 'ok') { drmTries = 0; checkDrm(); }
     });
     hookCookies(); // (a player kept hidden by an engine, with no card to place, still learns whether the user is signed in)
+    // (not before the page exists: asking for the emulation of a view with no page yet takes the process down)
+    wc.on('did-start-navigation', () => { if (!host || !view || view.webContents !== wc) emulate(true); });
     load();
     return view;
   }
@@ -218,6 +235,7 @@ function createWebPlayer(deps, spec) {
   function destroy() {
     const v = view;
     view = null;
+    emulating = false;
     clearTimeout(drmTimer);
     state = 'loading';
     drm = 'unknown';
@@ -229,7 +247,9 @@ function createWebPlayer(deps, spec) {
   }
 
   function hide() {
-    if (alive()) view.setVisible(false); // stays loaded and playing
+    if (!alive()) return;
+    view.setVisible(false); // stays loaded and playing
+    if (!host) emulate(true); // never placed (or released): it has no size of its own
   }
 
   // The view in a window of its own (a sign-in window), until release(): the card's placing leaves it alone meanwhile.
@@ -240,6 +260,7 @@ function createWebPlayer(deps, spec) {
     if (host && host !== win) { try { host.contentView.removeChildView(v); } catch { /* that window is gone */ } }
     host = win;
     pinned = true;
+    emulate(false);
     win.contentView.addChildView(v);
     v.setBounds(rect);
     v.setVisible(true);
@@ -251,6 +272,9 @@ function createWebPlayer(deps, spec) {
     view.setVisible(false);
     try { host?.contentView.removeChildView(view); } catch { /* the window is gone */ }
     host = null;
+    emulate(true);
+    // (asked again once the removal has settled: the first ask, made as the view leaves the window, is not kept)
+    setTimeout(() => { if (alive() && !host) { emulating = false; emulate(true); } }, 150).unref?.();
   }
 
   function place(rect) {
@@ -265,6 +289,7 @@ function createWebPlayer(deps, spec) {
       host = win;
       win.once('closed', () => { if (host === win) destroy(); });
     }
+    emulate(false);
     if (moved || !v.getVisible()) win.contentView.addChildView(v); // (re-)adding puts it above the page
     v.setBounds(rect);
     v.setVisible(true);

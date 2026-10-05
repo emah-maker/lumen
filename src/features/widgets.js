@@ -99,6 +99,7 @@ const ENDPOINTS = {
 // elists (look at the recent plays and playlists again). `am` is the engine's facade (deps.appleMusic, deps.spotifyEngine).
 async function engineAct(am, name, action, x, cached) {
   if (action.do === 'esignin') { am.signIn(); return { local: true }; }
+  if (action.do === 'eshow') { am.showPlayer(); return { local: true }; }
   if (action.do === 'elists') { am.refreshLists(); return { local: true }; }
   if (action.do === 'esearch') { am.search(action.text); return { local: true }; }
   if (action.do === 'playitem') {
@@ -2204,7 +2205,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|elists)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|eshow|elists)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);

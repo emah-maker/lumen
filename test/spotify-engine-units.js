@@ -17,7 +17,7 @@ const state = (o = {}) => JSON.stringify({ t: 'state', state: 2, pos: 12, dur: 2
 function fakePlayer() {
   const p = {
     destroyed: 0, signed: false, pinned: null, released: 0, reloaded: 0, st: { state: 'ready', drm: 'ok' }, wc: null,
-    ensure() { if (!p.wc) p.wc = { sent: [], send: (ch, json) => p.wc.sent.push([ch, JSON.parse(json)]) }; return {}; },
+    ensure() { if (!p.wc) p.wc = { sent: [], gestures: [], codes: [], executeJavaScript(code, gesture) { const m = /detail: (".*") \}\)\)$/.exec(code); p.wc.codes.push(code); p.wc.gestures.push(gesture); if (m) p.wc.sent.push(['musicengine:cmd', JSON.parse(JSON.parse(m[1]))]); return Promise.resolve(); } }; return {}; },
     webContents: () => p.wc, status: () => p.st, isSignedIn: () => p.signed,
     destroy() { p.destroyed++; p.wc = null; }, showIn(win, rect) { p.pinned = { win, rect }; }, release() { p.released++; p.pinned = null; }, reload() { p.reloaded++; },
   };
@@ -108,6 +108,20 @@ module.exports = async function spotifyEngineUnits(check) {
   check('spotify engine: a search the page could not answer is flagged (the card says Spotify may have changed)', (await e.read()).searchOk === false, '');
   check('spotify engine: playItem sends kind and id; artist is a kind here too', e.playItem('artist', '06HL4z0CvFAxyc27GXpf02') === true && JSON.stringify(sent().at(-1)) === '{"cmd":"playItem","kind":"artist","id":"06HL4z0CvFAxyc27GXpf02"}' && e.playItem('station', '1') === false, '');
 
+  // ---- user gesture, and the player shown when a button does nothing ----
+  check('spotify engine: every command runs in the page with a user gesture (the click on Spotify\'s own button then has activation)', player.wc.gestures.length > 5 && player.wc.gestures.every((g) => g === true), String(player.wc.gestures.length));
+  const r = createEngine({ player: fakePlayer(), now: () => t, fetchBytes: async () => null, onChange: () => { changes.n++; }, setInterval: () => ({ unref() {} }), respondMs: () => 60, BrowserWindow: function BrowserWindow(opts) { const w = fakeWin(); w.opts = opts; wins.push(w); return w; }, getParent: () => null });
+  await r.read();
+  r.onMessage('{"t":"ready"}');
+  r.onMessage(state({ state: 3 }));
+  await r.control('play');
+  await sleep(120);
+  check('spotify engine: Play pressed and Spotify did nothing: the card is told it did not respond', (await r.read()).unresponsive === true, '');
+  const nWins = wins.length;
+  r.showPlayer();
+  check('spotify engine: "Open player" shows the engine page in a small window of its own (titled Spotify player) and clears the warning', wins.length === nWins + 1 && wins.at(-1).opts.title === 'Spotify player' && (await r.read()).unresponsive === false, JSON.stringify(wins.at(-1)?.opts?.title));
+  r.destroy();
+
   // ---- the widget ----
   check('spotify widget: a new card is in engine mode (status); a saved mode is kept; a card saved before modes stays the API card', SW.cleanMode({}) === 'status' && SW.cleanMode(null) === 'status' && SW.cleanMode({ mode: 'web' }) === 'web' && SW.cleanMode({ mode: 'api' }) === 'api' && SW.cleanMode({ mode: 'status' }) === 'status' && SW.cleanMode({ clientId: CLIENT, art: true }) === 'api' && SW.cleanMode({ mode: '<x>' }) === 'status', '');
   const list = cleanList([{ id: 'wold1', type: 'spotify', clientId: CLIENT, art: true }, { id: 'wweb1', type: 'spotify', mode: 'web' }, { id: 'wnew1', type: 'spotify' }, { id: 'wst01', type: 'spotify', mode: 'status', art: false }]);
@@ -156,7 +170,7 @@ module.exports = async function spotifyEngineUnits(check) {
   await w.refresh(w.list()[0], { force: true });
   w.engineChanged();
   check('spotify widget: in Web player mode the engine is not read, and the card is the web card\'s', get().data.mode === 'web' && fake.reads === r2, JSON.stringify(get().data));
-  check('spotify widget: the page action list accepts the engine\'s actions for it', ['esignin', 'elists'].every((a) => w.actionFrom(url(a))?.do === a) && w.actionFrom(url('playlater&kind=playlist&arg=p.1'))?.item === 'p.1', '');
+  check('spotify widget: the page action list accepts the engine\'s actions for it', ['esignin', 'eshow', 'elists'].every((a) => w.actionFrom(url(a))?.do === a) && w.actionFrom(url('playlater&kind=playlist&arg=p.1'))?.item === 'p.1', '');
   await w.save({ type: 'spotify', mode: 'api', clientId: CLIENT }).then(() => check('spotify widget: API mode still asks to log in first', false, 'saved'), (er) => check('spotify widget: API mode still asks to log in first', /Log in with Spotify first/.test(er.message), er.message));
   const w2 = createWidgets({ readSettings: () => ({ homeWidgets: [{ id: 'wapi00001', type: 'spotify', mode: 'api', clientId: CLIENT, art: false, x: 0, y: 0, w: 4, h: 3 }] }), writeSettings: () => {}, fetch: async () => { throw new Error('offline'); }, getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}) });
   check('spotify widget: an existing API-mode card keeps its mode and Client ID', w2.list()[0].mode === 'api' && w2.list()[0].clientId === CLIENT && w2.list()[0].art === false, JSON.stringify(w2.list()[0]));
