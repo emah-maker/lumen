@@ -74,6 +74,8 @@ const fakeModel = (app) => app.evaluate(() => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabchats-'));
   let app = await launch(profile);
+  const oneChatPerTab = () => app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true)); // these checks are about tabs with a chat each (the old behaviour)
+  await oneChatPerTab();
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const errors = [];
@@ -525,6 +527,7 @@ const fakeModel = (app) => app.evaluate(() => {
   await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
   await app.close();
   app = await launch(profile);
+  await oneChatPerTab();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   await fakeModel(app);

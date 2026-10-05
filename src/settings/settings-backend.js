@@ -131,6 +131,7 @@ const DEFAULTS = {
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
   agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
+  oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'off', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
