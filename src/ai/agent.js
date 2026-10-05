@@ -414,6 +414,13 @@ function missedItems(messages, seen) {
   return transcriptFor(messages.slice(seen, -1), null);
 }
 const MISSED_NOTE = 'Messages of this chat that another model answered since your last reply here (you have not seen them; each reply is labeled with the model that wrote it):';
+const UNANSWERED_NOTE = 'The user\'s previous message below got no reply from you (it failed or was stopped before you said anything). It is repeated here so you have it; the message that follows it is the one to answer now:';
+// What a CLI engine must be told about a message that got no reply (runTask keeps it in messages.unanswered): it rides along with
+// the next one, since the session may never have received it and the chat's own handover leaves it out. '' when there is none.
+function unansweredBlock(messages) {
+  const turns = handoffTurns(messages.unanswered || []);
+  return turns ? `${UNANSWERED_NOTE}\n\n${turns}` : '';
+}
 // The chat's CLI sessions and their counts. A count past the chat's length means the history was cut since (rewound,
 // compacted): the session holds turns the chat no longer has, so it is dropped and the next message hands the chat over.
 const CLI_SESSIONS = [['ccSession', 'ccSeen'], ['gbSession', 'gbSeen'], ['agySession', 'agySeen'], ['cxSession', 'cxSeen']];
@@ -1692,6 +1699,10 @@ class Agent {
       { type: 'text', text: state + page + attached.block + note },
     ];
     const last = messages[messages.length - 1];
+    // [chat history] A message that got no reply (it failed, or was stopped before the CLI said anything) is merged into this one
+    // below, so a CLI engine's handover (transcriptFor(...).slice(0, -1)) would drop it with the merged turn: it is kept
+    // here, as the chat showed it, to be repeated to the CLI with this message (unansweredBlock).
+    messages.unanswered = last?.role === 'user' ? transcriptFor([last], null).filter((it) => it.role === 'user') : [];
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
@@ -2046,9 +2057,10 @@ class Agent {
     // There's no CLI session yet to carry earlier pictures (that's what --resume is for on later
     // turns), so any images from earlier user turns ride along as image blocks on this first message too.
     const handoff = () => {
-      if (messages.length <= 1) return { text: prompt, images };
+      const unanswered = unansweredBlock(messages);
+      if (messages.length <= 1 && !unanswered) return { text: prompt, images };
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = earlierText(messages, priorItems);
+      const earlier = [earlierText(messages, priorItems), unanswered].filter(Boolean).join('\n\n');
       const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
       return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, images: [...capHistoryImages(priorImages, images, emit), ...images] };
     };
@@ -2059,7 +2071,8 @@ class Agent {
     // A resumed session is handed the turns other models answered since its last reply here (missedItems).
     const catchUp = () => {
       const missed = handoffTurns(missedItems(messages, settings.ccSeen));
-      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt), images };
+      const caught = [missed ? `${MISSED_NOTE}\n\n${missed}` : '', unansweredBlock(messages)].filter(Boolean).join('\n\n');
+      return { text: interruptedNote(messages) + (caught ? `<earlier_conversation>\n${caught}\n</earlier_conversation>\n\n${prompt}` : prompt), images };
     };
     const first = slash ? { text: slash, images } : spawn.resume ? catchUp() : handoff();
     this.prewarmed = null; // (its session id is this message's now)

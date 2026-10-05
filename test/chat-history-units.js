@@ -254,6 +254,39 @@ function fakeClaudeCode({ delay = () => 0, gone = new Set() } = {}) {
     check('handoff: labels by model, falls back to Assistant', handoffTurns(items) === want, handoffTurns(items));
   }
 
+  // A message that got no reply (the CLI failed, or was stopped before saying anything) is merged into the next one in the chat's
+  // history; the CLI is told about it with that next message, on a new session (handover) and on a resumed one (catch-up).
+  {
+    const failing = (fails) => {
+      const cc = fakeClaudeCode();
+      const answer = cc.run;
+      cc.run = (opts) => (fails.has([...opts.prompt.matchAll(/q\d/g)].pop()?.[0]) ? Promise.resolve(cc.calls.push({ sessionId: opts.sessionId, resume: opts.resume, prompt: opts.prompt }) && { text: '', sessionId: opts.sessionId, failed: true }) : answer(opts));
+      return cc;
+    };
+    const first = newAgent();
+    const cc1 = failing(new Set(['q1']));
+    first.engines = { claudecode: cc1 };
+    const a = chat('claudecode:sonnet');
+    await run(first, a, 'q1 my first words');
+    await run(first, a, 'q2 what did I say');
+    const p2 = cc1.calls[1].prompt;
+    check('no reply: a failed first message is repeated to the CLI with the next one (new session)', !cc1.calls[1].resume && p2.indexOf('<earlier_conversation>') === 0 && p2.includes('User: q1 my first words') && /got no reply/.test(p2), p2.slice(0, 500));
+    check('no reply: the chat still holds both messages as one waiting turn plus the answer', a.length === 2 && a[0].role === 'user' && a[1].role === 'assistant', J(a.map((x) => x.role)));
+    await run(first, a, 'q3 and now');
+    check('no reply: once answered, it is not repeated again', !cc1.calls[2].prompt.includes('got no reply') && !cc1.calls[2].prompt.includes('q1 my first words'), cc1.calls[2].prompt.slice(0, 300));
+
+    const second = newAgent();
+    const cc2 = failing(new Set(['q2']));
+    second.engines = { claudecode: cc2 };
+    const b = chat('claudecode:sonnet');
+    await run(second, b, 'q1 hello there');
+    await run(second, b, 'q2 this one fails');
+    await run(second, b, 'q3 the next');
+    const p3 = cc2.calls[2].prompt;
+    check('no reply: in a resumed session it is repeated too, once', cc2.calls[2].resume === true && p3.includes('User: q2 this one fails') && p3.split('q2 this one fails').length === 2, p3.slice(0, 500));
+    check('no reply: ...and the turns the session answered are not', !p3.includes('q1 hello there') && !p3.includes('cc reply 1'), p3.slice(0, 500));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
