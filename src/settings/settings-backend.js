@@ -163,6 +163,7 @@ const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 8640
 
 const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
+const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
@@ -863,25 +864,49 @@ function create(deps) {
     handle('prefs:widget-gmail-connect', async (input) => { const out = await deps.widgets.gmailConnect(input); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
+    // Gmail's default mode: sign in to Google in a Lumen tab, which accounts are signed in, and the client-file reader of the Advanced setup.
+    handle('prefs:widget-gmail-signin', () => deps.widgets.gmailOpenSignIn());
+    handle('prefs:widget-gmail-accounts', () => deps.widgets.gmailAccounts());
+    handle('prefs:widget-gmail-parse-client', (text) => require('../features/google-client').parseClientJson(typeof text === 'string' ? text : ''));
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
     handle('prefs:widget-tv-lists', () => deps.widgets.tradingviewLists());
     // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
     const WIDGET_HELP = {
       todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
       coingecko: 'https://www.coingecko.com/en/api', muse: 'https://dev.meta.ai', spotify: 'https://developer.spotify.com/dashboard', gmail: 'https://console.cloud.google.com/apis/credentials',
+      // The guided setup of Gmail's Advanced mode (your own Google Cloud client), one page per step.
+      gmailProject: 'https://console.cloud.google.com/projectcreate', gmailApi: 'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+      gmailConsent: 'https://console.cloud.google.com/apis/credentials/consent', gmailClient: 'https://console.cloud.google.com/apis/credentials/oauthclient',
       slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
     };
     handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });
-    // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
+    // Slack setup (features/slack-setup.js, features/slack-view.js explains the flow). Slack's pages open in a
+    // small Lumen window that only shows slack.com; when Slack sends it to the app's redirect address, the
+    // address is taken from the navigation (no pasting) and checked against the pending state.
+    const slackSetup = require('../features/slack-setup').create({ BrowserWindow: deps.BrowserWindow, clipboard: deps.clipboard });
+    const slackTokenSeen = (token) => { slackSetup.close(); deps.widgets.slackAuto('token', token); };
+    const slackOwner = () => { try { return require('os').userInfo().username; } catch { return ''; } };
+    handle('prefs:slack-create-app', (opts) => {
+      const url = SLACK.manifestUrl({ name: slackOwner() });
+      if (opts && opts.browser === true) shell.openExternal(url).catch(() => {}); // for a sign-in the setup window can't do (SSO): the default browser
+      else slackSetup.open(url, { followToTokenPage: true });
+      slackSetup.watchClipboard(slackTokenSeen);
+      return deps.widgets.state();
+    });
     handle('prefs:slack-start', (input) => {
       const out = deps.widgets.slackStart(input);
-      if (!out.url.startsWith('https://slack.com/oauth/v2/authorize?')) throw new Error('Not allowed');
-      shell.openExternal(out.url).catch(() => {});
+      slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
       return { redirectUri: out.redirectUri, state: deps.widgets.state() };
     });
-    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); return { message: out.message, state: deps.widgets.state() }; });
-    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); return deps.widgets.state(); });
-    handle('prefs:slack-disconnect', async () => { await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
+    handle('prefs:slack-paste', async (text) => {
+      const out = await deps.widgets.slackPaste(text);
+      if (out.kind === 'approve') slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
+      else if (out.kind === 'connected') { slackSetup.stopWatch(); slackSetup.close(); }
+      return { kind: out.kind, message: out.message || '', missing: out.missing || '', state: deps.widgets.state() };
+    });
+    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); slackSetup.close(); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); slackSetup.stopWatch(); slackSetup.close(); return deps.widgets.state(); });
+    handle('prefs:slack-disconnect', async () => { slackSetup.stopWatch(); slackSetup.close(); await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
     handle('prefs:slack-channels', () => deps.widgets.slackChannels());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });

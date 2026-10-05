@@ -2311,6 +2311,16 @@ const readAsDataUrl = (file) => new Promise((resolve, reject) => {
 // A reason an image could not be added (attachProblem says it in words).
 const imageError = (code) => Object.assign(new Error(code), { code });
 
+const PNG_PASS_BYTES = 1_000_000; // a PNG over this goes through the canvas (and becomes a JPEG when it has no transparency)
+// Any pixel that is not fully opaque? (Read in rows, stopping at the first one.)
+function hasAlpha(ctx, canvas) {
+  try {
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) return true;
+    return false;
+  } catch { return true; } // unreadable: keep it as PNG
+}
+
 // Canvas -> { media_type, data, url } within the size main accepts, or null. Pictures with transparency keep it
 // as PNG; photos (and anything too big as PNG) become JPEG on white.
 function encodeCanvas(canvas, wantPng) {
@@ -2347,16 +2357,20 @@ async function toAttachment(file) {
   const h = img.naturalHeight || Math.round(w * 0.75);
   const edge = Math.max(w, h);
   const name = file.name || '';
-  if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES) {
+  // A big opaque PNG (a screenshot: several MB) is re-encoded as a JPEG below: the model reads it as well and it uploads in a fraction of the time.
+  const heavyPng = file.type === 'image/png' && file.size > PNG_PASS_BYTES;
+  if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES && !heavyPng) {
     return { media_type: file.type, data: url.split(',')[1], url, name };
   }
   let scale = Math.min(1, MAX_EDGE / edge);
-  const wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
+  let wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
   for (let tries = 0; tries < 3; tries++, scale *= 0.7) {
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(w * scale));
     canvas.height = Math.max(1, Math.round(h * scale));
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: heavyPng });
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (heavyPng && wantPng && !hasAlpha(ctx, canvas)) wantPng = false;
     const encoded = encodeCanvas(canvas, wantPng);
     if (encoded) return { ...encoded, name };
   }
@@ -2879,6 +2893,9 @@ window.assistant.onEvent((event) => {
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
+  // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
+  // text): drawn under that reply, not dropped with the finished turn.
+  if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -3082,6 +3099,17 @@ function lateDone(event) {
   if (event.undo) window.showRunUndo?.(append, event.undo);
   aiTabsRunId = event.runId;
   if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId);
+}
+
+// A picture for a reply that already ended early (see onEvent): placed after that reply's text (or its last late picture), so a
+// message sent meanwhile stays below it; with no anchor left on screen it goes at the end like a live one.
+function latePicture(event) {
+  const pic = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
+  pic.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}), ...(event.caption ? { caption: event.caption } : {}) }));
+  const anchor = earlyEnded.pics || earlyEnded.bubble;
+  if (anchor?.isConnected) anchor.after(pic); else append(pic);
+  earlyEnded.pics = pic;
+  announce(t('genimg.made'));
 }
 
 // While a reply streams, hold back a trailing link that hasn't finished arriving

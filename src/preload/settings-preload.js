@@ -26,8 +26,13 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       gmailConnect: call('prefs:widget-gmail-connect'),
       gmailCancel: call('prefs:widget-gmail-cancel'),
       gmailDisconnect: call('prefs:widget-gmail-disconnect'),
+      gmailSignIn: call('prefs:widget-gmail-signin'),
+      gmailAccounts: call('prefs:widget-gmail-accounts'),
+      gmailParseClient: call('prefs:widget-gmail-parse-client'),
       onChanged: (cb) => ipcRenderer.on('widgets:changed', () => cb()), // a connection changed elsewhere (the card, Google)
       slackStart: call('prefs:slack-start'),
+      slackCreateApp: call('prefs:slack-create-app'),
+      slackPaste: call('prefs:slack-paste'),
       slackFinish: call('prefs:slack-finish'),
       slackCancel: call('prefs:slack-cancel'),
       slackDisconnect: call('prefs:slack-disconnect'),

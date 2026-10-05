@@ -227,6 +227,8 @@ function collapsible(title, rows) {
   return d;
 }let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
 let gmailWatchOn = false;
+let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
+let slackWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
@@ -1187,35 +1189,107 @@ async function buildWidgets(card) {
       syncMode();
       fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox);
     }
-    // ---- gmail: your own Google Cloud OAuth client, then Connect (opens your browser) ----
+    // ---- gmail: your Google sign-in in Lumen (default), or your own Google Cloud client (Advanced) ----
     function gmailFields(same) {
       const g = same || {};
-      const connected = () => Boolean(ws.connections?.gmail);
+      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], g.mode === 'oauth' ? 'oauth' : 'google');
+      inputs.account = h('select', { id: 'widget-gmail-account', 'aria-label': tr('settings.gmail.accountPick', 'Google account') });
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
       inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
       inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
       inputs.snippets = tog('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
+      const isGoogle = () => inputs.mode.value !== 'oauth';
+
+      // ---- Google sign-in in Lumen (default): nothing to set up ----
+      const gStatus = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-gstatus' });
+      const gSignIn = h('button', { type: 'button', id: 'widget-gmail-signin', class: 'primary big', text: tr('settings.gmail.signInLumen', 'Sign in to Gmail') });
+      const gCheck = h('button', { type: 'button', id: 'widget-gmail-recheck', text: tr('settings.gmail.checkAgain', 'Check again') });
+      const googleRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-google' },
+        h('div', { class: 'sp-actions' }, gSignIn, gCheck), gStatus,
+        setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).')),
+        h('span', { class: 'note', text: tr('settings.gmail.googleHow', 'Uses the Google sign-in you already have in Lumen. Nothing to set up, no Google Cloud project, no key. Lumen only reads Gmail’s unread list: sender, subject and a preview. It cannot send, delete or change anything.') }),
+        h('span', { class: 'note', id: 'widget-gmail-limits', text: tr('settings.gmail.googleLimits', 'This way shows unread messages only (up to the newest 20), not read mail or other labels. For more, use your own Google Cloud client under Advanced.') }));
+      let signedIn = ws.gmailGoogle?.signedIn;
+      let accounts = [];
+      const fillAccounts = () => {
+        const want = Number(inputs.account.value || g.account || 0);
+        const nth = (n) => (n === 0 ? tr('settings.gmail.firstAccount', 'First signed-in account') : tr('settings.gmail.accountN', 'Google account {n}', { n: n + 1 }));
+        const opts = accounts.length ? accounts.map((a) => [a.index, a.email]) : [[want, nth(want)]];
+        if (!opts.some(([i]) => i === want)) opts.push([want, nth(want)]);
+        inputs.account.replaceChildren(...opts.map(([v, t]) => h('option', { value: String(v), text: t })));
+        inputs.account.value = String(want);
+      };
+      const loadAccounts = async () => {
+        gCheck.disabled = true;
+        flash(gStatus, tr('settings.gmail.looking', 'Looking for your Google sign-in…'), 'ok');
+        try {
+          const r = await S.widgets.gmailAccounts();
+          accounts = r.accounts || [];
+          signedIn = Boolean(r.signedIn);
+        } catch { accounts = []; signedIn = null; }
+        gCheck.disabled = false;
+        fillAccounts();
+        if (signedIn) {
+          flash(gStatus, accounts.length > 1 ? tr('settings.gmail.signedInMany', 'Signed in to Google in Lumen: {n} accounts.', { n: accounts.length }) : tr('settings.gmail.signedInAs', 'Signed in as {email}.', { email: accounts[0]?.email || '' }), 'ok');
+          gStatus.className = 'sp-status on';
+        } else {
+          gStatus.className = 'sp-status';
+          gStatus.textContent = signedIn === false ? tr('settings.gmail.notSignedIn', 'Not signed in to Google in Lumen yet. Press Sign in to Gmail; this updates when you’re done.') : tr('settings.gmail.couldNotCheck', 'Couldn’t check the Google sign-in right now.');
+        }
+      };
+      fillAccounts();
+      gSignIn.addEventListener('click', async () => {
+        try { await S.widgets.gmailSignIn(); flash(gStatus, tr('settings.gmail.signInOpened', 'Finish signing in, in the tab Lumen opened. This updates when you’re done.'), 'ok'); } catch (err) { flash(gStatus, clean(err), 'err'); }
+      });
+      gCheck.addEventListener('click', loadAccounts);
+
+      // ---- Advanced: your own Google Cloud client, with a guided setup ----
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-status' });
-      // builtin: Lumen was built with its own Google client, so "Sign in with Google" needs no setup and
-      // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
+      const connected = () => Boolean(ws.connections?.gmail);
+      // builtin: this copy of Lumen was built with its own Google client, so Connect works with no Client ID typed.
       const builtin = Boolean(ws.gmailClient?.builtin);
       const own = () => Boolean(inputs.clientId.value.trim());
-      // Connected, it stays: "Sign in again" switches account or mends a sign-in Google ended.
       const connectLabel = () => (connected() || ws.gmailSignedOut ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
       const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
-      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
+      const step = (n, key, label, hint) => h('div', { class: 'row stack' }, h('span', { class: 'note' }, h('strong', { text: `${n}. ` }), `${hint} `, h('button', { type: 'button', class: 'linkish', 'data-help': key, text: label, onclick: () => S.widgets.help(key) })));
+      const found = h('span', { class: 'note', role: 'status', id: 'widget-gmail-found' });
+      const dropLabel = tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text');
+      const dropBox = h('textarea', { id: 'widget-gmail-json', rows: '3', spellcheck: 'false', autocomplete: 'off', placeholder: dropLabel, 'aria-label': dropLabel });
+      const readClient = async (text) => {
+        const r = await S.widgets.gmailParseClient(text);
+        if (r?.error) { flash(found, r.error, 'warn'); return; }
+        inputs.clientId.value = r.clientId;
+        inputs.clientSecret.value = r.clientSecret;
+        inputs.clientId.dispatchEvent(new Event('input'));
+        dropBox.value = '';
+        flash(found, tr('settings.gmail.clientFound', 'Got the client {id}. Now press Connect Gmail.', { id: `${r.clientId.slice(0, 12)}…` }), 'ok');
+      };
+      dropBox.addEventListener('paste', (e) => { const t = e.clipboardData?.getData('text'); if (t) { e.preventDefault(); readClient(t); } });
+      dropBox.addEventListener('change', () => { if (dropBox.value.trim()) readClient(dropBox.value); });
+      dropBox.addEventListener('dragover', (e) => e.preventDefault());
+      dropBox.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer?.files?.[0];
+        if (f) { if (f.size > 20000) flash(found, tr('settings.gmail.notClientFile', 'That is too big to be a Google client file.'), 'warn'); else readClient(await f.text()); return; }
+        const t = e.dataTransfer?.getData('text');
+        if (t) readClient(t);
+      });
+      const oauthRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-oauth' },
+        h('span', { class: 'note', text: tr('settings.gmail.advancedHow', 'Uses the Gmail API with your own Google Cloud project: it also works when you are not signed in to Google in Lumen, and it sees read mail too. A few steps in Google’s console, then one paste:') }),
+        step(1, 'gmailProject', tr('settings.gmail.step1Link', 'Create a project'), tr('settings.gmail.step1', 'Make a Google Cloud project (any name).')),
+        step(2, 'gmailApi', tr('settings.gmail.step2Link', 'Turn on the Gmail API'), tr('settings.gmail.step2', 'Press Enable on the Gmail API page.')),
+        step(3, 'gmailConsent', tr('settings.gmail.step3Link', 'Set up the consent screen'), tr('settings.gmail.step3', 'User type External, and add your own Google address as a test user.')),
+        step(4, 'gmailClient', tr('settings.gmail.step4Link', 'Create the client'), tr('settings.gmail.step4', 'Application type Desktop app, then Download JSON.')),
+        dropBox, found,
+        setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? tr('settings.gmail.leaveEmpty', 'Leave empty to use Lumen’s own Google sign-in.') : tr('settings.gmail.filledByJson', 'Filled in for you when you drop the JSON file; or type it.')),
+        setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, tr('settings.gmail.secretHelp', 'From the same client. Stored encrypted by your system.')),
+        h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: tr('settings.gmail.readOnly', 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.') }),
-        // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
+        h('span', { class: 'note', text: tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.') }),
         builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') }) : null);
-      const adv = advanced([
-        builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
-        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
-        setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
-      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
-      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : tr('settings.advanced', 'Advanced');
-      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = oauthRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
         connect.textContent = connectLabel();
@@ -1227,7 +1301,7 @@ async function buildWidgets(card) {
         }
       };
       connect.addEventListener('click', async () => {
-        if (!builtin && !own()) { adv.open = true; flash(status, tr('settings.gmail.needClient', 'First add your Google Cloud Client ID and secret under Advanced.'), 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { flash(status, tr('settings.gmail.needClient', 'First drop the client JSON file above, or type your Client ID and secret.'), 'warn'); dropBox.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
@@ -1269,9 +1343,16 @@ async function buildWidgets(card) {
         draw();
       });
       draw();
+      // Only the chosen way shows.
+      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); };
+      inputs.mode.addEventListener('change', () => { showMode(); if (isGoogle() && signedIn == null) loadAccounts(); });
+      showMode();
+      if (isGoogle()) loadAccounts();
       // A connection that changed elsewhere (Google ended it, the card signed in) shows here at once.
       gmailWatch = async () => {
-        if (!accountRow.isConnected || connect.disabled || armed) return; // a sign-in or a confirm is under way
+        if (!googleRow.isConnected) return;
+        if (isGoogle()) { if (!gCheck.disabled) loadAccounts(); return; } // a Google sign-in began or ended in a tab
+        if (connect.disabled || armed) return; // a sign-in or a confirm is under way
         const next = await S.widgets.state();
         const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}|${ws.gmailSignedOut || ''}`;
         const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}|${next.gmailSignedOut || ''}`;
@@ -1282,47 +1363,71 @@ async function buildWidgets(card) {
       };
       if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); } // one listener per page, whatever editor is open
       fields.replaceChildren(
-        section(tr('settings.gmail.account', 'Account'), [accountRow]),
-        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),
-        adv);
+        section(tr('settings.gmail.account', 'Account'), [h('div', { class: 'row stack' }, inputs.mode), googleRow, oauthRow]),
+        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
     }
-    // ---- slack: sign in (OAuth v2 with your own Slack app), then what to show ----
+    // ---- slack: guided setup (create the app from a prefilled link, copy one token), then what to show ----
     function slackFields(same) {
       const sc = same?.slack || {};
       let st = ws.slack || {};
+      let sawLast = '';
       const picked = new Map((sc.channels || []).map((c) => [c.id, c.name]));
       inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: 'xoxp-… (optional)', 'aria-label': 'Slack user token' });
       const clientId = h('input', { type: 'text', id: 'slack-client-id', autocomplete: 'off', spellcheck: 'false', placeholder: '1234567890.1234567890', value: st.clientId || '', 'aria-label': 'Slack app Client ID' });
       const clientSecret = h('input', { type: 'password', id: 'slack-client-secret', autocomplete: 'off', spellcheck: 'false', placeholder: st.hasSecret ? 'Saved. Paste a new secret to replace it' : 'Client Secret', 'aria-label': 'Slack app Client Secret' });
       const redirect = h('input', { type: 'url', id: 'slack-redirect', spellcheck: 'false', value: st.redirect || '', 'aria-label': 'Slack redirect URL' });
       const pasted = h('input', { type: 'text', id: 'slack-pasted', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the address you landed on', 'aria-label': 'Address after approving' });
+      const pasteAll = h('input', { type: 'password', id: 'slack-paste', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the token (xoxp-…) here', 'aria-label': 'Slack token, or Client ID and Client Secret' });
       const status = h('span', { class: 'sp-status', role: 'status', id: 'slack-status' });
+      const steps = h('ol', { class: 'wf-steps', id: 'slack-steps' });
       const drawStatus = () => {
         st = ws.slack || st;
-        if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Log in again to reconnect.`, 'warn');
-        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
-        else if (st.waiting) flash(status, 'Approve in the browser tab that opened, then paste the address it ends on.', 'note');
+        if (st.last && st.last.message !== sawLast) { sawLast = st.last.message; flash(status, st.last.message, st.last.ok ? 'ok' : 'err'); }
+        else if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Set it up again to reconnect.`, 'warn');
+        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.user ? ` as ${st.user}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
+        else if (st.waiting) flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+        else if (st.draft) flash(status, 'Got one half. Paste the other (Client ID and Client Secret) to continue.', 'note');
         else { status.textContent = 'Not connected.'; status.className = 'sp-status'; }
         disconnect.hidden = !st.connected;
-        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
-        open.classList.toggle('primary', !st.connected);
+        create.textContent = st.connected ? 'Set up again' : 'Create the Lumen app in Slack';
+        create.classList.toggle('primary', !st.connected);
+        steps.hidden = Boolean(st.connected);
+        viaBrowser.hidden = Boolean(st.connected);
+        pasteRow.hidden = Boolean(st.connected);
         pastedRow.hidden = !st.waiting;
+        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
       };
-      const open = h('button', { type: 'button', id: 'slack-open', class: 'primary big', text: 'Log in with Slack', onclick: async () => {
-        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret under Advanced.', 'warn'); clientId.focus(); return; }
-        try {
-          const r = await S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value });
-          ws = r.state; clientSecret.value = ''; drawStatus();
-        } catch (err) { flash(status, clean(err), 'err'); }
+      const run = async (fn) => { try { const r = await fn(); if (r?.state) ws = r.state; else if (r && r.slack) ws = r; drawStatus(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; } };
+      const create = h('button', { type: 'button', id: 'slack-create', class: 'primary big', text: 'Create the Lumen app in Slack', onclick: () => run(async () => { const r = await S.widgets.slackCreateApp(); flash(status, 'Slack opened in a small window. Follow the steps below; Lumen connects when you copy the token.', 'note'); return r; }) });
+      const viaBrowser = h('button', { type: 'button', class: 'linkish', id: 'slack-browser', text: 'Slack won’t let me sign in there: use my browser instead', onclick: () => run(() => S.widgets.slackCreateApp({ browser: true })) });
+      const connectPasted = async () => {
+        const r = await run(() => S.widgets.slackPaste(pasteAll.value));
+        if (!r) return;
+        pasteAll.value = '';
+        if (r.kind === 'connected') flash(status, r.message, 'ok');
+        else if (r.kind === 'partial') flash(status, `Got it. Now paste the ${r.missing}.`, 'note');
+        else if (r.kind === 'approve') flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+      };
+      const connect = h('button', { type: 'button', id: 'slack-connect', text: 'Connect', onclick: connectPasted });
+      pasteAll.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectPasted(); } });
+      steps.append(
+        h('li', {}, h('b', { text: 'Create the app. ' }), 'The button above opens Slack with the name, read-only permissions and redirect already filled in. Pick your workspace, press Next, then Create.'),
+        h('li', {}, h('b', { text: 'Install it. ' }), 'On the page that follows press Install to Workspace, then Allow.'),
+        h('li', {}, h('b', { text: 'Copy the token. ' }), 'Press Copy next to User OAuth Token. Lumen notices it and connects by itself; or paste it below.'));
+      const pasteRow = setting('Paste it instead', pasteAll, 'The token, or the Client ID and Client Secret from Basic Information (copied together is fine). Stored encrypted by your system.', connect);
+      const open = h('button', { type: 'button', id: 'slack-open', text: 'Log in with Slack', onclick: async () => {
+        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret.', 'warn'); clientId.focus(); return; }
+        run(() => S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value })).then(() => { clientSecret.value = ''; });
       } });
       const finish = h('button', { type: 'button', id: 'slack-finish', text: 'Finish', onclick: async () => {
-        try {
-          const r = await S.widgets.slackFinish(pasted.value);
-          ws = r.state; pasted.value = ''; drawStatus(); flash(status, r.message, 'ok');
-        } catch (err) { flash(status, clean(err), 'err'); }
+        const r = await run(() => S.widgets.slackFinish(pasted.value));
+        if (r) { pasted.value = ''; flash(status, r.message, 'ok'); }
       } });
-      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: async () => { ws = await S.widgets.slackDisconnect(); drawStatus(); } });
-      const pastedRow = setting('Finish signing in', pasted, 'Slack ends on a page that may not load. That is fine: copy its address from the address bar and paste it here.', finish);
+      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: () => run(async () => S.widgets.slackDisconnect()) });
+      const pastedRow = setting('Finish signing in', pasted, 'Only if the Slack window was closed before it finished: paste the address it ended on.', finish);
+      // A connection that finished by itself (the window caught the redirect, the clipboard held the token) shows here at once.
+      slackWatch = async () => { if (!status.isConnected) return; ws = await S.widgets.state(); drawStatus(); };
+      if (!slackWatchOn) { slackWatchOn = true; S.widgets.onChanged?.(() => slackWatch?.()); }
       const chBox = h('div', { class: 'widget-checks', id: 'slack-channels' });
       const drawChannels = (items) => {
         chBox.replaceChildren(...items.map((c) => {
@@ -1341,17 +1446,18 @@ async function buildWidgets(card) {
       inputs.dms = tog('widget-slack-dms', 'Unread direct messages', sc.dms !== false);
       inputs.mentions = tog('widget-slack-mentions', 'Mentions of you', sc.mentions !== false, 'In the channels chosen below.');
       inputs.count = segment('widget-slack-count', 'Recent messages', [[3, '3'], [5, '5'], [8, '8'], [10, '10']], sc.count || 5);
-      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, open, disconnect), status,
-        h('span', { class: 'note', text: 'Read-only: nothing can be posted. Slack’s sign-in opens in your browser.' }));
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, create, disconnect), status,
+        h('span', { class: 'note', text: 'Read-only: nothing can be posted. The app is yours; Lumen only ever shows slack.com in its setup window.' }), viaBrowser);
       const adv = advanced([
-        helpLink(setting('Slack app Client ID', clientId, 'Slack needs an app of your own (Create New App). Keep it private, not distributed.'), 'slack', 'Open Slack API apps'),
-        setting('Client Secret', clientSecret, 'From the app’s Basic Information page. Stored encrypted by your system.'),
-        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https.'),
-        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token from the app’s OAuth & Permissions page. It doesn’t renew itself.'),
-      ], 'User Token Scopes to add: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', !st.connected && !st.clientId);
+        setting('Slack app Client ID', clientId, 'From the app’s Basic Information page, if you made the app yourself.'),
+        setting('Client Secret', clientSecret, 'The same page. Stored encrypted by your system.'),
+        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https. The setup link already does.'),
+        setting('Sign in with them', open, 'Opens Slack’s approval in the setup window and finishes by itself. Renews itself if the app has token rotation on.'),
+        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token. It doesn’t renew itself. (Saved with the card.)'),
+      ], 'User Token Scopes the app needs: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', Boolean(st.draft));
       drawStatus();
       fields.replaceChildren(
-        section('Account', [accountRow, pastedRow]),
+        section('Account', [accountRow, steps, pasteRow, pastedRow]),
         section('Show', [inputs.dms, inputs.mentions, setting('Recent messages', inputs.count)]),
         section('Channels', [block('Channels to follow', 'Up to 4 channels you are in; their recent messages show on the card.', h('div', { class: 'widget-inline' }, load), chBox)]),
         adv);
@@ -1624,7 +1730,8 @@ async function buildWidgets(card) {
       if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
       if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app) };
       if (type === 'gmail') {
-        return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
+        const own = inputs.mode.value === 'oauth';
+        return { ...base, mode: own ? 'oauth' : 'google', account: Number(inputs.account.value) || 0, clientId: own ? inputs.clientId.value : '', clientSecret: own ? inputs.clientSecret.value : '', count: Number(inputs.count.value), snippets: val(inputs.snippets) };
       }
       if (type === 'slack') {
         return { ...base, token: inputs.token.value, slack: { channels: [...inputs.slackPicked].map(([id, name]) => ({ id, name })), dms: val(inputs.dms), mentions: val(inputs.mentions), count: Number(inputs.count.value) } };

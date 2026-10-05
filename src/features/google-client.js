@@ -70,4 +70,34 @@ const MESSAGES = {
   noClient: 'Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).',
 };
 
-module.exports = { builtinClient, resolveClient, uiState, MESSAGES };
+// The file Google Cloud lets you download for an OAuth client ("Download JSON"), or its text pasted in, or
+// the same two values as plain text -> { clientId, clientSecret }, or { error } saying what is wrong.
+//   Desktop app clients are {"installed": {"client_id", "client_secret", ...}}; a Web application client
+//   ({"web": ...}) can't sign in through Lumen's loopback address, so it is refused with that advice.
+// Also accepts the bare client object, and "client_id: ... client_secret: ..." / "id<newline>secret" text.
+const MAX_CLIENT_FILE = 20000;
+function parseClientJson(input) {
+  const text = typeof input === 'string' ? (input.charCodeAt(0) === 0xfeff ? input.slice(1) : input).trim() : '';
+  if (!text) return { error: 'Drop the client JSON file from Google Cloud here, or paste its text.' };
+  if (text.length > MAX_CLIENT_FILE) return { error: 'That is too big to be a Google client file.' };
+  let obj = null;
+  if (/^[[{]/.test(text)) {
+    try { obj = JSON.parse(text); } catch { return { error: 'That looks like JSON but isn’t valid. Use the file Google Cloud downloads (client_secret_….json).' }; }
+  }
+  let client = null;
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    if (obj.web && typeof obj.web === 'object') return { error: 'That is a Web application client. Create one of type “Desktop app” instead; Lumen signs in on your own computer.' };
+    client = obj.installed && typeof obj.installed === 'object' ? obj.installed : obj;
+  } else if (!obj) {
+    const id = /[0-9]+-[a-z0-9_]+\.apps\.googleusercontent\.com/i.exec(text)?.[0];
+    const secret = /\b(GOCSPX-[A-Za-z0-9_-]{8,})/.exec(text)?.[1] || /secret\W{1,4}([A-Za-z0-9_-]{8,200})/i.exec(text)?.[1];
+    client = { client_id: id, client_secret: secret };
+  }
+  const clientId = GV.cleanClientId(client?.client_id);
+  const clientSecret = GV.cleanClientSecret(client?.client_secret);
+  if (!clientId) return { error: 'No Google client ID found (it ends in .apps.googleusercontent.com).' };
+  if (!clientSecret) return { error: 'No client secret found. Use the downloaded JSON file, which has both.' };
+  return { clientId, clientSecret };
+}
+
+module.exports = { parseClientJson, builtinClient, resolveClient, uiState, MESSAGES };

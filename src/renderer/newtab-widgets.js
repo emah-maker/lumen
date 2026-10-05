@@ -1057,13 +1057,14 @@ const WIDGET_RENDERERS = {
     card.head.append(refreshButton(w));
     if (d.state === 'reconnect') {
       const note = el('p', 'w-note');
-      note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
+      const google = d.google === true; // reading through the Google sign-in in Lumen (the default)
+      note.append(el('strong', null, google ? 'Sign in to Gmail' : 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
       // oneClick: Lumen can start Google's sign-in (in the user's browser) straight from the card;
       // otherwise the button opens Settings, where the user's own Google Cloud client is set up.
       const oneClick = d.oneClick === true;
-      const fix = el('button', 'w-btn primary', oneClick ? 'Sign in with Google' : 'Open Settings');
+      const fix = el('button', 'w-btn primary', google ? 'Sign in to Gmail' : oneClick ? 'Sign in with Google' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.setAttribute('aria-label', google ? `Sign in to Gmail for ${text(w.title, 60)}` : oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
       fix.addEventListener('click', () => widgetAct(w.id, oneClick ? 'signin' : 'configure'));
       const wrap = el('div');
       wrap.append(fix);
@@ -1076,14 +1077,17 @@ const WIDGET_RENDERERS = {
     const head = el('div', 'gm-head');
     head.append(el('span', 'gm-count', String(unread)), el('span', 'gm-of', 'unread'));
     card.body.append(head);
+    // The account number the links use (Gmail's /mail/u/N/): a single digit, set by the app, never page text.
+    const acct = Number.isInteger(d.account) && d.account >= 0 && d.account <= 9 ? d.account : 0;
+    if (d.source === 'google' && text(d.email, 200)) card.body.append(el('p', 'w-sub gm-acct', text(d.email, 200)));
     const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m.id === 'string' && /^[0-9a-f]{6,32}$/i.test(m.id)).slice(0, 10);
-    if (!messages.length) { card.body.append(el('p', 'w-empty', 'The inbox is empty.')); return; }
+    if (!messages.length) { card.body.append(el('p', 'w-empty', d.unreadOnly ? 'No unread messages.' : 'The inbox is empty.')); return; }
     const list = el('div', 'w-list');
     messages.forEach((m, i) => {
       const row = el('div', `w-row gm-row${m.unread ? ' unread' : ''}${i > 0 ? ' later' : ''}`);
       const main = el('div', 'w-main');
       const subject = text(m.subject, 200) || '(no subject)';
-      const a = link(`https://mail.google.com/mail/u/0/#inbox/${m.id}`, subject, '');
+      const a = link(`https://mail.google.com/mail/u/${acct}/#inbox/${m.id}`, subject, '');
       main.append(el('span', 'gm-from', text(m.from, 100) || 'Unknown sender'), a);
       if (m.snippet) main.append(el('span', 'gm-snip', text(m.snippet, 160)));
       row.append(main);
@@ -1091,6 +1095,8 @@ const WIDGET_RENDERERS = {
       list.append(row);
     });
     card.body.append(list);
+    // Said plainly: the feed lists unread messages only, and at most the newest 20.
+    if (d.unreadOnly) card.body.append(el('p', 'w-sub gm-note', unread > messages.length ? 'Unread messages only, newest first.' : 'Shows unread messages only.'));
   },
 
   feed(w, card) {

@@ -61,6 +61,7 @@ const SW = lazy(() => require('./spotify-web'));
 const AMV = lazy(() => require('./apple-music-view'));
 const AMB = lazy(() => require('./apple-music-bridge'));
 const GV = lazy(() => require('./gmail-view'));
+const GA = lazy(() => require('./gmail-atom')); // Gmail through the Google sign-in already in Lumen (the default: no Google Cloud setup)
 const SL = lazy(() => require('./slack-view'));
 const OA = lazy(() => require('./oauth'));
 const GC = lazy(() => require('./google-client')); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
@@ -546,21 +547,35 @@ const CONNECTORS = {
     },
   },
 
-  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Signs
-  // in with Lumen's built-in Google client (features/google-client.js) or, when the widget has one, the
-  // user's own Google Cloud OAuth client, which wins (features/oauth.js); see features/gmail-view.js.
+  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Two ways in:
+  //   mode 'google' (default): the Google sign-in already in Lumen's browsing session, through Gmail's Atom
+  //     feed (features/gmail-atom.js): no Google Cloud project, nothing to paste. Unread messages only.
+  //   mode 'oauth' (Advanced): the user's own Google Cloud OAuth client (or Lumen's built-in one, when this
+  //     copy has it: features/google-client.js), the Gmail API with the gmail.readonly scope (features/oauth.js).
   gmail: {
     label: 'Gmail',
-    ttl: 5 * 60e3,
+    // The feed asks for no more than one visit every 10 minutes; a signed-out card looks again sooner (the cookie watch also nudges it).
+    ttl: (data) => (data?.source === 'google' ? 10 * 60e3 : data?.google ? 2 * 60e3 : 5 * 60e3),
     secret: 'gmail',
     clean: (c) => { const g = GV.cleanConfig(c); return g ? { ...g, colors: WC.cleanMode(c.colors) } : null; },
     async resolve(input, x) {
+      if (GV.cleanConfig(input)?.mode === 'google') {
+        // Nothing to check against Google first: the card says "Sign in to Gmail" itself when nobody is signed in.
+        const cfg = GV.cleanConfig({ ...input, mode: 'google' });
+        if (!cfg) throw new Error('That didn’t check out. Try again.');
+        let message = 'Saved. Sign in to Google in Lumen and the card shows your unread mail.';
+        try {
+          const data = await gmailFeedData(x, cfg);
+          if (data.state === 'ok') message = `Connected${data.email ? ` as ${data.email}` : ''}. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.`;
+        } catch { /* saved anyway: the card explains what is wrong */ }
+        return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, message };
+      }
       const stored = OA.decodeCreds(x.secret());
       const client = gmailClient(input, stored, x.googleClient());
       const same = stored?.clientId === client.clientId;
       const creds = { clientId: client.clientId, clientSecret: client.clientSecret, refresh: same ? stored.refresh : '' };
       if (!creds.refresh) throw new Error(client.source === 'builtin' ? 'Connect your Google account first: use Sign in with Google.' : 'Connect your Google account first: use Connect Gmail.');
-      const cfg = GV.cleanConfig({ ...input, clientId: client.source === 'own' ? client.clientId : '' }); // the built-in client is never written to settings.json
+      const cfg = GV.cleanConfig({ ...input, mode: 'oauth', clientId: client.source === 'own' ? client.clientId : '' }); // the built-in client is never written to settings.json
       const data = await gmailData(x, x.session(creds), { ...cfg, count: 3 });
       const changed = !stored || stored.clientId !== creds.clientId || stored.clientSecret !== creds.clientSecret || stored.refresh !== creds.refresh;
       return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, secret: changed ? OA.encodeCreds(creds) : undefined, message: `Connected. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.` };
@@ -568,6 +583,7 @@ const CONNECTORS = {
     title: () => 'Gmail',
     summary: (c) => `Inbox · ${c.count} latest`,
     async fetch(c, x) {
+      if (c.mode !== 'oauth') return gmailFeedData(x, c);
       const session = x.session();
       // oneClick: the card's button can start the sign-in itself (do=signin) instead of opening Settings.
       const oneClick = () => GC.uiState({ clientId: c.clientId, stored: OA.decodeCreds(x.secret()), builtin: x.googleClient() }).oneClick;
@@ -1196,6 +1212,23 @@ async function spotifyAccess(x, clientId, force = false) {
   return s.access;
 }
 
+// Gmail through the Google sign-in in Lumen's session: one GET of the inbox's Atom feed (x.googleMail,
+// main.js: the session's cookies, mail.google.com only), parsed strictly (features/gmail-atom.js).
+// Signed out (401, 403, a sign-in redirect or page) is a card state, not an error.
+async function gmailFeedData(x, cfg) {
+  const gm = x.googleMail;
+  const account = GA.cleanAccount(cfg.account);
+  if (!gm) throw new Error('Reading Gmail through your Google sign-in isn’t available here.');
+  const res = await gm.fetch(GA.feedUrl(account));
+  if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) { x.googleSeen(false); return GA.signedOut(account); }
+  if (res.status === 429) { x.backoff(60e3); throw new Error('Gmail asked Lumen to slow down. It will try again shortly.'); }
+  if (res.status !== 200) throw new Error(res.status >= 500 ? 'Gmail is having trouble. Lumen will try again shortly.' : `Gmail answered ${res.status}.`);
+  const parsed = GA.parseFeed(res.body, { snippets: cfg.snippets !== false });
+  if (!parsed.ok) { if (parsed.reason === 'html') { x.googleSeen(false); return GA.signedOut(account); } throw new Error('Gmail sent something unexpected.'); }
+  x.googleSeen(true, parsed.email);
+  return GA.shape(parsed, { account, count: cfg.count, snippets: cfg.snippets !== false });
+}
+
 // Which Google client a Gmail sign-in or Check uses: the user's own (typed, or the widget's saved Client
 // ID with its stored secret) before Lumen's built-in one. Throws a message for the user when neither.
 function gmailClient(input, stored, builtin) {
@@ -1253,7 +1286,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1350,6 +1383,8 @@ function createWidgets(deps) {
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
+  let slackDraft = null; // a pasted Client ID or Secret that is waiting for the other half: { clientId, clientSecret, at }
+  let slackLast = null; // how the last automatic sign-in ended, for Settings to show: { ok, message }
   let slackBad = false; // Slack refused the stored sign-in: the cards say Reconnect until it is redone
   let slackRefreshing = null; // one token refresh at a time (rotation invalidates the old refresh token)
   const now = () => (deps.now ? deps.now() : Date.now());
@@ -1429,6 +1464,7 @@ function createWidgets(deps) {
     const res = await request(url, { method: 'POST', max: 65536, body, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
     return { ok: res.ok, status: res.status, body: res.body, retryAfter: res.headers.get('retry-after') };
   }
+  let googleFeed = { signedIn: null, email: '' }; // what the last read of Gmail's feed saw: signed in to Google in Lumen (null: not asked yet) and as whom
   // OAuth accounts by secret name: the access token is kept here, in memory, and the refresh token in
   // the encrypted secret (a JSON blob, see features/oauth.js).
   const sessions = new Map();
@@ -1481,8 +1517,10 @@ function createWidgets(deps) {
       },
       backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       googleClient,
-      appleMusic: deps.appleMusic || null,
-      spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js) // the Apple Music app's now-playing interface (features/apple-music-native.js)
+      googleMail: deps.googleMail || null, // the feed fetch for Gmail's Google-sign-in mode (main.js)
+      googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
+      appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
+      spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -1584,7 +1622,7 @@ function createWidgets(deps) {
       },
       async identify(access) {
         const r = await slackRequest(x, access || (await slackToken(x)).access, 'auth.test');
-        return { userId: str(r.user_id, 40), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
+        return { userId: str(r.user_id, 40), userName: str(r.user, 80), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
       },
       userName: (id) => x.memo(`slack:user:${id}`, 3600e3, async () => {
         const u = (await x.slack.call('users.info', { user: id })).user || {};
@@ -1843,6 +1881,16 @@ function createWidgets(deps) {
   function gmailSignInFromPage(w) {
     // Also when a sign-in is stored but Google stopped accepting it (the card asks to reconnect): a new sign-in replaces it.
     if (w.type !== 'gmail') return false;
+    if (w.mode !== 'oauth') { // the default: sign in to Google in a normal Lumen tab; the cookie watch refreshes the card
+      if (cache.get(w.id)?.data?.state === 'ok') return false;
+      gmailOpenSignIn();
+      const old = cache.get(w.id);
+      const entry = old && old.key === keyOf(w) ? old : { key: keyOf(w), undo: old?.undo };
+      Object.assign(entry, { data: { ...GA.signedOut(w.account), message: 'Finish signing in, in the tab Lumen opened. This card fills in when you’re done.' }, error: null, at: now() });
+      cache.set(w.id, entry);
+      deps.onUpdate?.();
+      return true;
+    }
     if (sessionFor('gmail').connected() && cache.get(w.id)?.data?.state !== 'reconnect') return false;
     if (!GC.uiState({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).oneClick) { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     const show = (message) => {
@@ -1863,6 +1911,43 @@ function createWidgets(deps) {
       .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))
       .catch((err) => { if (attempt === pageSignIns) show(String(err?.message || err)); }) // a newer click's wait is not overwritten by the one it cancelled
       .finally(() => clearTimeout(hint));
+    return true;
+  }
+  // ---- Gmail through the Google sign-in in Lumen (the default) ----
+  // Sign in: a normal tab on Google's sign-in page (Lumen's own Google sign-in handling applies there).
+  function gmailOpenSignIn() {
+    if (!deps.googleMail?.openSignIn) throw new Error('Opening a sign-in tab isn’t available here.');
+    deps.googleMail.openSignIn(GA.SIGN_IN_URL);
+    return true;
+  }
+  // The Google accounts signed in in Lumen, for Settings' picker: [{ index, email }]. Stops at the first
+  // index that isn't an account (or repeats one): a few small requests, only when Settings asks.
+  async function gmailAccounts() {
+    if (!deps.googleMail) return { accounts: [], signedIn: false };
+    const found = [];
+    for (let i = 0; i <= GA.MAX_ACCOUNT; i++) {
+      let res;
+      try { res = await deps.googleMail.fetch(GA.feedUrl(i)); } catch { break; }
+      const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+      if (!parsed?.ok || !parsed.email || found.some((e) => e.toLowerCase() === parsed.email.toLowerCase())) break;
+      found.push(parsed.email);
+    }
+    googleFeed = { signedIn: found.length > 0, email: found[0] || '' };
+    return { accounts: GA.accountList(found), signedIn: found.length > 0 };
+  }
+  // Google's sign-in cookies appeared or went (main.js watches them): Gmail cards that read through that
+  // sign-in look again at once, instead of waiting out their refresh time.
+  let googleNudge = 0;
+  function googleSessionChanged() {
+    const cards = list().filter((w) => w.type === 'gmail' && w.mode !== 'oauth');
+    if (!cards.length) return false;
+    clearTimeout(googleNudge);
+    googleNudge = setTimeout(() => {
+      for (const w of cards) cache.delete(w.id);
+      googleFeed = { signedIn: null, email: '' };
+      deps.onUpdate?.();
+    }, 1500);
+    googleNudge.unref?.();
     return true;
   }
   // Best effort: tell Google the refresh token is no longer wanted.
@@ -1946,7 +2031,7 @@ function createWidgets(deps) {
   function slackStatus() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
     return {
-      connected: Boolean(tok?.access), team: tok?.teamName || '', reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
+      connected: Boolean(tok?.access), team: tok?.teamName || '', user: tok?.userName || '', last: slackLast, draft: Boolean(slackDraft), reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
       clientId: tok?.clientId || slackPending?.clientId || '', hasSecret: Boolean(tok?.clientSecret), redirect: SL.DEFAULT_REDIRECT, scopes: SL.USER_SCOPES, waiting: Boolean(slackPending),
     };
   }
@@ -1961,6 +2046,7 @@ function createWidgets(deps) {
     if (!clientId) throw new Error('Paste your Slack app’s Client ID (Basic Information → App Credentials: two numbers with a dot).');
     if (!clientSecret) throw new Error('Paste your Slack app’s Client Secret (the same page). It is stored encrypted and never shown again.');
     if (!redirectUri) throw new Error('The redirect URL must be an https:// address. Add the same one under OAuth & Permissions → Redirect URLs in your Slack app.');
+    slackLast = null;
     slackPending = { state: OA.randomState(), clientId, clientSecret, redirectUri, at: now() };
     return { url: SL.authorizeUrl({ clientId, redirectUri, state: slackPending.state }), redirectUri };
   }
@@ -1980,11 +2066,45 @@ function createWidgets(deps) {
     slackReset();
     return { message: `Connected to ${t.teamName || 'Slack'}.` };
   }
-  function slackCancel() { slackPending = null; return true; }
+  function slackCancel() { slackPending = null; slackDraft = null; return true; }
+  // The easy path: a user token (xoxp-…) the user copied from the app's OAuth & Permissions page, or that
+  // Lumen saw on the clipboard. It is checked with auth.test before anything is stored.
+  async function slackConnectToken(token) {
+    const pasted = SL.cleanUserToken(token);
+    if (!pasted) throw new Error('That doesn’t look like a Slack user token (it starts with xoxp-).');
+    const who = await helpers('slack').slack.identify(pasted);
+    deps.setSecret('slack', OA.packTokens({ access: pasted, userId: who.userId, userName: who.userName, teamId: who.teamId, teamName: who.teamName, teamUrl: who.teamUrl }));
+    slackPending = null; slackDraft = null;
+    slackReset();
+    return { message: `Connected to ${who.teamName || 'Slack'}${who.userName ? ` as ${who.userName}` : ''}.` };
+  }
+  // One paste box for everything: a token connects at once; a Client ID and Client Secret (together, or one
+  // after the other) start the approval, whose address comes back through slackAuto.
+  async function slackPaste(text) {
+    const p = SL.parseCredentials(text);
+    if (p.token) return { kind: 'connected', ...(await slackConnectToken(p.token)) };
+    if (!p.clientId && !p.clientSecret) throw new Error('Lumen can’t use that. Paste the User OAuth Token (starts with xoxp-), or the Client ID and Client Secret.');
+    const keep = slackDraft && now() - slackDraft.at < 15 * 60e3 ? slackDraft : null;
+    const clientId = p.clientId || keep?.clientId || '';
+    const clientSecret = p.clientSecret || keep?.clientSecret || '';
+    if (!clientId || !clientSecret) {
+      slackDraft = { clientId, clientSecret, at: now() };
+      return { kind: 'partial', missing: clientId ? 'Client Secret' : 'Client ID' };
+    }
+    slackDraft = null;
+    return { kind: 'approve', ...slackStart({ clientId, clientSecret }) };
+  }
+  // The address Slack sent the setup window to, or a token Lumen saw on the clipboard: finish quietly and
+  // leave the result in the status (Settings shows it), because no call is waiting for an answer.
+  async function slackAuto(what, value) {
+    try { slackLast = { ok: true, message: (what === 'token' ? await slackConnectToken(value) : await slackFinish(value)).message }; } catch (err) { slackLast = { ok: false, message: err instanceof Error ? err.message : 'Slack sign-in failed.' }; }
+    deps.onUpdate?.();
+    return slackLast;
+  }
   // Settings' Disconnect: revoke the token at Slack when possible, then forget everything stored.
   async function slackDisconnect() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
-    slackPending = null;
+    slackPending = null; slackDraft = null; slackLast = null;
     if (tok?.access) await slackRequest(helpers('slack'), tok.access, 'auth.revoke').catch(() => {});
     deps.setSecret('slack', null);
     slackReset();
@@ -2059,6 +2179,7 @@ function createWidgets(deps) {
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
       gmailAccount: OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // which one, when known
       gmailSignedOut: !OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // Google ended this account's sign-in (a disconnect forgets the address)
+      gmailGoogle: { signedIn: googleFeed.signedIn, email: googleFeed.email, available: Boolean(deps.googleMail) }, // Settings: is the Google sign-in in Lumen readable, and as whom (the default mode)
       gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
@@ -2367,7 +2488,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
