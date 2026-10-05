@@ -619,6 +619,7 @@ function settleAuth(userHome, home, before) {
   const now = statOf(real);
   const mine = statOf(own);
   if (!before || !now || !mine || sameFile(now, mine)) return false;
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile: theirs stays
   if (!newerThan(mine, now)) return false;
   authSync.copyAtomicSync(own, real, fs.statSync(own));
   return true;
@@ -647,6 +648,7 @@ async function settleAuthAsync(userHome, home, before) {
   const own = path.join(home, 'auth.json');
   const [now, mine] = [await stat(real), await stat(own)];
   if (!before || !now || !mine || sameFile(now, mine)) return false;
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile: theirs stays
   if (!newerThan(mine, now)) return false;
   await authSync.copyAtomic(own, real, await fsp.stat(own));
   return true;
