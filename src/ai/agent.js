@@ -743,6 +743,7 @@ const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed
 const { siteOf } = require('../features/ai-sites');
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
+const siteExtractors = require('./site-extractors'); // [site extractors] Reddit, Hacker News, YouTube, X, TikTok, GitHub: read from their feeds, not the cluttered page
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
@@ -1005,6 +1006,18 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
   else if (action === 'open' || action === 'tool' || action === 'upload') what = wants(title) || (action === 'open' ? `open ${host}` : `${action} ${host}`);
   else what = `${who || 'Claude'} interacting with ${host}`;
   return `Allowed automatically: ${what}`;
+}
+
+// [site extractors] A supported address (site-extractors.js) read from its feed / API / transcript in the same cookie-less
+// session the hidden reader uses: { title, text } (text starts with "Source: ..."), or null when the address isn't
+// supported or anything failed (the caller then does its normal page read).
+const SITE_MAX_CHARS = siteExtractors.DEFAULT_MAX_CHARS;
+async function readSiteNetwork(url, maxChars = SITE_MAX_CHARS) {
+  if (!siteExtractors.extractorFor(url)) return null;
+  try {
+    const ses = require('electron').session.fromPartition('claude-reader');
+    return await siteExtractors.readSite(url, { get: siteExtractors.makeGet((u, o) => ses.fetch(u, o)), maxChars });
+  } catch { return null; }
 }
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
@@ -3897,6 +3910,8 @@ ${out.text}${note}
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
       await quietWait(wc); // (waitForLoad already waited for quiet; this covers the sleep(15000) race winning)
       if (away()) return fallBack();
+      const site = await siteExtractors.readSiteInPage(wc.getURL() || url, (code) => runScript(wc, code, 8000)).catch(() => null); // [site extractors] the signed-in page's own Reddit / TikTok data
+      if (site && !away()) return { url: wc.getURL() || url, title: site.title || siteOf(url), text: site.text, signedIn: true };
       const page = await runScript(wc, scripts.readPage(0, 0), 8000);
       if (away()) return fallBack(); // it moved while being read
       const more = page.totalTextChars > 8000 ? `\n[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
@@ -3959,6 +3974,16 @@ ${out.text}${note}
     switch (name) {
       case 'read_page': {
         const wc = this.requireTab();
+        // [site extractors] a supported site's structured view, unless the call asks for the raw page (mode:"full", an offset, elements)
+        if (input.mode !== 'full' && !input.text_offset && !input.element_offset && input.elements !== true) {
+          const url = wc.getURL();
+          const site = await siteExtractors.readSiteInPage(url, (code) => runScript(wc, code, 8000)).catch(() => null) || await readSiteNetwork(url);
+          if (site) return `<untrusted_page_content url="${url}">
+Title: ${site.title}
+${site.text}
+(Structured view of this site; read_page mode:"full" gives the raw page, mode:"compact" the [id] outline to click.)
+</untrusted_page_content>`;
+        }
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
@@ -4079,7 +4104,13 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        const siteMax = Number(input.max_chars) > 0 ? Math.min(Number(input.max_chars), 40000) : SITE_MAX_CHARS;
+        // [site extractors] after the approval / redirect gates above: a supported site is read from its feed, else the hidden view
+        const signedOut = async (url) => {
+          const site = await readSiteNetwork(url, siteMax);
+          if (site) return { url, title: site.title || siteOf(url), text: site.text };
+          return readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        };
         // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
         const plan = await this.planSignedIn(urls, input.as_user === true);
         const pages = await Promise.all(urls.map(async (url) => {

@@ -21,12 +21,14 @@ Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"f
 |---|---|---|---|
 | `text_offset` | integer |  | Character offset into the page text (full mode). |
 | `element_offset` | integer |  | Elements to skip in the list (full mode). |
-| `mode` | `compact`, `full` |  |  |
+| `mode` | `compact`, `full`, `site` |  | `full`: the raw page text and elements, never the site view below. `site`: ask for the site view explicitly. |
 | `since_last` | boolean |  | compact: only what changed since your last read. |
 | `start_line` | integer |  | compact: continue a clipped outline. |
 | `hrefs` | boolean |  | compact: include link URLs. |
 | `extract` | `tables`, `links`, `lists` |  | Return these as JSON instead of a page read: tables (rows of cells, up to 5 tables), links (`[text, href]`, up to 80), lists (items of up to 8 lists). |
 | `selector` | string |  | extract: limit to this CSS selector. |
+
+On a Reddit, Hacker News, YouTube, X, TikTok or GitHub page, a plain `read_page` (no `mode`, offsets, `elements` or `extract`) returns that site's [structured view](#site-views) instead of the raw page text. It has no element ids: use `mode:"compact"` or `find` to click, or `mode:"full"` for the raw page.
 
 ### `screenshot`
 
@@ -81,6 +83,19 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:tr
 |---|---|---|
 | `urls` | string[] | yes |
 | `as_user` | boolean | no |
+
+### Site views
+
+`read_urls` (signed out) and a plain `read_page` read these addresses from the site's own compact feed instead of the page, so a long thread is not cut off in the middle of its comments. The text starts with `Source: <site> (<how>)` and stays inside `<untrusted_page_content>`; all approval, redirect and site-off rules apply first. If the feed fails, is blocked or rate limited, or the page is private, the normal page read is used. Read-only: no cookies are sent and nothing is posted or changed. Each view is capped at 8,000 characters (comments are flattened one per line, `[d2] u/name 1.2k · 3h: text`, deepest replies dropped first, with a count of what was left out).
+
+| Site | Addresses | Source |
+|---|---|---|
+| Reddit | posts and comment threads, subreddit listings, user pages, search | JSON, else Atom RSS (the RSS has no scores or reply nesting); on a loaded or signed-in page, the page itself |
+| Hacker News | `item?id=`, front page, `/ask`, `/show`, `/newest`, `/jobs` | hn.algolia.com |
+| YouTube | `watch?v=`, `youtu.be`, `/shorts`, `/live` | oEmbed, the player data, and captions as `[m:ss]` paragraphs (English or the video's own language; says so when there are none) |
+| X / Twitter | `/status/<id>` | the public post embed data, else oEmbed |
+| TikTok | `/@user/video/<id>` | oEmbed; on a loaded page, its own data (plays, likes, comments) |
+| GitHub | repo, issue and pull request pages | the public GitHub API (README, discussion) |
 
 `as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
 
