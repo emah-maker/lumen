@@ -39,7 +39,7 @@ const sameFile = (a, b) => {
 //         t, strings(), Menu, clipboard, shell, platform, testBackground, prepareSession(ses), releaseSession(ses),
 //         prepareTab(wc), tabWebPreferences(), defaultZoom(), realUrl(wc), securityState(wc), zoom(wc, step), searchFor(text),
 //         downloadDir(), askWhereToSave(), permissionDefault(name), pickScreen(request, callback, win),
-//         askOpenExternal(wc, details, decisions), openSettings(), onFocusChange() } — all but the first eight optional.
+//         askOpenExternal(wc, details, decisions), openSettings(), onFocusChange(), print(wc, win) (the print preview) } — all but the first eight optional.
 function createPrivateWindows(deps) {
   const { BrowserWindow, WebContentsView, session, ipcMain, dialog, resolveInput, isWebUrl } = deps;
   const t = deps.t || ((key, vars) => (vars ? `${key} ${JSON.stringify(vars)}` : key));
@@ -528,7 +528,8 @@ function createPrivateWindows(deps) {
       case 'zoomIn': zoom(live, 0.5); break;
       case 'zoomOut': zoom(live, -0.5); break;
       case 'actualSize': zoom(live, 0); break;
-      case 'print': live?.print({}, () => {}); break;
+      case 'print': if (deps.print) deps.print(live, rec.win); else live?.print({}, () => {}); break; // the print preview, over this window
+      case 'printSystem': live?.print({}, () => {}); break;
       case 'devTools': live?.toggleDevTools(); break;
       case 'screenshot': { const ctx = screenshotCtx(rec); if (ctx) deps.screenshot?.(ctx).catch(() => {}); break; }
       case 'settings': deps.openSettings?.(); break;
@@ -574,6 +575,7 @@ function createPrivateWindows(deps) {
     else if (mod && (key === '=' || key === '+')) name = 'zoomIn';
     else if (mod && key === '-') name = 'zoomOut';
     else if (mod && key === '0') name = 'actualSize';
+    else if (mod && input.shift && !input.alt && key === 'p') name = 'printSystem';
     else if (mod && key === 'p') name = 'print';
     else if (key === 'f12' || (mod && input.alt && key === 'i')) name = 'devTools';
     else if (mod && key === ',') name = 'settings';

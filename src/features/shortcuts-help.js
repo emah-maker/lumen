@@ -53,6 +53,7 @@ const SECTIONS = [
       ['shortcuts.zoomOut', ['mod+-']],
       ['shortcuts.actualSize', ['mod+0']],
       ['shortcuts.print', ['mod+p']],
+      ['shortcuts.printSystem', ['mod+shift+p']],
       ['shortcuts.savePage', ['mod+s']],
       ['shortcuts.screenshot', ['mod+shift+s']],
       ['shortcuts.viewSource', ['mod+u']],

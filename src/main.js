@@ -570,6 +570,25 @@ if (TEST) {
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
+// ---------- print preview: Ctrl+P and every Print entry (features/print-preview.js) ----------
+const printPreview = lazy(() => require('./features/print-preview').createPrintPreview({
+  t, strings: () => i18n().strings, readSettings, writeSettings, win: () => win,
+  paths: { preload: path.join(__dirname, 'preload', 'print-preview-preload.js'), html: path.join(__dirname, 'renderer', 'print-preview.html') },
+  restoreFocus: (wc) => { if (wc && !wc.isDestroyed()) wc.focus(); },
+  downloadsDir: () => app.getPath('downloads'),
+  isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)), // a PDF tab is previewed and printed as the document it is
+}));
+// Print…: the preview sheet over the window of the tab `wc` (a private window passes its own).
+let printSheetOpen = false;
+function printTab(wc, host) {
+  if (!wc || wc.isDestroyed()) return;
+  printSheetOpen = true;
+  printPreview.open({ wc, host, title: wc.getTitle() }).catch((err) => console.error('[lumen] print preview:', err.message)).finally(() => { printSheetOpen = printPreview.isOpen(); });
+}
+// Print Using System Dialog… (Ctrl+Shift+P): the OS's own dialog, no preview.
+const printSystem = (wc) => printPreview.printWithSystemDialog(wc);
+if (TEST) global.__printPreview = { printPreview, printTab, printSystem };
+
 // ---------- what's new after an update (features/whats-new.js): once, over the first window ----------
 const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   app, readSettings, writeSettings, t, test: TEST,
@@ -1037,6 +1056,7 @@ const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl, Menu, clipboard, shell,
   resolveInput: (text) => resolveInput(text), iconPath: WINDOW_ICON,
   t, strings: () => i18n().strings, locale: () => i18n().locale,
+  print: (wc, host) => printTab(wc, host), // Print… in a private window: the same preview, over that window
   testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
   // The protections a normal tab has: Safe Browsing (until the ad blocker takes over onBeforeRequest, which
@@ -1275,7 +1295,8 @@ function showAppMenu({ x, y, right }) {
         ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
       ], 'zoom', t('menu.zoom'), 3),
       chunk([
-        { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+        { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => printTab(wc) },
+        { label: t('menu.printSystem'), accelerator: 'CmdOrCtrl+Shift+P', enabled: Boolean(wc), click: () => printSystem(wc) },
         { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: web, click: () => pageTools.savePage(wc).catch(() => {}) },
         { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: web, click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
         { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
@@ -1689,6 +1710,7 @@ function raiseOverlays() {
   // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
   for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
+  if (printSheetOpen) printPreview.raise(); // (a tab added while the print preview is up)
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
 function setOverlay(tab, params) {
@@ -3824,7 +3846,7 @@ function showContextMenu(wc, p) {
     if (isWebUrl(wc.getURL())) {
       items.push(
         { label: t('menu.savePageAs'), click: () => pageTools.savePage(wc).catch(() => {}) },
-        { label: t('menu.print'), click: () => wc.print({}, () => {}) },
+        { label: t('menu.print'), click: () => printTab(wc) },
         { label: t('menu.viewSource'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
@@ -3883,7 +3905,8 @@ function handleShortcut(event, input) {
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
-  else if (mod && key === 'p') wc?.print({}, () => {});
+  else if (mod && input.shift && !input.alt && key === 'p') printSystem(wc); // Print using the system dialog, as in Chrome
+  else if (mod && key === 'p') printTab(wc);
   else if (mod && input.shift && !input.alt && key === 's') { if (wc) takeScreenshot(wc); }
   else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
   else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
@@ -4685,7 +4708,8 @@ function macMenu() {
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
         { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
         normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
-        { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => wc()?.print({}, () => {})) },
+        { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => printTab(wc())) },
+        { label: t('menu.printSystem'), ...shown('Shift+Cmd+P'), click: pv('printSystem', () => printSystem(wc())) },
         { type: 'separator' },
         { label: t('menu.closeTab'), ...shown('Cmd+W'), click: pv('closeTab', () => { if (activeId) requestCloseTab(activeId); }) },
         { label: t('menu.closeWindow'), ...shown('Shift+Cmd+W'), click: pv('closeWindow', closeCurrentWindow) },

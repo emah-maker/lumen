@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Print opens a real print preview, and you can save the page as a PDF.** Ctrl+P (and Print in the menu, the page's right-click menu, the PDF viewer and private windows) now opens a sheet over the window like Chrome's: the pages on the left, updated as you change a setting, and the settings on the right. **Destination** is Save as PDF (the default; Save asks where, with the page title as the file name) or any of your printers (the default one is marked). Pages (all or a range like 1-5, 8, 11-13), Layout, Color and Copies for printers, and under More settings: Paper size (Letter, Legal, Tabloid, A3, A4, A5), Margins (default, none, minimum, custom), Scale, Headers and footers, Background graphics and Two-sided. It shows the page or sheet count, closes with Esc, follows light and dark, and remembers your last choices. **Print using system dialog...** (Ctrl+Shift+P) keeps the old system dialog. Not included: pages per sheet, and the paper sizes only your printer lists.
+
 - **The address bar keeps what you typed when you switch tabs.** Type something in the address bar, switch to another tab and come back, and your text is still there with the caret where it was (and the cursor back in the address bar if it was there when you left), as in Chrome. Each tab keeps its own, so the other tab shows its own address. Pressing Enter, picking a suggestion or pressing Escape clears it, and so does closing the tab. It works in private windows and detached windows too. What you typed is only held in memory while Lumen is open: it is not saved, synced or shared with the AI or extensions.
 
 ## 0.5.15 (2026-10-05)

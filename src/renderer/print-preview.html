@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Print</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface: #ffffff; --field: rgba(0, 0, 0, 0.05); --border: rgba(0, 0, 0, 0.1);
+      --text: #1d1d1f; --muted: #6e6e73; --hover: rgba(0, 0, 0, 0.07); --stage: #e5e5ea;
+      --accent: #007aff; --accent-deep: #0051d5; --accent-soft: rgba(0, 122, 255, 0.14); --on-accent: #ffffff;
+      --danger: #d70015;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --border: rgba(255, 255, 255, 0.12);
+        --text: #f5f5f7; --muted: #98989d; --hover: rgba(255, 255, 255, 0.12); --stage: #1c1c1e;
+        --accent: #0a84ff; --accent-deep: #0060df; --accent-soft: rgba(10, 132, 255, 0.2); --on-accent: #ffffff;
+        --danger: #ff453a;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--surface); }
+    body {
+      font: 13px/1.45 system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+      letter-spacing: -0.003em; -webkit-font-smoothing: antialiased; color: var(--text); user-select: none;
+    }
+    #sheet { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+    #stage { position: relative; background: var(--stage); display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+    #stage-note { color: var(--muted); font-size: 13px; max-width: 360px; }
+    #stage-note.error { color: var(--danger); }
+    #panel { display: flex; flex-direction: column; min-width: 0; border-left: 0.5px solid var(--border); background: var(--surface); }
+    #head { padding: 18px 20px 12px; }
+    #head h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+    #count { margin: 2px 0 0; color: var(--muted); min-height: 1.45em; }
+    #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 12px; overscroll-behavior: contain; }
+    .row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px 10px; padding: 7px 0; }
+    [hidden] { display: none !important; }
+    .row > .name { color: var(--muted); font-size: 12px; }
+    .sub { grid-column: 2; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    select, input[type=text], input[type=number] {
+      width: 100%; height: 30px; padding: 0 8px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
+      font: inherit; letter-spacing: -0.003em; outline: none; box-shadow: 0 0 0 0 transparent; user-select: text;
+    }
+    select { padding-right: 4px; }
+    select option { background: var(--surface); color: var(--text); }
+    select:focus-visible, input:focus-visible { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+    input[aria-invalid=true] { box-shadow: 0 0 0 1.5px var(--danger); }
+    .err { grid-column: 2; color: var(--danger); font-size: 12px; margin-top: -2px; }
+    .margins { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; grid-column: 2; }
+    .margins label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
+    .check { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+    .check input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+    details { border-top: 0.5px solid var(--border); margin-top: 8px; padding-top: 4px; }
+    summary { cursor: default; padding: 8px 0; font-weight: 500; list-style: none; display: flex; align-items: center; gap: 6px; border-radius: 6px; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 140ms ease-out; margin: 0 2px; }
+    details[open] > summary::before { transform: rotate(45deg); }
+    summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    #system { display: inline-block; margin: 8px 0 0; padding: 0; border: none; background: none; color: var(--accent); font: inherit; cursor: default; text-align: left; border-radius: 4px; }
+    #system:hover { text-decoration: underline; }
+    #system:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    #system kbd { color: var(--muted); font: inherit; margin-left: 6px; }
+    #message { min-height: 1.45em; padding: 0 20px 6px; color: var(--danger); font-size: 12px; user-select: text; }
+    #buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 0.5px solid var(--border); }
+    .btn {
+      height: 30px; padding: 0 16px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
+      font: inherit; font-weight: 500; letter-spacing: -0.003em; cursor: default;
+      transition: background-color 120ms ease-out, transform 90ms ease-out;
+    }
+    .btn:hover { background: var(--hover); }
+    .btn:active { transform: scale(0.96); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn.primary { background: var(--accent); color: var(--on-accent); }
+    .btn.primary:hover { background: var(--accent-deep); }
+    .btn:disabled { opacity: 0.5; pointer-events: none; }
+    @media (prefers-reduced-motion: reduce) { .btn, summary::before { transition: none; } .btn:active { transform: none; } }
+    @media (max-width: 760px) { #sheet { grid-template-columns: minmax(0, 1fr) 300px; } }
+  </style>
+</head>
+<body>
+  <div id="sheet" role="dialog" aria-modal="true" aria-labelledby="title">
+    <div id="stage"><p id="stage-note" role="status" data-i18n="print.preparing">Preparing preview…</p></div>
+    <div id="panel">
+      <div id="head">
+        <h1 id="title" data-i18n="print.title">Print</h1>
+        <p id="count" role="status" aria-live="polite"></p>
+      </div>
+      <div id="settings">
+        <div class="row" id="row-destination"><label class="name" for="destination" data-i18n="print.destination">Destination</label><select id="destination"></select></div>
+        <div class="row" id="row-pages">
+          <label class="name" for="pages" data-i18n="print.pages">Pages</label>
+          <select id="pages"><option value="all" data-i18n="print.pagesAll">All</option><option value="custom" data-i18n="print.pagesCustom">Custom</option></select>
+          <div class="sub" id="ranges-wrap" hidden><input type="text" id="ranges" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="1-5, 8, 11-13" data-i18n-placeholder="print.rangesPlaceholder" aria-describedby="ranges-error" /></div>
+          <div class="err" id="ranges-error" role="alert" hidden></div>
+        </div>
+        <div class="row" id="row-copies" hidden><label class="name" for="copies" data-i18n="print.copies">Copies</label><input type="number" id="copies" min="1" max="999" step="1" /></div>
+        <div class="row" id="row-layout"><label class="name" for="layout" data-i18n="print.layout">Layout</label><select id="layout"><option value="portrait" data-i18n="print.portrait">Portrait</option><option value="landscape" data-i18n="print.landscape">Landscape</option></select></div>
+        <div class="row" id="row-color" hidden><label class="name" for="color" data-i18n="print.color">Color</label><select id="color"><option value="color" data-i18n="print.colorColor">Color</option><option value="bw" data-i18n="print.colorBw">Black and white</option></select></div>
+        <details id="more">
+          <summary data-i18n="print.more">More settings</summary>
+          <div class="row" id="row-paper"><label class="name" for="paper" data-i18n="print.paper">Paper size</label><select id="paper"></select></div>
+          <div class="row" id="row-margins">
+            <label class="name" for="margins" data-i18n="print.margins">Margins</label>
+            <select id="margins"><option value="default" data-i18n="print.marginsDefault">Default</option><option value="none" data-i18n="print.marginsNone">None</option><option value="minimum" data-i18n="print.marginsMinimum">Minimum</option><option value="custom" data-i18n="print.marginsCustom">Custom</option></select>
+            <div class="margins" id="custom-margins" hidden>
+              <label><span data-i18n="print.marginTop">Top (in)</span><input type="number" id="m-top" min="0" max="5" step="0.05" /></label>
+              <label><span data-i18n="print.marginBottom">Bottom (in)</span><input type="number" id="m-bottom" min="0" max="5" step="0.05" /></label>
+              <label><span data-i18n="print.marginLeft">Left (in)</span><input type="number" id="m-left" min="0" max="5" step="0.05" /></label>
+              <label><span data-i18n="print.marginRight">Right (in)</span><input type="number" id="m-right" min="0" max="5" step="0.05" /></label>
+            </div>
+          </div>
+          <div class="row" id="row-scale">
+            <label class="name" for="scale" data-i18n="print.scale">Scale</label>
+            <select id="scale"><option value="default" data-i18n="print.scaleDefault">Default</option><option value="custom" data-i18n="print.scaleCustom">Custom</option></select>
+            <div class="sub" id="scale-wrap" hidden><input type="number" id="scale-percent" min="10" max="200" step="1" aria-label="Scale percent" data-i18n-aria-label="print.scalePercent" /></div>
+          </div>
+          <div class="row" id="row-options">
+            <span class="name" data-i18n="print.options">Options</span>
+            <div>
+              <label class="check" id="check-hf"><input type="checkbox" id="headerFooter" /><span data-i18n="print.headerFooter">Headers and footers</span></label>
+              <label class="check" id="check-bg"><input type="checkbox" id="background" /><span data-i18n="print.background">Background graphics</span></label>
+              <label class="check" id="check-duplex" hidden><input type="checkbox" id="duplex" /><span data-i18n="print.twoSided">Two-sided</span></label>
+            </div>
+            <div class="sub" id="duplex-wrap" hidden><select id="duplex-edge" aria-label="Two-sided" data-i18n-aria-label="print.twoSided"><option value="longEdge" data-i18n="print.flipLong">Flip on long edge</option><option value="shortEdge" data-i18n="print.flipShort">Flip on short edge</option></select></div>
+          </div>
+        </details>
+        <button type="button" id="system"><span data-i18n="print.system">Print using system dialog…</span><kbd id="system-key"></kbd></button>
+      </div>
+      <div id="message" role="alert"></div>
+      <div id="buttons">
+        <button type="button" class="btn" id="cancel" data-i18n="print.cancel">Cancel</button>
+        <button type="button" class="btn primary" id="go" data-i18n="print.save">Save</button>
+      </div>
+    </div>
+  </div>
+  <script src="print-preview.js"></script>
+</body>
+</html>
