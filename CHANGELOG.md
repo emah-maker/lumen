@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The address bar keeps what you typed when you switch tabs.** Type something in the address bar, switch to another tab and come back, and your text is still there with the caret where it was (and the cursor back in the address bar if it was there when you left), as in Chrome. Each tab keeps its own, so the other tab shows its own address. Pressing Enter, picking a suggestion or pressing Escape clears it, and so does closing the tab. It works in private windows and detached windows too. What you typed is only held in memory while Lumen is open: it is not saved, synced or shared with the AI or extensions.
+
 ## 0.5.15 (2026-10-05)
 
 - **Fewer surprise sign-outs for Grok Build and Codex.** When Grok or Codex refreshed its sign-in, Lumen could keep an older copy of the sign-in file (Grok: after Lumen quit mid-reply; Codex: each chat had its own copy, so one chat's refresh left the others with a token that no longer worked), and the next message asked you to sign in again. Lumen now keeps every copy at the newest one and never lets an older file replace a newer one. A network or timeout error that merely mentioned "authentication" is also no longer shown as "please sign in again" for Claude Code, Codex or Grok Build. Lumen still never reads what is in those files.

@@ -14,6 +14,13 @@ const findText = document.getElementById('find-text');
 const findCount = document.getElementById('find-count');
 let edited = false; // typed in since it was focused: a page loading then leaves the box alone
 let last = { tabs: [], url: '' };
+// Per-tab address-bar drafts (omnibox-draft.js), in memory only: text typed and not submitted stays with its tab.
+const drafts = window.omniboxDraft.createDraftStore();
+let activeTabId = null;
+let leavingFocused = false; // a press on the tab strip left the address while it had focus (it blurs before the tab switches)
+let leavingTimer = 0;
+let restoring = false; // a restored draft keeps its caret: only a fresh focus selects the whole address
+let showingDraft = false; // the field shows a restored draft without focus: a page loading must not rewrite it
 
 if (api.platform === 'darwin') document.body.classList.add('mac');
 const tr = (key, fallback, vars) => { const out = t(key, vars); return out === key ? fallback : out; };
@@ -124,7 +131,20 @@ function renderSecurity(state) {
 }
 
 function render(state) {
+  const prev = last;
   last = state;
+  const nowId = state.tabs.find((tab) => tab.active)?.id ?? null;
+  drafts.prune(state.tabs.map((tab) => tab.id));
+  let draft = null;
+  if (nowId !== activeTabId) {
+    // The field still holds what the tab just left was showing (or the user typed over it): keep an edit with that tab.
+    if (activeTabId != null) drafts.save(activeTabId, { value: address.value, start: address.selectionStart, end: address.selectionEnd, focused: leavingFocused || document.activeElement === address }, prev.url);
+    activeTabId = nowId;
+    leavingFocused = false;
+    draft = drafts.get(nowId);
+    edited = Boolean(draft);
+    showingDraft = false;
+  }
   const ids = new Set(state.tabs.map((tab) => tab.id));
   for (const [id, entry] of tabEls) if (!ids.has(id)) { entry.el.remove(); tabEls.delete(id); }
   state.tabs.forEach((tab, i) => {
@@ -148,7 +168,15 @@ function render(state) {
   const reloadLabel = state.loading ? tr('private.stop', 'Stop loading') : tr('private.reload', 'Reload');
   reloadBtn.title = reloadLabel;
   reloadBtn.setAttribute('aria-label', reloadLabel);
-  if (!edited || document.activeElement !== address) address.value = state.url;
+  if (draft) {
+    // Back on a tab with an unsent edit: its text, caret and focus return as they were left.
+    address.value = draft.text;
+    restoring = true;
+    if (draft.focused) address.focus();
+    restoring = false;
+    address.setSelectionRange(draft.start, draft.end);
+    showingDraft = !draft.focused;
+  } else if (!leavingFocused && !showingDraft && (!edited || document.activeElement !== address)) address.value = state.url;
   renderSecurity(state);
   const zoomed = state.url && /^https?:/i.test(state.url) && state.zoom && state.zoom !== (state.defaultZoom || 100);
   zoomChip.hidden = !zoomed;
@@ -206,12 +234,19 @@ downloadsBtn.addEventListener('click', () => {
   const r = downloadsBtn.getBoundingClientRect();
   api.send('private:downloads', { x: r.left, y: r.bottom });
 });
-address.addEventListener('focus', () => address.select());
+tabsEl.addEventListener('pointerdown', () => {
+  leavingFocused = document.activeElement === address && document.hasFocus();
+  clearTimeout(leavingTimer);
+  leavingTimer = setTimeout(() => { leavingFocused = false; }, 1500);
+}, true);
+address.addEventListener('focus', () => { showingDraft = false; if (!restoring) address.select(); });
 address.addEventListener('input', () => { edited = true; });
 address.addEventListener('blur', () => { edited = false; });
 address.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   // Escape puts the address back as it was; a second one (or one on an untouched box) returns to the page.
+  drafts.clear(activeTabId);
+  showingDraft = false;
   if (address.value !== last.url) { address.value = last.url; edited = false; address.select(); return; }
   address.blur();
   if (last.url) api.send('private:focus-page');
@@ -220,6 +255,8 @@ document.getElementById('address-form').addEventListener('submit', (e) => {
   e.preventDefault();
   if (!address.value.trim()) return;
   api.send('private:go', address.value);
+  drafts.clear(activeTabId);
+  showingDraft = false;
   edited = false;
   address.blur();
 });
