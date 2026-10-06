@@ -880,6 +880,8 @@
   "settings.ai.antigravityFullAccessDesc": "Runs commands and edits files without asking first. Lumen’s approval cards don’t cover Antigravity’s own tools.",
   "settings.ai.codexFullAccess": "Give Codex full access to this computer",
   "settings.ai.codexFullAccessDesc": "Runs commands and edits files without asking first, with its sandbox off. Lumen’s approval cards don’t cover Codex’s own tools.",
+  "settings.ai.grokTerminal": "Let Grok Build ask to run terminal commands",
+  "settings.ai.grokTerminalDesc": "Grok Build in the sidebar can ask to run a command on this computer, and runs it only if you approve. Off: it is told no every time, without asking you. Turning it off can also stop antivirus warnings about Grok’s chat logs.",
   "settings.ai.grokWarmup": "Warm up Grok Build when Lumen starts",
   "settings.ai.grokWarmupDesc": "Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.",
   "settings.ai.grokKeepConnected": "Keep Grok Build connected",

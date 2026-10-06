@@ -124,6 +124,7 @@ const DEFAULTS = {
   codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings > AI)
   codexFullAccess: false, // [ai] Codex in the sidebar runs with --sandbox danger-full-access and its own shell, patch and web tools on (ai/codex.js FULL_ON)
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
+  grokTerminal: true, // [ai] Grok Build in the sidebar may ask to run terminal commands (approval card each time); off: every call is denied without asking (automation/mcp-http.js terminalDecision)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
   grokKeepConnected: false, // [ai] each Grok Build chat keeps its own `grok agent stdio` process between messages (features/grok-warm.js)
   codexKeepConnected: true, // [ai] each Codex chat keeps its own `codex app-server` process between messages (features/codex-warm.js); ~80 MB each while it waits
