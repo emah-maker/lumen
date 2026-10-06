@@ -41,7 +41,7 @@ const { shortcutMod } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
 const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
-const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
+const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
 const { createBurstLimit } = require('./features/popup-guard'); // caps windows/tabs one page opens in a burst
@@ -808,6 +808,9 @@ ipcMain.on('page-dialog', (event, req) => {
   const wc = event.sender;
   const silence = () => { event.returnValue = req.kind === 'confirm' ? false : req.kind === 'prompt' ? null : undefined; };
   if (dialogs.isOwnView(wc)) return silence(); // ignore requests from the overlay itself
+  // [page debug] The AI is working in this tab: its alert is accepted and noted, a confirm/prompt waits for handle_dialog (ai/page-debug.js).
+  const respond = (accept, text) => { event.returnValue = req.kind === 'confirm' ? accept === true : req.kind === 'prompt' ? (accept === true ? String(text ?? req.defaultValue ?? '') : null) : undefined; };
+  if (pageDebugShared.pageDialog(wc, req, respond)) return;
   if (agentContents.has(wc)) return silence(); // [agent window] alert is dismissed, confirm says no, prompt cancels: nothing waits for a person who is not there
   const entry = pageDialogEntry(wc);
   if (entry.muted) return silence();

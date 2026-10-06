@@ -92,7 +92,18 @@ function backgroundReadScript() {
         ${readabilitySrc}
         ${readerableSrc}
         if (!isProbablyReaderable(document)) return null;
-        const a = new Readability(document.cloneNode(true)).parse();
+        const doc = document.cloneNode(true);
+        // A heading wrapped with small links of its own (Wikipedia's div.mw-heading + "[edit]", a "#" permalink) reads to
+        // Readability as a short, link-heavy block and is dropped with its wrapper: the article lost every section title.
+        // The heading is kept alone.
+        for (const h of doc.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+          const w = h.parentElement;
+          if (!w || w === doc.body || !/^(DIV|HEADER|SPAN|HGROUP)$/.test(w.tagName)) continue;
+          const others = [...w.children].filter((c) => c !== h);
+          const extra = (w.textContent || '').trim().length - (h.textContent || '').trim().length;
+          if (others.length && extra <= 30 && others.every((c) => (c.textContent || '').trim().length <= 24)) w.replaceWith(h);
+        }
+        const a = new Readability(doc).parse();
         return a && a.content ? { title: a.title || '', byline: a.byline || '', content: a.content.slice(0, 600000) } : null;
       };
       article = run();
@@ -116,7 +127,8 @@ const readBackground = (wc, timeoutMs = 12000) => runIn(wc, backgroundReadScript
 // A background read -> { title, text, health }: the result text is the health line (when the page is not fine), the
 // chunk of the page asked for (Readability's article as markdown when the page is one and it did not lose most of the
 // text, else the plain visible text), a note for the next chunk, and compact structured data.
-function finishRead(raw, { maxChars, offset } = {}) {
+// requested: the address asked for (a redirect from it to a sign-in page is a wall: page-health.js loginRedirect).
+function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
   const probe = raw.probe || {};
   const text = String(raw.text || '');
   let body = text;
@@ -126,7 +138,7 @@ function finishRead(raw, { maxChars, offset } = {}) {
     const by = raw.article.byline ? `By ${String(raw.article.byline).replace(/\s+/g, ' ').trim()}\n\n` : '';
     if (md.length >= 400 && md.length >= text.length * 0.25) { body = by + md; article = true; }
   }
-  const verdict = health.classifyPage({ ...probe, title: raw.title, textHead: text.slice(0, 3000), textLen: raw.textLen ?? text.length });
+  const verdict = health.classifyPage({ ...probe, title: raw.title, textHead: text.slice(0, 3000), textLen: raw.textLen ?? text.length, loginRedirect: Boolean(requested) && health.loginRedirect(requested, raw.url) });
   const first = !(Number(offset) > 0);
   const shell = verdict.kind === 'js_shell' || verdict.kind === 'data_shell';
   const slice = health.slicePage(body, { maxChars, offset });
