@@ -20,6 +20,19 @@ const CONSENT = /(accept|agree to) (all )?(cookies|the use of cookies|our cookie
 const NOT_FOUND = /\b404\b|page (can ?not|could not|can't|was not|wasn't|is not) (be )?found|not found|no longer (available|exists?)|(does not|doesn't) exist|nothing (here|found)|couldn't find (that|this|the) page|this page (is gone|has been removed)|no such page/i;
 const NEEDS_JS = /enable javascript|requires javascript|javascript is (disabled|required)|turn on javascript|you need to enable javascript/i;
 
+// A read that asked for one page and landed on a sign-in page instead (x.com/home -> /i/flow/login, a LinkedIn feed ->
+// /authwall): the site sent a signed-out reader to log in. Its text alone often says nothing a pattern can catch (a
+// script-drawn login form, a few words), so the address is the signal. Asking for a login page itself is not a wall.
+const LOGIN_PATH = /(^|\/)(log-?in|sign-?in|sign_in|signon|authwall|uas\/login|accounts\/login|i\/flow\/login|auth\/login|sso)(\/|\.|$)/i;
+const LOGIN_QUERY = /(^|&)(mode=login|redirect_after_login=|session_redirect=)/i;
+function loginRedirect(requested, landed) {
+  let a; let b;
+  try { a = new URL(requested); b = new URL(landed); } catch { return false; }
+  if (a.host === b.host && a.pathname === b.pathname) return false;
+  const looksLogin = (u) => LOGIN_PATH.test(u.pathname) || LOGIN_QUERY.test(u.search.slice(1));
+  return looksLogin(b) && !looksLogin(a);
+}
+
 function classifyPage(sig = {}) {
   const textLen = Number(sig.textLen) || 0;
   const head = String(sig.textHead || '').slice(0, 3000);
@@ -30,6 +43,7 @@ function classifyPage(sig = {}) {
   const islandBytes = Number(sig.islandBytes) || 0;
   // Walls are short: a long article that mentions "subscribe to continue" in a footer is still an article.
   if (textLen < 4000) {
+    if (sig.loginRedirect) return { kind: 'wall', reason: 'sign-in' };
     if ((sig.hasCaptcha && textLen < 1500) || BOT.test(both)) return { kind: 'wall', reason: 'bot check' };
     if (CONSENT.test(both) && textLen < 1500) return { kind: 'wall', reason: 'consent' };
     if (PAYWALL.test(both) && textLen < 2500) return { kind: 'wall', reason: 'paywall' };
@@ -247,4 +261,4 @@ function slicePage(text, { maxChars, offset } = {}) {
   return { text: text.slice(from, to), from, to, total, more, note };
 }
 
-module.exports = { classifyPage, healthLine, compactJson, extractAssignedJson, jsonLdEntities, formatStructured, summarizeStructured, unwrapIsland, slicePage, clampChars, MAX_CHARS_DEFAULT };
+module.exports = { classifyPage, loginRedirect, healthLine, compactJson, extractAssignedJson, jsonLdEntities, formatStructured, summarizeStructured, unwrapIsland, slicePage, clampChars, MAX_CHARS_DEFAULT };

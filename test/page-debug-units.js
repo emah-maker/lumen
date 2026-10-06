@@ -251,6 +251,29 @@ const req = (id, over = {}) => ({ id, method: 'GET', url: 'https://api.test/v1/i
     check('dialogs: a tab with no debugger of ours: no control, and handle_dialog says so', pc.dialogControl === false && /another debugger/.test(await refused(() => dbg.handleDialog(plain, { accept: true })) || ''));
   }
 
+  // ---- Lumen's own page dialogs (preload/page-dialogs-preload.js -> main.js 'page-dialog' -> pageDialog): CDP never sees them
+  {
+    const dbg = new D.PageDebug({ now });
+    const wc = fakeWc(fakeSession(), { attached: false });
+    const answers = [];
+    const respond = (accept, text) => answers.push([accept, text]);
+    check('own dialogs: a tab the AI never used is left to the user', dbg.pageDialog(wc, { kind: 'alert', message: 'hi' }, respond) === false && !answers.length);
+    const cap = dbg.watch(wc);
+    clockNow += 60000;
+    check('own dialogs: nor one the AI last worked in a minute ago', dbg.pageDialog(wc, { kind: 'confirm', message: 'x' }, respond) === false && !answers.length);
+    cap.busy = 1;
+    check('own dialogs: while an AI tool runs an alert is accepted at once and noted', dbg.pageDialog(wc, { kind: 'alert', message: 'Saved' }, respond) === true && answers.length === 1 && answers[0][0] === true && /accepted automatically: alert "Saved"/.test(dbg.headerFor(wc)));
+    cap.busy = 0; cap.lastAiAt = now();
+    check('own dialogs: just after a tool, a confirm is held (not answered) and shows in the header', dbg.pageDialog(wc, { kind: 'confirm', message: 'Delete?' }, respond) === true && answers.length === 1 && /Dialog open: confirm "Delete\?"/.test(dbg.headerFor(wc)));
+    check('own dialogs: handle_dialog answers it through Lumen (no debugger needed)', /^Accepted the confirm/.test(await dbg.handleDialog(wc, { accept: true })) && answers.at(-1)[0] === true && cap.dialog === null);
+    dbg.pageDialog(wc, { kind: 'prompt', message: 'Name?', defaultValue: 'x' }, respond);
+    await dbg.handleDialog(wc, { accept: true, text: 'Ada' });
+    check('own dialogs: a prompt gets the text', answers.at(-1)[0] === true && answers.at(-1)[1] === 'Ada');
+    dbg.pageDialog(wc, { kind: 'confirm', message: 'Leave?' }, respond);
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    check('own dialogs: one still held when the page goes is answered "no" (the page is not left blocked)', answers.at(-1)[0] === false && cap.dialog === null);
+  }
+
   // ---- through the Agent: the tools, the headers, wait_for
   {
     const ses = fakeSession();

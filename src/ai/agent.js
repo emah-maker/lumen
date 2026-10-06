@@ -1189,7 +1189,7 @@ async function readInBackground(url, guard = () => null, { wait, maxChars, offse
     await quietWait(wc);
     // The article as markdown when the page is one, else the visible text; health line, a note for the next chunk
     // (offset) and compact structured data around it (page-reading.js).
-    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset });
+    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset, requested: url });
     healthy = true;
     return { url: wc.getURL() || url, title: page.title, text: page.text };
   } catch (err) {
@@ -4082,12 +4082,15 @@ ${out.text}${note}
     let call = () => this.executeGuarded(name, input);
     if (AI_NAV_TOOLS.has(name)) { const inner = call; call = () => dbg.withAiNavigation(wc, inner); }
     let result;
+    if (cap) cap.busy++; // (a page dialog opened now is the AI's: page-debug.js pageDialog)
     try {
       result = safe ? await call() : await dbg.race(wc, call());
     } catch (err) {
       const head = dbg.headerFor(wc);
       if (head && err && typeof err.message === 'string') err.message = `${head}${err.message}`;
       throw err;
+    } finally {
+      if (cap) { cap.busy--; cap.lastAiAt = cap.now(); }
     }
     if (result && typeof result === 'object' && !Array.isArray(result) && result.dialog) return blocked(); // (the abandoned call settles on its own)
     const head = dbg.headerFor(wc);
@@ -4737,4 +4740,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };

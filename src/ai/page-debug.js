@@ -152,7 +152,13 @@ class TabCapture {
     this.dialog = null; // a confirm/prompt held for handle_dialog
     this.notes = []; // automatic dialog answers not yet told to the model
     this.waiters = new Set(); // called when a dialog is held
+    this.busy = 0; // AI tool calls running on this tab (agent.js executeDebugged)
+    this.lastAiAt = 0; // when the last one ended
   }
+
+  // The AI is working in the tab: a tool call is running there, or one ended in the last AI_DIALOG_MS (a click's dialog can
+  // open just after the click returns). Only then is a page's dialog the AI's to answer (PageDebug.pageDialog).
+  aiActive() { return this.busy > 0 || this.now() - this.lastAiAt < AI_DIALOG_MS; }
 
   addConsole(entry) { this.console.push({ ...entry, seq: ++this.seq, t: this.now() }); }
 
@@ -181,12 +187,19 @@ class TabCapture {
     this.dialog = dialog;
     for (const fn of [...this.waiters]) fn(dialog);
   }
-  release() { this.dialog = null; }
+  // settle: the page is going away (navigation, crash) with a dialog of Lumen's own still held: answer it "no" so the page's
+  // blocked call returns (a CDP dialog closes with its page by itself).
+  release({ settle = false } = {}) {
+    const d = this.dialog;
+    this.dialog = null;
+    if (settle && d?.respond) { try { d.respond(false); } catch { /* the page is gone */ } }
+  }
   note(n) { this.notes.push(n); if (this.notes.length > 5) this.notes.shift(); }
 }
 
 // ---- the manager
 
+const AI_DIALOG_MS = 3000;
 const WEB_FILTER = { urls: ['http://*/*', 'https://*/*'] };
 
 class PageDebug {
@@ -208,8 +221,8 @@ class PageDebug {
     const id = wc.id;
 
     const onConsole = (...args) => { const e = normalizeConsole(...args); if (e.text) cap.addConsole(e); };
-    const onGone = (_e, details) => { cap.addConsole({ level: 'error', text: `The page crashed (${details?.reason || 'unknown reason'})`, line: 0, source: '' }); cap.open.clear(); cap.tracker.clear(); cap.release(); };
-    const onNav = (details) => { const d = details?.isMainFrame !== undefined ? details : { isMainFrame: true }; if (d.isMainFrame && !d.isSameDocument) cap.release(); }; // a dialog does not outlive its page
+    const onGone = (_e, details) => { cap.addConsole({ level: 'error', text: `The page crashed (${details?.reason || 'unknown reason'})`, line: 0, source: '' }); cap.open.clear(); cap.tracker.clear(); cap.release({ settle: true }); };
+    const onNav = (details) => { const d = details?.isMainFrame !== undefined ? details : { isMainFrame: true }; if (d.isMainFrame && !d.isSameDocument) cap.release({ settle: true }); }; // a dialog does not outlive its page
     const onMessage = (_e, method, params, sessionId) => this.onDebuggerMessage(cap, method, params, sessionId);
     wc.on('console-message', onConsole);
     wc.on('render-process-gone', onGone);
@@ -273,7 +286,30 @@ class PageDebug {
     cap.addConsole({ level: 'warning', text: `[dialog] ${dialogNote({ ...dialog, action })}`, line: 0, source: '' });
   }
 
+  // Lumen draws a page's alert/confirm/prompt itself (preload/page-dialogs-preload.js asks main.js over a sync IPC and the page
+  // waits for the answer), so CDP's Page.javascriptDialogOpening never fires for them: main.js offers each one here first.
+  // respond(accept, promptText) answers the page. -> true when it is the AI's to handle (the AI is working in the tab:
+  // TabCapture.aiActive), with the same policy as a CDP dialog (an alert accepted and noted, a confirm/prompt held for
+  // handle_dialog); false: the user's overlay shows it as before.
+  pageDialog(wc, { kind, message, defaultValue } = {}, respond) {
+    const cap = this.captureOf(wc);
+    if (!cap || !cap.aiActive() || typeof respond !== 'function') return false;
+    const type = kind === 'confirm' || kind === 'prompt' ? kind : 'alert';
+    const dialog = { type, message: String(message ?? ''), defaultPrompt: String(defaultValue ?? ''), respond };
+    const action = dialogPolicy({ type, aiNavigating: cap.aiNav > 0 });
+    if (action === 'hold') {
+      cap.release({ settle: true }); // (one page cannot have two open; a stale one is answered "no")
+      cap.hold(dialog);
+      return true;
+    }
+    respond(action === 'accept');
+    cap.note({ ...dialog, action });
+    cap.addConsole({ level: 'warning', text: `[dialog] ${dialogNote({ ...dialog, action })}`, line: 0, source: '' });
+    return true;
+  }
+
   async answer(cap, dialog, accept, promptText) {
+    if (dialog.respond) return dialog.respond(accept, promptText); // one of Lumen's own (pageDialog)
     const params = { accept, ...(promptText !== undefined ? { promptText } : {}) };
     await cap.wc.debugger.sendCommand('Page.handleJavaScriptDialog', params, dialog.sessionId);
   }
@@ -281,8 +317,8 @@ class PageDebug {
   // handle_dialog. Returns the text for the model; throws when there is nothing to answer.
   async handleDialog(wc, { accept, text } = {}) {
     const cap = this.captureOf(wc);
-    if (!cap?.dialogControl) throw new Error('Lumen cannot see dialogs on this tab (another debugger is attached to it).');
-    const dialog = cap.dialog;
+    const dialog = cap?.dialog;
+    if (!cap?.dialogControl && !dialog?.respond) throw new Error('Lumen cannot see dialogs on this tab (another debugger is attached to it).');
     if (!dialog) throw new Error('No confirm or prompt dialog is open on that tab.');
     await this.answer(cap, dialog, accept === true, dialog.type === 'prompt' && accept === true ? String(text ?? '') : undefined);
     cap.release();
