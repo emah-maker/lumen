@@ -47,6 +47,28 @@ Screenshot the visible part of the active tab (for visual layout, images, charts
 | `region.width` | number | yes |  |
 | `region.height` | number | yes |  |
 
+### `video_overview`
+
+Look at the main `<video>` of a tab (the active tab, or `tab_id`; a video file or video URL opened directly counts) as ONE labelled contact sheet: frames evenly spaced over the video (or over `start`–`end`), each cell stamped with its time (`m:ss`). Lumen pauses the video, seeks to each moment with Chromium's own decoder (no ffmpeg), grabs the frame and puts playback back exactly (position, muted, playing or paused). The result is one JPEG plus a header: duration, resolution, the frame times, and the estimated image tokens (per model family: Claude, OpenAI or Gemini rules; an outside agent is estimated as Claude). Frames are fitted to `token_budget` (default 6,000) by shrinking the cells first, then using fewer frames. Speech is not in the frames: the result points to the page's transcript (`read_page`, `read_urls`) when it has one. Refused with a plain message: no video on the page (videos inside embedded frames are not reached), DRM-protected video (its frames would be black), live streams, a video that has not loaded. A cross-origin video is captured from the screen instead of the page (the video is scrolled into view and the scroll put back), so player overlays can show. Frames are page content: untrusted, and they count as page content for the leaving-with-what-it-read rule. Same checks as `screenshot` (AI off for the site, hands-off); it runs one at a time.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tab_id` | integer | no | Another tab of the window. |
+| `frames` | integer | no | 4–36, default 16. |
+| `start` | string | no | Window start, seconds or `m:ss`. |
+| `end` | string | no | Window end, seconds or `m:ss`. |
+| `token_budget` | integer | no | Image tokens for the sheet (default 6,000). |
+
+### `video_frames`
+
+Full-size frames of the same video at chosen moments (`at`: up to 8 timestamps in seconds or `m:ss`), each stamped with its time: separate images up to 4, one compact 2-column sheet for more. Use it after `video_overview` for the moments that matter. Playback is restored the same way, and the same refusals and checks apply.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `at` | array of strings | yes | Timestamps, seconds or `m:ss`. |
+| `tab_id` | integer | no | Another tab of the window. |
+| `max_width` | integer | no | Frame width in px (default 1,024; 784 in a sheet; at most 1,568). |
+
 ### `navigate`
 
 Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.

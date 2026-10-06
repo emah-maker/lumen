@@ -3008,6 +3008,8 @@ const TOOL_LABELS = {
   ungroup_tabs: () => t('tool.ungroup_tabs'),
   read_urls: () => t('tool.read_urls'),
   read_pdf: () => t('tool.read_pdf'),
+  video_overview: () => t('tool.video_overview'),
+  video_frames: () => t('tool.video_frames'),
   read_tabs: (i) => t(i.ids?.length === 1 ? 'tool.read_tabs.one' : 'tool.read_tabs.other', { count: i.ids?.length || 0 }),
   run_script: () => t('tool.run_script'),
   wait_for: (i) => (i.text ? t('tool.wait_for', { text: i.text }) : t('tool.wait_for.page')),

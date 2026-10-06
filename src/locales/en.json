@@ -1275,6 +1275,8 @@
   "tool.get_network": "Reading the page requests",
   "tool.handle_dialog": "Answering a page dialog",
   "tool.upload_file": "Uploading a file",
+  "tool.video_frames": "Looking at video frames",
+  "tool.video_overview": "Looking over the video",
   "tool.web_search": "Searching the web: {query}",
   "toolbar.ai": "AI assistant",
   "toolbar.ai.title": "AI (Ctrl+J)",

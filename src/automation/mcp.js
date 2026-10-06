@@ -56,7 +56,7 @@ function clientLabel(info = {}) {
 
 // Tools that only read: MCP clients may run them without asking the user (Codex asks before every call of a tool that is not
 // marked read-only). Lumen's own approval card for sites and for acting tools is unchanged: it is in callTool.
-const READ_ONLY_TOOLS = new Set(['read_page', 'read_tabs', 'read_urls', 'read_pdf', 'list_tabs', 'find', 'screenshot', 'web_search', 'wait', 'wait_for', 'analyze_posts', 'get_console', 'get_network']);
+const READ_ONLY_TOOLS = new Set(['read_page', 'read_tabs', 'read_urls', 'read_pdf', 'list_tabs', 'find', 'screenshot', 'video_overview', 'video_frames', 'web_search', 'wait', 'wait_for', 'analyze_posts', 'get_console', 'get_network']);
 // (destructiveHint and openWorldHint are left out: destructiveHint means nothing on a read-only tool, and clients ask only by readOnlyHint.)
 const ANNOTATIONS = { readOnlyHint: true };
 const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? ANNOTATIONS : undefined);

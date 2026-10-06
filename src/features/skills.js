@@ -109,6 +109,11 @@ const BUILTINS = [
     prompt: 'Find out what people are saying about: {{input}}\nUse web_search to find recent discussions on Reddit, Hacker News and X, then read the best threads with read_urls. Report: Overall sentiment (positive, mixed or negative, with a rough share and your confidence), Themes (most common first, a line each), Notable quotes (exact, with the author or site and the URL), and Sources (every URL you read). Keep each platform separate if they disagree. Say which platforms returned nothing or could not be read, and never write a quote or a figure you did not see.',
     mode: 'agent', inputRequired: true,
   },
+  {
+    name: 'watch-video', title: 'Watch video', description: 'Look at the video in this tab and answer about it: /watch-video what does the demo show?',
+    prompt: 'Watch the video in this tab. Call video_overview first (pass start and end if I name a stretch). From the contact sheet pick the moments that matter, then call video_frames on them (up to 8) to read detail. If the page text below has a transcript or captions, use it for what was said. Cite times as m:ss. Describe only what the frames show: when something is not visible or not covered, say so and never guess.',
+    inputs: ['page'], mode: 'agent',
+  },
 ];
 const builtinId = (name) => `builtin:${name}`;
 
