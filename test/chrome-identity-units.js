@@ -160,6 +160,17 @@ const brandName = (b) => b.brand;
   run(ctx);
   check('patch: a second run leaves the same objects', get('chrome') === before && get('navigator.webdriver') === false, 'idempotent');
 
+  // toString is wrapped, and a TypeError raised inside the wrapper must not name it ("at Object.apply"), as no native toString does.
+  const stack = get('(() => { try { Function.prototype.toString.call({}); } catch (e) { return e.stack; } })()');
+  check('patch: toString on a non-function throws the same TypeError, with no "Object.apply" frame of ours in the stack', /requires that 'this' be a Function/.test(stack) && !/\bat (Object|Reflect)\.apply\b/.test(stack), stack);
+  check('patch: toString of toString still reads native and has no prototype property', get('Function.prototype.toString.call(Function.prototype.toString)') === 'function toString() { [native code] }' && get('Function.prototype.toString.hasOwnProperty("prototype")') === false, 'native');
+  // Google's sign-in hosts get the same Chrome identity as every page (a Firefox one there is refused).
+  const auth = page('globalThis.location = { protocol: "https:", hostname: "accounts.google.com" };');
+  run(auth);
+  check('patch: runs on accounts.google.com too (one identity everywhere, no per-host switch)', vm.runInContext('navigator.webdriver', auth) === false && vm.runInContext('typeof chrome', auth) === 'object', 'auth host');
+  // The text registry is shared with the preloads through toString itself: no property, no symbol on the wrapper.
+  check('patch: the wrapper has no extra own properties or symbols (nothing to find it by)', get('Object.getOwnPropertyNames(Function.prototype.toString).join()') === 'length,name' && get('Object.getOwnPropertySymbols(Function.prototype.toString).length') === 0, 'extras');
+  check('patch: a second script finds the same registry (toString.call(Symbol.for(...)) answers a WeakMap; the native one throws)', get('Function.prototype.toString.call(Symbol.for("lumen.nativeTexts")) instanceof WeakMap') === true, 'registry');
   // A page that already has window.chrome (an extension's, say) keeps it; only what is missing is added.
   const own = page('globalThis.chrome = { runtime: { id: "x" }, csi() { return "mine"; } };');
   run(own);
@@ -180,6 +191,13 @@ const brandName = (b) => b.brand;
   let threw = false;
   try { run(locked); } catch { threw = true; }
   check('patch: a locked-down page does not make it throw', !threw, 'threw');
+}
+
+// ---- Accept-Language goes last (after Referer, as Chrome sends it)
+{
+  const out = id.languageLast({ 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'UA', 'Accept-Language': 'en-US,en;q=0.9', Accept: '*/*', Referer: 'https://a.example/' });
+  check('headers: Accept-Language moved to the end, the rest in order', Object.keys(out).join() === 'Upgrade-Insecure-Requests,User-Agent,Accept,Referer,Accept-Language' && out['Accept-Language'] === 'en-US,en;q=0.9', Object.keys(out).join());
+  check('headers: no Accept-Language, nothing changes', Object.keys(id.languageLast({ A: '1', B: '2' })).join() === 'A,B', 'none');
 }
 
 // ---- the relaunched browser's switches

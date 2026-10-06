@@ -15,9 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const googleAuth = require('../browser/google-auth-identity');
 const { shortcutMod } = require('../browser/shortcut-mod');
-const firefoxProfile = googleAuth.firefoxProfile(process.platform);
 const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
@@ -122,9 +120,7 @@ function createPrivateWindows(deps) {
     else if (deps.chromeHintHeaders) {
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         let headers = details.requestHeaders;
-        if (googleAuth.isAuthUrl(details.url)) {
-          headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile); // Google's sign-in hosts see Firefox
-        } else if (/^https:/.test(details.url)) {
+        if (/^https:/.test(details.url)) {
           for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
           Object.assign(headers, deps.chromeHintHeaders);
         }
