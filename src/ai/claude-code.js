@@ -122,7 +122,9 @@ const IDLE_MS = 10 * 60 * 1000;
 // A process pre-warmed on composer focus (agent.js prewarm) that no message has taken is released after this long.
 const PREWARM_IDLE_MS = 10 * 60 * 1000;
 // The first turn's wait for the user's own MCP servers under full access (see spawnProc).
-const MCP_STARTUP_WAIT_MS = 3000;
+// (Lumen's own server is local HTTP and answers in well under a second. Measured 2026-10-05 with the user's real setup, full access,
+// cold start to the first model output: uncapped 37.8 s, 3 s cap 15.9 s, 1 s cap 14.8 s; the floor with only Lumen's server is 10.6 s.)
+const MCP_STARTUP_WAIT_MS = 1000;
 // After a pre-warmed process dies unused (a broken CLI, no sign-in), pre-warming pauses this long, doubling per
 // repeat up to the max; a successful turn resets it.
 const WARM_BACKOFF_MS = 5 * 60 * 1000;
