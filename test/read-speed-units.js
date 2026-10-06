@@ -20,6 +20,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   check('interactive: complete is done even with little text', loadDone('interactive', p({ readyState: 'complete', textChars: 3 })));
   check('load: only complete', !loadDone('load', p({ readyState: 'interactive', textChars: 9000 })) && loadDone('load', p({ readyState: 'complete' })));
   check('networkidle: needs 500 ms idle and nothing loading', !loadDone('networkidle', p({ readyState: 'complete', idleMs: 499, loading: false })) && !loadDone('networkidle', p({ readyState: 'complete', idleMs: 900, loading: true })) && loadDone('networkidle', p({ readyState: 'complete', idleMs: 500, loading: false })));
+  check('networkidle: the tab request tracker (netIdle) overrides the idleMs guess', !loadDone('networkidle', p({ readyState: 'complete', idleMs: 5000, loading: false, netIdle: false })) && loadDone('networkidle', p({ readyState: 'complete', idleMs: 0, loading: false, netIdle: true })) && !loadDone('networkidle', p({ readyState: 'complete', idleMs: 0, loading: true, netIdle: true })));
   check('every mode ends at the cap', MODES.every((m) => loadDone(m, p({}), 15000, 15000)) && !loadDone('load', p({}), 14999, 15000));
   check('no probe is never done before the cap', !loadDone('interactive', null, 100, 15000) && loadDone('interactive', null, 15000, 15000));
   check('probe script is an expression string', typeof PROBE_SCRIPT === 'string' && (() => { try { new Function(`return ${PROBE_SCRIPT}`); return true; } catch { return false; } })());

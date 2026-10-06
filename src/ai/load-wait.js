@@ -13,13 +13,15 @@ const IDLE_MS = 500;
 
 const normalizeWait = (value, fallback = DEFAULT_WAIT) => (MODES.includes(value) ? value : fallback);
 
-// probe: { readyState, textChars, idleMs (since the last resource finished), loading (wc.isLoading()) }
+// probe: { readyState, textChars, idleMs (since the last resource finished), loading (wc.isLoading()), netIdle? }
+// netIdle (optional): the tab's own request tracker says the network is quiet (page-debug.js / idle-tracker.js: it sees
+// requests still in flight, and ignores analytics and long-polls); when given it replaces the idleMs guess.
 function loadDone(mode, probe, elapsedMs = 0, capMs = 15000) {
   if (elapsedMs >= capMs) return true;
   const rs = probe?.readyState;
   const parsed = rs === 'interactive' || rs === 'complete';
   if (mode === 'load') return rs === 'complete';
-  if (mode === 'networkidle') return rs === 'complete' && !probe.loading && probe.idleMs >= IDLE_MS;
+  if (mode === 'networkidle') return rs === 'complete' && !probe.loading && (typeof probe.netIdle === 'boolean' ? probe.netIdle : probe.idleMs >= IDLE_MS);
   return rs === 'complete' || (parsed && probe.textChars >= MEANINGFUL_TEXT);
 }
 

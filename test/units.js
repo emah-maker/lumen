@@ -965,7 +965,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
     const sys = a.system[0].text;
     check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
-    check('request: tool definitions stay under 10.5k chars (about 2.6k tokens; was 10k before get_console, get_network, handle_dialog and wait_for url/gone/network_idle added ~1.4k)', JSON.stringify(a.tools).length < 10500, String(JSON.stringify(a.tools).length));
+    check('request: tool definitions stay under 11.5k chars (about 2.9k tokens; 11.2k with the reading and debug tools of 2026-10: analyze_posts ~0.6k, get_console/get_network/handle_dialog and wait_for url/gone/network_idle ~1.4k, read_page outline/site/structured and read_urls wait/max_chars/offset ~0.3k)', JSON.stringify(a.tools).length < 11500, String(JSON.stringify(a.tools).length));
   }
 
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];

@@ -1078,7 +1078,8 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
 // real text, so a page that is slow only in images, ads and trackers is read in a fraction of the time, while a JS shell
 // with no text yet keeps waiting for the load; "networkidle" also waits for the late fetches. Never longer than capMs.
 // Never throws: a failed load just ends the wait (the caller reads whatever page or error page is there).
-async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000) {
+// `netIdle()` (optional): true/false from the tab's request tracker (page-debug.js), undefined when it has none.
+async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle } = {}) {
   const t0 = Date.now();
   let loaded = false;
   const full = wc.loadURL(url).catch(() => {}).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
@@ -1092,7 +1093,7 @@ async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000) {
     const elapsed = Date.now() - t0;
     const probe = await runScript(wc, PROBE_SCRIPT, 2000).catch(() => null);
     if (loaded && !probe) return; // nothing to measure (a failed load)
-    if (probe && loadDone(mode, { ...probe, loading: wc.isLoading() }, elapsed, capMs)) return;
+    if (probe && loadDone(mode, { ...probe, loading: wc.isLoading(), netIdle: netIdle?.() }, elapsed, capMs)) return;
     if (elapsed >= capMs) return;
     await sleep(150);
   }
@@ -4234,7 +4235,10 @@ ${same}
         const url = webUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
         const wait = normalizeWait(input.wait);
-        await loadPage(wc, url, wait); // redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js)
+        // Redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js); networkidle asks the tab's own
+        // request tracker when it has one (executeDebugged started it), the same one wait_for network_idle uses.
+        const tracker = pageDebugShared.captureOf(wc)?.tracker;
+        await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined });
         // Returned early (the page shows text, images and trackers still loading): only the DOM settling is waited for, not the rest of the load.
         if (wait === 'interactive' && wc.isLoading()) await quietWait(wc);
         else await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for

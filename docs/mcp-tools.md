@@ -31,7 +31,7 @@ A full read of a page that is not fine starts with one line, `Page: js_shell | w
 | `extract` | `tables`, `links`, `lists` |  | Return these as JSON instead of a page read: tables (rows of cells, up to 5 tables), links (`[text, href]`, up to 80), lists (items of up to 8 lists). |
 | `selector` | string |  | extract: limit to this CSS selector. |
 
-On a Reddit, Hacker News, YouTube, X, TikTok or GitHub page, a plain `read_page` (no `mode`, offsets, `elements` or `extract`) returns that site's [structured view](#site-views) instead of the raw page text. It has no element ids: use `mode:"compact"` or `find` to click, or `mode:"full"` for the raw page.
+On a Reddit, Hacker News, YouTube, X, TikTok or GitHub page, a plain `read_page` (no `mode`, offsets, `elements`, `structured`, `selector` or `extract`), or `mode:"site"`, returns that site's [structured view](#site-views) instead of the raw page text. It has no element ids: use `mode:"compact"` or `find` to click, or `mode:"full"` for the raw page.
 
 ### `screenshot`
 
@@ -58,7 +58,7 @@ Load a URL in the active tab. read:true also returns the new outline; wait_for w
 | `wait_for` | string |  |
 | `wait` | `interactive` \| `load` \| `networkidle` |  |
 
-`wait` says when the page counts as loaded. `interactive` (the default) returns as soon as the page's DOM is ready and already shows real text, without waiting for images, ads and trackers; a page with no text yet (a JavaScript app shell) is still waited for until it loads. `load` waits for the load event, `networkidle` also for ~500 ms without network activity. All are capped.
+`wait` says when the page counts as loaded. `interactive` (the default) returns as soon as the page's DOM is ready and already shows real text, without waiting for images, ads and trackers; a page with no text yet (a JavaScript app shell) is still waited for until it loads. `load` waits for the load event, `networkidle` also for ~500 ms without network activity (on a tab, judged by the same request tracker as `wait_for` `network_idle`, which ignores analytics and long-polls). All are capped.
 
 ### `click`
 
@@ -88,18 +88,20 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:tr
 | Parameter | Type | Required |
 |---|---|---|
 | `urls` | string[] | yes |
+| `wait` | `interactive` \| `load` \| `networkidle` | no |
 | `max_chars` | integer | no |
 | `offset` | integer | no |
 | `as_user` | boolean | no |
-| `wait` | `interactive` \| `load` \| `networkidle` | no |
 
 `wait` is the same as on `navigate` (default `interactive`). Pages are read in reused hidden views with images, media and web fonts not loaded, and a page read a moment ago (same chat, within 5 minutes, same options) is returned from a small cache instead of being fetched again; `as_user` reads are never cached.
 
 `max_chars` is the chunk size per page (1000-30000, default 8000) and `offset` the character to start at (take it from the previous result's note). Signed-in (`as_user`) reads are not chunked yet.
 
+`as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
+
 ### Site views
 
-`read_urls` (signed out) and a plain `read_page` read these addresses from the site's own compact feed instead of the page, so a long thread is not cut off in the middle of its comments. The text starts with `Source: <site> (<how>)` and stays inside `<untrusted_page_content>`; all approval, redirect and site-off rules apply first. If the feed fails, is blocked or rate limited, or the page is private, the normal page read is used. Read-only: no cookies are sent and nothing is posted or changed. Each view is capped at 8,000 characters (comments are flattened one per line, `[d2] u/name 1.2k · 3h: text`, deepest replies dropped first, with a count of what was left out).
+`read_urls` (signed out) and a plain `read_page` read these addresses from the site's own compact feed instead of the page, so a long thread is not cut off in the middle of its comments. The text starts with `Source: <site> (<how>)` and stays inside `<untrusted_page_content>`; all approval, redirect and site-off rules apply first. If the feed fails, is blocked or rate limited, or the page is private, the normal page read is used. Read-only: no cookies are sent and nothing is posted or changed. In `read_urls` each view is capped at `max_chars` (default 8,000; a plain `read_page` uses 8,000), and `offset` pages through a longer view with the same next-offset note as a page read (comments are flattened one per line, `[d2] u/name 1.2k · 3h: text`, deepest replies dropped first, with a count of what was left out).
 
 | Site | Addresses | Source |
 |---|---|---|
@@ -109,8 +111,6 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:tr
 | X / Twitter | `/status/<id>` | the public post embed data, else oEmbed |
 | TikTok | `/@user/video/<id>` | oEmbed; on a loaded page, its own data (plays, likes, comments) |
 | GitHub | repo, issue and pull request pages | the public GitHub API (README, discussion) |
-
-`as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
 
 ### `read_pdf`
 

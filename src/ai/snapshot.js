@@ -18,7 +18,7 @@ const lastSnapshot = new Map(); // webContents id -> { url, lines }
 // gets one line back instead. "Soon" is a few tool calls: the API clears older tool results, and a
 // model that can no longer see the earlier snapshot must get it again. Any tool that can change the
 // page clears the cache, and the content itself is compared, so a stale hit can't happen.
-const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'analyze_posts']);
+const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'analyze_posts', 'get_console', 'get_network']);
 const FRESH_CALLS = 6;
 class ReadCache {
   // acted: how many acting tools have run (batch's baseline reuse compares it, see batch below).
