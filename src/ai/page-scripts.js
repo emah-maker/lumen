@@ -592,10 +592,11 @@ function uploadCleanup(token) {
 }
 
 // What read_page returns: the page's facts as JSON, then its text.
-function formatFull(page) {
+function formatFull(page, extras = '') {
   const { text, ...rest } = page;
   return `<untrusted_page_content>
-${JSON.stringify(rest)}
+${JSON.stringify(rest)}${extras ? `
+${extras}` : ''}
 
 PAGE TEXT:
 ${text}

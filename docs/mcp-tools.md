@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 30 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 33 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
@@ -15,18 +15,23 @@ The sidebar's Claude models use Anthropic's server-side web search instead of `w
 
 ### `read_page`
 
-Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.
+Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"outline": a cheap map with no refs: title, URL, page health, h1-h3 headings, structured-data summary, links grouped by landmark (main/article first, then nav/header/footer; up to 15 each, with counts), a repeated block ("main > ul.results: 20 items like ..."), and the next-page link. mode:"full": raw JSON elements and text (text_offset/element_offset to page; structured:true adds JSON-LD, meta tags and embedded data). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.
+
+A full read of a page that is not fine starts with one line, `Page: js_shell | wall | soft_404 | data_shell — ...` (what it is and what to try), and a page drawn by script (js_shell, data_shell) also shows its compact structured data.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `text_offset` | integer |  | Character offset into the page text (full mode). |
 | `element_offset` | integer |  | Elements to skip in the list (full mode). |
-| `mode` | `compact`, `full` |  |  |
+| `mode` | `compact`, `full`, `outline`, `site` |  | `full`: the raw page text and elements, never the site view below. `outline`: the cheap map described above. `site`: ask for the site view explicitly. |
 | `since_last` | boolean |  | compact: only what changed since your last read. |
 | `start_line` | integer |  | compact: continue a clipped outline. |
 | `hrefs` | boolean |  | compact: include link URLs. |
+| `structured` | boolean |  | full: add compact JSON-LD, meta tags and the largest embedded data (`__NEXT_DATA__`, `ytInitialData`, ...). |
 | `extract` | `tables`, `links`, `lists` |  | Return these as JSON instead of a page read: tables (rows of cells, up to 5 tables), links (`[text, href]`, up to 80), lists (items of up to 8 lists). |
 | `selector` | string |  | extract: limit to this CSS selector. |
+
+On a Reddit, Hacker News, YouTube, X, TikTok or GitHub page, a plain `read_page` (no `mode`, offsets, `elements`, `structured`, `selector` or `extract`), or `mode:"site"`, returns that site's [structured view](#site-views) instead of the raw page text. It has no element ids: use `mode:"compact"` or `find` to click, or `mode:"full"` for the raw page.
 
 ### `screenshot`
 
@@ -51,6 +56,9 @@ Load a URL in the active tab. read:true also returns the new outline; wait_for w
 | `url` | string | yes |
 | `read` | boolean |  |
 | `wait_for` | string |  |
+| `wait` | `interactive` \| `load` \| `networkidle` |  |
+
+`wait` says when the page counts as loaded. `interactive` (the default) returns as soon as the page's DOM is ready and already shows real text, without waiting for images, ads and trackers; a page with no text yet (a JavaScript app shell) is still waited for until it loads. `load` waits for the load event, `networkidle` also for ~500 ms without network activity (on a tab, judged by the same request tracker as `wait_for` `network_idle`, which ignores analytics and long-polls). All are capped.
 
 ### `click`
 
@@ -75,14 +83,34 @@ Fill several fields by label/placeholder (text, select, date, checkbox "true"/"f
 
 ### `read_urls`
 
-Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user's own account pages signed in. Returns title + text.
+Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user's own account pages signed in. Returns title + text: an article-like page as compact markdown (headings, lists, `[text](url)` links, code blocks, simple tables), anything else as its visible text. A page that is not fine starts with a `Page: js_shell | wall | soft_404 | data_shell — ...` line, and a compact "Structured data" section (meta tags, JSON-LD, and for script-drawn pages the largest embedded JSON) follows the text. Long pages come in chunks: the result ends with the `offset` for the next one.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `urls` | string[] | yes |
+| `wait` | `interactive` \| `load` \| `networkidle` | no |
+| `max_chars` | integer | no |
+| `offset` | integer | no |
 | `as_user` | boolean | no |
 
+`wait` is the same as on `navigate` (default `interactive`). Pages are read in reused hidden views with images, media and web fonts not loaded, and a page read a moment ago (same chat, within 5 minutes, same options) is returned from a small cache instead of being fetched again; `as_user` reads are never cached.
+
+`max_chars` is the chunk size per page (1000-30000, default 8000) and `offset` the character to start at (take it from the previous result's note). Signed-in (`as_user`) reads are not chunked yet.
+
 `as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
+
+### Site views
+
+`read_urls` (signed out) and a plain `read_page` read these addresses from the site's own compact feed instead of the page, so a long thread is not cut off in the middle of its comments. The text starts with `Source: <site> (<how>)` and stays inside `<untrusted_page_content>`; all approval, redirect and site-off rules apply first. If the feed fails, is blocked or rate limited, or the page is private, the normal page read is used. Read-only: no cookies are sent and nothing is posted or changed. In `read_urls` each view is capped at `max_chars` (default 8,000; a plain `read_page` uses 8,000), and `offset` pages through a longer view with the same next-offset note as a page read (comments are flattened one per line, `[d2] u/name 1.2k · 3h: text`, deepest replies dropped first, with a count of what was left out).
+
+| Site | Addresses | Source |
+|---|---|---|
+| Reddit | posts and comment threads, subreddit listings, user pages, search | JSON, else Atom RSS (the RSS has no scores or reply nesting); on a loaded or signed-in page, the page itself |
+| Hacker News | `item?id=`, front page, `/ask`, `/show`, `/newest`, `/jobs` | hn.algolia.com |
+| YouTube | `watch?v=`, `youtu.be`, `/shorts`, `/live` | oEmbed, the player data, and captions as `[m:ss]` paragraphs (English or the video's own language; says so when there are none) |
+| X / Twitter | `/status/<id>` | the public post embed data, else oEmbed |
+| TikTok | `/@user/video/<id>` | oEmbed; on a loaded page, its own data (plays, likes, comments) |
+| GitHub | repo, issue and pull request pages | the public GitHub API (README, discussion) |
 
 ### `read_pdf`
 
@@ -113,12 +141,50 @@ LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. 
 
 ### `wait_for`
 
-Wait until the active tab contains some text, up to a timeout.
+Wait until the active tab meets every condition given, up to a timeout. `url` is a substring of the tab's address, or a `*` glob that must match all of it. `gone` is text or a CSS selector (`#spinner`, `.loading`, `div.busy`) that must no longer be on the page. `network_idle` waits until nothing the page requested is still in flight for about 500 ms and the page has stopped loading; ad and tracker hosts, `data:` URLs, images, fonts and media still loading after 3 s, and requests open for over 10 s (long polls, streams) are ignored. A timeout says what is still pending, for example `Timed out after 10s; still pending: network busy: 3 requests in flight (api.example.com, cdn.example.com)`. The same options work in a `batch` `wait_for` step.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `text` | string | yes |  |
+| `text` | string |  | Text that must be on the page. |
+| `url` | string |  | Substring or `*` glob the tab's address must match. |
+| `gone` | string |  | Text or CSS selector that must disappear. |
+| `network_idle` | boolean |  | No requests in flight for about 500 ms. |
 | `seconds` | number |  | Timeout, 1 to 30. Default 10. |
+
+At least one of `text`, `url`, `gone`, `network_idle` is needed.
+
+### `get_console`
+
+The tab's console messages and uncaught errors, as one line each: `[err] 12:01:03 TypeError: x is undefined (app.js:120)`. Lumen starts keeping them (the newest 300) when an agent first works in a tab, so the first call shows only what happened since then; the result says when capture began. Page content, so it is wrapped like any other page read.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tab_id` | integer |  | A tab from `list_tabs`. Default: the active tab. |
+| `level` | `error`, `warning`, `info`, `all` |  | Default `warning` (warnings and errors). |
+| `since_last` | boolean |  | Only what came after the last `get_console` of this tab. |
+
+### `get_network`
+
+The requests a tab made, one line each: `GET 404 api.example.com/v1/items 230ms xhr` (or `GET ERR net::ERR_... host/path kind`). The newest 500 are kept from the moment an agent first works in the tab, so the first call can only show what came after; the result says when capture began and what is in flight now. Query strings are left out by default, and headers and bodies are never recorded. Lumen cannot tell `fetch` from `XMLHttpRequest`, so `fetch` and `xhr` filter the same requests.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tab_id` | integer |  | A tab from `list_tabs`. Default: the active tab. |
+| `failed` | boolean |  | Only status 400 and above, or requests that failed. |
+| `type` | `xhr`, `fetch`, `document`, `script`, `all` |  | Default `all`. |
+| `url_contains` | string |  | Only requests whose address contains this (case-insensitive; matched against the full address, query included). |
+| `since_last` | boolean |  | Only what came after the last `get_network` of this tab. |
+| `include_query` | boolean |  | Keep query strings in the lines. |
+
+### `handle_dialog`
+
+Answer a `confirm` or `prompt` dialog the page opened. A dialog freezes the page, so while one is open every tool that needs the page stops and the result begins `Dialog open: confirm "Delete item?" — use handle_dialog`; `get_console`, `get_network`, `list_tabs` and the other tools that name no page still work. Lumen answers the others itself and tells you in the next result: an `alert` is accepted, and a `beforeunload` ("Leave site?") is accepted only while the agent's own `navigate`, `go_back`, `go_forward` or `reload` runs (otherwise the page is kept). A confirm or prompt is never answered automatically. Like a click, `handle_dialog` is an action: it needs the site's approval, and it is refused where the user keeps the AI from acting on the tab or hands-off mode applies.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `accept` | boolean | yes | true is OK, false is Cancel. |
+| `text` | string |  | The answer to a `prompt`. |
+| `tab_id` | integer |  | Default: the active tab. |
 
 ### `type_text`
 
@@ -262,7 +328,7 @@ Search the active tab for text: returns matching controls as [id] refs and short
 
 ### `batch`
 
-Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref\|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.
+Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref\|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text|url|gone|network_idle} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.
 
 | Parameter | Type | Required |
 |---|---|---|
@@ -291,3 +357,12 @@ Make a picture, or edit the chat's latest one with `edit: true`; it is shown in 
 |---|---|---|---|
 | `prompt` | string | yes | What to draw. Style and size go in the words. |
 | `edit` | boolean |  | Edit the latest picture in this chat (OpenAI, Gemini, OpenRouter and Grok Build can; Grok's API can't). |
+
+### `analyze_posts`
+
+Find which posts beat their own account's normal. Pure local math: it makes no request and needs no tab, so it works before an agent has a window. Give it rows you already collected (up to 200); it returns each account's median baseline, then the outliers by lift (`×3.4`) labelled `huge` (5x or more), `strong` (2 to 5x) or `mild` (1.5 to 2x). The baseline is per account, and per account and format when that format has 5 or more rows. An account with fewer than 10 rows is marked low confidence, and rows with no usable number are listed under "Not enough data" rather than guessed.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `posts` | object[] | yes | `{ url, account?, format?, views?, likes?, replies?, reposts?, comments?, shares?, date? }` |
+| `metric` | `views`, `engagement`, `auto` |  | `views` for video, `engagement` (likes + replies + reposts + comments + shares) for text; `auto` (default) uses views when most rows have them. |
