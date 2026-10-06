@@ -58,13 +58,15 @@ function terminalCommand(msg) {
   try { return JSON.stringify(input, null, 2).slice(0, 4000); } catch { return '(Lumen could not read the command Grok wants to run.)'; }
 }
 
-// { tools, callTool, enabled, onEvent, onTerminalApproval }: as mcp.js startServer, plus
+// { tools, callTool, enabled, onEvent, onTerminalApproval, terminalEnabled }: as mcp.js startServer, plus
+// terminalEnabled() -> false: Settings > AI turned Grok's terminal off, so every run_terminal_command is denied
+// without a card (checked before an earlier "always" too), and
 // onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
 // Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
 // armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
-function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
+function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, terminalEnabled = () => true, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
   const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
   let port = 0;
@@ -77,6 +79,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   // deny -- same fail-closed default as an unreachable gate). No onTerminalApproval wired up (a
   // caller that never expects Grok to reach this far): deny, same as before this existed.
   async function terminalDecision(run, msg) {
+    if (!terminalEnabled()) return DENY("Terminal commands are turned off in Lumen (Settings > AI). Do not try again: answer with Lumen's browser tools only.");
     if (run.chatSessionId && chatSessionsAllowed.has(run.chatSessionId)) return null;
     if (!onTerminalApproval) return DENY("Lumen isn't set up to approve terminal commands here.");
     const command = terminalCommand(msg);
