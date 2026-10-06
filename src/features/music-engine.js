@@ -23,8 +23,8 @@ const RESPOND_MS = 3500; // a button pressed and nothing changed this long after
 const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
-//         fetchBytes(url) -> Buffer|null, resizeArt(bytes) -> bytes|null, BrowserWindow?, getParent()? (the browser window, for the sign-in
-//         window), onChange() (what the card shows may differ), hasCard()? (is a card of this service configured), isAuthorized()?
+//         fetchBytes(url) -> Buffer|null, resizeArt(bytes) -> bytes|null, BrowserWindow?, (the sign-in
+//         window is its own top-level window, never owned by the browser window), onChange() (what the card shows may differ), hasCard()? (is a card of this service configured), isAuthorized()?
 //         (true | false | null when the service says so another way than the page, e.g. a cookie), playerMissingMs()? (tests only: a shorter wait
 //         before "the service changed its page"), now?, setInterval? }
 function createMusicEngine(deps) {
@@ -250,8 +250,7 @@ function createMusicEngine(deps) {
     wake();
     if (signInWin && !signInWin.isDestroyed()) { signInWin.focus(); return true; }
     if (!deps.BrowserWindow) return false;
-    const parent = deps.getParent?.();
-    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title, autoHideMenuBar: true, show: true, ...(parent && !parent.isDestroyed() ? { parent } : {}) });
+    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title, autoHideMenuBar: true, show: true }); // (no `parent`: an owned window stays above the browser window on Windows; this one is a window of its own, as a sign-in popup is in Chrome)
     signInWin = win;
     try { win.removeMenu?.(); } catch { /* no menu to remove */ }
     const fit = () => { if (win.isDestroyed()) return; const [width, height] = win.getContentSize(); player.showIn(win, { x: 0, y: 0, width, height }); };
