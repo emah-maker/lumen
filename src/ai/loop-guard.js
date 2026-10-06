@@ -9,7 +9,7 @@
 const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover']);
 
 // Reads whose identical repeat (same input, nothing done in between) can only return the same thing.
-const STATIC_READS = new Set(['read_page', 'find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf']);
+const STATIC_READS = new Set(['read_page', 'find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf', 'video_overview', 'video_frames']);
 
 class RepeatDetector {
   constructor(limit = 8) {

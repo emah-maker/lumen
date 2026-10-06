@@ -82,6 +82,11 @@ const BUILTINS = [
     prompt: 'Proofread the text below. Fix spelling, grammar and punctuation without changing the meaning or the voice. Reply with the corrected text first, then a short list of the significant changes.\n\n{{selection}}',
     inputs: ['selection'],
   },
+  {
+    name: 'watch-video', title: 'Watch video', description: 'Look at the video in this tab and answer about it: /watch-video what does the demo show?',
+    prompt: 'Watch the video in this tab. Call video_overview first (pass start and end if I name a stretch). From the contact sheet pick the moments that matter, then call video_frames on them (up to 8) to read detail. If the page text below has a transcript or captions, use it for what was said. Cite times as m:ss. Describe only what the frames show: when something is not visible or not covered, say so and never guess.',
+    inputs: ['page'], mode: 'agent',
+  },
 ];
 const builtinId = (name) => `builtin:${name}`;
 

@@ -22,6 +22,8 @@ const chatImages = require('../features/chat-images'); // images a message carri
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
+const videoCapture = require('../features/video-capture'); // video_overview, video_frames
+const videoBudget = require('./video-budget');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
@@ -90,6 +92,33 @@ const TOOLS = [
     name: 'screenshot',
     description: 'Screenshot the active tab (visuals only).',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'video_overview',
+    description: 'Contact sheet of the main video on the page: frames evenly spaced, each timestamped. Playback is restored. Start here, then video_frames.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        frames: { type: 'integer', description: '4-36, default 16.' },
+        start: { type: 'string', description: 'Window start: seconds or m:ss.' },
+        end: { type: 'string', description: 'Window end: seconds or m:ss.' },
+        token_budget: { type: 'integer', description: 'Image tokens, default 6000.' },
+      },
+    },
+  },
+  {
+    name: 'video_frames',
+    description: 'Full-size frames of the page video at timestamps (seconds or m:ss, max 8). Playback is restored.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        at: { type: 'array', items: { type: 'string' } },
+        max_width: { type: 'integer', description: 'Default 1024.' },
+      },
+      required: ['at'],
+    },
   },
   {
     name: 'navigate',
@@ -343,7 +372,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'start', 'end', 'token_budget']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -727,7 +756,7 @@ const ONE_OF = { click: [['element_id', 'text']] };
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'video_overview', 'video_frames']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -789,6 +818,8 @@ function validateInput(name, input) {
   const schema = TOOL_SCHEMAS[name];
   if (!schema) return `Unknown tool: ${name}`;
   if (!input || typeof input !== 'object') return 'Input must be an object';
+  for (const key of ['start', 'end']) if (name === 'video_overview' && typeof input[key] === 'number') input[key] = String(input[key]); // a model sends 83 as often as "1:23"
+  if (name === 'video_frames' && Array.isArray(input.at)) input.at = input.at.map((t) => (typeof t === 'number' ? String(t) : t));
   for (const key of schema.required || []) {
     if (!(key in input)) return `Missing required field: ${key}`;
   }
@@ -2898,6 +2929,8 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
       if (name === 'generate_image') return input.edit ? 'Editing the picture' : 'Making a picture';
       if (name === 'read_pdf') return 'Reading the PDF';
+      if (name === 'video_overview') return 'Looking over the video';
+      if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
@@ -3030,7 +3063,7 @@ ${prompt}` : prompt), historyImages: [] };
     const urlOf = (id) => this.browser.listTabs().find((t) => t.id === id)?.url || '';
     const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : [])
-        : name === 'read_pdf' && input.tab_id !== undefined ? [input.tab_id] : [];
+        : (name === 'read_pdf' || name === 'video_overview' || name === 'video_frames') && input.tab_id !== undefined ? [input.tab_id] : [];
     for (const id of named) if (off(urlOf(id))) refuse(urlOf(id));
     if (!TAB_FREE_TOOLS.has(name)) {
       let url = '';
@@ -3440,6 +3473,18 @@ ${rendered.text}
     const { url } = await this.pdfTarget(input);
     const ok = await pdfText.requirePdfPermission(taintHolder(run), url, (name) => (noAsk ? true : this.askApproval(name, emit, signal, { action: 'pdf', who, title: `Allow the AI to read ${name}?` })));
     if (!ok) throw new Error(`The user did not allow reading ${pdfText.pdfName(url)}. Ask them what to do instead.`);
+  }
+
+  // ---- video_overview / video_frames (features/video-capture.js): the tab's main <video>, paused and seeked for the
+  // frames, then put back as the user had it. Reading tools: the same checks as screenshot (AI off for the site, the
+  // hands-off and off-tab modes leave reading alone), and what they return taints the run like any page content.
+  // The image cost is estimated for the model family answering (the chat's model; an outside agent: Claude's).
+  async videoTool(name, input) {
+    const tab = input.tab_id !== undefined ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+    if (!tab) throw new Error(input.tab_id !== undefined ? `No tab with id ${input.tab_id}. Call list_tabs.` : this.browser.noTabReason?.() || 'No tab is open.');
+    const scope = taskScope.getStore();
+    const deps = { runScript, captureTab, nativeImage: require('electron').nativeImage, signal: scope?.signal, family: videoBudget.familyOf(scope?.chat?.settings?.model) };
+    return name === 'video_overview' ? videoCapture.overview(tab.webContents, input, deps) : videoCapture.frames(tab.webContents, input, deps);
   }
 
   async readPdf(input) {
@@ -4075,6 +4120,8 @@ ${same}
       }
       case 'generate_image': return this.generateImageTool(input); // [image routing]
       case 'read_pdf': return this.readPdf(input);
+      case 'video_overview':
+      case 'video_frames': return this.videoTool(name, input);
       case 'upload_file': return this.uploadFile(input); // [uploads]
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
