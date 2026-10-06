@@ -10,7 +10,7 @@ const { pathToFileURL } = require('url');
 const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
-const { requestedHints, withHints } = require('../browser/chrome-identity');
+const { requestedHints, withHints, languageLast } = require('../browser/chrome-identity');
 const { createSiteZoom } = require('../features/site-zoom');
 const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
@@ -456,8 +456,6 @@ function create(deps) {
     if (hot?.ref !== ref) hot = { ref, value: prefs() };
     return hot.value;
   };
-  const googleAuth = require('../browser/google-auth-identity'); // Google sign-in is Firefox's identity, not Chrome's
-  const firefoxProfile = googleAuth.firefoxProfile(process.platform);
   // Accept-Language is not a per-request job: Chrome sends the q-weighted list of the browser's languages (Electron's
   // default is the bare "en-US"), and Chromium builds that header itself from the session's list, so it is set once
   // here and again when Settings → Languages changes. The list is the one navigator.languages uses (and is cut to the
@@ -469,7 +467,7 @@ function create(deps) {
     try { target.setUserAgent(target.getUserAgent(), languageList(list).join(',')); } catch (err) { console.error('Accept-Language:', err.message); }
   }
   // The one onBeforeSendHeaders listener of a session. It stays registered for every request because Chrome's own
-  // Sec-CH-UA hints, the color-scheme hint and Google sign-in's Firefox headers are all added here; the work per
+  // Sec-CH-UA hints and the color-scheme hint are added here; the work per
   // request is a single parse of the address and nothing else unless a setting or a rule above applies.
   function setupHeaders(target = ses()) {
     applyAcceptLanguage(target);
@@ -492,9 +490,7 @@ function create(deps) {
       if (p.blockThirdPartyCookies && isThirdParty(details)) {
         for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie') delete headers[name];
       }
-      // Google's sign-in hosts see Firefox (Firefox's User-Agent, no client hints), last so nothing above adds one back.
-      if (u && (u.protocol === 'https:' || u.protocol === 'wss:') && googleAuth.isAuthHost(u.hostname)) headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile);
-      callback({ requestHeaders: headers });
+      callback({ requestHeaders: languageLast(headers) });
     });
   }
 

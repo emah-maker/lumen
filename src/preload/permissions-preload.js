@@ -31,10 +31,37 @@ function install(bridgeKey) {
   const bridge = window[bridgeKey];
   delete window[bridgeKey];
   if (!bridge) return;
-  const looksNative = (name, fn) => {
-    Object.defineProperty(fn, 'toString', { value: () => `function ${name}() { [native code] }`, configurable: true, enumerable: false, writable: true });
-    return fn;
+  // One WeakMap (function -> the text toString() gives for it) shared by everything Lumen patches into a page's main
+  // world (this script and the preloads), found by asking the toString wrapper for it (toString.call(symbol): the native throws, ours answers; no property of its own), whichever of them runs first.
+  // toString is wrapped by a plain method, not a Proxy (a Proxy gives itself away to the cyclic-prototype and stack-depth
+  // probes that "tampered function" checks run). A TypeError from toString.call(notAFunction) is raised inside the
+  // wrapper, so its stack would carry a frame of ours ("at Object.toString (<anonymous>:L:C)") that no native toString
+  // has: it is cut out. (The same helper is in preload/permissions-preload.js and page-dialogs-preload.js.)
+  const nativeTexts = () => {
+    const key = Symbol.for('lumen.nativeTexts');
+    const current = Function.prototype.toString;
+    try { const found = current.call(key); if (found instanceof WeakMap) return found; } catch { /* the native one: not wrapped yet */ }
+    const shown = new WeakMap();
+    const wrapper = {
+      toString() {
+        'use strict'; // (a sloppy method would box the symbol it is asked with)
+        if (this === key) return shown;
+        if (shown.has(this)) return shown.get(this);
+        try {
+          return Reflect.apply(current, this, arguments);
+        } catch (err) {
+          try { if (err && typeof err.stack === 'string') err.stack = err.stack.split('\n').filter((line) => !/^\s+at (?:\S+\.)?(?:toString|apply) \([^)]*<anonymous>:\d+:\d+\)$/.test(line)).join('\n'); } catch { /* frozen error: left */ }
+          throw err;
+        }
+      },
+    }.toString;
+    shown.set(wrapper, 'function toString() { [native code] }');
+    Object.defineProperty(Function.prototype, 'toString', { value: wrapper, writable: true, configurable: true, enumerable: false });
+    return shown;
   };
+  const shown = nativeTexts();
+  const looksNative = (name, fn) => { shown.set(fn, `function ${name}() { [native code] }`); return fn; };
+  const getter = (name, key, fn) => looksNative(`get ${key}`, Object.getOwnPropertyDescriptor({ get [key]() { return fn.call(this); } }, key).get);
   let states = {};
   try { states = Object.assign({}, bridge.get()); } catch { /* stay with Electron's answers */ }
   const NAMES = { geolocation: 'geolocation', notifications: 'notifications', camera: 'media', microphone: 'media', 'clipboard-read': 'clipboard-read' };
@@ -57,24 +84,33 @@ function install(bridgeKey) {
   window.addEventListener('focus', refresh);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 
-  // navigator.permissions.query: the real PermissionStatus, with `state` answered from the decisions.
+  // navigator.permissions.query: the real PermissionStatus, with `state` answered from the decisions. Built the way the
+  // natives are (a method, so no prototype and not constructible; `state` a getter on PermissionStatus.prototype, not an
+  // own property of each status), so none of it shows to a "tampered function" or property-descriptor check.
   try {
     const Perms = window.Permissions && window.Permissions.prototype;
     const origQuery = Perms && Perms.query;
-    if (typeof origQuery === 'function') {
-      const query = function query(descriptor) {
-        const p = origQuery.apply(this, arguments);
-        let name;
-        try { name = descriptor && typeof descriptor === 'object' ? descriptor.name : undefined; } catch { name = undefined; }
-        if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(NAMES, name)) return p;
-        return p.then((status) => {
-          try {
-            Object.defineProperty(status, 'state', { get: looksNative('get state', function () { return stateOf(name); }), enumerable: true, configurable: true });
-            live.add({ ref: new WeakRef(status), name, last: stateOf(name) });
-          } catch { /* leave the status as it is */ }
-          return status;
-        });
-      };
+    const Status = window.PermissionStatus && window.PermissionStatus.prototype;
+    const stateDescriptor = Status && Object.getOwnPropertyDescriptor(Status, 'state');
+    if (typeof origQuery === 'function' && stateDescriptor && stateDescriptor.get) {
+      const names = new WeakMap(); // PermissionStatus -> the permission it was asked about
+      const origState = stateDescriptor.get;
+      Object.defineProperty(Status, 'state', { get: getter('get state', 'state', function () { const name = names.get(this); return name ? stateOf(name) : origState.call(this); }), set: undefined, enumerable: stateDescriptor.enumerable, configurable: true });
+      const query = {
+        query(descriptor) {
+          const p = origQuery.apply(this, arguments);
+          let name;
+          try { name = descriptor && typeof descriptor === 'object' ? descriptor.name : undefined; } catch { name = undefined; }
+          if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(NAMES, name)) return p;
+          return p.then((status) => {
+            try {
+              names.set(status, name);
+              live.add({ ref: new WeakRef(status), name, last: stateOf(name) });
+            } catch { /* leave the status as it is */ }
+            return status;
+          });
+        },
+      }.query;
       Object.defineProperty(Perms, 'query', { value: looksNative('query', query), configurable: true, enumerable: true, writable: true });
     }
   } catch { /* keep Electron's answers */ }
@@ -83,17 +119,19 @@ function install(bridgeKey) {
   try {
     const N = window.Notification;
     if (N) {
-      Object.defineProperty(N, 'permission', { get: looksNative('get permission', function () { const s = states.notifications; return s === 'granted' || s === 'denied' ? s : 'default'; }), enumerable: true, configurable: true });
+      Object.defineProperty(N, 'permission', { get: getter('get permission', 'permission', function () { const s = states.notifications; return s === 'granted' || s === 'denied' ? s : 'default'; }), set: undefined, enumerable: true, configurable: true });
       const origRequest = N.requestPermission;
       if (typeof origRequest === 'function') {
-        const requestPermission = function requestPermission() {
-          const p = origRequest.apply(this, arguments);
-          Promise.resolve(p).then((result) => {
-            if (result === 'granted' || result === 'denied') states.notifications = result; else delete states.notifications;
-            update();
-          }, () => {});
-          return p;
-        };
+        const requestPermission = {
+          requestPermission() {
+            const p = origRequest.apply(this, arguments);
+            Promise.resolve(p).then((result) => {
+              if (result === 'granted' || result === 'denied') states.notifications = result; else delete states.notifications;
+              update();
+            }, () => {});
+            return p;
+          },
+        }.requestPermission;
         Object.defineProperty(N, 'requestPermission', { value: looksNative('requestPermission', requestPermission), configurable: true, enumerable: true, writable: true });
       }
     }

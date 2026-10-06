@@ -3605,10 +3605,6 @@ if (TEST) global.__managers = { managers, siteActivity, history: () => history, 
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
 // brand list, headers and window.chrome all come from browser/chrome-identity.js so they agree.
 const CHROME_IDENTITY = require('./browser/chrome-identity');
-// Google's sign-in hosts refuse a Chrome-shaped Electron whatever it reports; they get a Firefox identity instead
-// (browser/google-auth-identity.js): Firefox's User-Agent, no client hints, Firefox's navigator, no window.chrome.
-const GOOGLE_AUTH = require('./browser/google-auth-identity');
-const FIREFOX_PROFILE = GOOGLE_AUTH.firefoxProfile(process.platform);
 const UA_METADATA = CHROME_IDENTITY.uaMetadata({
   chromeVersion: process.versions.chrome, platform: process.platform, arch: process.arch,
   release: require('os').release(), systemVersion: process.platform === 'darwin' ? process.getSystemVersion() : '',
@@ -3737,25 +3733,19 @@ function applyChromeIdentity(wc) {
   aiFrames.track(wc); // before the auto-attach below: every out-of-process frame's session is recorded
   const lang = () => chromeLanguages.list().join(','); // navigator.languages (DevTools takes the plain list, no q-weights); the request header is the same list, q-weighted
   const override = () => ({ userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA, acceptLanguage: lang() });
-  const firefox = () => ({ userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform, acceptLanguage: lang() }); // no userAgentMetadata: Firefox has no client hints
   const basic = () => ({ ...override(), userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }); // (if this DevTools rejects the newest metadata fields, the brands still apply)
   const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
-  // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
-  const identify = (sessionId, asFirefox = false) => (asFirefox
-    ? send('Emulation.setUserAgentOverride', firefox(), sessionId).catch(() => send('Network.setUserAgentOverride', firefox(), sessionId)).catch(() => {})
-    : send('Emulation.setUserAgentOverride', override(), sessionId)
-      .catch(() => send('Emulation.setUserAgentOverride', basic(), sessionId))
-      .catch(() => send('Network.setUserAgentOverride', override(), sessionId))
-      .catch(() => send('Network.setUserAgentOverride', basic(), sessionId)).catch(() => {}));
+  const identify = (sessionId) => send('Emulation.setUserAgentOverride', override(), sessionId)
+    .catch(() => send('Emulation.setUserAgentOverride', basic(), sessionId))
+    .catch(() => send('Network.setUserAgentOverride', override(), sessionId))
+    .catch(() => send('Network.setUserAgentOverride', basic(), sessionId)).catch(() => {});
   // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
-  // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
+  // (Google's sign-in hosts get the same identity as every other page: Google refuses a Firefox one, google-auth-identity.js.)
   // The Page domain is switched on first: with Chromium's debugging port open (automation, test drivers) a script added
   // to a session that never enabled Page is not run at document start, and window.chrome stayed Electron's empty {}.
-  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() => Promise.all([
-    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
-    send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
-  ]));
+  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() =>
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
@@ -3766,22 +3756,17 @@ function applyChromeIdentity(wc) {
     // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
     // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
     if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
-    Promise.all([identify(sessionId, GOOGLE_AUTH.isAuthUrl(targetInfo.url)), script(sessionId), autoAttach(sessionId)]).finally(resume);
+    Promise.all([identify(sessionId), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
-  // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
-  // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
-  // settings-backend.js and the navigator by the script above, so neither waits on this.)
-  let asFirefox = false;
   let languages = lang(); // navigator.languages follows the Languages setting: re-applied at the next navigation after it changes
   const follow = (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
-    const want = GOOGLE_AUTH.isAuthUrl(details.url);
     const now = lang();
-    if (want !== asFirefox || now !== languages) { asFirefox = want; languages = now; identify(undefined, want); }
+    if (now !== languages) { languages = now; identify(); }
   };
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
-  identify(undefined, GOOGLE_AUTH.isAuthUrl(wc.getURL()) ? (asFirefox = true) : false);
+  identify();
   script();
   autoAttach();
 }
