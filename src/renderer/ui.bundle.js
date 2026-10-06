@@ -1919,6 +1919,24 @@ explain describe list find give compare difference summarize summary write rewri
   window.genImages = { figure, decorate, load };
 })();
 ;
+// ---- run-state.js
+// What a view should do with main's answer about the chat it shows (renderer/chat-core.js reconcile()): 'keep' when the
+// view already matches (same chat, same running state), 'adopt' when only the chat's id was not known yet, 'sync' when
+// the view is stale (another chat, or a run that ended or began while the sidebar was hidden) and must take main's view.
+// Plain script in the UI; test/run-state-units.js loads it with require().
+(function (root) {
+  function reconcileAction(view, shownChatId, running) {
+    if (!view || !view.id) return 'keep';
+    const live = Boolean(view.live);
+    if (view.id === shownChatId && live === running) return 'keep';
+    if (!shownChatId && live === running) return 'adopt';
+    return 'sync';
+  }
+  const api = { reconcileAction };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.runState = api;
+})(this);
+;
 // ---- chat-core.js
 // The chat itself, shared by the sidebar (index.html) and the full-page chat (chat-page.html): the
 // model picker, the "set up an AI" card, messages and streaming, image attachments, approval cards,
@@ -3867,9 +3885,9 @@ async function reconcile() {
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
-  const live = Boolean(view.live);
-  if (view.id === shownChatId && live === running) return true;
-  if (!shownChatId && live === running) { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
+  const action = window.runState.reconcileAction(view, shownChatId, running);
+  if (action === 'keep') return true;
+  if (action === 'adopt') { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
@@ -3885,6 +3903,7 @@ messages.addEventListener('click', (e) => {
 
 new ResizeObserver(() => {
   chatRoot.style.setProperty('--composer-h', `${$('composer').offsetHeight}px`);
+  if ($('composer').offsetHeight && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
 
 function autosize() {
@@ -3910,6 +3929,15 @@ const prewarm = (force = false) => {
 };
 let prewarmSent = '';
 prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
+// A view that comes back (window focus, the page visible) asks main what runs.
+window.addEventListener('focus', () => { if (running) reconcile(); });
+let sidebarWasHidden = document.body.classList.contains('sidebar-hidden');
+new MutationObserver(() => {
+  const hidden = document.body.classList.contains('sidebar-hidden');
+  if (sidebarWasHidden && !hidden && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
+  sidebarWasHidden = hidden;
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && running) reconcile(); });
 prompt.addEventListener('focus', () => { prewarm(); if (running) reconcile(); }); // (a Stop button that belongs to another chat goes as soon as the box is used)
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
@@ -3934,7 +3962,12 @@ prompt.addEventListener('keydown', (e) => {
 });
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (running) { window.assistant.stop(); return; } // the button, while running, is Stop
+  if (running) {
+    // The Stop shown may be stale (the reply ended while this view was hidden and missed it): main's truth decides, and a
+    // click on a stale Stop is a Send. A really running reply is stopped.
+    const settled = await reconcile();
+    if (running) { if (settled) window.assistant.stop(); return; }
+  }
   sendComposer();
 });
 sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
