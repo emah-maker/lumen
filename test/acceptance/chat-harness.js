@@ -63,7 +63,7 @@ mcpHttp.startHttp = ({ callTool }) => {
   });
 };
 const mcp = require('../../src/automation/mcp');
-mcp.startServer = (o) => { gate.callTool ||= o.callTool; return { disconnectAll() {}, close() {} }; };
+mcp.startServer = (o) => { gate.callTool ||= o.callTool; gate.mcpOpts = o; return { disconnectAll() {}, close() {} }; }; // (gate.mcpOpts: what the stdio server was given, for suites that open sessions the way it does)
 
 const { Agent, EXTERNAL_TOOLS } = require('../../src/ai/agent');
 const { setupAiAgents } = require('../../src/features/ai-agents');
@@ -111,7 +111,23 @@ agent.execute = async function execute(name) {
 const limits = { maxWarmChats: 4, idleMs: undefined };
 const quitHandlers = [];
 const quit = () => { for (const fn of quitHandlers.splice(0)) { try { fn(); } catch {} } };
+// Settings a suite may turn (mcpEnabled: outside agents may connect). Defaults as before.
+const settings = { mcpEnabled: false, grokSidebar: true, grokWarmup: false };
+// A recording stand-in for main.js's agent windows (features/agent-windows.js): one window per outside session, made by ensure().
+const AGENT_TAB = 900;
+const windows = {
+  ensured: [], released: [], made: new Map(),
+  get: (session) => windows.made.get(session) || null,
+  ensure(session, label) {
+    windows.ensured.push({ label, at: Date.now() });
+    if (!windows.made.has(session)) windows.made.set(session, { agentWindow: true, label });
+    return Promise.resolve(windows.made.get(session));
+  },
+  release: (session) => { windows.released.push(session); return true; },
+  releaseAll() {},
+};
 const aiAgents = setupAiAgents({
+  agentWindows: { windows, activeTabId: () => AGENT_TAB },
   app: { getPath: () => tmp, on(ev, fn) { if (ev === 'will-quit') quitHandlers.push(fn); } },
   maxWarmChats: () => limits.maxWarmChats,
   warmIdleMs: () => limits.idleMs,
@@ -119,7 +135,7 @@ const aiAgents = setupAiAgents({
   agent,
   tools: EXTERNAL_TOOLS,
   validateToolInput: () => null,
-  readSettings: () => ({ mcpEnabled: false, grokSidebar: true, grokWarmup: false }),
+  readSettings: () => ({ ...settings }),
   writeSettings() {},
   ui: () => null,
   codexLocate: async () => ({ found: true, command: FAKE_CODEX, args: [], path: FAKE_CODEX, kind: 'exe', version: '9.9.9', source: 'test' }), // (the stand-in codex: no `--version` to run)
@@ -166,4 +182,4 @@ function finish() {
 // A suite must never hang CI: a hard stop well inside scripts/test-units.js's 120 s.
 const hardStop = (ms = 100000) => setTimeout(() => { console.log(`FAIL  suite timed out after ${ms / 1000}s`); failures++; finish(); }, ms).unref();
 
-module.exports = { FAKE_CODEX, aiAgents, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };
+module.exports = { FAKE_CODEX, aiAgents, settings, windows, AGENT_TAB, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };
