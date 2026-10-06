@@ -80,7 +80,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "outline": headings, links by region, next page (no refs); "full": raw text + element count (elements:true lists; structured:true adds JSON-LD/meta/embedded data). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -135,12 +135,14 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 URLs in hidden tabs, signed out; as_user:true asks to read the user\'s own pages signed in.',
+    description: 'Read up to 6 URLs in hidden tabs, signed out: markdown text, page health, structured data; max_chars (8000) + offset page long ones. as_user:true asks to read the user\'s own pages signed in.',
     input_schema: {
       type: 'object',
       properties: {
         urls: { type: 'array', items: { type: 'string' } },
         wait: { type: 'string', enum: WAIT_MODES, description: 'interactive (default), load, networkidle' },
+        max_chars: { type: 'integer', description: 'Per page, 1000-30000, default 8000.' },
+        offset: { type: 'integer', description: 'Start at this character (the next chunk).' },
         // [signed-in sites] features/signed-in-sites.js
         as_user: { type: 'boolean' },
       },
@@ -359,7 +361,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'max_chars', 'offset', 'structured']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -757,6 +759,8 @@ const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // too
 const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
+const pageReading = require('./page-reading'); // read_urls / read_page: health, structured data, markdown, outline
+const pageHealth = require('./page-health'); // read_urls chunk size (clampChars), offset slicing (slicePage)
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
 // ---- [/ai controls]
@@ -1070,7 +1074,9 @@ const readerPool = new ReaderPool({
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
-async function readInBackground(url, guard = () => null, { wait } = {}) {
+// The view comes from the warm reader pool (blanked between reads, so each read starts on a fresh document and the
+// isolated-world scripts of the last one are gone with it); `wait` says when the page counts as loaded (load-wait.js).
+async function readInBackground(url, guard = () => null, { wait, maxChars, offset } = {}) {
   const entry = await readerPool.acquire();
   const wc = entry.wc;
   let healthy = false;
@@ -1079,11 +1085,11 @@ async function readInBackground(url, guard = () => null, { wait } = {}) {
     await loadPage(wc, url, normalizeWait(wait));
     await redirects?.settle();
     await quietWait(wc);
-    const page = await runScript(wc, scripts.readPage(0, 0), 8000);
-    const more = page.totalTextChars > 8000 ? `
-[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
+    // The article as markdown when the page is one, else the visible text; health line, a note for the next chunk
+    // (offset) and compact structured data around it (page-reading.js).
+    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset });
     healthy = true;
-    return { url: wc.getURL() || url, title: page.title, text: page.text.slice(0, 8000) + more };
+    return { url: wc.getURL() || url, title: page.title, text: page.text };
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
@@ -4031,7 +4037,9 @@ ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}
 </untrusted_page_content>`;
-        return scripts.formatFull(page);
+        // Page health (when not ok) and structured data (a shell page, or structured:true) ahead of the text (page-reading.js).
+        const extras = textOffset || elementOffset ? '' : await pageReading.fullReadExtras(page, (code) => runScript(wc, code), { structured: input.structured === true }).catch(() => '');
+        return scripts.formatFull(page, extras);
       }
       case 'screenshot': {
         const wc = this.requireTab();
@@ -4143,15 +4151,19 @@ ${same}
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
         const wait = normalizeWait(input.wait);
-        const read = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), { wait });
+        // The chunk asked for, normalized the way page-health.js slicePage reads it, so equal requests share a cache entry.
+        const maxChars = pageHealth.clampChars(input.max_chars);
+        const offset = Math.max(0, Math.floor(Number(input.offset)) || 0);
+        const readOpts = { wait, maxChars, offset };
+        const read = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), readOpts);
         // Repeat reads in the same chat come from a 5-minute cache (read-speed.js): never signed in, never when the user turned AI off
-        // for the site now, kept apart per trust scope (sidebar vs an MCP client).
+        // for the site now, kept apart per trust scope (sidebar vs an MCP client). The key holds every option that changes the result.
         const scope = taskScope.getStore()?.gate?.external === false ? 'sidebar' : 'external';
         const signedOut = async (url) => {
-          const cached = input.as_user ? null : readResults.get(url, { wait }, scope);
+          const cached = input.as_user ? null : readResults.get(url, readOpts, scope);
           if (cached && !this.browser.aiOff?.(url) && !this.browser.aiOff?.(cached.url)) return { ...cached };
           const page = await read(url);
-          if (!input.as_user) readResults.put(url, { wait }, scope, page);
+          if (!input.as_user) readResults.put(url, readOpts, scope, page);
           return page;
         };
         // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
