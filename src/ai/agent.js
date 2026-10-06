@@ -21,6 +21,8 @@ const imageGrok = require('./image-grok'); // [image routing] Grok Build's own i
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
+const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
@@ -171,14 +173,52 @@ const TOOLS = [
   },
   {
     name: 'wait_for',
-    description: 'Wait until the active tab shows text.',
+    description: 'Wait (up to seconds, 1-30) until the tab meets all given: text, url (substring or * glob), gone (text/selector), network_idle.',
     input_schema: {
       type: 'object',
       properties: {
         text: { type: 'string' },
-        seconds: { type: 'number', description: '1-30, default 10.' },
+        url: { type: 'string' },
+        gone: { type: 'string' },
+        network_idle: { type: 'boolean' },
+        seconds: { type: 'number' },
       },
-      required: ['text'],
+    },
+  },
+  {
+    name: 'get_console',
+    description: 'Console messages and errors since the AI first used the tab. Default: warnings+errors.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        level: { type: 'string', enum: ['error', 'warning', 'info', 'all'] },
+        since_last: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'get_network',
+    description: 'Requests a tab made (status, host+path, ms) since the AI first used it. No headers or bodies.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        failed: { type: 'boolean' },
+        type: { type: 'string', enum: ['xhr', 'fetch', 'document', 'script', 'all'] },
+        url_contains: { type: 'string' },
+        since_last: { type: 'boolean' },
+        include_query: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'handle_dialog',
+    description: 'Answer the open confirm/prompt (text for a prompt). Alerts auto-accept.',
+    input_schema: {
+      type: 'object',
+      properties: { accept: { type: 'boolean' }, text: { type: 'string' }, tab_id: { type: 'integer' } },
+      required: ['accept'],
     },
   },
   {
@@ -343,7 +383,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'gone', 'include_query', 'url_contains']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -722,12 +762,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Eager input streaming skips server-side validation, so check inputs against the schema here.
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
-const ONE_OF = { click: [['element_id', 'text']] };
+const ONE_OF = { click: [['element_id', 'text']], wait_for: [['text', 'url', 'gone', 'network_idle']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
-const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', ...snapshot.ACTING]);
+// (handle_dialog: accepting a page's confirm is part of the interaction the user allowed on that site, so it asks like a click does.)
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'get_console', 'get_network']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -739,6 +780,10 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
 const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
+const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
+const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
+const TAB_NAMING_READS = new Set(['read_pdf', 'get_console', 'get_network', 'handle_dialog']); // tools that may name another tab (tab_id) as well as the task's
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
@@ -2890,7 +2935,10 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
       if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
       if (name === 'run_script') return 'Running a script on the page';
-      if (name === 'wait_for') return `Waiting for ${quote(input.text)}`;
+      if (name === 'wait_for') return input.text ? `Waiting for ${quote(input.text)}` : input.network_idle === true && !input.url && !input.gone ? 'Waiting for the page to finish loading' : 'Waiting for the page';
+      if (name === 'get_console') return 'Reading the page console';
+      if (name === 'get_network') return "Reading the page's requests";
+      if (name === 'handle_dialog') return input.accept === true ? "Accepting the page's dialog" : "Dismissing the page's dialog";
       if (name === 'web_search') return `Searching the web for ${quote(input.query || '')}`;
       if (name === 'group_tabs') return `Grouping ${input.tab_ids.length} tabs as ${quote(input.name)}`;
       if (name === 'ungroup_tabs') return `Ungrouping ${input.tab_ids.length} tab${input.tab_ids.length === 1 ? '' : 's'}`;
@@ -2979,7 +3027,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
-      const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+      const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
       const url = tab?.webContents.getURL() || '';
       try {
         const parsed = new URL(url);
@@ -3030,7 +3078,7 @@ ${prompt}` : prompt), historyImages: [] };
     const urlOf = (id) => this.browser.listTabs().find((t) => t.id === id)?.url || '';
     const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : [])
-        : name === 'read_pdf' && input.tab_id !== undefined ? [input.tab_id] : [];
+        : TAB_NAMING_READS.has(name) && input.tab_id !== undefined ? [input.tab_id] : [];
     for (const id of named) if (off(urlOf(id))) refuse(urlOf(id));
     if (!TAB_FREE_TOOLS.has(name)) {
       let url = '';
@@ -3050,7 +3098,10 @@ ${prompt}` : prompt), historyImages: [] };
     const named = name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
     for (const id of named) if (id !== undefined && id !== null && off(id)) refuse();
-    if (TAB_FREE_TOOLS.has(name)) return;
+    if (TAB_FREE_TOOLS.has(name) || (name === 'handle_dialog' && input.tab_id !== undefined)) { // (a dialog answer names its own tab)
+      if (name === 'handle_dialog' && off(input.tab_id)) refuse();
+      return;
+    }
     let id = null;
     try { id = this.taskTab()?.id ?? null; } catch {}
     if (id !== null && off(id)) refuse();
@@ -3065,7 +3116,7 @@ ${prompt}` : prompt), historyImages: [] };
     let ids;
     try {
       if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
-      else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
+      else ids = [name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? input.tab_id : (this.taskTab()?.id ?? null)];
     } catch { throw new Error(manners.handsOffRefusal(name)); } // (no tab at all is null, not a throw, and the tool says so itself; a lookup that fails is refused, never let through)
     for (const id of ids) {
       if (id === null || id === undefined) continue;
@@ -3420,6 +3471,46 @@ ${rendered.text}
     if (!list.length) return { block: '', tabs: [] };
     const rendered = tabsAsk.renderTabs(await this.readTabEntries(list));
     return { block: tabsAsk.messageBlock(rendered), tabs: rendered.tabs };
+  }
+
+  // wait_for: every condition given (text, url, gone, network_idle) must hold at once. text alone keeps the old answers. A timeout
+  // throws, but with the state of each condition and what the network was doing (idle-tracker.js timeoutText), not a bare
+  // "did not appear" (so a batch still stops there). Idle needs the tab's capture (the first tool call there started it) and a
+  // page that is no longer loading.
+  async waitFor(wc, input) {
+    const c = idle.waitConditions(input);
+    if (!Object.keys(c).length) throw new Error('wait_for needs text, url, gone or network_idle:true.');
+    const cap = pageDebugShared.watch(wc);
+    const seconds = Math.min(Math.max(input.seconds || 10, 1), 30);
+    const deadline = Date.now() + seconds * 1000;
+    const textProbe = c.text !== undefined ? scripts.textProbe(c.text) : null;
+    const goneText = c.gone !== undefined ? scripts.textProbe(c.gone) : null;
+    const goneSelector = c.gone !== undefined && idle.looksLikeSelector(c.gone) ? `(() => { try { return document.querySelector(${JSON.stringify(c.gone)}) ? 1 : 0; } catch { return -1; } })()` : null;
+    const present = async (probe) => (await runScript(wc, probe, 3000).catch(() => false)) || (frames.available(wc) && await this.framesInclude(wc, probe).catch(() => false));
+    const only = Object.keys(c).length === 1 && c.text !== undefined;
+    let state;
+    let where = 'on the page';
+    for (;;) {
+      if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+      state = {};
+      if (textProbe) {
+        if (await runScript(wc, textProbe, 3000).catch(() => false)) state.text = true;
+        else if (frames.available(wc) && await this.framesInclude(wc, textProbe).catch(() => false)) { state.text = true; where = 'in an embedded frame of the page'; }
+        else state.text = false;
+      }
+      if (c.url !== undefined) state.url = idle.urlMatches(c.url, wc.getURL());
+      if (c.gone !== undefined) {
+        const sel = goneSelector ? await runScript(wc, goneSelector, 3000).catch(() => null) : -1;
+        state.gone = sel === -1 ? !(await present(goneText)) : sel === 0; // -1: it is text (or a selector the page refused); null: the page did not answer, not gone yet
+      }
+      if (c.idle) state.idle = !wc.isLoading() && (cap ? cap.tracker.idle(Date.now()) : true);
+      if (Object.values(state).every(Boolean)) return only ? `Found ${quote(c.text)} ${where}.` : idle.successText(c, { url: wc.getURL() });
+      if (Date.now() >= deadline || this.signalAborted()) break;
+      await sleep(300);
+    }
+    if (this.signalAborted()) throw new Error('Stopped by the user.');
+    const detail = idle.timeoutText(c, state, { seconds, url: wc.getURL(), tracker: cap?.tracker, loading: wc.isLoading() });
+    throw new Error(only ? `${quote(c.text)} did not appear within the timeout. (${detail})` : detail);
   }
 
   // ---- read_pdf (features/pdf-text.js): the tab's PDF, only after the user allowed that PDF in this
@@ -3807,7 +3898,7 @@ ${out.text}${note}
     this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
-      const result = await this.executeGuarded(name, input);
+      const result = await this.executeDebugged(name, input);
       this.aiOffAfter(name);
       return result;
     }
@@ -3815,13 +3906,58 @@ ${out.text}${note}
     const before = this.actionSnapshot();
     let result;
     try {
-      result = await nestedCall.run(true, () => this.executeGuarded(name, input));
+      result = await nestedCall.run(true, () => this.executeDebugged(name, input));
     } finally {
       this.recordActions(log, name, input, before);
     }
     this.aiOffAfter(name);
     return result;
   }
+
+  // ---- [page debug] ai/page-debug.js: per-tab console / request capture, network_idle and JS dialogs.
+  // The tab a debug tool names (tab_id), else the task's; null for tools that name no tab.
+  debugWc(name, input) {
+    try {
+      if (input?.tab_id !== undefined && DEBUG_TOOLS.has(name)) return this.browser.tabById?.(input.tab_id)?.webContents || null;
+      if (TAB_FREE_TOOLS.has(name)) return null;
+      return this.taskTab()?.webContents || null;
+    } catch { return null; }
+  }
+
+  debugTarget(input) {
+    const tab = input?.tab_id !== undefined ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+    if (!tab) throw new Error(input?.tab_id !== undefined ? `No tab with id ${input.tab_id}. Call list_tabs.` : this.browser.noTabReason?.() || 'No tab is open.');
+    return tab.webContents;
+  }
+
+  // executeGuarded plus the page-debug layer: the first tool on a tab starts its capture; a dialog the page has open (a confirm or
+  // prompt waiting for handle_dialog) is put ahead of the result, once; a call that stalls on such a dialog ends the moment it
+  // opens (the page cannot answer anything until it is closed); and a navigation of the AI's own may leave a page whose
+  // beforeunload dialog asks (page-debug.js dialogPolicy).
+  async executeDebugged(name, input) {
+    const wc = this.debugWc(name, input);
+    if (!wc) return this.executeGuarded(name, input);
+    const dbg = pageDebugShared;
+    const cap = dbg.watch(wc);
+    const safe = TAB_FREE_TOOLS.has(name) || DEBUG_TOOLS.has(name);
+    const blocked = () => `${dbg.headerFor(wc)}The page is blocked by this dialog until you answer it with handle_dialog (accept: true or false); "${name}" was not run or was interrupted. Then repeat what you were doing.`;
+    if (cap?.dialog && !safe) return blocked();
+    let call = () => this.executeGuarded(name, input);
+    if (AI_NAV_TOOLS.has(name)) { const inner = call; call = () => dbg.withAiNavigation(wc, inner); }
+    let result;
+    try {
+      result = safe ? await call() : await dbg.race(wc, call());
+    } catch (err) {
+      const head = dbg.headerFor(wc);
+      if (head && err && typeof err.message === 'string') err.message = `${head}${err.message}`;
+      throw err;
+    }
+    if (result && typeof result === 'object' && !Array.isArray(result) && result.dialog) return blocked(); // (the abandoned call settles on its own)
+    const head = dbg.headerFor(wc);
+    if (!head) return result;
+    return Array.isArray(result) ? [{ type: 'text', text: head.trimEnd() }, ...result] : typeof result === 'string' ? `${head}${result}` : result;
+  }
+  // ---- [/page debug]
 
   // [research tabs] features/research-tabs.js: web_search / read_urls also open what they look at as
   // background tabs (Settings > Show AI research in tabs). Returns the function that ends the "reading" marker.
@@ -4112,19 +4248,10 @@ ${same}
         if (clipped.startsWith('ERROR: ')) throw new Error(`Script failed: ${clipped.slice(7)}`);
         return `<untrusted_page_content>\n${clipped}\n</untrusted_page_content>`;
       }
-      case 'wait_for': {
-        const wc = this.requireTab();
-        const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
-        const probe = scripts.textProbe(input.text);
-        while (Date.now() < deadline && !this.signalAborted()) {
-          if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
-          if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;
-          if (frames.available(wc) && await this.framesInclude(wc, probe)) return `Found ${quote(input.text)} in an embedded frame of the page.`;
-          await sleep(300);
-        }
-        if (this.signalAborted()) throw new Error('Stopped by the user.');
-        throw new Error(`${quote(input.text)} did not appear within the timeout.`);
-      }
+      case 'wait_for': return this.waitFor(this.requireTab(), input);
+      case 'get_console': { const wc = this.debugTarget(input); return pageDebugShared.console(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
+      case 'get_network': { const wc = this.debugTarget(input); return pageDebugShared.network(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
+      case 'handle_dialog': { const wc = this.debugTarget(input); pageDebugShared.watch(wc); return pageDebugShared.handleDialog(wc, input); }
       case 'type_text': {
         const wc = this.requireTab();
         await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause

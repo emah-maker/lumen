@@ -18,7 +18,7 @@ const lastSnapshot = new Map(); // webContents id -> { url, lines }
 // gets one line back instead. "Soon" is a few tool calls: the API clears older tool results, and a
 // model that can no longer see the earlier snapshot must get it again. Any tool that can change the
 // page clears the cache, and the content itself is compared, so a stale hit can't happen.
-const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf']);
+const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network']);
 const FRESH_CALLS = 6;
 class ReadCache {
   // acted: how many acting tools have run (batch's baseline reuse compares it, see batch below).
@@ -336,7 +336,7 @@ const NEW_TOOLS = [
   },
   {
     name: 'batch',
-    description: 'Several actions in one call, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text} scroll{direction} hover{ref}.',
+    description: 'Several actions in one call, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
@@ -348,6 +348,9 @@ const NEW_TOOLS = [
               do: { type: 'string', enum: ['type', 'click', 'select', 'press', 'wait_for', 'scroll', 'hover'] },
               ref: { type: 'integer' },
               text: { type: 'string' },
+              url: { type: 'string' },
+              gone: { type: 'string' },
+              network_idle: { type: 'boolean' },
               enter: { type: 'boolean' },
               key: { type: 'string' },
               modifiers: { type: 'array', items: { type: 'string' } },
@@ -572,7 +575,7 @@ async function batch(agent, wc, input, h) {
         case 'select': tool = ['type_text', { element_id: step.ref, text: step.text ?? '' }]; break;
         case 'click': tool = ['click', step.ref ? { element_id: step.ref } : { text: step.text }]; break;
         case 'press': tool = ['press_key', { key: step.key, ...(step.modifiers ? { modifiers: step.modifiers } : {}) }]; break;
-        case 'wait_for': tool = ['wait_for', { text: step.text, seconds: 10 }]; break;
+        case 'wait_for': tool = ['wait_for', { ...(step.text !== undefined ? { text: step.text } : {}), ...(step.url !== undefined ? { url: step.url } : {}), ...(step.gone !== undefined ? { gone: step.gone } : {}), ...(step.network_idle === true ? { network_idle: true } : {}), seconds: 10 }]; break;
         case 'scroll': tool = ['scroll', { direction: step.direction || 'down' }]; break;
         case 'hover': tool = ['hover', { element_id: step.ref }]; break;
         default: throw new Error(`Unknown step "${step.do}".`);

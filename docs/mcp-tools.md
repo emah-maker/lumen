@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 30 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 33 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
@@ -113,12 +113,50 @@ LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. 
 
 ### `wait_for`
 
-Wait until the active tab contains some text, up to a timeout.
+Wait until the active tab meets every condition given, up to a timeout. `url` is a substring of the tab's address, or a `*` glob that must match all of it. `gone` is text or a CSS selector (`#spinner`, `.loading`, `div.busy`) that must no longer be on the page. `network_idle` waits until nothing the page requested is still in flight for about 500 ms and the page has stopped loading; ad and tracker hosts, `data:` URLs, images, fonts and media still loading after 3 s, and requests open for over 10 s (long polls, streams) are ignored. A timeout says what is still pending, for example `Timed out after 10s; still pending: network busy: 3 requests in flight (api.example.com, cdn.example.com)`. The same options work in a `batch` `wait_for` step.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `text` | string | yes |  |
+| `text` | string |  | Text that must be on the page. |
+| `url` | string |  | Substring or `*` glob the tab's address must match. |
+| `gone` | string |  | Text or CSS selector that must disappear. |
+| `network_idle` | boolean |  | No requests in flight for about 500 ms. |
 | `seconds` | number |  | Timeout, 1 to 30. Default 10. |
+
+At least one of `text`, `url`, `gone`, `network_idle` is needed.
+
+### `get_console`
+
+The tab's console messages and uncaught errors, as one line each: `[err] 12:01:03 TypeError: x is undefined (app.js:120)`. Lumen starts keeping them (the newest 300) when an agent first works in a tab, so the first call shows only what happened since then; the result says when capture began. Page content, so it is wrapped like any other page read.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tab_id` | integer |  | A tab from `list_tabs`. Default: the active tab. |
+| `level` | `error`, `warning`, `info`, `all` |  | Default `warning` (warnings and errors). |
+| `since_last` | boolean |  | Only what came after the last `get_console` of this tab. |
+
+### `get_network`
+
+The requests a tab made, one line each: `GET 404 api.example.com/v1/items 230ms xhr` (or `GET ERR net::ERR_... host/path kind`). The newest 500 are kept from the moment an agent first works in the tab, so the first call can only show what came after; the result says when capture began and what is in flight now. Query strings are left out by default, and headers and bodies are never recorded. Lumen cannot tell `fetch` from `XMLHttpRequest`, so `fetch` and `xhr` filter the same requests.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `tab_id` | integer |  | A tab from `list_tabs`. Default: the active tab. |
+| `failed` | boolean |  | Only status 400 and above, or requests that failed. |
+| `type` | `xhr`, `fetch`, `document`, `script`, `all` |  | Default `all`. |
+| `url_contains` | string |  | Only requests whose address contains this (case-insensitive; matched against the full address, query included). |
+| `since_last` | boolean |  | Only what came after the last `get_network` of this tab. |
+| `include_query` | boolean |  | Keep query strings in the lines. |
+
+### `handle_dialog`
+
+Answer a `confirm` or `prompt` dialog the page opened. A dialog freezes the page, so while one is open every tool that needs the page stops and the result begins `Dialog open: confirm "Delete item?" — use handle_dialog`; `get_console`, `get_network`, `list_tabs` and the other tools that name no page still work. Lumen answers the others itself and tells you in the next result: an `alert` is accepted, and a `beforeunload` ("Leave site?") is accepted only while the agent's own `navigate`, `go_back`, `go_forward` or `reload` runs (otherwise the page is kept). A confirm or prompt is never answered automatically. Like a click, `handle_dialog` is an action: it needs the site's approval, and it is refused where the user keeps the AI from acting on the tab or hands-off mode applies.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `accept` | boolean | yes | true is OK, false is Cancel. |
+| `text` | string |  | The answer to a `prompt`. |
+| `tab_id` | integer |  | Default: the active tab. |
 
 ### `type_text`
 
@@ -262,7 +300,7 @@ Search the active tab for text: returns matching controls as [id] refs and short
 
 ### `batch`
 
-Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref\|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.
+Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref\|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text|url|gone|network_idle} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.
 
 | Parameter | Type | Required |
 |---|---|---|
