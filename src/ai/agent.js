@@ -21,6 +21,7 @@ const imageGrok = require('./image-grok'); // [image routing] Grok Build's own i
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
@@ -314,6 +315,18 @@ const TOOLS = [
       type: 'object',
       properties: { tab_id: { type: 'integer' }, show: { type: 'boolean' } },
       required: ['tab_id'],
+    },
+  },
+  {
+    name: 'analyze_posts',
+    description: 'Local math, no browsing: find posts that beat their account median (lift).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        posts: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, account: { type: 'string' }, format: { type: 'string' }, views: { type: 'number' }, likes: { type: 'number' }, replies: { type: 'number' }, reposts: { type: 'number' }, comments: { type: 'number' }, shares: { type: 'number' }, date: { type: 'string' } }, required: ['url'] } },
+        metric: { type: 'string', enum: ['views', 'engagement', 'auto'] },
+      },
+      required: ['posts'],
     },
   },
   {
@@ -738,7 +751,7 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
@@ -2898,6 +2911,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
       if (name === 'generate_image') return input.edit ? 'Editing the picture' : 'Making a picture';
       if (name === 'read_pdf') return 'Reading the PDF';
+      if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
@@ -4281,6 +4295,7 @@ ${same}
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
+      case 'analyze_posts': return postAnalysis.run(input);
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
         while (Date.now() < until && !this.signalAborted()) await sleep(Math.min(250, until - Date.now()));

@@ -2889,8 +2889,8 @@ async function tabsAskRuns() {
   const file = path.join(dirS, 'skills.json');
   let store = skills.createStore({ file });
   const builtinNames = skills.BUILTINS.map((b) => b.name);
-  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
-  check('skills: only fact-check may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
+  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
+  check('skills: only fact-check and the research skills may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
   check('skills: every built-in prompt fits the cap and names only known variables', store.list().every((s) => s.prompt.length < 700 && [...s.prompt.matchAll(/\{\{(\w+)\}\}/g)].every((m) => skills.VARIABLES.includes(m[1]))), '');
   const made = store.save({ name: 'mine', title: 'Mine', prompt: 'Do {{input}}' });
   check('skills: a new skill saves, as a user skill', made.ok && made.skill.source === 'user' && store.get(made.skill.id).name === 'mine', JSON.stringify(made));
@@ -2906,13 +2906,13 @@ async function tabsAskRuns() {
   store = skills.createStore({ file });
   check('skills: a deleted built-in stays deleted after a restart', !store.byName('summarize'), '');
   const all = store.resetBuiltins();
-  check('skills: reset built-ins brings back deleted ones and keeps your own', all.reset === 9 && store.byName('summarize') && store.byName('mine') && store.list().length === 10, JSON.stringify(all));
+  check('skills: reset built-ins brings back deleted ones and keeps your own', all.reset === 14 && store.byName('summarize') && store.byName('mine') && store.list().length === 15, JSON.stringify(all));
   store.remove(store.byName('tldr').id);
   store.save({ name: 'tldr', title: 'Mine instead', prompt: 'x' });
   const clash = store.resetBuiltins();
   check('skills: reset leaves alone a user skill that took a built-in\'s name', clash.skipped.join() === 'tldr' && store.byName('tldr').title === 'Mine instead', JSON.stringify(clash));
   fs.writeFileSync(file, '{ not json');
-  check('skills: a corrupt skills.json starts over from the built-ins', skills.createStore({ file }).list().length === 9, '');
+  check('skills: a corrupt skills.json starts over from the built-ins', skills.createStore({ file }).list().length === 14, '');
   // the 200-skill cap
   const capFile = path.join(dirS, 'cap.json');
   const capped = skills.createStore({ file: capFile });

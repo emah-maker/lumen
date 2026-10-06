@@ -291,3 +291,12 @@ Make a picture, or edit the chat's latest one with `edit: true`; it is shown in 
 |---|---|---|---|
 | `prompt` | string | yes | What to draw. Style and size go in the words. |
 | `edit` | boolean |  | Edit the latest picture in this chat (OpenAI, Gemini, OpenRouter and Grok Build can; Grok's API can't). |
+
+### `analyze_posts`
+
+Find which posts beat their own account's normal. Pure local math: it makes no request and needs no tab, so it works before an agent has a window. Give it rows you already collected (up to 200); it returns each account's median baseline, then the outliers by lift (`×3.4`) labelled `huge` (5x or more), `strong` (2 to 5x) or `mild` (1.5 to 2x). The baseline is per account, and per account and format when that format has 5 or more rows. An account with fewer than 10 rows is marked low confidence, and rows with no usable number are listed under "Not enough data" rather than guessed.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `posts` | object[] | yes | `{ url, account?, format?, views?, likes?, replies?, reposts?, comments?, shares?, date? }` |
+| `metric` | `views`, `engagement`, `auto` |  | `views` for video, `engagement` (likes + replies + reposts + comments + shares) for text; `auto` (default) uses views when most rows have them. |
