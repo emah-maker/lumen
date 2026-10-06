@@ -302,7 +302,8 @@ const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
 // ---------------------------------------------------------------- tool definitions
 
 const READ_PAGE_EXTRA = {
-  mode: { type: 'string', enum: ['compact', 'full'] },
+  mode: { type: 'string', enum: ['compact', 'outline', 'full'] },
+  structured: { type: 'boolean', description: 'full: add JSON-LD, meta tags and embedded data.' },
   since_last: { type: 'boolean', description: 'compact: only changes since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
   hrefs: { type: 'boolean', description: 'compact: add link URLs.' },
@@ -391,6 +392,7 @@ const ACTING = ['batch'];
 // ---------------------------------------------------------------- execution
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
+const pageReading = require('./page-reading'); // mode "outline"
 const frames = require('./frames');
 
 // read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
@@ -602,6 +604,7 @@ async function batch(agent, wc, input, h) {
 async function execute(agent, name, input, h) {
   reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
+  if (name === 'read_page' && input.mode === 'outline') return pageReading.readOutline((code, ms) => h.runScript(agent.requireTab(), code, ms)); // headings, links by region, next page (page-outline.js)
   if (name === 'read_page' && input.extract) {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);

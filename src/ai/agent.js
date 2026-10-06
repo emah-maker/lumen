@@ -77,7 +77,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "outline": headings, links by region, next page (no refs); "full": raw text + element count (elements:true lists; structured:true adds JSON-LD/meta/embedded data). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -132,11 +132,13 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 URLs in hidden tabs, signed out; as_user:true asks to read the user\'s own pages signed in.',
+    description: 'Read up to 6 URLs in hidden tabs, signed out: markdown text, page health, structured data; max_chars (8000) + offset page long ones. as_user:true asks to read the user\'s own pages signed in.',
     input_schema: {
       type: 'object',
       properties: {
         urls: { type: 'array', items: { type: 'string' } },
+        max_chars: { type: 'integer', description: 'Per page, 1000-30000, default 8000.' },
+        offset: { type: 'integer', description: 'Start at this character (the next chunk).' },
         // [signed-in sites] features/signed-in-sites.js
         as_user: { type: 'boolean' },
       },
@@ -343,7 +345,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'max_chars', 'offset', 'structured']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -741,6 +743,7 @@ const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // too
 const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
+const pageReading = require('./page-reading'); // read_urls / read_page: health, structured data, markdown, outline
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
 // ---- [/ai controls]
@@ -1009,7 +1012,7 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
-async function readInBackground(url, guard = () => null) {
+async function readInBackground(url, guard = () => null, { maxChars, offset } = {}) {
   // In-memory partition: no cookies or logins from the user's browsing.
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
   view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
@@ -1021,10 +1024,10 @@ async function readInBackground(url, guard = () => null) {
     await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]);
     await redirects?.settle();
     await quietWait(wc);
-    const page = await runScript(wc, scripts.readPage(0, 0), 8000);
-    const more = page.totalTextChars > 8000 ? `
-[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
-    return { url: wc.getURL() || url, title: page.title, text: page.text.slice(0, 8000) + more };
+    // The article as markdown when the page is one, else the visible text; health line, a note for the next chunk
+    // (offset) and compact structured data around it (page-reading.js).
+    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset });
+    return { url: wc.getURL() || url, title: page.title, text: page.text };
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
@@ -3971,7 +3974,9 @@ ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}
 </untrusted_page_content>`;
-        return scripts.formatFull(page);
+        // Page health (when not ok) and structured data (a shell page, or structured:true) ahead of the text (page-reading.js).
+        const extras = textOffset || elementOffset ? '' : await pageReading.fullReadExtras(page, (code) => runScript(wc, code), { structured: input.structured === true }).catch(() => '');
+        return scripts.formatFull(page, extras);
       }
       case 'screenshot': {
         const wc = this.requireTab();
@@ -4079,7 +4084,7 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), { maxChars: input.max_chars, offset: input.offset });
         // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
         const plan = await this.planSignedIn(urls, input.as_user === true);
         const pages = await Promise.all(urls.map(async (url) => {

@@ -15,16 +15,19 @@ The sidebar's Claude models use Anthropic's server-side web search instead of `w
 
 ### `read_page`
 
-Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.
+Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"outline": a cheap map with no refs: title, URL, page health, h1-h3 headings, structured-data summary, links grouped by landmark (main/article first, then nav/header/footer; up to 15 each, with counts), a repeated block ("main > ul.results: 20 items like ..."), and the next-page link. mode:"full": raw JSON elements and text (text_offset/element_offset to page; structured:true adds JSON-LD, meta tags and embedded data). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.
+
+A full read of a page that is not fine starts with one line, `Page: js_shell | wall | soft_404 | data_shell — ...` (what it is and what to try), and a page drawn by script (js_shell, data_shell) also shows its compact structured data.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `text_offset` | integer |  | Character offset into the page text (full mode). |
 | `element_offset` | integer |  | Elements to skip in the list (full mode). |
-| `mode` | `compact`, `full` |  |  |
+| `mode` | `compact`, `outline`, `full` |  |  |
 | `since_last` | boolean |  | compact: only what changed since your last read. |
 | `start_line` | integer |  | compact: continue a clipped outline. |
 | `hrefs` | boolean |  | compact: include link URLs. |
+| `structured` | boolean |  | full: add compact JSON-LD, meta tags and the largest embedded data (`__NEXT_DATA__`, `ytInitialData`, ...). |
 | `extract` | `tables`, `links`, `lists` |  | Return these as JSON instead of a page read: tables (rows of cells, up to 5 tables), links (`[text, href]`, up to 80), lists (items of up to 8 lists). |
 | `selector` | string |  | extract: limit to this CSS selector. |
 
@@ -75,12 +78,16 @@ Fill several fields by label/placeholder (text, select, date, checkbox "true"/"f
 
 ### `read_urls`
 
-Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user's own account pages signed in. Returns title + text.
+Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user's own account pages signed in. Returns title + text: an article-like page as compact markdown (headings, lists, `[text](url)` links, code blocks, simple tables), anything else as its visible text. A page that is not fine starts with a `Page: js_shell | wall | soft_404 | data_shell — ...` line, and a compact "Structured data" section (meta tags, JSON-LD, and for script-drawn pages the largest embedded JSON) follows the text. Long pages come in chunks: the result ends with the `offset` for the next one.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `urls` | string[] | yes |
+| `max_chars` | integer | no |
+| `offset` | integer | no |
 | `as_user` | boolean | no |
+
+`max_chars` is the chunk size per page (1000-30000, default 8000) and `offset` the character to start at (take it from the previous result's note). Signed-in (`as_user`) reads are not chunked yet.
 
 `as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
 
