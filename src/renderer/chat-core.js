@@ -1072,7 +1072,11 @@ const TOOL_LABELS = {
   video_frames: () => t('tool.video_frames'),
   read_tabs: (i) => t(i.ids?.length === 1 ? 'tool.read_tabs.one' : 'tool.read_tabs.other', { count: i.ids?.length || 0 }),
   run_script: () => t('tool.run_script'),
-  wait_for: (i) => t('tool.wait_for', { text: i.text ?? '' }),
+  wait_for: (i) => (i.text ? t('tool.wait_for', { text: i.text }) : t('tool.wait_for.page')),
+  get_console: () => t('tool.get_console'),
+  get_network: () => t('tool.get_network'),
+  handle_dialog: () => t('tool.handle_dialog'),
+  analyze_posts: () => t('tool.analyze_posts'),
 };
 
 // Rendering a long reply's whole markdown on every streamed chunk grew slower and slower (the work

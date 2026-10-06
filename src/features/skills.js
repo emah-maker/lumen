@@ -82,6 +82,33 @@ const BUILTINS = [
     prompt: 'Proofread the text below. Fix spelling, grammar and punctuation without changing the meaning or the voice. Reply with the corrected text first, then a short list of the significant changes.\n\n{{selection}}',
     inputs: ['selection'],
   },
+  // Research recipes: each runs with the browser tools (read_urls, web_search, read_page) and analyze_posts. They share three rules:
+  // a source URL on every claim, quotes copied exactly, and nothing invented when a page would not load.
+  {
+    name: 'comment-mining', title: 'Mine comments', description: 'Sort a post\'s comments into what people ask, object to and want: /comment-mining <post URL>.',
+    prompt: 'Mine the comments on: {{input}}\nRead the post and as many of its comments as you can reach (read_urls, then read_page if needed). Drop spam and duplicates. Sort the rest into: questions, objections, pain points, praise, confusion, requests, buying intent, controversy, jokes. Under each bucket list the themes, most frequent and most intense first, with a count, an exact quote and its URL. Finish with the three things the author should act on. Quote only what you read, never reconstruct a comment, and say plainly if the comments did not load or only a sample did.',
+    mode: 'agent', inputRequired: true,
+  },
+  {
+    name: 'competitor-brief', title: 'Competitor brief', description: 'Profile a competitor\'s social account: /competitor-brief <profile URL>.',
+    prompt: 'Brief me on the competitor: {{input}}\n1. Read the profile: who they are, audience size, bio, links.\n2. Collect at least 20 recent posts with their URLs and numbers (views, likes, comments, dates). If you cannot reach 20, say how many you got.\n3. Run analyze_posts on those rows and note the outliers.\nWrite a markdown brief with exactly these sections: Snapshot, Content pillars, Formats, Hooks, Cadence, CTAs, Top outliers (why each worked), Gaps we could take. Put the source URL after every claim. Never invent a number or caption you did not read; write "not available" instead.',
+    mode: 'agent', inputRequired: true,
+  },
+  {
+    name: 'outlier-finder', title: 'Find outliers', description: 'Which posts beat an account\'s normal, and why: /outlier-finder <profile URL>.',
+    prompt: 'Find the outlier posts for: {{input}}\nCollect at least 20 recent posts (url, format, views or likes, replies, reposts, comments, shares, date) with read_urls or read_page. Never estimate a missing number; leave it out. Call analyze_posts with the rows and read its baselines and lifts. For the top 3 to 5 outliers, open each post and explain why it worked: the hook, the topic, the format, the timing, the audience reaction. Give the lift and the post URL with each. If there were fewer than 20 posts or the baseline has low confidence, say so first.',
+    mode: 'agent', inputRequired: true,
+  },
+  {
+    name: 'transcript-breakdown', title: 'Break down a video', description: 'Hook, setup, claims and CTA of a video or reel: /transcript-breakdown <video URL>.',
+    prompt: 'Break down this video: {{input}}\nGet its transcript with read_urls. If there is no transcript, say so in the first line and work from the caption instead; never make up the words. Report: Hook (the first line or two, quoted), Setup, Claims (each one quoted or closely paraphrased, with the time if known), CTA (quoted). Then two lines on why the structure works or does not. Cite the video URL, and mark anything you are inferring rather than reading.',
+    mode: 'agent', inputRequired: true,
+  },
+  {
+    name: 'social-listening', title: 'Social listening', description: 'What people are saying about a topic on Reddit, Hacker News and X: /social-listening <topic>.',
+    prompt: 'Find out what people are saying about: {{input}}\nUse web_search to find recent discussions on Reddit, Hacker News and X, then read the best threads with read_urls. Report: Overall sentiment (positive, mixed or negative, with a rough share and your confidence), Themes (most common first, a line each), Notable quotes (exact, with the author or site and the URL), and Sources (every URL you read). Keep each platform separate if they disagree. Say which platforms returned nothing or could not be read, and never write a quote or a figure you did not see.',
+    mode: 'agent', inputRequired: true,
+  },
   {
     name: 'watch-video', title: 'Watch video', description: 'Look at the video in this tab and answer about it: /watch-video what does the demo show?',
     prompt: 'Watch the video in this tab. Call video_overview first (pass start and end if I name a stretch). From the contact sheet pick the moments that matter, then call video_frames on them (up to 8) to read detail. If the page text below has a transcript or captions, use it for what was said. Cite times as m:ss. Describe only what the frames show: when something is not visible or not covered, say so and never guess.',

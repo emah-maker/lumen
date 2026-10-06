@@ -965,7 +965,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
     const sys = a.system[0].text;
     check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
-    check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
+    check('request: tool definitions stay under 12k chars (about 3k tokens; 11.9k now: 11.2k with the reading and debug tools of 2026-10: analyze_posts ~0.6k, get_console/get_network/handle_dialog and wait_for url/gone/network_idle ~1.4k, read_page outline/site/structured and read_urls wait/max_chars/offset ~0.3k, plus video_overview/video_frames ~0.7k)', JSON.stringify(a.tools).length < 12000, String(JSON.stringify(a.tools).length));
   }
 
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
@@ -2889,8 +2889,8 @@ async function tabsAskRuns() {
   const file = path.join(dirS, 'skills.json');
   let store = skills.createStore({ file });
   const builtinNames = skills.BUILTINS.map((b) => b.name);
-  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread,watch-video' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
-  check('skills: only fact-check and watch-video may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck,watch-video' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
+  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening,watch-video' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
+  check('skills: only fact-check, watch-video and the research skills may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening,watch-video' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
   check('skills: every built-in prompt fits the cap and names only known variables', store.list().every((s) => s.prompt.length < 700 && [...s.prompt.matchAll(/\{\{(\w+)\}\}/g)].every((m) => skills.VARIABLES.includes(m[1]))), '');
   const made = store.save({ name: 'mine', title: 'Mine', prompt: 'Do {{input}}' });
   check('skills: a new skill saves, as a user skill', made.ok && made.skill.source === 'user' && store.get(made.skill.id).name === 'mine', JSON.stringify(made));

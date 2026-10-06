@@ -80,7 +80,7 @@ function createAgentWindows({ open, alive, close, keep, userUsed = () => false, 
 }
 
 // Tools that can answer without a window: a session that has none yet has no tabs to list.
-const NEEDS_NO_WINDOW = new Set(['list_tabs', 'wait']);
+const NEEDS_NO_WINDOW = new Set(['list_tabs', 'wait', 'analyze_posts']);
 const needsWindow = (tool) => !NEEDS_NO_WINDOW.has(tool);
 
 module.exports = { createAgentWindows, needsWindow, GRACE_MS };

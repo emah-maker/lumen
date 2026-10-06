@@ -854,6 +854,7 @@ app.whenReady().then(() => {
   reader.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   reader.setPermissionCheckHandler(() => false);
   reader.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
+  require('./ai/read-speed').installReaderFilter(reader, 'claude-reader'); // reading needs text, not images, media or fonts: cancelled in this session only
 });
 
 // ---------- permissions: ask like Safari, remember per origin ----------

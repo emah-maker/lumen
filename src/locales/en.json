@@ -1266,7 +1266,12 @@
   "tool.type_text": "Typing “{text}”",
   "tool.ungroup_tabs": "Ungrouping tabs",
   "tool.wait": "Waiting {seconds}s",
+  "tool.analyze_posts": "Comparing posts",
   "tool.wait_for": "Waiting for “{text}”",
+  "tool.wait_for.page": "Waiting for the page",
+  "tool.get_console": "Reading the page console",
+  "tool.get_network": "Reading the page requests",
+  "tool.handle_dialog": "Answering a page dialog",
   "tool.upload_file": "Uploading a file",
   "tool.video_frames": "Looking at video frames",
   "tool.video_overview": "Looking over the video",
@@ -1966,7 +1971,8 @@
   "translate.error.downloadOffline": "You appear to be offline, so the language pack couldn’t download. Connect and try again.",
   "translate.error.packRemoved": "The language pack was deleted while it was downloading. Try again to download it.",
   "settings.translate.packs.deleteSure": "Delete? Click again",
-  "settings.translate.packs.deleteAllSure": "Delete all packs? Click again",
+  "settings.translate.packs.deleteAllSure": "Delete all packs? Click again"
+,
   "print.title": "Print",
   "print.preparing": "Preparing preview…",
   "print.destination": "Destination",

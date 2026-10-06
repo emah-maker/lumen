@@ -19,8 +19,13 @@ const genImages = require('../features/gen-images'); // pictures the AI made or 
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
+const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
+const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
+const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
+const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
 const { captureTab } = require('../features/tab-capture');
 const videoCapture = require('../features/video-capture'); // video_overview, video_frames
 const videoBudget = require('./video-budget');
@@ -79,7 +84,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "full": raw text + element count (elements:true lists). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": [id] outline (start here); "outline": headings, links by region, next page; "full": raw text (elements:true lists; structured:true adds JSON-LD/meta); "site": Reddit/HN/YouTube/X/TikTok/GitHub feed view (default there). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -95,27 +100,27 @@ const TOOLS = [
   },
   {
     name: 'video_overview',
-    description: 'Contact sheet of the main video on the page: frames evenly spaced, each timestamped. Playback is restored. Start here, then video_frames.',
+    description: 'Timestamped contact sheet of the page video (start/end: s or m:ss). Then video_frames.',
     input_schema: {
       type: 'object',
       properties: {
         tab_id: { type: 'integer' },
-        frames: { type: 'integer', description: '4-36, default 16.' },
-        start: { type: 'string', description: 'Window start: seconds or m:ss.' },
-        end: { type: 'string', description: 'Window end: seconds or m:ss.' },
-        token_budget: { type: 'integer', description: 'Image tokens, default 6000.' },
+        frames: { type: 'integer', description: '4-36' },
+        start: { type: 'string' },
+        end: { type: 'string' },
+        token_budget: { type: 'integer' },
       },
     },
   },
   {
     name: 'video_frames',
-    description: 'Full-size frames of the page video at timestamps (seconds or m:ss, max 8). Playback is restored.',
+    description: 'Full-size frames of the page video at times (s or m:ss, max 8).',
     input_schema: {
       type: 'object',
       properties: {
         tab_id: { type: 'integer' },
         at: { type: 'array', items: { type: 'string' } },
-        max_width: { type: 'integer', description: 'Default 1024.' },
+        max_width: { type: 'integer' },
       },
       required: ['at'],
     },
@@ -125,7 +130,7 @@ const TOOLS = [
     description: 'Load a URL in the active tab; read:true returns the new outline.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' } },
+      properties: { url: { type: 'string' }, wait: { type: 'string', enum: WAIT_MODES } /* interactive (default): once the page shows text (load-wait.js) */ },
       required: ['url'],
     },
   },
@@ -161,11 +166,14 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 URLs in hidden tabs, signed out; as_user:true asks to read the user\'s own pages signed in.',
+    description: 'Read up to 6 URLs in hidden tabs, signed out (markdown, page health, structured data; max_chars+offset page long ones). as_user:true asks to read the user\'s own pages signed in.',
     input_schema: {
       type: 'object',
       properties: {
         urls: { type: 'array', items: { type: 'string' } },
+        wait: { type: 'string', enum: WAIT_MODES }, // as on navigate
+        max_chars: { type: 'integer', description: 'Per page, 1000-30000, default 8000.' },
+        offset: { type: 'integer', description: 'Start at this character (the next chunk).' },
         // [signed-in sites] features/signed-in-sites.js
         as_user: { type: 'boolean' },
       },
@@ -200,14 +208,52 @@ const TOOLS = [
   },
   {
     name: 'wait_for',
-    description: 'Wait until the active tab shows text.',
+    description: 'Wait (up to seconds, 1-30) until the tab meets all given: text, url (substring or * glob), gone (text/selector), network_idle.',
     input_schema: {
       type: 'object',
       properties: {
         text: { type: 'string' },
-        seconds: { type: 'number', description: '1-30, default 10.' },
+        url: { type: 'string' },
+        gone: { type: 'string' },
+        network_idle: { type: 'boolean' },
+        seconds: { type: 'number' },
       },
-      required: ['text'],
+    },
+  },
+  {
+    name: 'get_console',
+    description: 'Console messages and errors since the AI first used the tab. Default: warnings+errors.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        level: { type: 'string', enum: ['error', 'warning', 'info', 'all'] },
+        since_last: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'get_network',
+    description: 'Requests a tab made (status, host+path, ms) since the AI first used it. No headers or bodies.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        failed: { type: 'boolean' },
+        type: { type: 'string', enum: ['xhr', 'fetch', 'document', 'script', 'all'] },
+        url_contains: { type: 'string' },
+        since_last: { type: 'boolean' },
+        include_query: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'handle_dialog',
+    description: 'Answer the open confirm/prompt (text for a prompt). Alerts auto-accept.',
+    input_schema: {
+      type: 'object',
+      properties: { accept: { type: 'boolean' }, text: { type: 'string' }, tab_id: { type: 'integer' } },
+      required: ['accept'],
     },
   },
   {
@@ -346,6 +392,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'analyze_posts',
+    description: 'Local math, no browsing: find posts that beat their account median (lift).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        posts: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, account: { type: 'string' }, format: { type: 'string' }, views: { type: 'number' }, likes: { type: 'number' }, replies: { type: 'number' }, reposts: { type: 'number' }, comments: { type: 'number' }, shares: { type: 'number' }, date: { type: 'string' } }, required: ['url'] } },
+        metric: { type: 'string', enum: ['views', 'engagement', 'auto'] },
+      },
+      required: ['posts'],
+    },
+  },
+  {
     name: 'wait',
     description: 'Wait 1-10 s (prefer wait_for).',
     input_schema: {
@@ -372,7 +430,7 @@ const SEARCH_TOOL = {
 // with a slimmer schema, since every message pays for it. Paging and tuning options (RARE_ARGS), property notes and the
 // shape of array items (batch steps, fill_form fields: their descriptions spell it out) are left out of the listing only;
 // a call is still checked against the full schema (TOOL_SCHEMAS, validateInput), so those options keep working.
-const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'start', 'end', 'token_budget']);
+const RARE_ARGS = new Set(['text_offset', 'element_offset', 'start_line', 'hrefs', 'selector', 'max_width', 'quality', 'region', 'max_chars_each', 'screens', 'max', 'elements', 'gone', 'include_query', 'url_contains', 'max_chars', 'offset', 'structured', 'start', 'end', 'token_budget']);
 function slimProp(prop) {
   const out = { type: prop.type };
   if (prop.enum) out.enum = prop.enum;
@@ -751,12 +809,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Eager input streaming skips server-side validation, so check inputs against the schema here.
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
-const ONE_OF = { click: [['element_id', 'text']] };
+const ONE_OF = { click: [['element_id', 'text']], wait_for: [['text', 'url', 'gone', 'network_idle']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
-const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', ...snapshot.ACTING]);
+// (handle_dialog: accepting a page's confirm is part of the interaction the user allowed on that site, so it asks like a click does.)
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'video_overview', 'video_frames']);
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -767,11 +826,18 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
+const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
+const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
+const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
+const TAB_NAMING_READS = new Set(['read_pdf', 'get_console', 'get_network', 'handle_dialog', 'video_overview', 'video_frames']); // tools that may name another tab (tab_id) as well as the task's
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
+const pageReading = require('./page-reading'); // read_urls / read_page: health, structured data, markdown, outline
+const pageHealth = require('./page-health'); // read_urls chunk size (clampChars), offset slicing (slicePage)
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
+const siteExtractors = require('./site-extractors'); // [site extractors] Reddit, Hacker News, YouTube, X, TikTok, GitHub: read from their feeds, not the cluttered page
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
@@ -1038,29 +1104,99 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
   return `Allowed automatically: ${what}`;
 }
 
+// Starts loading `url` in `wc` and returns once the page is ready by the `wait` mode (load-wait.js): "load" is what
+// loadURL always meant (the load event); "interactive" (default) returns at dom-ready as soon as the page already shows
+// real text, so a page that is slow only in images, ads and trackers is read in a fraction of the time, while a JS shell
+// with no text yet keeps waiting for the load; "networkidle" also waits for the late fetches. Never longer than capMs.
+// Never throws: a failed load just ends the wait (the caller reads whatever page or error page is there).
+// `netIdle()` (optional): true/false from the tab's request tracker (page-debug.js), undefined when it has none.
+async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle } = {}) {
+  const t0 = Date.now();
+  let loaded = false;
+  const full = wc.loadURL(url).catch(() => {}).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
+  if (mode === 'load') return void await Promise.race([full, sleep(capMs)]);
+  let ready;
+  const domReady = new Promise((resolve) => { ready = resolve; wc.once('dom-ready', ready); wc.once('destroyed', ready); });
+  await Promise.race([full, domReady, sleep(capMs)]);
+  if (!wc.isDestroyed()) { wc.removeListener('dom-ready', ready); wc.removeListener('destroyed', ready); }
+  for (;;) {
+    if (wc.isDestroyed() || (loaded && mode !== 'networkidle')) return;
+    const elapsed = Date.now() - t0;
+    const probe = await runScript(wc, PROBE_SCRIPT, 2000).catch(() => null);
+    if (loaded && !probe) return; // nothing to measure (a failed load)
+    if (probe && loadDone(mode, { ...probe, loading: wc.isLoading(), netIdle: netIdle?.() }, elapsed, capMs)) return;
+    if (elapsed >= capMs) return;
+    await sleep(150);
+  }
+}
+
+const readResults = new ResultCache(); // read_urls results across runs: 50 pages, 5 minutes
+
+// Warm hidden reader views (read-speed.js ReaderPool): up to 3 kept blanked for 60 s and reused, so a read does not pay
+// for a new view each time. Same in-memory partition as before; one that timed out, crashed or will not blank is closed.
+const readerPool = new ReaderPool({
+  create: () => {
+    // In-memory partition: no cookies or logins from the user's browsing.
+    const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
+    const wc = view.webContents;
+    wc.setAudioMuted(true);
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+    wc.on('will-prevent-unload', (event) => event.preventDefault()); // a "leave this page?" prompt must not stop it being blanked
+    return { view, wc };
+  },
+  reset: async ({ wc }) => { await Promise.race([wc.loadURL('about:blank').catch(() => {}), sleep(2000)]); return !wc.isDestroyed() && wc.getURL() === 'about:blank'; },
+  destroy: ({ wc }) => { if (!wc.isDestroyed()) wc.close(); },
+  alive: ({ wc }) => !wc.isDestroyed() && !wc.isCrashed(),
+});
+
+// [site extractors] A supported address (site-extractors.js) read from its feed / API / transcript in the same cookie-less
+// session the hidden reader uses: { title, text } (text starts with "Source: ..."), or null when the address isn't
+// supported or anything failed (the caller then does its normal page read).
+// Paging (read_urls max_chars/offset): the first chunk is the extractor's own view at that budget (it drops the deepest
+// replies first and says what it left out); a later chunk renders the view with room for offset + maxChars and slices it
+// the way a page read is sliced (page-health.js slicePage), with the same "next offset" note.
+const SITE_MAX_CHARS = siteExtractors.DEFAULT_MAX_CHARS;
+const SITE_PAGED_MAX = 120000; // the biggest view a later chunk renders
+async function readSiteNetwork(url, { maxChars = SITE_MAX_CHARS, offset = 0 } = {}) {
+  if (!siteExtractors.extractorFor(url)) return null;
+  try {
+    const ses = require('electron').session.fromPartition('claude-reader');
+    const budget = offset > 0 ? Math.min(SITE_PAGED_MAX, offset + maxChars) : maxChars;
+    const site = await siteExtractors.readSite(url, { get: siteExtractors.makeGet((u, o) => ses.fetch(u, o)), maxChars: budget });
+    if (!site) return null;
+    if (!(offset > 0)) { // a view filled to its budget probably left something out: say how to get the rest
+      return site.text.length < maxChars * 0.9 ? site : { ...site, text: `${site.text}\n[view capped at ${maxChars} chars; for more call read_urls again with offset: ${site.text.length}]` };
+    }
+    const slice = pageHealth.slicePage(site.text, { maxChars, offset });
+    const source = site.text.split('\n', 1)[0]; // "Source: <site> (<how>)", kept on every chunk
+    return { ...site, text: [`${source} [continued]`, slice.text, slice.note].filter(Boolean).join('\n') };
+  } catch { return null; }
+}
+
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
-async function readInBackground(url, guard = () => null) {
-  // In-memory partition: no cookies or logins from the user's browsing.
-  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
-  view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
-  const wc = view.webContents;
-  wc.setAudioMuted(true);
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+// The view comes from the warm reader pool (blanked between reads, so each read starts on a fresh document and the
+// isolated-world scripts of the last one are gone with it); `wait` says when the page counts as loaded (load-wait.js).
+async function readInBackground(url, guard = () => null, { wait, maxChars, offset } = {}) {
+  const entry = await readerPool.acquire();
+  const wc = entry.wc;
+  let healthy = false;
   const redirects = guard(wc);
   try {
-    await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]);
+    await loadPage(wc, url, normalizeWait(wait));
     await redirects?.settle();
     await quietWait(wc);
-    const page = await runScript(wc, scripts.readPage(0, 0), 8000);
-    const more = page.totalTextChars > 8000 ? `
-[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
-    return { url: wc.getURL() || url, title: page.title, text: page.text.slice(0, 8000) + more };
+    // The article as markdown when the page is one, else the visible text; health line, a note for the next chunk
+    // (offset) and compact structured data around it (page-reading.js).
+    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset });
+    healthy = true;
+    return { url: wc.getURL() || url, title: page.title, text: page.text };
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
     redirects?.release();
-    wc.close();
+    await readerPool.release(entry, healthy);
   }
 }
 
@@ -2921,7 +3057,10 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
       if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
       if (name === 'run_script') return 'Running a script on the page';
-      if (name === 'wait_for') return `Waiting for ${quote(input.text)}`;
+      if (name === 'wait_for') return input.text ? `Waiting for ${quote(input.text)}` : input.network_idle === true && !input.url && !input.gone ? 'Waiting for the page to finish loading' : 'Waiting for the page';
+      if (name === 'get_console') return 'Reading the page console';
+      if (name === 'get_network') return "Reading the page's requests";
+      if (name === 'handle_dialog') return input.accept === true ? "Accepting the page's dialog" : "Dismissing the page's dialog";
       if (name === 'web_search') return `Searching the web for ${quote(input.query || '')}`;
       if (name === 'group_tabs') return `Grouping ${input.tab_ids.length} tabs as ${quote(input.name)}`;
       if (name === 'ungroup_tabs') return `Ungrouping ${input.tab_ids.length} tab${input.tab_ids.length === 1 ? '' : 's'}`;
@@ -2931,6 +3070,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_pdf') return 'Reading the PDF';
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
+      if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
@@ -3012,7 +3152,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
-      const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+      const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
       const url = tab?.webContents.getURL() || '';
       try {
         const parsed = new URL(url);
@@ -3063,7 +3203,7 @@ ${prompt}` : prompt), historyImages: [] };
     const urlOf = (id) => this.browser.listTabs().find((t) => t.id === id)?.url || '';
     const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : [])
-        : (name === 'read_pdf' || name === 'video_overview' || name === 'video_frames') && input.tab_id !== undefined ? [input.tab_id] : [];
+        : TAB_NAMING_READS.has(name) && input.tab_id !== undefined ? [input.tab_id] : [];
     for (const id of named) if (off(urlOf(id))) refuse(urlOf(id));
     if (!TAB_FREE_TOOLS.has(name)) {
       let url = '';
@@ -3083,7 +3223,10 @@ ${prompt}` : prompt), historyImages: [] };
     const named = name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
     for (const id of named) if (id !== undefined && id !== null && off(id)) refuse();
-    if (TAB_FREE_TOOLS.has(name)) return;
+    if (TAB_FREE_TOOLS.has(name) || (name === 'handle_dialog' && input.tab_id !== undefined)) { // (a dialog answer names its own tab)
+      if (name === 'handle_dialog' && off(input.tab_id)) refuse();
+      return;
+    }
     let id = null;
     try { id = this.taskTab()?.id ?? null; } catch {}
     if (id !== null && off(id)) refuse();
@@ -3098,7 +3241,7 @@ ${prompt}` : prompt), historyImages: [] };
     let ids;
     try {
       if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
-      else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
+      else ids = [name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? input.tab_id : (this.taskTab()?.id ?? null)];
     } catch { throw new Error(manners.handsOffRefusal(name)); } // (no tab at all is null, not a throw, and the tool says so itself; a lookup that fails is refused, never let through)
     for (const id of ids) {
       if (id === null || id === undefined) continue;
@@ -3453,6 +3596,46 @@ ${rendered.text}
     if (!list.length) return { block: '', tabs: [] };
     const rendered = tabsAsk.renderTabs(await this.readTabEntries(list));
     return { block: tabsAsk.messageBlock(rendered), tabs: rendered.tabs };
+  }
+
+  // wait_for: every condition given (text, url, gone, network_idle) must hold at once. text alone keeps the old answers. A timeout
+  // throws, but with the state of each condition and what the network was doing (idle-tracker.js timeoutText), not a bare
+  // "did not appear" (so a batch still stops there). Idle needs the tab's capture (the first tool call there started it) and a
+  // page that is no longer loading.
+  async waitFor(wc, input) {
+    const c = idle.waitConditions(input);
+    if (!Object.keys(c).length) throw new Error('wait_for needs text, url, gone or network_idle:true.');
+    const cap = pageDebugShared.watch(wc);
+    const seconds = Math.min(Math.max(input.seconds || 10, 1), 30);
+    const deadline = Date.now() + seconds * 1000;
+    const textProbe = c.text !== undefined ? scripts.textProbe(c.text) : null;
+    const goneText = c.gone !== undefined ? scripts.textProbe(c.gone) : null;
+    const goneSelector = c.gone !== undefined && idle.looksLikeSelector(c.gone) ? `(() => { try { return document.querySelector(${JSON.stringify(c.gone)}) ? 1 : 0; } catch { return -1; } })()` : null;
+    const present = async (probe) => (await runScript(wc, probe, 3000).catch(() => false)) || (frames.available(wc) && await this.framesInclude(wc, probe).catch(() => false));
+    const only = Object.keys(c).length === 1 && c.text !== undefined;
+    let state;
+    let where = 'on the page';
+    for (;;) {
+      if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+      state = {};
+      if (textProbe) {
+        if (await runScript(wc, textProbe, 3000).catch(() => false)) state.text = true;
+        else if (frames.available(wc) && await this.framesInclude(wc, textProbe).catch(() => false)) { state.text = true; where = 'in an embedded frame of the page'; }
+        else state.text = false;
+      }
+      if (c.url !== undefined) state.url = idle.urlMatches(c.url, wc.getURL());
+      if (c.gone !== undefined) {
+        const sel = goneSelector ? await runScript(wc, goneSelector, 3000).catch(() => null) : -1;
+        state.gone = sel === -1 ? !(await present(goneText)) : sel === 0; // -1: it is text (or a selector the page refused); null: the page did not answer, not gone yet
+      }
+      if (c.idle) state.idle = !wc.isLoading() && (cap ? cap.tracker.idle(Date.now()) : true);
+      if (Object.values(state).every(Boolean)) return only ? `Found ${quote(c.text)} ${where}.` : idle.successText(c, { url: wc.getURL() });
+      if (Date.now() >= deadline || this.signalAborted()) break;
+      await sleep(300);
+    }
+    if (this.signalAborted()) throw new Error('Stopped by the user.');
+    const detail = idle.timeoutText(c, state, { seconds, url: wc.getURL(), tracker: cap?.tracker, loading: wc.isLoading() });
+    throw new Error(only ? `${quote(c.text)} did not appear within the timeout. (${detail})` : detail);
   }
 
   // ---- read_pdf (features/pdf-text.js): the tab's PDF, only after the user allowed that PDF in this
@@ -3852,7 +4035,7 @@ ${out.text}${note}
     this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
-      const result = await this.executeGuarded(name, input);
+      const result = await this.executeDebugged(name, input);
       this.aiOffAfter(name);
       return result;
     }
@@ -3860,13 +4043,58 @@ ${out.text}${note}
     const before = this.actionSnapshot();
     let result;
     try {
-      result = await nestedCall.run(true, () => this.executeGuarded(name, input));
+      result = await nestedCall.run(true, () => this.executeDebugged(name, input));
     } finally {
       this.recordActions(log, name, input, before);
     }
     this.aiOffAfter(name);
     return result;
   }
+
+  // ---- [page debug] ai/page-debug.js: per-tab console / request capture, network_idle and JS dialogs.
+  // The tab a debug tool names (tab_id), else the task's; null for tools that name no tab.
+  debugWc(name, input) {
+    try {
+      if (input?.tab_id !== undefined && DEBUG_TOOLS.has(name)) return this.browser.tabById?.(input.tab_id)?.webContents || null;
+      if (TAB_FREE_TOOLS.has(name)) return null;
+      return this.taskTab()?.webContents || null;
+    } catch { return null; }
+  }
+
+  debugTarget(input) {
+    const tab = input?.tab_id !== undefined ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+    if (!tab) throw new Error(input?.tab_id !== undefined ? `No tab with id ${input.tab_id}. Call list_tabs.` : this.browser.noTabReason?.() || 'No tab is open.');
+    return tab.webContents;
+  }
+
+  // executeGuarded plus the page-debug layer: the first tool on a tab starts its capture; a dialog the page has open (a confirm or
+  // prompt waiting for handle_dialog) is put ahead of the result, once; a call that stalls on such a dialog ends the moment it
+  // opens (the page cannot answer anything until it is closed); and a navigation of the AI's own may leave a page whose
+  // beforeunload dialog asks (page-debug.js dialogPolicy).
+  async executeDebugged(name, input) {
+    const wc = this.debugWc(name, input);
+    if (!wc) return this.executeGuarded(name, input);
+    const dbg = pageDebugShared;
+    const cap = dbg.watch(wc);
+    const safe = TAB_FREE_TOOLS.has(name) || DEBUG_TOOLS.has(name);
+    const blocked = () => `${dbg.headerFor(wc)}The page is blocked by this dialog until you answer it with handle_dialog (accept: true or false); "${name}" was not run or was interrupted. Then repeat what you were doing.`;
+    if (cap?.dialog && !safe) return blocked();
+    let call = () => this.executeGuarded(name, input);
+    if (AI_NAV_TOOLS.has(name)) { const inner = call; call = () => dbg.withAiNavigation(wc, inner); }
+    let result;
+    try {
+      result = safe ? await call() : await dbg.race(wc, call());
+    } catch (err) {
+      const head = dbg.headerFor(wc);
+      if (head && err && typeof err.message === 'string') err.message = `${head}${err.message}`;
+      throw err;
+    }
+    if (result && typeof result === 'object' && !Array.isArray(result) && result.dialog) return blocked(); // (the abandoned call settles on its own)
+    const head = dbg.headerFor(wc);
+    if (!head) return result;
+    return Array.isArray(result) ? [{ type: 'text', text: head.trimEnd() }, ...result] : typeof result === 'string' ? `${head}${result}` : result;
+  }
+  // ---- [/page debug]
 
   // [research tabs] features/research-tabs.js: web_search / read_urls also open what they look at as
   // background tabs (Settings > Show AI research in tabs). Returns the function that ends the "reading" marker.
@@ -3942,6 +4170,8 @@ ${out.text}${note}
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
       await quietWait(wc); // (waitForLoad already waited for quiet; this covers the sleep(15000) race winning)
       if (away()) return fallBack();
+      const site = await siteExtractors.readSiteInPage(wc.getURL() || url, (code) => runScript(wc, code, 8000)).catch(() => null); // [site extractors] the signed-in page's own Reddit / TikTok data
+      if (site && !away()) return { url: wc.getURL() || url, title: site.title || siteOf(url), text: site.text, signedIn: true };
       const page = await runScript(wc, scripts.readPage(0, 0), 8000);
       if (away()) return fallBack(); // it moved while being read
       const more = page.totalTextChars > 8000 ? `\n[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
@@ -4004,6 +4234,18 @@ ${out.text}${note}
     switch (name) {
       case 'read_page': {
         const wc = this.requireTab();
+        // [site extractors] a supported site's structured view: for mode:"site", or a plain read_page (no mode, offset, elements,
+        // selector or structured). mode "compact" / "outline" and extract are answered in snapshot.js before this.
+        const plain = !input.mode && !input.text_offset && !input.element_offset && input.elements !== true && !input.selector && input.structured !== true;
+        if (input.mode === 'site' || plain) {
+          const url = wc.getURL();
+          const site = await siteExtractors.readSiteInPage(url, (code) => runScript(wc, code, 8000)).catch(() => null) || await readSiteNetwork(url);
+          if (site) return `<untrusted_page_content url="${url}">
+Title: ${site.title}
+${site.text}
+(Structured view of this site; read_page mode:"full" gives the raw page, mode:"compact" the [id] outline to click.)
+</untrusted_page_content>`;
+        }
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
@@ -4016,7 +4258,9 @@ ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}
 </untrusted_page_content>`;
-        return scripts.formatFull(page);
+        // Page health (when not ok) and structured data (a shell page, or structured:true) ahead of the text (page-reading.js).
+        const extras = textOffset || elementOffset ? '' : await pageReading.fullReadExtras(page, (code) => runScript(wc, code), { structured: input.structured === true }).catch(() => '');
+        return scripts.formatFull(page, extras);
       }
       case 'screenshot': {
         const wc = this.requireTab();
@@ -4035,8 +4279,14 @@ ${same}
         const wc = this.requireTab();
         const url = webUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
-        await wc.loadURL(url).catch(() => {}); // redirects reject with ERR_ABORTED; the load still happens
-        await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
+        const wait = normalizeWait(input.wait);
+        // Redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js); networkidle asks the tab's own
+        // request tracker when it has one (executeDebugged started it), the same one wait_for network_idle uses.
+        const tracker = pageDebugShared.captureOf(wc)?.tracker;
+        await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined });
+        // Returned early (the page shows text, images and trackers still loading): only the DOM settling is waited for, not the rest of the load.
+        if (wait === 'interactive' && wc.isLoading()) await quietWait(wc);
+        else await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
         await this.settleRedirects(wc);
         let loaded = `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
         if (input.wait_for) {
@@ -4126,7 +4376,28 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        const wait = normalizeWait(input.wait);
+        // The chunk asked for, normalized the way page-health.js slicePage reads it, so equal requests share a cache entry.
+        const maxChars = pageHealth.clampChars(input.max_chars);
+        const offset = Math.max(0, Math.floor(Number(input.offset)) || 0);
+        const readOpts = { wait, maxChars, offset };
+        // [site extractors] after the approval / redirect gates above: a supported site is read from its feed (same chunk
+        // size and offset), else the hidden view (markdown, page health, paging: page-reading.js).
+        const read = async (url) => {
+          const site = await readSiteNetwork(url, { maxChars, offset });
+          if (site) return { url, title: site.title || siteOf(url), text: site.text };
+          return readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), readOpts);
+        };
+        // Repeat reads in the same chat come from a 5-minute cache (read-speed.js): never signed in, never when the user turned AI off
+        // for the site now, kept apart per trust scope (sidebar vs an MCP client). The key holds every option that changes the result.
+        const scope = taskScope.getStore()?.gate?.external === false ? 'sidebar' : 'external';
+        const signedOut = async (url) => {
+          const cached = input.as_user ? null : readResults.get(url, readOpts, scope);
+          if (cached && !this.browser.aiOff?.(url) && !this.browser.aiOff?.(cached.url)) return { ...cached };
+          const page = await read(url);
+          if (!input.as_user) readResults.put(url, readOpts, scope, page);
+          return page;
+        };
         // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
         const plan = await this.planSignedIn(urls, input.as_user === true);
         const pages = await Promise.all(urls.map(async (url) => {
@@ -4159,19 +4430,10 @@ ${same}
         if (clipped.startsWith('ERROR: ')) throw new Error(`Script failed: ${clipped.slice(7)}`);
         return `<untrusted_page_content>\n${clipped}\n</untrusted_page_content>`;
       }
-      case 'wait_for': {
-        const wc = this.requireTab();
-        const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
-        const probe = scripts.textProbe(input.text);
-        while (Date.now() < deadline && !this.signalAborted()) {
-          if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
-          if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;
-          if (frames.available(wc) && await this.framesInclude(wc, probe)) return `Found ${quote(input.text)} in an embedded frame of the page.`;
-          await sleep(300);
-        }
-        if (this.signalAborted()) throw new Error('Stopped by the user.');
-        throw new Error(`${quote(input.text)} did not appear within the timeout.`);
-      }
+      case 'wait_for': return this.waitFor(this.requireTab(), input);
+      case 'get_console': { const wc = this.debugTarget(input); return pageDebugShared.console(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
+      case 'get_network': { const wc = this.debugTarget(input); return pageDebugShared.network(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
+      case 'handle_dialog': { const wc = this.debugTarget(input); pageDebugShared.watch(wc); return pageDebugShared.handleDialog(wc, input); }
       case 'type_text': {
         const wc = this.requireTab();
         await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
@@ -4328,6 +4590,7 @@ ${same}
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
+      case 'analyze_posts': return postAnalysis.run(input);
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
         while (Date.now() < until && !this.signalAborted()) await sleep(Math.min(250, until - Date.now()));

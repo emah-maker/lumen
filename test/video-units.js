@@ -275,7 +275,7 @@ const runIn = (env) => (wc, code) => withEnv(env, () => eval(code)); // the seri
   const hasBoth = (src, name) => names.every((n) => setOf(src, name).includes(`'${n}'`));
   const hasNone = (src, name) => names.every((n) => !setOf(src, name).includes(`'${n}'`));
   check('lists: agent.js READING_TOOLS (taints the run, like screenshot)', hasBoth(agentSrc, 'READING_TOOLS'), '');
-  check('lists: tab_id is checked against AI-off sites', /name === 'video_overview' \|\| name === 'video_frames'\) && input\.tab_id !== undefined \? \[input\.tab_id\]/.test(agentSrc), '');
+  check('lists: tab_id is checked against AI-off sites (TAB_NAMING_READS)', hasBoth(agentSrc, 'TAB_NAMING_READS'), '');
   check('lists: neither is a tab-free, destination or acting tool (they use the task tab like screenshot)', ['TAB_FREE_TOOLS', 'DESTINATION_TOOLS', 'ACTING_TOOLS'].every((n) => hasNone(agentSrc, n)), '');
   check('lists: step labels in agent.js, en.json, chat-core.js and the bundle', /name === 'video_overview'\) return 'Looking over the video'/.test(agentSrc) && /"tool\.video_overview"/.test(read('src/locales/en.json')) && /"tool\.video_frames"/.test(read('src/locales/en.json')) && /video_overview: \(\) => t\('tool\.video_overview'\)/.test(read('src/renderer/chat-core.js')) && /video_frames: \(\) => t\('tool\.video_frames'\)/.test(read('src/renderer/ui.bundle.js')), '');
   const lg = read('src/ai/loop-guard.js');
