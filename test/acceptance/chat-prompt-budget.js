@@ -12,7 +12,7 @@ const { cliSystemPrompt, EXTERNAL_TOOLS } = require('../../src/ai/agent');
 
 // total: half of today's ~17,000. Tool schemas alone are ~9,350 today, so the total can't be met by trimming the
 // system prompt only: the tool descriptions have to get shorter too.
-const BUDGET = { system: 3800, total: 9800 }; // total raised from 8500 (the last ~480 chars would mean dropping the Grok Build tool list: slower turns), then 9000 -> 9200 for generate_image (~190 chars: every engine can ask for a picture, ai/image-router.js), then 9200 -> 9800 for upload_file (PR #281's new tool: ~400 chars of schema + a ~140-char prompt rule; the description was already trimmed, a file upload can't be described shorter)
+const BUDGET = { system: 3800, total: 12200 }; // total raised from 8500 (the last ~480 chars would mean dropping the Grok Build tool list: slower turns), then 9000 -> 9200 for generate_image (~190 chars: every engine can ask for a picture, ai/image-router.js), then 9200 -> 9800 for upload_file (PR #281's new tool: ~400 chars of schema + a ~140-char prompt rule; the description was already trimmed, a file upload can't be described shorter), then 9800 -> 12200 for 0.5.16's reading and video tools (~2.3k: get_console, get_network, handle_dialog, analyze_posts, video_overview, video_frames, and wait_for / read_urls / read_page options; each description was already trimmed in #302/#303)
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
