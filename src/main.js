@@ -3709,9 +3709,11 @@ function popupFailPage(wc) {
     wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
   });
 }
-function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null) {
-  const child = new BrowserWindow({ ...options, ...popupWindowOptions(), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
+function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null, behind = false) {
+  behind = behind || manners.isAiTab(openerTab); // [ai manners] a window an AI tab's page opened comes up behind the user's window, never over it
+  const child = new BrowserWindow({ ...windowOrder.independent(options), ...popupWindowOptions(), ...(behind ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
   const wc = child.webContents;
+  if (behind) showBehind(child);
   popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc); // before anything loads
   if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
@@ -3735,7 +3737,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!popupLimit.allow()) return { action: 'deny' };
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
-    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
+    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url, null, behind) };
     const byAi = manners.isAiTab(openerTab); // [ai manners] a link from a window an AI tab's page opened is the AI's too: behind the user's tab, and kept out of the strip when hiding is on
     withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab' || byAi, partition, ...(byAi ? { openedBy: { chatId: openerTab.openedBy.chatId, runId: openerTab.openedBy.runId } } : {}) })); // a research tab's popup keeps to its session
     return { action: 'deny' };
@@ -6109,14 +6111,19 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 // never saved with the session, never merged, and its tabs are not "AI tabs" (nothing in it is the user's to hide or close).
 // It closes a little after the session ends, unless the user used it or pinned a tab in it: then it is theirs, an ordinary window.
 const { createAgentWindows } = require('./features/agent-windows');
+const windowOrder = require('./features/window-order');
 const agentWindowTitle = (label) => `${label} · Lumen`;
 function showBehind(w) {
   const front = BrowserWindow.getFocusedWindow();
   w.showInactive();
   try {
-    // The user is in a Lumen window: it stays above this one (stacking only, focus is untouched). Otherwise they are in
-    // another app, and this window waits in the taskbar instead of covering it.
-    if (front && front !== w && !front.isDestroyed() && !front.isMinimized()) front.moveAbove(w.getMediaSourceId());
+    // The user is in a Lumen window: it goes back on top of this one (stacking only, focus is untouched). Otherwise they are in
+    // another app, and this window waits in the taskbar instead of covering it. (moveTop, not moveAbove: on Windows moveAbove
+    // is SetWindowPos with the other window as the one to insert after, which put the user's window *below* the new one, and a
+    // new window the size of theirs covered it whole, with nothing left to click.) A beat later it is done again: a window shown
+    // while another is being activated can land back on top once its first paint arrives.
+    const toFront = () => { if (!front.isDestroyed() && !w.isDestroyed() && windowOrder.behindPlan({ front, self: w }) === 'raise-front' && front.isFocused()) front.moveTop(); };
+    if (windowOrder.behindPlan({ front, self: w }) === 'raise-front') { front.moveTop(); setTimeout(toFront, 250).unref?.(); }
     else w.minimize();
   } catch {}
 }
@@ -6928,7 +6935,6 @@ const appleMusicEngine = require('./features/apple-music-engine').createEngine({
   resizeArt,
   fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on mzstatic.com)
   BrowserWindow,
-  getParent: () => win,
   hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
   respondMs: () => (TEST && global.__respondMs) || 0,
   onChange: () => widgets.engineChanged(),
@@ -6940,7 +6946,6 @@ const spotifyEngine = require('./features/spotify-engine').createEngine({
   resizeArt,
   fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
   BrowserWindow,
-  getParent: () => win,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
   respondMs: () => (TEST && global.__respondMs) || 0,

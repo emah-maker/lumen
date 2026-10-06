@@ -358,7 +358,7 @@ function createPrivateWindows(deps) {
         overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } },
         outlivesOpener: true,
         createWindow: (options) => {
-          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(deps.testBackground ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
+          const child = new BrowserWindow({ ...(({ parent, modal, ...rest }) => rest)(options || {}), autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(deps.testBackground ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
           if (deps.testBackground) hideForTests(child);
           const wc = child.webContents;
           deps.chromeIdentity?.(wc); // before anything loads
