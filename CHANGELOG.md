@@ -1,9 +1,12 @@
-﻿# Changelog
+# Changelog
 
 Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [Releases](https://github.com/emah-maker/lumen/releases).
 
 ## Unreleased
 
+## 0.5.15 (2026-10-05)
+
+- **Fewer surprise sign-outs for Grok Build and Codex.** When Grok or Codex refreshed its sign-in, Lumen could keep an older copy of the sign-in file (Grok: after Lumen quit mid-reply; Codex: each chat had its own copy, so one chat's refresh left the others with a token that no longer worked), and the next message asked you to sign in again. Lumen now keeps every copy at the newest one and never lets an older file replace a newer one. A network or timeout error that merely mentioned "authentication" is also no longer shown as "please sign in again" for Claude Code, Codex or Grok Build. Lumen still never reads what is in those files.
 - **The full-page chat keeps its chat when you leave it and come back.** The chat page (Ctrl+Shift+L) used to follow whatever chat was open in the sidebar, so after you worked in another tab and cycled back it could show a different (or empty) chat. Each chat page tab now remembers its own chat, including after a restart: other tabs' new chats, messages and replies no longer replace it, a message you send or New chat you press there acts on that chat, and clicking a chat in its list opens it on the page. A chat page that has no chat yet simply takes the one that was open.
 
 - **Windows no longer pop up by themselves because an AI connected.** Since 0.5.9 an AI agent connecting to Lumen got its own window the moment it listed Lumen's tools, so every Claude Code or Grok session you started anywhere (an editor, a terminal, a hook) opened a Lumen window even when it never used the browser. The window is now made by the agent's first call that needs a tab, and a window Lumen has just made can no longer become the "current" window when the system briefly activates it, so your next sidebar message, shortcuts and the active tab stay in the window you are using.
