@@ -322,7 +322,7 @@ function setupAiAgents(deps) {
   // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
   function startGrokGate() {
-    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
+    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }

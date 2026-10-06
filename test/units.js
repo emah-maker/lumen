@@ -366,6 +366,34 @@ async function grokTerminalApproval() {
   } finally {
     stuckGate.stop();
   }
+
+  // Settings > AI "Let Grok Build ask to run terminal commands" off (grokTerminal: false): every call is
+  // denied without a card, even in a chat that already said "always"; back on, that chat's "always" holds again.
+  let terminalOn = true;
+  const offAsked = [];
+  const offGate = await require('../src/automation/mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (_tag, command) => { offAsked.push(command); return 'always'; },
+    terminalEnabled: () => terminalOn,
+    terminalHoldMs: 500,
+  });
+  try {
+    const orun1 = offGate.open('o1', 'chatD');
+    const first = await term(orun1); // asked once, the user says "always"
+    offGate.close('o1');
+    terminalOn = false;
+    const orun2 = offGate.open('o2', 'chatD');
+    const offRes = await post(orun2.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'run_terminal_command', tool_input: { command: 'echo hi' } });
+    offGate.close('o2');
+    check('Grok gate: with the terminal turned off, run_terminal_command is denied without asking, even after "always"', first === 'allow' && offRes.body?.hookSpecificOutput?.permissionDecision === 'deny' && /turned off/.test(offRes.body?.reason || '') && offAsked.length === 1, JSON.stringify({ first, offRes: offRes.body, offAsked }));
+    terminalOn = true;
+    const orun3 = offGate.open('o3', 'chatD');
+    check('Grok gate: turned back on, the chat\'s earlier "always" applies again', await term(orun3) === 'allow' && offAsked.length === 1, JSON.stringify(offAsked));
+    offGate.close('o3');
+  } finally {
+    offGate.stop();
+  }
 }
 
 async function grokRuns() {

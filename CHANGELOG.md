@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **You can turn off Grok Build's terminal.** Settings → AI has a new switch, "Let Grok Build ask to run terminal commands". Turn it off and Grok Build in the sidebar is told no every time it tries to run a command, without an approval card, even in a chat where you chose "allow for this chat". It still uses Lumen's browser tools as before. This can also stop Microsoft Defender from flagging Grok's chat logs as "Trojan:JS/ChatGPTStealer", a false alarm caused by logged commands that search your files. On by default, so nothing changes until you switch it off.
+
 - **Windows an AI opens no longer cover your window.** A window made for an AI agent (or a popup an AI's page opened) could come up on top of your Lumen window, the same size and almost the same place, and clicking where your window was did nothing until you dragged the new one away. Lumen was putting your window below the new one instead of above it on Windows. Those windows now open behind the one you are in (or wait in the taskbar when you are in another app), and the Spotify and Apple Music sign-in window is a window of its own rather than one tied above the browser window, as a sign-in popup is in Chrome.
 
 - **New tabs no longer open blank.** A new tab could sometimes show an empty gray page area instead of the new-tab page until something else redrew the window (a tab switch, a resize). It happened when another Lumen window, such as an AI agent's window, was the one Lumen was busy with at the moment the new-tab page finished drawing. The page now shows as soon as it is ready.
