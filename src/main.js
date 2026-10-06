@@ -1943,7 +1943,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     const filled = loaded.then(() => (wc.isDestroyed() || wc.getURL() === url ? null : fill()));
     // (At most 100 ms past its load: an occluded or minimized window draws no frames, and the tab must not stay blank.)
     Promise.race([filled, loaded.then(() => new Promise((r) => setTimeout(r, 100)))])
-      .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
+      // (activeId read inside the tab's own window: with another window current, the check failed and the page stayed hidden.)
+      .finally(() => { tab.spareFilling = false; if (alive(tab)) withWindow(tab.rec, () => { if (tab.id === activeId) layout(); }); });
   }
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
