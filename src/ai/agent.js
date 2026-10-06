@@ -19,6 +19,8 @@ const genImages = require('../features/gen-images'); // pictures the AI made or 
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
+const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
+const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
@@ -97,7 +99,7 @@ const TOOLS = [
     description: 'Load a URL in the active tab; read:true returns the new outline.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' } },
+      properties: { url: { type: 'string' }, wait: { type: 'string', enum: WAIT_MODES, description: 'interactive (default): once the page shows text; load; networkidle' } },
       required: ['url'],
     },
   },
@@ -138,6 +140,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         urls: { type: 'array', items: { type: 'string' } },
+        wait: { type: 'string', enum: WAIT_MODES, description: 'interactive (default), load, networkidle' },
         // [signed-in sites] features/signed-in-sites.js
         as_user: { type: 'boolean' },
       },
@@ -1020,29 +1023,72 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
   return `Allowed automatically: ${what}`;
 }
 
+// Starts loading `url` in `wc` and returns once the page is ready by the `wait` mode (load-wait.js): "load" is what
+// loadURL always meant (the load event); "interactive" (default) returns at dom-ready as soon as the page already shows
+// real text, so a page that is slow only in images, ads and trackers is read in a fraction of the time, while a JS shell
+// with no text yet keeps waiting for the load; "networkidle" also waits for the late fetches. Never longer than capMs.
+// Never throws: a failed load just ends the wait (the caller reads whatever page or error page is there).
+async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000) {
+  const t0 = Date.now();
+  let loaded = false;
+  const full = wc.loadURL(url).catch(() => {}).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
+  if (mode === 'load') return void await Promise.race([full, sleep(capMs)]);
+  let ready;
+  const domReady = new Promise((resolve) => { ready = resolve; wc.once('dom-ready', ready); wc.once('destroyed', ready); });
+  await Promise.race([full, domReady, sleep(capMs)]);
+  if (!wc.isDestroyed()) { wc.removeListener('dom-ready', ready); wc.removeListener('destroyed', ready); }
+  for (;;) {
+    if (wc.isDestroyed() || (loaded && mode !== 'networkidle')) return;
+    const elapsed = Date.now() - t0;
+    const probe = await runScript(wc, PROBE_SCRIPT, 2000).catch(() => null);
+    if (loaded && !probe) return; // nothing to measure (a failed load)
+    if (probe && loadDone(mode, { ...probe, loading: wc.isLoading() }, elapsed, capMs)) return;
+    if (elapsed >= capMs) return;
+    await sleep(150);
+  }
+}
+
+const readResults = new ResultCache(); // read_urls results across runs: 50 pages, 5 minutes
+
+// Warm hidden reader views (read-speed.js ReaderPool): up to 3 kept blanked for 60 s and reused, so a read does not pay
+// for a new view each time. Same in-memory partition as before; one that timed out, crashed or will not blank is closed.
+const readerPool = new ReaderPool({
+  create: () => {
+    // In-memory partition: no cookies or logins from the user's browsing.
+    const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
+    const wc = view.webContents;
+    wc.setAudioMuted(true);
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+    wc.on('will-prevent-unload', (event) => event.preventDefault()); // a "leave this page?" prompt must not stop it being blanked
+    return { view, wc };
+  },
+  reset: async ({ wc }) => { await Promise.race([wc.loadURL('about:blank').catch(() => {}), sleep(2000)]); return !wc.isDestroyed() && wc.getURL() === 'about:blank'; },
+  destroy: ({ wc }) => { if (!wc.isDestroyed()) wc.close(); },
+  alive: ({ wc }) => !wc.isDestroyed() && !wc.isCrashed(),
+});
+
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
-async function readInBackground(url, guard = () => null) {
-  // In-memory partition: no cookies or logins from the user's browsing.
-  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
-  view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
-  const wc = view.webContents;
-  wc.setAudioMuted(true);
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+async function readInBackground(url, guard = () => null, { wait } = {}) {
+  const entry = await readerPool.acquire();
+  const wc = entry.wc;
+  let healthy = false;
   const redirects = guard(wc);
   try {
-    await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]);
+    await loadPage(wc, url, normalizeWait(wait));
     await redirects?.settle();
     await quietWait(wc);
     const page = await runScript(wc, scripts.readPage(0, 0), 8000);
     const more = page.totalTextChars > 8000 ? `
 [first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
+    healthy = true;
     return { url: wc.getURL() || url, title: page.title, text: page.text.slice(0, 8000) + more };
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
     redirects?.release();
-    wc.close();
+    await readerPool.release(entry, healthy);
   }
 }
 
@@ -4004,8 +4050,11 @@ ${same}
         const wc = this.requireTab();
         const url = webUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
-        await wc.loadURL(url).catch(() => {}); // redirects reject with ERR_ABORTED; the load still happens
-        await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
+        const wait = normalizeWait(input.wait);
+        await loadPage(wc, url, wait); // redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js)
+        // Returned early (the page shows text, images and trackers still loading): only the DOM settling is waited for, not the rest of the load.
+        if (wait === 'interactive' && wc.isLoading()) await quietWait(wc);
+        else await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
         await this.settleRedirects(wc);
         let loaded = `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
         if (input.wait_for) {
@@ -4093,7 +4142,18 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        const wait = normalizeWait(input.wait);
+        const read = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), { wait });
+        // Repeat reads in the same chat come from a 5-minute cache (read-speed.js): never signed in, never when the user turned AI off
+        // for the site now, kept apart per trust scope (sidebar vs an MCP client).
+        const scope = taskScope.getStore()?.gate?.external === false ? 'sidebar' : 'external';
+        const signedOut = async (url) => {
+          const cached = input.as_user ? null : readResults.get(url, { wait }, scope);
+          if (cached && !this.browser.aiOff?.(url) && !this.browser.aiOff?.(cached.url)) return { ...cached };
+          const page = await read(url);
+          if (!input.as_user) readResults.put(url, { wait }, scope, page);
+          return page;
+        };
         // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
         const plan = await this.planSignedIn(urls, input.as_user === true);
         const pages = await Promise.all(urls.map(async (url) => {

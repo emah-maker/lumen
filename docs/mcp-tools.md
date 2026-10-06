@@ -51,6 +51,9 @@ Load a URL in the active tab. read:true also returns the new outline; wait_for w
 | `url` | string | yes |
 | `read` | boolean |  |
 | `wait_for` | string |  |
+| `wait` | `interactive` \| `load` \| `networkidle` |  |
+
+`wait` says when the page counts as loaded. `interactive` (the default) returns as soon as the page's DOM is ready and already shows real text, without waiting for images, ads and trackers; a page with no text yet (a JavaScript app shell) is still waited for until it loads. `load` waits for the load event, `networkidle` also for ~500 ms without network activity. All are capped.
 
 ### `click`
 
@@ -81,6 +84,9 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:tr
 |---|---|---|
 | `urls` | string[] | yes |
 | `as_user` | boolean | no |
+| `wait` | `interactive` \| `load` \| `networkidle` | no |
+
+`wait` is the same as on `navigate` (default `interactive`). Pages are read in reused hidden views with images, media and web fonts not loaded, and a page read a moment ago (same chat, within 5 minutes, same options) is returned from a small cache instead of being fetched again; `as_user` reads are never cached.
 
 `as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
 
