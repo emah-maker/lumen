@@ -66,6 +66,11 @@ function springTo(from, to, { response = 0.34, damping = 1, velocity = 0, onUpda
 
 const address = $('address');
 let addressDirty = false;
+// Per-tab address-bar drafts (omnibox-draft.js): what was typed and not submitted stays with its tab, in memory only.
+const addressDrafts = window.omniboxDraft.createDraftStore();
+let draftShowing = false; // the field shows a restored draft without focus: tab updates must not rewrite it
+let focusOnLeave = false; // a press on the tab strip left the address bar while it had focus (it blurs before the tab switches)
+let focusOnLeaveTimer = 0;
 let currentUrl = '';
 let currentError = false;
 let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
@@ -118,10 +123,12 @@ function setSecurityName(el, name) {
   el.tabIndex = 0;
 }
 
-function showAddress() {
+function showAddress(keepText = false) { // keepText: refresh the lock only, the field holds a draft
   const security = $('security');
-  if (document.activeElement === address) return;
-  address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  if (!keepText) {
+    if (document.activeElement === address) return;
+    address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  }
   if (currentError || currentLumenPage) {
     security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
@@ -1808,9 +1815,16 @@ function finishTabsRender(state, before, container, switched) {
   if (activeEl && (switched || !before.has(activeId))) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: motionReduced() ? 'auto' : 'smooth' });
 
   const active = state.tabs.find((t) => t.id === state.activeId);
+  addressDrafts.prune(state.tabs.map((t) => t.id));
+  let restoredDraft = null;
   if (state.activeId !== lastActiveId) {
+    saveAddressDraft(lastActiveId); // before the field is rewritten for the tab now in front
     lastActiveId = state.activeId;
     closeFind();
+    hideSuggestions();
+    restoredDraft = addressDrafts.get(state.activeId);
+    draftShowing = false;
+    if (!restoredDraft) addressDirty = false; // this tab shows its URL, whatever the last one was doing
   }
   currentError = Boolean(active?.error);
   currentSecurity = active?.security || null;
@@ -1837,7 +1851,18 @@ function finishTabsRender(state, before, container, switched) {
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
   star.title = active?.bookmarked ? t('bookmark.remove.title') : t('bookmark.add.title');
   star.setAttribute('aria-label', active?.bookmarked ? t('bookmark.remove') : t('bookmark.add'));
-  if (active && (!addressDirty || document.activeElement !== address)) {
+  if (active && restoredDraft) {
+    // Back on a tab with an unsent edit: its text, caret and (as in Chrome) focus return as they were left.
+    currentUrl = active.url;
+    address.value = restoredDraft.text;
+    addressDirty = true;
+    draftShowing = !restoredDraft.focused;
+    if (restoredDraft.focused) { window.browser.addressTouched?.(); address.focus(); }
+    address.setSelectionRange(restoredDraft.start, restoredDraft.end);
+    showAddress(true);
+  } else if (active && draftShowing) {
+    currentUrl = active.url; // the restored text stays until the user focuses the field or submits
+  } else if (active && (!addressDirty || (document.activeElement !== address && !focusOnLeave))) { // (focusOnLeave: a tab switch is under way, its draft is read from the field)
     currentUrl = active.url;
     addressDirty = false;
     // Focused: only rewrite a changed URL, and keep a full selection. Assigning .value (even the same
@@ -1936,8 +1961,29 @@ function moveSelection(step) {
   renderSuggestions();
 }
 
+// Remember the unsent text in the address bar for tab `id` (see addressDrafts). Only an edit counts: the field
+// still showing the URL is not a draft.
+function saveAddressDraft(id) {
+  if (id == null) return;
+  if (!addressDirty) { addressDrafts.clear(id); return; } // the field was showing the URL: nothing is left to restore
+  const shown = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  const focused = (document.activeElement === address && document.hasFocus()) || focusOnLeave;
+  addressDrafts.save(id, { value: address.value, start: address.selectionStart, end: address.selectionEnd, focused }, shown);
+}
+function dropAddressDraft() {
+  if (lastActiveId != null) addressDrafts.clear(lastActiveId);
+  draftShowing = false;
+}
+// A press on the tab strip is how the address bar usually loses focus to a tab switch: note it was focused.
+$('tabs').addEventListener('pointerdown', () => {
+  focusOnLeave = document.activeElement === address && document.hasFocus();
+  clearTimeout(focusOnLeaveTimer);
+  focusOnLeaveTimer = setTimeout(() => { focusOnLeave = false; }, 1500);
+}, true);
+
 function navigate(target) {
   hideSuggestions();
+  dropAddressDraft();
   addressDirty = false;
   if (target) window.browser.go(target);
   address.blur();
@@ -1951,11 +1997,13 @@ window.browser.onSuggestionPicked(({ index, listId }) => {
 
 address.addEventListener('input', (e) => {
   addressDirty = true;
+  draftShowing = false;
   updateSuggestions(address.value, e.inputType?.startsWith('delete'));
 });
 address.addEventListener('focus', () => {
   // Focus coming back while you type (a loading page briefly took it) must not select the typed
   // text, or the next key would replace it.
+  draftShowing = false;
   if (addressDirty) return;
   address.value = currentUrl;
   address.select();
@@ -1995,6 +2043,7 @@ address.addEventListener('keydown', (e) => {
     const text = address.value.trim();
     hideSuggestions();
     if (text) { showSidebar(true); askInNewChat(text); }
+    dropAddressDraft();
     addressDirty = false;
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!suggest.items.length) return;
@@ -2006,6 +2055,7 @@ address.addEventListener('keydown', (e) => {
       hideSuggestions();
       return;
     }
+    dropAddressDraft();
     addressDirty = false;
     address.blur();
     showAddress();
