@@ -80,7 +80,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "outline": headings, links by region, next page (no refs); "full": raw text + element count (elements:true lists; structured:true adds JSON-LD/meta/embedded data); "site": a feed view (Reddit, HN, YouTube, X, TikTok, GitHub; the default there). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": [id] outline (start here); "outline": headings, links by region, next page; "full": raw text (elements:true lists; structured:true adds JSON-LD/meta); "site": Reddit/HN/YouTube/X/TikTok/GitHub feed view (default there). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -99,7 +99,7 @@ const TOOLS = [
     description: 'Load a URL in the active tab; read:true returns the new outline.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' }, wait: { type: 'string', enum: WAIT_MODES, description: 'interactive (default): once the page shows text; load; networkidle' } },
+      properties: { url: { type: 'string' }, wait: { type: 'string', enum: WAIT_MODES } /* interactive (default): once the page shows text (load-wait.js) */ },
       required: ['url'],
     },
   },
@@ -135,12 +135,12 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 URLs in hidden tabs, signed out: markdown text, page health, structured data; max_chars (8000) + offset page long ones. as_user:true asks to read the user\'s own pages signed in.',
+    description: 'Read up to 6 URLs in hidden tabs, signed out (markdown, page health, structured data; max_chars+offset page long ones). as_user:true asks to read the user\'s own pages signed in.',
     input_schema: {
       type: 'object',
       properties: {
         urls: { type: 'array', items: { type: 'string' } },
-        wait: { type: 'string', enum: WAIT_MODES, description: 'interactive (default), load, networkidle' },
+        wait: { type: 'string', enum: WAIT_MODES }, // as on navigate
         max_chars: { type: 'integer', description: 'Per page, 1000-30000, default 8000.' },
         offset: { type: 'integer', description: 'Start at this character (the next chunk).' },
         // [signed-in sites] features/signed-in-sites.js
