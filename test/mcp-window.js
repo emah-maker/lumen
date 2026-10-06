@@ -145,11 +145,11 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
   // ---- 1. Nothing opens until the agent needs a tab
   const A = await connect('Claude Code');
-  // Listing the tools warms the agent's window (ai-agents.js onListed), so its first navigate does not wait for one.
-  check('a connected agent that listed the tools gets its window made ahead of its first call', await waitFor(async () => (await agentWins()).length === 1), JSON.stringify(await windows()));
-  check('...a window never made current or focused', !(await agentWins())[0]?.current && !(await agentWins())[0]?.focused, JSON.stringify(await agentWins()));
+  // Connecting and listing the tools makes no window (a session that never uses Lumen must not pop one up).
+  await sleep(1200);
+  check('a connected agent that listed the tools has no window yet', (await agentWins()).length === 0, JSON.stringify(await windows()));
   let r = await A.call('list_tabs');
-  check('list_tabs: the warm window own (blank) tab, still one window', (await agentWins()).length === 1 && !/a1/.test(A.text(r)), A.text(r));
+  check('list_tabs: no tabs of its own yet, still no window', (await agentWins()).length === 0 && A.text(r) === '[]', A.text(r));
 
   // ---- 2. The sidebar AI starts working in the user's tab (held mid-run) while the agent drives
   await ui.evaluate(() => window.assistant.setAutoAllow?.(true)).catch(() => {});

@@ -4777,7 +4777,10 @@ function bindContext(emitter, getRec) {
     const rec = getRec();
     if (!rec || rec === curRec || !winRecs.has(rec)) return emit(...args);
     // (A page's own focus in an agent window is not the user arriving there: only the window's, a real OS focus, is.)
-    if (args[0] === 'focus' && !(rec.agent && emitter !== rec.win)) enterWindow(rec);
+    // (Nor is the OS activating a window Lumen itself just made: on Windows showInactive / minimize can still hand it focus for a moment,
+    // and the sidebar's next message, the shortcuts and "the active tab" would then be the agent window's.)
+    const justMade = rec.agent && Date.now() - (rec.agent.madeAt || 0) < 4000;
+    if (args[0] === 'focus' && !(rec.agent && emitter !== rec.win) && !justMade) enterWindow(rec);
     return args[0] === 'focus' && curRec === rec ? emit(...args) : withWindow(rec, () => emit(...args));
   };
 }
@@ -5874,7 +5877,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     },
   });
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
-  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore), agent: agentOf ? { label: agentOf.label, used: false } : null };
+  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore), agent: agentOf ? { label: agentOf.label, used: false, madeAt: Date.now() } : null };
   winRecs.add(rec);
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);

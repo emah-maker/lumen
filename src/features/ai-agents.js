@@ -509,13 +509,10 @@ function setupAiAgents(deps) {
       // tag is refused, never treated as an outside agent.
       enabled: (session) => (session.engine ? ownsSession(session) : mcpEnabled()),
       onEvent: mcpEvent,
-      // An outside agent's own window is made as it lists the tools, so its first navigate does not pay for it (~1 s).
-      // Behind the user's window (agent-windows open), only while agents may connect; the sidebar's engines use the user's tabs.
-      onListed: (session) => {
-        if (session.engine || !mcpEnabled() || session.controller.signal.aborted) return;
-        if (global.__mcpSharedWindow && require('../test-mode').isTest()) return;
-        deps.agentWindows?.windows.ensure(session, session.clientName).catch(() => {});
-      },
+      // No window is made when an agent merely lists the tools. Every Claude Code / Grok / Codex session the user starts anywhere
+      // (an editor, a terminal, a hook, another app) connects and lists Lumen's tools at start-up, most of them never to use
+      // them: a window made for each popped up "randomly" and loaded the app for nothing. The window is made by the session's
+      // first call that needs a tab (mcpCallTool), which pays ~1 s once.
       onClose: (session) => { if (!session.engine) deps.agentWindows?.windows.release(session); }, // its window closes after a grace period
     });
   }

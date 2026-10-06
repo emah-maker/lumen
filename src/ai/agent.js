@@ -2472,7 +2472,7 @@ ${prompt}` : prompt), historyImages: [] };
     });
     return {
       openai: api('openai'), xai: api('xai'), gemini: api('gemini'), openrouter: api('openrouter'),
-      grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal }),
+      grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal, userData: this.engines.grokbuild.userData }),
       ...(this.imageBackendOverrides || {}),
     };
   }
