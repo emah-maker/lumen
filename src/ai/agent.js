@@ -80,7 +80,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "outline": headings, links by region, next page (no refs); "full": raw text + element count (elements:true lists; structured:true adds JSON-LD/meta/embedded data). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": outline, [id] refs (start here); "outline": headings, links by region, next page (no refs); "full": raw text + element count (elements:true lists; structured:true adds JSON-LD/meta/embedded data); "site": a feed view (Reddit, HN, YouTube, X, TikTok, GitHub; the default there). extract: tables|links|lists JSON.',
     input_schema: {
       type: 'object',
       properties: {
@@ -763,6 +763,7 @@ const pageReading = require('./page-reading'); // read_urls / read_page: health,
 const pageHealth = require('./page-health'); // read_urls chunk size (clampChars), offset slicing (slicePage)
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
+const siteExtractors = require('./site-extractors'); // [site extractors] Reddit, Hacker News, YouTube, X, TikTok, GitHub: read from their feeds, not the cluttered page
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
@@ -1071,6 +1072,30 @@ const readerPool = new ReaderPool({
   destroy: ({ wc }) => { if (!wc.isDestroyed()) wc.close(); },
   alive: ({ wc }) => !wc.isDestroyed() && !wc.isCrashed(),
 });
+
+// [site extractors] A supported address (site-extractors.js) read from its feed / API / transcript in the same cookie-less
+// session the hidden reader uses: { title, text } (text starts with "Source: ..."), or null when the address isn't
+// supported or anything failed (the caller then does its normal page read).
+// Paging (read_urls max_chars/offset): the first chunk is the extractor's own view at that budget (it drops the deepest
+// replies first and says what it left out); a later chunk renders the view with room for offset + maxChars and slices it
+// the way a page read is sliced (page-health.js slicePage), with the same "next offset" note.
+const SITE_MAX_CHARS = siteExtractors.DEFAULT_MAX_CHARS;
+const SITE_PAGED_MAX = 120000; // the biggest view a later chunk renders
+async function readSiteNetwork(url, { maxChars = SITE_MAX_CHARS, offset = 0 } = {}) {
+  if (!siteExtractors.extractorFor(url)) return null;
+  try {
+    const ses = require('electron').session.fromPartition('claude-reader');
+    const budget = offset > 0 ? Math.min(SITE_PAGED_MAX, offset + maxChars) : maxChars;
+    const site = await siteExtractors.readSite(url, { get: siteExtractors.makeGet((u, o) => ses.fetch(u, o)), maxChars: budget });
+    if (!site) return null;
+    if (!(offset > 0)) { // a view filled to its budget probably left something out: say how to get the rest
+      return site.text.length < maxChars * 0.9 ? site : { ...site, text: `${site.text}\n[view capped at ${maxChars} chars; for more call read_urls again with offset: ${site.text.length}]` };
+    }
+    const slice = pageHealth.slicePage(site.text, { maxChars, offset });
+    const source = site.text.split('\n', 1)[0]; // "Source: <site> (<how>)", kept on every chunk
+    return { ...site, text: [`${source} [continued]`, slice.text, slice.note].filter(Boolean).join('\n') };
+  } catch { return null; }
+}
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
 // `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
@@ -3963,6 +3988,8 @@ ${out.text}${note}
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
       await quietWait(wc); // (waitForLoad already waited for quiet; this covers the sleep(15000) race winning)
       if (away()) return fallBack();
+      const site = await siteExtractors.readSiteInPage(wc.getURL() || url, (code) => runScript(wc, code, 8000)).catch(() => null); // [site extractors] the signed-in page's own Reddit / TikTok data
+      if (site && !away()) return { url: wc.getURL() || url, title: site.title || siteOf(url), text: site.text, signedIn: true };
       const page = await runScript(wc, scripts.readPage(0, 0), 8000);
       if (away()) return fallBack(); // it moved while being read
       const more = page.totalTextChars > 8000 ? `\n[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
@@ -4025,6 +4052,18 @@ ${out.text}${note}
     switch (name) {
       case 'read_page': {
         const wc = this.requireTab();
+        // [site extractors] a supported site's structured view: for mode:"site", or a plain read_page (no mode, offset, elements,
+        // selector or structured). mode "compact" / "outline" and extract are answered in snapshot.js before this.
+        const plain = !input.mode && !input.text_offset && !input.element_offset && input.elements !== true && !input.selector && input.structured !== true;
+        if (input.mode === 'site' || plain) {
+          const url = wc.getURL();
+          const site = await siteExtractors.readSiteInPage(url, (code) => runScript(wc, code, 8000)).catch(() => null) || await readSiteNetwork(url);
+          if (site) return `<untrusted_page_content url="${url}">
+Title: ${site.title}
+${site.text}
+(Structured view of this site; read_page mode:"full" gives the raw page, mode:"compact" the [id] outline to click.)
+</untrusted_page_content>`;
+        }
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
@@ -4155,7 +4194,13 @@ ${same}
         const maxChars = pageHealth.clampChars(input.max_chars);
         const offset = Math.max(0, Math.floor(Number(input.offset)) || 0);
         const readOpts = { wait, maxChars, offset };
-        const read = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), readOpts);
+        // [site extractors] after the approval / redirect gates above: a supported site is read from its feed (same chunk
+        // size and offset), else the hidden view (markdown, page health, paging: page-reading.js).
+        const read = async (url) => {
+          const site = await readSiteNetwork(url, { maxChars, offset });
+          if (site) return { url, title: site.title || siteOf(url), text: site.text };
+          return readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }), readOpts);
+        };
         // Repeat reads in the same chat come from a 5-minute cache (read-speed.js): never signed in, never when the user turned AI off
         // for the site now, kept apart per trust scope (sidebar vs an MCP client). The key holds every option that changes the result.
         const scope = taskScope.getStore()?.gate?.external === false ? 'sidebar' : 'external';

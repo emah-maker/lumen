@@ -302,7 +302,7 @@ const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
 // ---------------------------------------------------------------- tool definitions
 
 const READ_PAGE_EXTRA = {
-  mode: { type: 'string', enum: ['compact', 'outline', 'full'] },
+  mode: { type: 'string', enum: ['compact', 'full', 'outline', 'site'] },
   structured: { type: 'boolean', description: 'full: add JSON-LD, meta tags and embedded data.' },
   since_last: { type: 'boolean', description: 'compact: only changes since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
