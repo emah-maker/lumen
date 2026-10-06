@@ -4229,8 +4229,9 @@ function pushChatView(wc) {
 // The sidebar of the window just entered shows the chat of its front tab.
 // `push`: tell the sidebar (false when the sender already shows it).
 function followTabChat(tab, { push = true } = {}) {
-  if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings || tab.rec?.agent) return; // the chat page and Settings keep whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
-  const own = chatBind.chatOf(tab.id) || pinnedChat(tab.id);
+  if (!tab || tab.isolated || tab.settings || tab.rec?.agent) return; // Settings keeps whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
+  if (tab.managerPage === 'chat' && !chatBind.chatOf(tab.id)) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatId, { share: true }); } // the chat page keeps the chat it was left on, like any tab; one with none yet takes the open chat and keeps it from then on
+  const own = chatBind.chatOf(tab.id) || (tab.managerPage === 'chat' ? null : pinnedChat(tab.id));
   const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId), carry: readSettings().oneChatPerTab !== true });
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
   const unseen = (id) => unreadChats.has(id) && !sidebarOpen; // a finished reply stays "done" on its tab until the sidebar is looked at
@@ -4263,6 +4264,15 @@ function followFront(opts) {
 function syncToSender(event) {
   const rec = recOfSender(event?.sender);
   if (rec) withWindow(rec, () => followFront({ push: false }));
+  else followChatPage(event?.sender); // a chat page's own call: the open chat is the page's tab's chat
+}
+// A chat page (in a tab, any window) asked for something: the open chat becomes the chat its tab was left on, so what it sends or
+// resets is that chat's, whichever chat the sidebar or another tab has open now.
+// The tab a chat call acts for: a chat page's own tab (it keeps its chat there), else the tab in front.
+const pageTabOf = (wc) => (wc && chatPageRt?.everyChatTab().find((t) => t.view.webContents === wc)) || null;
+function followChatPage(wc) {
+  const page = wc && chatPageRt?.everyChatTab().find((t) => t.view.webContents === wc);
+  if (page) withWindow(page.rec, () => followTabChat(page, { push: false }));
 }
 // The sidebar asks which chat it should be showing: a tab switch that skipped the sidebar (a tool was acting at that moment, see
 // switchTab) leaves it on the chat it had, with that chat's running state. The answer is the authoritative view of the chat of
@@ -4285,6 +4295,15 @@ function refreshSidebars() {
 }
 // The open chat now belongs to the tab in front ("Move chat to this tab", a chat chosen from the list, a new chat).
 function bindOpenChatHere(sender) {
+  const page = pageTabOf(sender);
+  if (page) { // a chat page opened it: that page shows it from now on (no tab loses it, no run moves onto the page's tab)
+    carriedTabs.delete(page.id);
+    chatBind.bind(page.id, chatId, { share: true });
+    shownChat.set(sender, chatId);
+    pushAttention();
+    refreshSidebars();
+    return;
+  }
   carriedTabs.delete(activeId);
   const run = chatRuns.get(chatId);
   chatBind.move(chatId, activeId);
@@ -6518,6 +6537,8 @@ chatPageRt = chatPage.create({
   managersOpen: () => managers.open('chat'),
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
+  chatOf: (tabId) => chatBind.chatOf(tabId), // [chat per tab] the chat a chat page tab was left on
+  followPage: (event) => followChatPage(event?.sender), // a page asking for its chat first brings the open chat in line with its tab
   agentOffLimits,
   tabInfo: (t) => {
     const live = alive(t);
@@ -6525,7 +6546,7 @@ chatPageRt = chatPage.create({
   },
 });
 chatPageRt.register();
-if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId };
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
@@ -7269,7 +7290,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
-  chatPageRt.beginRun(event, { text: askText, runId, images: valid, files: attachedFiles }); // pins a chat-page run to the tab last looked at; the other view mirrors it
+  chatPageRt.beginRun(event, { text: askText, runId, chatId: runChat, images: valid, files: attachedFiles }); // pins a chat-page run to the tab last looked at; the other view mirrors it
   mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, chatId: runChat, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })), files: attachedFiles }); // another window's sidebar showing this chat shows the turn too
   const finishQueued = () => { // a run that never got a slot (stopped, or its chat deleted while it waited)
     runSlots.cancel(runChat);
@@ -7391,8 +7412,9 @@ ipcMain.handle('agent:rewind', (_e, expected) => {
 ipcMain.on('agent:reset', (event) => {
   syncToSender(event);
   switchChat(null);
-  carriedTabs.delete(activeId);
-  chatBind.bind(activeId, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
+  const forTab = pageTabOf(event.sender)?.id ?? activeId; // (a chat page's New chat is its own tab's)
+  carriedTabs.delete(forTab);
+  chatBind.bind(forTab, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
   if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
   pushAttention();
   chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
@@ -7454,8 +7476,9 @@ ipcMain.handle('chats:share', (event, id) => {
   syncToSender(event);
   const view = switchChat(String(id));
   if (view) {
-    carriedTabs.delete(activeId);
-    chatBind.bind(activeId, chatId, { share: true });
+    const forTab = pageTabOf(event.sender)?.id ?? activeId;
+    carriedTabs.delete(forTab);
+    chatBind.bind(forTab, chatId, { share: true });
     if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
     pushAttention();
     refreshSidebars();
@@ -7500,7 +7523,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(saveChatTimer);
     agent.reset();
     chatId = chats().newId();
-    chatBind.bind(activeId, chatId);
+    chatBind.bind(pageTabOf(event.sender)?.id ?? activeId, chatId);
     chats().remove(id);
     imageStore().removeChat(id);
     uploads().removeChat(id); // [uploads] the files attached to it

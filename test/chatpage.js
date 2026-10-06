@@ -259,6 +259,30 @@ const fakeClient = (app) => app.evaluate(() => {
   await app.evaluate(() => global.__chatPage.open());
   check('opening it again reuses the one tab', oneChatTab && (await tabs()).filter((t) => t.chat).length === 1, await chatFlags());
 
+  // ---- 12b. The page keeps its chat when you leave and come back (cycling tabs), whatever chat is open elsewhere meanwhile
+  const pageTab = await chatTab();
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), a);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === a);
+  await sleep(400);
+  if (await ui.evaluate(() => document.body.classList.contains('sidebar-hidden'))) await ui.evaluate(() => document.getElementById('toggle-sidebar').click()); // (each tab has its own sidebar state)
+  await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden')));
+  await ui.evaluate(() => document.getElementById('new-chat').click());
+  await ui.fill('#prompt', 'second chat elsewhere');
+  await ui.press('#prompt', 'Enter');
+  await waitFor(async () => /Reply \d+\./.test(await sidebarText()) && /second chat elsewhere/.test(await sidebarText()));
+  await sleep(500);
+  check('the page, left in the background, did not switch to the chat started in another tab', !/second chat elsewhere/.test(await pageText()) && /first from the sidebar/.test(await pageText()), await pageText());
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), pageTab.id);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === pageTab.id);
+  await sleep(500);
+  check('back on the page tab: still the chat it was left on, with its history', /first from the sidebar/.test(await pageText()) && !/second chat elsewhere/.test(await pageText()), await pageText());
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), a);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === a);
+  await sleep(300);
+  check('and the other tab still has its own chat', /second chat elsewhere/.test(await sidebarText()) && !/first from the sidebar/.test(await sidebarText()), await sidebarText());
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), pageTab.id);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === pageTab.id);
+
   // ---- 13. After a restart the page is back, showing the chat
   await sleep(3500); // the session is saved a moment after tabs change
   await app.close();

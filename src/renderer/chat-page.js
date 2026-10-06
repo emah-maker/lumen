@@ -31,6 +31,7 @@
     api,
     open: (id) => openChat(id),
     share: (id) => openChat(id, { share: true }), // "Also show in this tab"
+    jump: false, // a click on a row shows that chat here (the page keeps its own chat); "Open chat in its tab" is still its own button
     rerender: () => renderList(),
     cleared: () => { clearChatView(); refreshUsage(''); },
   });

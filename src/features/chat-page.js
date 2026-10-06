@@ -106,12 +106,18 @@ function create(deps) {
     const ui = deps.ui();
     return [...(ui ? [ui] : []), ...pages].filter((wc) => !wc.isDestroyed());
   }
+  // A chat page keeps the chat it was left on (its tab's own chat, deps.chatOf): a sync or a run of some other chat, started in the
+  // sidebar or another tab, never replaces what it shows. The sidebar and a page with no chat of its own take everything.
+  const chatOfPage = (wc) => { const t = everyChatTab().find((x) => x.view.webContents === wc); return t && deps.chatOf ? deps.chatOf(t.id) : null; };
+  const pageWants = (wc, payload) => { const about = payload?.view?.id ?? payload?.chatId; const own = about ? chatOfPage(wc) : null; return !own || own === about; };
   function broadcast(channel, payload, except = null) {
-    for (const wc of surfaces()) if (wc !== except) wc.send(channel, payload);
+    const pages = new Set(everyChatTab().map((t) => t.view.webContents));
+    const scoped = channel === 'chat:sync' || channel === 'chat:run-start';
+    for (const wc of surfaces()) if (wc !== except && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
   }
   // A run's event to whoever asked, and to the other views when a page is open.
   function emit(sender, channel, payload) {
-    const to = new Set(surfaces());
+    const to = new Set(surfaces().filter((wc) => channel !== 'agent:event' || wc === sender || pageWants(wc, payload)));
     if (sender) to.add(sender);
     for (const wc of to) if (!wc.isDestroyed()) wc.send(channel, payload);
   }
@@ -137,7 +143,7 @@ function create(deps) {
 
   // A run starts (`event.sender` asked). From the chat page it is pinned to the target tab, and a
   // tab is opened if there is none. Other views hear about it so they show the same turn.
-  function beginRun(event, { text, runId, images, files }) {
+  function beginRun(event, { text, runId, images, files, chatId = null }) {
     const fromChat = isChatSender(event);
     let pinned = null;
     if (fromChat) {
@@ -146,7 +152,7 @@ function create(deps) {
     }
     runs.start({ runId, text, fromChat, target: pinned });
     if (fromChat) pushTarget();
-    broadcast('chat:run-start', { text, runId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })), files: files || [] }, event.sender);
+    broadcast('chat:run-start', { text, runId, chatId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })), files: files || [] }, event.sender);
     return fromChat;
   }
   const endRun = () => { runs.end(); pushTarget.last = null; pushTarget(); };
@@ -171,7 +177,7 @@ function create(deps) {
     const { ipcMain } = deps;
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
     ipcMain.on('chat:open-page', (event) => { if (!deps.isPrivateSender(event)) open(); });
-    ipcMain.handle('chatpage:state', () => ({ view: deps.chatView(), run: runs.get(), target: targetInfo() }));
+    ipcMain.handle('chatpage:state', (event) => { deps.followPage?.(event); return { view: deps.chatView(), run: runs.get(), target: targetInfo() }; });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
