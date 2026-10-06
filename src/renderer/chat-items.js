@@ -87,7 +87,7 @@
     },
   };
   window.chatTr = tr;
-  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared }) => {
+  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
@@ -163,7 +163,8 @@
       const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
       openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
-        if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
+        if (!jump) await moveHere(); // (the chat page opens a chat on the page itself: it keeps what it shows, whatever the tabs do)
+        else if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
         else if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
       };
 
