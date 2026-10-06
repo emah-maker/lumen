@@ -1,7 +1,8 @@
 // The one identity Lumen gives every page: a stock Chrome of this Chromium's major version. The User-Agent
 // string, navigator.userAgentData (brands, getHighEntropyValues), the Sec-CH-UA* request headers and the
 // window.chrome object a Chrome page has all come from here, so they cannot disagree. Google's sign-in
-// ("This browser or app may not be secure") compares them. Pure (no Electron): test/chrome-identity-units.js.
+// ("This browser or app may not be secure") compares them; Google's own sign-in hosts get this identity too (a Firefox
+// one there is refused, google-auth-identity.js). Pure (no Electron): test/chrome-identity-units.js.
 /* global window, location */ // the patch functions are serialized into pages and run there
 
 // Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
@@ -129,6 +130,16 @@ function withHints(headers, hints) {
   return out;
 }
 
+// Chrome sends Accept-Encoding and then Accept-Language near the end of the header list (after Referer, Chromium adds
+// Accept-Encoding itself after our rewrite), but Electron hands the listener Accept-Language right after User-Agent,
+// where no Chrome has it: the header is moved to the end of the list.
+function languageLast(headers) {
+  for (const name of Object.keys(headers)) {
+    if (/^accept-language$/i.test(name)) { const value = headers[name]; delete headers[name]; headers[name] = value; }
+  }
+  return headers;
+}
+
 // ---------------------------------------------------------------- what the page's own JavaScript sees
 
 // Runs at document start in every frame's main world (DevTools' Page.addScriptToEvaluateOnNewDocument), after
@@ -138,16 +149,39 @@ function withHints(headers, hints) {
 //    took effect in that renderer),
 //  - window.chrome with app, csi and loadTimes (Electron pages have no window.chrome; Google looks for it),
 //  - the functions it adds answer toString() like native ones.
-function identityPatch(skipHostSource) {
+function identityPatch() {
   try {
     if (/^(file|lumen|chrome-extension|chrome|devtools):$/.test(location.protocol)) return;
-    if (new RegExp(skipHostSource, 'i').test(location.hostname)) return; // Google's sign-in hosts get a Firefox identity instead (google-auth-identity.js)
-    const shown = new WeakMap(); // function -> the text toString() gives for it
+    // One WeakMap (function -> the text toString() gives for it) shared by everything Lumen patches into a page's main
+    // world (this script and the preloads), found by asking the toString wrapper for it (toString.call(symbol): the native throws, ours answers; no property of its own), whichever of them runs first.
+    // toString is wrapped by a plain method, not a Proxy (a Proxy gives itself away to the cyclic-prototype and stack-depth
+    // probes that "tampered function" checks run). A TypeError from toString.call(notAFunction) is raised inside the
+    // wrapper, so its stack would carry a frame of ours ("at Object.toString (<anonymous>:L:C)") that no native toString
+    // has: it is cut out. (The same helper is in preload/permissions-preload.js and page-dialogs-preload.js.)
+    const nativeTexts = () => {
+      const key = Symbol.for('lumen.nativeTexts');
+      const current = Function.prototype.toString;
+      try { const found = current.call(key); if (found instanceof WeakMap) return found; } catch { /* the native one: not wrapped yet */ }
+      const shown = new WeakMap();
+      const wrapper = {
+        toString() {
+          'use strict'; // (a sloppy method would box the symbol it is asked with)
+          if (this === key) return shown;
+          if (shown.has(this)) return shown.get(this);
+          try {
+            return Reflect.apply(current, this, arguments);
+          } catch (err) {
+            try { if (err && typeof err.stack === 'string') err.stack = err.stack.split('\n').filter((line) => !/^\s+at (?:\S+\.)?(?:toString|apply) \([^)]*<anonymous>:\d+:\d+\)$/.test(line)).join('\n'); } catch { /* frozen error: left */ }
+            throw err;
+          }
+        },
+      }.toString;
+      shown.set(wrapper, 'function toString() { [native code] }');
+      Object.defineProperty(Function.prototype, 'toString', { value: wrapper, writable: true, configurable: true, enumerable: false });
+      return shown;
+    };
+    const shown = nativeTexts();
     const native = (fn) => { shown.set(fn, `function ${fn.name}() { [native code] }`); return fn; };
-    const toString = Function.prototype.toString;
-    const patched = new Proxy(toString, { apply: (target, self, args) => (shown.has(self) ? shown.get(self) : Reflect.apply(target, self, args)) });
-    shown.set(patched, 'function toString() { [native code] }');
-    Object.defineProperty(Function.prototype, 'toString', { value: patched, writable: true, configurable: true, enumerable: false });
     const define = (object, key, value) => Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
 
     if (navigator.webdriver) {
@@ -204,10 +238,10 @@ function identityPatch(skipHostSource) {
     // A page that locked something down: it keeps what it has.
   }
 }
-const IDENTITY_SCRIPT = `(${identityPatch})(${JSON.stringify(require('./google-auth-identity').HOST_SOURCE)});`;
+const IDENTITY_SCRIPT = `(${identityPatch})();`;
 
 module.exports = {
   languageList, acceptLanguageHeader, chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
-  lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, HIGH_ENTROPY,
+  lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, languageLast, HIGH_ENTROPY,
   IDENTITY_SCRIPT,
 };
