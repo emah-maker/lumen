@@ -965,7 +965,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
     const sys = a.system[0].text;
     check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
-    check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
+    check('request: tool definitions stay under 10.5k chars (about 2.6k tokens; was 10k before get_console, get_network, handle_dialog and wait_for url/gone/network_idle added ~1.4k)', JSON.stringify(a.tools).length < 10500, String(JSON.stringify(a.tools).length));
   }
 
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];

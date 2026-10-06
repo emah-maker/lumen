@@ -6,7 +6,7 @@
 // - cacheLastTool: puts the prompt-cache breakpoint on the last tool definition.
 
 // Repeating these is normal (paging, waiting, re-reading), so only failures count for them.
-const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover']);
+const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover', 'get_console', 'get_network']);
 
 // Reads whose identical repeat (same input, nothing done in between) can only return the same thing.
 const STATIC_READS = new Set(['read_page', 'find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf', 'analyze_posts']);
@@ -152,7 +152,7 @@ function cacheLastTool(tools) {
 // Read-only tools that may run side by side when the model asks for several in one turn. Nothing
 // here acts on a page, navigates the task's tab, or runs code (read_page since_last keeps a diff
 // baseline, so it stays sequential).
-const PARALLEL_READS = new Set(['read_page', 'find', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'screenshot', 'list_tabs', 'analyze_posts']);
+const PARALLEL_READS = new Set(['read_page', 'find', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'screenshot', 'list_tabs', 'get_console', 'get_network', 'analyze_posts']);
 const isParallelRead = (use) => PARALLEL_READS.has(use.name) && !(use.name === 'read_page' && use.input && use.input.since_last);
 
 // Runs a turn's tool calls. Every call is gated (`gate`, may throw) one at a time, in order, before
