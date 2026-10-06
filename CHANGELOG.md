@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Print opens a real print preview, and you can save the page as a PDF.** Ctrl+P (and Print in the menu, the page's right-click menu, the PDF viewer and private windows) now opens a sheet over the window like Chrome's: the pages on the left, updated as you change a setting, and the settings on the right. **Destination** is Save as PDF (the default; Save asks where, with the page title as the file name) or any of your printers (the default one is marked). Pages (all or a range like 1-5, 8, 11-13), Layout, Color and Copies for printers, and under More settings: Paper size (Letter, Legal, Tabloid, A3, A4, A5), Margins (default, none, minimum, custom), Scale, Headers and footers, Background graphics and Two-sided. It shows the page or sheet count, closes with Esc, follows light and dark, and remembers your last choices. **Print using system dialog...** (Ctrl+Shift+P) keeps the old system dialog. Not included: pages per sheet, and the paper sizes only your printer lists.
+
 ## 0.5.15 (2026-10-05)
 
 - **Fewer surprise sign-outs for Grok Build and Codex.** When Grok or Codex refreshed its sign-in, Lumen could keep an older copy of the sign-in file (Grok: after Lumen quit mid-reply; Codex: each chat had its own copy, so one chat's refresh left the others with a token that no longer worked), and the next message asked you to sign in again. Lumen now keeps every copy at the newest one and never lets an older file replace a newer one. A network or timeout error that merely mentioned "authentication" is also no longer shown as "please sign in again" for Claude Code, Codex or Grok Build. Lumen still never reads what is in those files.
