@@ -24,9 +24,14 @@
   function range(min, max, o) {
     let lo = Number.isFinite(min) ? min : 0; let hi = Number.isFinite(max) ? max : 1;
     if (o.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-    const t = niceTicks(lo, hi, o.major);
+    // Like Excel: an automatic axis starts at zero unless all the data sits in the top sixth of the range.
+    else if (lo >= 0 && hi > 0 && lo < hi * (5 / 6)) lo = 0;
+    else if (hi <= 0 && lo < 0 && hi > lo * (5 / 6)) hi = 0;
+    // ... and leaves a little room above the largest value.
+    const room = o.max === null || o.max === undefined ? (hi - lo) * 0.05 : 0;
+    const t = niceTicks(lo, hi + (hi > lo ? room : 0), o.major);
     if (o.min === null || o.min === undefined) lo = Math.floor(lo / t.step + 1e-9) * t.step; else lo = o.min;
-    if (o.max === null || o.max === undefined) hi = Math.ceil(hi / t.step - 1e-9) * t.step; else hi = o.max;
+    if (o.max === null || o.max === undefined) hi = Math.ceil((hi + room) / t.step - 1e-9) * t.step; else hi = o.max;
     if (hi <= lo) hi = lo + t.step;
     const ticks = [];
     for (let v = Math.ceil(lo / t.step - 1e-9) * t.step, i = 0; v <= hi + t.step * 1e-6 && i < 200; v += t.step, i++) ticks.push(Math.abs(v) < t.step * 1e-9 ? 0 : v);
@@ -208,7 +213,7 @@
 
     // value -> position along the value axis; category i -> position along the category axis
     const vpos = (v) => { const f = (v - vr.lo) / (vr.hi - vr.lo); return horiz ? plot.x + f * plot.w : plot.y + plot.h - f * plot.h; };
-    const between = scatter ? false : cart.some((p) => p.kind === 'bar') || !catAx || catAx.between !== false;
+    const between = scatter ? false : cart.some((p) => p.kind === 'bar') || !catAx || (valAx && valAx.between !== null && valAx.between !== undefined ? valAx.between : catAx.between) !== false;
     const rev = Boolean(catAx && catAx.reverse);
     const cpos = (i) => {
       const f = between ? (i + 0.5) / n : n > 1 ? i / (n - 1) : 0.5;

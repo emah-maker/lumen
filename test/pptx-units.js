@@ -185,6 +185,21 @@ async function chartTests() {
   const ticks = Chart.range(0, 87, { zero: true });
   check('svg: nice ticks round the range out (0..87 -> 0..100 by 20)', ticks.lo === 0 && ticks.hi === 100 && J(ticks.ticks) === '[0,20,40,60,80,100]', J(ticks));
 
+  // Auto axis range (like Excel): zero unless the data hugs the top; headroom above the largest value
+  const r1 = Chart.range(14.2, 30.1, {}); const r2 = Chart.range(96, 100, {}); const r3 = Chart.range(1, 5, {});
+  check('svg: an automatic value axis starts at zero when the data spans a wide range (line 14..30 -> 0..35)', r1.lo === 0 && r1.hi >= 31.6, J(r1));
+  check('svg: ...but not when all the data sits near the top (96..100 stays above zero)', r2.lo > 50, J(r2));
+  check('svg: ...and a scatter x axis of 1..5 gets 0..6, so the last point is not on the edge', r3.lo === 0 && r3.hi === 6, J(r3));
+  check('svg: an axis with a set max has no extra headroom', Chart.range(0, 87, { max: 100, zero: true }).hi === 100);
+  // crossBetween lives on the value axis: an area chart (midCat) runs edge to edge
+  const areaXml = `<?xml version="1.0"?><c:chartSpace ${C_NS}><c:chart><c:plotArea><c:areaChart><c:grouping val="standard"/>${ser(0, 'A', ['a', 'b', 'c'], [1, 3, 2])}<c:axId val="1"/><c:axId val="2"/></c:areaChart><c:catAx><c:axId val="1"/><c:axPos val="b"/></c:catAx><c:valAx><c:axId val="2"/><c:axPos val="l"/><c:crossBetween val="midCat"/></c:valAx></c:plotArea></c:chart></c:chartSpace>`;
+  const ad = await P.parsePptx(miniDeck(chartFrame(2, 'rIdA', 100000, 100000, 4000000, 3000000, 'Area'), [['rIdA', 'chart', '../charts/chart1.xml']], { 'ppt/charts/chart1.xml': areaXml }));
+  const ac = ad.slides[0].shapes.find((x) => x.name === 'Area').chart;
+  const apath = Chart.drawChart(fakeDoc, ac, 400, 300).all('path').find((x) => x.attrs.class === 'area');
+  const axs = apath.attrs.d.match(/-?[\d.]+(?= )/g).map(Number);
+  const svgW = 400; 
+  check('chart: crossBetween=midCat on the value axis makes an area chart reach both plot edges', ac.axes.find((x) => x.kind === 'val').between === false && Math.max(...axs) - Math.min(...axs) > svgW * 0.7, J(axs));
+
   // ---- SmartArt
   const dsp = `<?xml version="1.0"?><dsp:drawing xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>${dspShape(0, 0, 1000000, 500000, 'Plan', '4472C4')}${dspShape(1200000, 100000, 1000000, 500000, 'Build', 'ED7D31')}</dsp:spTree></dsp:drawing>`;
   const withDrawing = miniDeck(diagramFrame(2, 1000000, 2000000, 3000000, 1000000), [['rIdDm', 'diagramData', '../diagrams/data1.xml'], ['rIdDr', 'diagramDrawing', '../diagrams/drawing1.xml']], {
