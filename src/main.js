@@ -8318,7 +8318,7 @@ function setupTaskbar() {
 
 app.whenReady().then(async () => {
   perf.mark('ready');
-  // The drag card's window, made once things are quiet, so the first tear-off of a session shows it at once.
+  // (The drag card's window is no longer made here: a tab drag makes it when it starts, see dragCardReaper.)
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
@@ -8374,7 +8374,7 @@ app.whenReady().then(async () => {
   startup.add('performance mode', () => perfMode.start(), { priority: 2 }); // power events, and whether the GPU really draws
   startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
   startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
-  setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
+  startup.add('GPU check', () => { setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); }, { priority: 2 }); // the GPU process has reported by then
   firstTabLoaded.then(() => startup.release());
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
