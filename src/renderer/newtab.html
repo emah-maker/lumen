@@ -27,6 +27,10 @@
     }
     html, body { margin: 0; min-height: 100%; }
     html { scrollbar-gutter: stable; } /* a scrollbar appearing never narrows the page (and the column's column count) */
+    /* Over a background, a picture or an effect there is no scrollbar column: a reserved gutter is painted in the root's
+       plain colour (black here), never by the fixed #backdrop or #effect, so the page showed a 15 px black band down its
+       right edge (most visible in full screen). The page still scrolls (wheel, keys, touch) and its width stays fixed. */
+    html:has(> body.on-media), html:has(> body.has-effect) { scrollbar-gutter: auto; scrollbar-width: none; }
     body {
       background: var(--bg); color: var(--text);
       font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
