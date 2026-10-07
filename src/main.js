@@ -878,7 +878,9 @@ function setupPermissions() {
   const ses = session.defaultSession;
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
 
-  ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
+  ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
+    // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
+    const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
     if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
@@ -951,7 +953,12 @@ async function askOpenExternal(wc, details, decisions = externalDecisions) { // 
 async function pickScreenToShare(request, callback, owner = null) {
   const shown = owner && !owner.isDestroyed() ? owner : win;
   let done = false;
-  const answer = (streams) => { if (!done) { done = true; callback(streams); } };
+  const answer = (streams) => {
+    if (done) return;
+    done = true;
+    if (streams?.video) { try { mediaPages.add(require('electron').webContents.fromFrame(request.frame)); } catch { /* the page is gone */ } } // sharing the screen: its tab stays awake
+    callback(streams);
+  };
   try {
     const { desktopCapturer, nativeImage } = require('electron');
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 96, height: 60 }, fetchWindowIcons: false });
@@ -986,6 +993,7 @@ async function pickScreenToShare(request, callback, owner = null) {
 
 let extensions = null;
 // A tab whose page was destroyed (e.g. it called window.close()) has no webContents any more.
+const mediaPages = new WeakSet(); // pages given the camera, microphone or screen since their last navigation
 const alive = (tab) => Boolean(tab?.view?.webContents) && !tab.view.webContents.isDestroyed();
 const tabByContents = (wc) => tabs.find((t) => alive(t) && t.view.webContents === wc);
 // The extension library reports every newly added tab as activated; ignore those echoes so
@@ -1606,6 +1614,7 @@ function tabState() {
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
         pinned: Boolean(t.pinned),
+        sleeping: Boolean(t.frozen), // asleep in freeze mode: paused, still loaded (tabSleep)
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
@@ -2105,6 +2114,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('responsive', () => { tab.hungAsked = false; });
   wc.on('did-navigate', (_e, url) => { if (!isErrorPage(url)) tab.lastUrl = url; });
+  wc.on('did-navigate', () => { mediaPages.delete(wc); });
+  wc.on('did-start-navigation', (e) => { if (tab.frozen && e.isMainFrame && !e.isSameDocument) { tab.frozen = false; tab.lastActiveAt = Date.now(); sendTabs(); } }); // a new document is not frozen // a new page starts without the camera or microphone
   wc.on('did-navigate', (_e, url) => {
     // The error page replaces the failed entry, so Back skips past it.
     if (isErrorPage(url)) {
@@ -2232,26 +2243,31 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
 // up through wireView(), the same path a freshly opened tab takes, reloading the same URL (restoring
 // scroll position isn't attempted). See canSleep() for every case this leaves alone.
 const tabSleep = require('./features/tab-sleep'); // the pure decisions: may it sleep, how it wakes
-const SLEEP_AFTER_MS = 20 * 60 * 1000;
-const SLEEP_CHECK_MS = 60 * 1000;
-// When the OS is short of memory, background tabs sleep after 2 minutes instead, oldest first. On
-// an 8 GB Mac a dozen tabs is enough to start swapping long before the 20 minutes are up.
-const PRESSURE_SLEEP_AFTER_MS = 2 * 60 * 1000;
+const SLEEP_CHECK_MS = 30 * 1000;
+// Settings > Tabs > Memory (the sleep settings, with their defaults = what this always did): features/tab-sleep.js decides
+// which tabs sleep (decideSleep); this file reads the facts, runs the page's own busy check, and does the sleeping.
 
-// macOS: the kernel's own pressure level (1 normal, 2 warning, 4 critical), the signal Activity
-// Monitor's graph shows; free-page counts are misleading there because of compression. Elsewhere:
-// under 10% of RAM available.
-function memoryPressure() {
-  if (process.platform !== 'darwin') {
-    const { total, free } = process.getSystemMemoryInfo();
-    return Promise.resolve(total > 0 && free / total < 0.1);
-  }
+// The numbers decideSleep's memory test reads. macOS: the kernel's own pressure level (1 normal, 2 warning, 4
+// critical), the signal Activity Monitor's graph shows, because free-page counts are misleading there (compression);
+// it stands in for the free-memory percentage. Elsewhere: free system memory against the chosen percentage.
+// getSystemMemoryInfo is in kilobytes, an app metric's workingSetSize too.
+function memoryInfo() {
+  let lumenBytes = 0;
+  try { lumenBytes = app.getAppMetrics().reduce((n, m) => n + (m.memory?.workingSetSize || 0), 0) * 1024; } catch { /* unknown: no limit on Lumen's own use applies */ }
+  let total = 0;
+  let free = 0;
+  try { const m = process.getSystemMemoryInfo(); total = m.total * 1024; free = m.free * 1024; } catch { /* unknown */ }
+  const info = { totalBytes: total, freeBytes: free, lumenBytes };
+  if (process.platform !== 'darwin') return Promise.resolve(info);
   return new Promise((resolve) => {
-    require('child_process').execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], (err, out) => {
-      if (err) { console.error('[lumen] memory pressure check failed:', err.message); return resolve(false); }
-      resolve(Number(out) >= 2);
+    require('child_process').execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 5000 }, (err, out) => {
+      if (err) { console.error('[lumen] memory pressure check failed:', err.message); return resolve(info); }
+      resolve({ ...info, pressure: Number(out) >= 2 });
     });
   });
+}
+async function memoryPressure() { // (the test hook too) is memory low by the current settings?
+  return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await memoryInfo());
 }
 
 function sleepTab(tab) {
@@ -2273,8 +2289,34 @@ function sleepTab(tab) {
   tab.view = null;
 }
 
+// "Sleep" in freeze mode: the page stays loaded (scroll, forms, scripts' state) but paused (Chromium's frozen lifecycle state,
+// which stops its timers and scripts and lets it be paged out), so waking it is instant. Resolves false when it can't be frozen.
+async function freezeTab(tab) {
+  try {
+    const wc = tab.view.webContents;
+    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+    wc.setBackgroundThrottling(true);
+    await wc.debugger.sendCommand('Page.setWebLifecycleState', { state: 'frozen' });
+    if (!alive(tab) || tab.id === activeId) { await thawTab(tab, { quiet: true }); return false; } // the user came to it meanwhile
+    tab.frozen = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+function thawTab(tab, { quiet = false } = {}) {
+  const wasFrozen = tab.frozen;
+  tab.frozen = false;
+  tab.lastActiveAt = Date.now(); // its idle clock starts again
+  if (!alive(tab)) return Promise.resolve();
+  const wc = tab.view.webContents;
+  return wc.debugger.isAttached() ? wc.debugger.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}).then(() => { if (wasFrozen && !quiet) sendTabs(); }) : Promise.resolve();
+}
+
 function wakeTab(tab) {
+  if (tab.frozen) { thawTab(tab); return; }
   if (!tab.sleeping) return;
+  tab.lastActiveAt = Date.now(); // woken (even in the background): its idle clock starts again, so the next sweep doesn't put it straight back
   // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
   const warm = !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
   const view = warm || new WebContentsView({
@@ -2342,50 +2384,90 @@ async function hasUnsavedInput(wc) {
   return (await unsavedInputState(wc)) !== 'no'; // any doubt counts as "yes, has input"
 }
 
-// Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
-// away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
-// typed form input. On any doubt this returns false and the tab is left alone.
-// (An agent's own window keeps its tabs loaded: agentUsing covers them.)
-async function canSleep(tab) {
+// What the sleep decision reads about a tab (features/tab-sleep.js decideSleep and keepReason).
+function sleepFacts(tab) {
   const wc = alive(tab) ? tab.view.webContents : null;
-  if (tabSleep.keepReason({
-    alive: Boolean(wc), sleeping: tab?.sleeping, active: tab?.id === activeId, settings: tab?.settings, closing: tab?.closing, unloadAsked: tab?.unloadAsked,
-    openPopups: tab?.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab?.aiLock, webPage: wc ? isWebUrl(realUrl(wc)) : false,
-    loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab?.fullscreen, devTools: wc?.isDevToolsOpened(),
-  })) return false;
-  return !(await hasUnsavedInput(wc));
+  const url = wc ? realUrl(wc) : tab.sleepUrl || '';
+  return {
+    id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen), active: tab.id === activeId, settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
+    openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) : false,
+    loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
+    capturing: wc ? wc.isBeingCaptured() || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded)
+    pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt,
+  };
 }
 
+// Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
+// away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, capturing, one the settings
+// exempt (pinned, a listed site), or with typed form input. On any doubt this returns false and the tab is left alone.
+// (An agent's own window keeps its tabs loaded: agentUsing covers them.)
+async function canSleep(tab, s = tabSleep.normalize(readSettings())) {
+  const facts = tab ? sleepFacts(tab) : null;
+  if (!facts || tabSleep.keepReason({ ...facts, keepPinned: s.keepPinned, neverSite: tabSleep.hostListed(facts.host, s.never) })) return false;
+  return !(await hasUnsavedInput(tab.view.webContents));
+}
+
+// Put a tab to sleep the chosen way: 'unload' closes the page (it reloads on return, keeping its place), 'freeze' pauses it in memory.
+async function putToSleep(tab, how) {
+  if (how === 'freeze') return freezeTab(tab); // couldn't be frozen (another debugger, a page going away): left awake, never unloaded unasked
+  sleepTab(tab);
+  return true;
+}
+
+let sweeping = false;
 async function sweepSleep() {
-  if (!win || win.isDestroyed() || readSettings().tabSleep === false) return;
-  const pressure = await pressureCheck();
-  const cutoff = Date.now() - (pressure ? PRESSURE_SLEEP_AFTER_MS : Math.min(SLEEP_AFTER_MS, perfMode.limits().sleepAfterMs)); // Performance mode: sooner
-  for (const tab of [...tabs].sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
-    if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
-    if (!(await canSleep(tab))) continue;
-    // hasUnsavedInput (inside canSleep) is an async round trip to the page (over a second): re-check the fast,
-    // synchronous conditions in case the user switched to (or closed) this exact tab, or it started playing, meanwhile.
-    if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
-    sleepTab(tab);
-    sendTabs();
-  }
-  // Performance mode also caps how many background tabs stay loaded: the ones unused the longest go
-  // first, and nothing used in the last minute.
-  const cap = perfMode.limits().maxLiveBackgroundTabs;
-  if (Number.isFinite(cap)) {
-    const live = () => tabs.filter((t) => alive(t) && !t.sleeping && t.id !== activeId);
-    for (const tab of live().sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
-      if (live().length <= cap) break;
-      if (!tab.lastActiveAt || tab.lastActiveAt > Date.now() - 60e3 || !(await canSleep(tab))) continue;
-      if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
-      sleepTab(tab);
-      sendTabs();
+  if (!win || win.isDestroyed() || sweeping) return;
+  const settings = readSettings();
+  const s = tabSleep.normalize(settings);
+  if (s.mode === 'off') return;
+  sweeping = true;
+  try {
+    const memory = s.mode === 'memory' || s.mode === 'both' ? await pressureCheck() : null;
+    const { sleep, capExcess } = tabSleep.decideSleep({ tabs: tabs.map(sleepFacts), settings, now: Date.now(), memory, limits: perfMode.limits() }); // Performance mode: sooner, and fewer kept
+    let capLeft = capExcess;
+    for (const { id, why } of sleep) {
+      if (why === 'cap' && capLeft <= 0) break;
+      const tab = tabs.find((t) => t.id === id);
+      if (!tab || !(await canSleep(tab, s))) continue;
+      // The page check (inside canSleep) is an async round trip (over a second): re-check the fast,
+      // synchronous conditions in case the user switched to (or closed) this exact tab, or it started playing, meanwhile.
+      if (!alive(tab) || tab.sleeping || tab.frozen || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
+      if (await putToSleep(tab, s.how)) { sendTabs(); if (why === 'cap') capLeft--; }
     }
+  } finally {
+    sweeping = false;
   }
 }
-let pressureCheck = memoryPressure;
+
+// A tab's menu: "Put to sleep now" / "Wake", and "Never sleep this site". Sleeping now ignores the idle clock and the page's
+// own checks (you asked), but not what would lose work or break a task (the tab in front, an AI task, popups, a tab closing).
+const canSleepNow = (tab) => !tabSleep.keepReason({ ...sleepFacts(tab), loading: false, audible: false, fullscreen: false, devTools: false, capturing: false });
+function sleepMenuItems(tab) {
+  const asleep = Boolean(tab.sleeping || tab.frozen);
+  const host = tabSleep.cleanHost(hostOf(tabUrl(tab)));
+  const never = readSettings().tabSleepNever || [];
+  const listed = Boolean(host) && never.includes(host);
+  return [
+    asleep
+      ? { label: t('menu.wakeTab'), click: () => { wakeTab(tab); layout(); sendTabs(); } }
+      : { label: t('menu.sleepTabNow'), enabled: canSleepNow(tab), click: () => { putToSleep(tab, tabSleep.normalize(readSettings()).how).then(() => sendTabs()).catch(() => {}); } },
+    ...(host && isWebUrl(tabUrl(tab)) ? [{
+      label: t(listed ? 'menu.allowSiteSleep' : 'menu.neverSleepSite', { host }),
+      click: () => { writeSettings({ ...readSettings(), tabSleepNever: listed ? never.filter((x) => x !== host) : [...never, host] }); try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ } },
+    }] : []),
+  ];
+}
+// A sleep setting changed (Settings > Tabs > Memory): applies at once. Turned off, frozen tabs wake; otherwise a sweep runs now.
+function tabSleepSettingChanged() {
+  if (tabSleep.normalize(readSettings()).mode === 'off') {
+    for (const tab of tabs) if (tab.frozen) thawTab(tab).catch(() => {});
+    return;
+  }
+  setTimeout(() => { sweepSleep().catch(() => {}); }, 300).unref?.();
+}
+let pressureCheck = memoryInfo;
 setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
-if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
+if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve({ pressure: on }); }, frozen: (id) => Boolean(tabs.find((x) => x.id === id)?.frozen), freeze: (id) => freezeTab(tabs.find((x) => x.id === id)), thaw: (id) => thawTab(tabs.find((x) => x.id === id)), sleepNow: (id) => putToSleep(tabs.find((x) => x.id === id), tabSleep.normalize(readSettings()).how), menuItems: (id) => sleepMenuItems(tabs.find((x) => x.id === id)).map((i) => ({ label: i.label, enabled: i.enabled !== false })), changed: tabSleepSettingChanged, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
 // Chromium focuses a tab's page by itself when its view is shown and again on its first navigation,
@@ -2504,7 +2586,7 @@ function switchTab(id, { wake = true } = {}) {
     sendTabs();
     return true;
   }
-  if (tab.sleeping) wakeTab(tab);
+  if (tab.sleeping || tab.frozen) wakeTab(tab);
   activeId = id;
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
@@ -3112,6 +3194,7 @@ function tabMenuTemplate(id) {
   items.push(
     { type: 'separator' },
     { label: t('menu.reload'), click: () => reloadTab(tab) },
+    ...(tab.settings ? [] : sleepMenuItems(tab)),
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
     ...audioMenuItems(tab),
@@ -3221,7 +3304,7 @@ function duplicateTab(id) {
 // woken, which loads it.
 function reloadTab(tab, { ignoreCache = false } = {}) {
   if (!tab) return;
-  if (tab.sleeping) { wakeTab(tab); layout(); sendTabs(); return; }
+  if (tab.sleeping || tab.frozen) { wakeTab(tab); layout(); sendTabs(); return; }
   if (!alive(tab)) return;
   const wc = tab.view.webContents;
   if (wc.isLoading() && !ignoreCache) wc.stop();
@@ -6338,7 +6421,7 @@ const agentSwitchTab = (id, opts = {}) => {
   }
   const t = tabs.find((x) => x.id === id);
   if (!t || agentOffLimits(t)) return false;
-  if (t.sleeping) wakeTab(t); // (the run is about to use it)
+  if (t.sleeping || t.frozen) wakeTab(t); // (the run is about to use it)
   if (fromPage) chatPageRt.retarget(id);
   return true;
 };
@@ -6372,15 +6455,15 @@ const agentTabById = (id) => {
       if (t) { owner = rec; break; }
     }
   }
-  if (t?.sleeping) withWindow(owner, () => wakeTab(t));
+  if (t?.sleeping || t?.frozen) withWindow(owner, () => wakeTab(t));
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
 // [ask across tabs] This window's tabs as read_tabs and the "@" picker see them (features/tabs-ask.js
 // decides which may be read). A private window's tabs are never in here: it keeps its own.
 const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleeping)).map((t) => {
-  const live = alive(t);
-  const url = live ? realUrl(t.view.webContents) : t.sleepUrl || '';
-  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
+  const live = alive(t) && !t.frozen; // (a frozen page can't be read: by its address only, like a sleeping one)
+  const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
+  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping || t.frozen), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
 });
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
@@ -7064,6 +7147,7 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  onTabSleepChange: () => tabSleepSettingChanged(),
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });

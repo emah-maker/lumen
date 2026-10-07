@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Choose when and how unused tabs sleep.** Settings > Tabs > Memory now picks the mode (off, after a time unused, only when memory is low, or both), the time (5 minutes to 8 hours, or any number of minutes), and how: Unload frees the page's memory and reloads it on return (as before), Sleep keeps it paused in memory and wakes at once. Memory is low under a free-memory percentage you choose, or when Lumen itself uses more than a chosen number of GB, checked every 30 seconds. You can keep pinned tabs and listed sites awake (also from a tab's right-click menu: Never Sleep this site), limit how many background tabs stay awake, and put a tab to sleep or wake it from its menu. Sleeping tabs show "Sleeping — click to wake" in their hover card. Tabs sharing the camera, microphone or screen never sleep. Changes apply at once; the defaults behave as before.
 - **A new-tab widget's Edit / gear button opens that widget's own editor.** It went to Settings > Appearance and relied on a reload to find the widget, so an already-open Settings tab could miss it. It now opens Settings > Home > Widgets (`lumen://settings/widgets`), reuses the open Settings tab without reloading it, opens the widget's form and highlights it.
 
 ## 0.5.17 (2026-10-07)
