@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - Fixed: the AI navigating to a URL that differs only by its #fragment (or is identical) no longer stalls and gets worked around with a cache-busting URL. A hash-only change completes at once on the same page, an identical URL reloads, and in-page (pushState) route changes end the load wait early.
+- **The new-tab page's colours reach every edge in full screen.** In full screen (F11) on Windows and Linux, the tab strip and toolbar now go away as in Chrome, so the page and the new-tab page's background, gradient or picture fill the whole screen instead of stopping below the toolbar. Typing in the address bar (a new tab still puts the cursor there) or pressing Ctrl+L brings the toolbar back until you leave it; F11 again exits full screen. macOS keeps its toolbar in full screen. The new-tab page also no longer shows a black band down its right edge over a background or effect (the space kept for a scrollbar was painted black); it still scrolls with the wheel and keys.
 
 ## 0.5.16 (2026-10-06)
 

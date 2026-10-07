@@ -1705,6 +1705,7 @@ function layout() {
   raiseOverlays();
 }
 const { overlaysToRaise } = require('./features/overlay-order');
+const fullscreenChrome = require('./features/fullscreen-chrome');
 // Layering (bottom to top): the UI view, tab views, Spotify and Apple Music cards, suggestions, downloads panel, tool overlay, dialogs. A tab view added later
 // (a new tab, a woken one) lands above an overlay that is showing and would hide it; put those back on top, in order.
 function raiseOverlays() {
@@ -3889,7 +3890,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
-  else if (mod && key === 'l') focusAddress();
+  else if (mod && key === 'l') focusAddress({ reveal: true }); // (in full screen, Ctrl+L shows the hidden toolbar)
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
@@ -3942,10 +3943,12 @@ function toggleChatPage() {
   else chatPageRt.open();
 }
 
-function focusAddress() {
+// `reveal`: the user asked for the address bar (Ctrl+L), so a full-screen window shows its hidden toolbar; a new tab
+// putting the cursor there doesn't (its page fills the screen until the user types).
+function focusAddress({ reveal = false } = {}) {
   ui()?.focus();
   if (curRec && !curRec.uiLoaded) curRec.focusAddressPending = true; // (sent again once the UI has loaded: createWindow)
-  ui()?.send('focus-address');
+  ui()?.send('focus-address', { reveal });
 }
 
 // [ai manners] with "hide tabs the AI opened" on, the tabs it leaves out of the strip are skipped (the one in front, and one playing sound, stay)
@@ -6011,6 +6014,13 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) followFront(); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
+  // Full screen (F11) on Windows and Linux hides the tab strip and toolbar, so the page (the new-tab page's colours) reaches
+  // every edge of the screen; the UI then reports the larger page area (content-bounds). See features/fullscreen-chrome.js.
+  // (The event says which way it went: on Windows, isFullScreen() inside these handlers still answers the old state.)
+  const sendFullscreen = (fullScreen) => { if (!w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send('window-fullscreen', fullscreenChrome.hidesChrome({ fullScreen, platform: process.platform })); };
+  w.on('enter-full-screen', () => sendFullscreen(true));
+  w.on('leave-full-screen', () => sendFullscreen(false));
+  w.webContents.on('did-finish-load', () => { if (w.isFullScreen()) sendFullscreen(true); }); // (a UI reloaded while in full screen)
   w.on('blur', hideSuggestions);
   w.loadFile(UI_HTML);
   // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
