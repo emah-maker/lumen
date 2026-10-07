@@ -1,3 +1,4 @@
+/* global document */
 // Startup and memory measurement for a restored session (hidden window, throwaway profile).
 //   node scripts/measure-startup.js [--tabs 25] [--active 3] [--json] [--leak] [--quick] [--no-engine]
 // Seeds settings.json with a saved session of N tabs on a local server (artificial size/latency), launches the
