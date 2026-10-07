@@ -3017,6 +3017,8 @@ const TOOL_LABELS = {
   get_network: () => t('tool.get_network'),
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
+  delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
 // Rendering a long reply's whole markdown on every streamed chunk grew slower and slower (the work
@@ -3461,6 +3463,27 @@ const permButton = $('auto-allow');
 (permButton.closest('.sidebar-head') || permButton.parentElement).append(permMenu);
 permButton.setAttribute('aria-haspopup', 'menu');
 permButton.setAttribute('aria-expanded', 'false');
+
+// ---------- helpers: whether the AI may hand read-only jobs to helpers working side by side (the delegate tool) ----------
+// The same setting as Settings > AI > "Let the AI use helpers to work in parallel" (aiSubagents): main keeps it and tells every view,
+// so the two follow each other. Off: the next message is sent without the tool.
+const helpersButton = $('helpers-btn');
+let helpersOn = true;
+function renderHelpers() {
+  if (!helpersButton) return;
+  helpersButton.setAttribute('aria-pressed', String(helpersOn));
+  helpersButton.title = t(helpersOn ? 'sidebar.helpers.on' : 'sidebar.helpers.off');
+}
+if (helpersButton) {
+  helpersButton.onclick = async () => {
+    const got = await window.assistant.helpers?.(!helpersOn);
+    if (typeof got === 'boolean') helpersOn = got;
+    renderHelpers();
+  };
+  window.addEventListener('lumen:helpers', (e) => { helpersOn = e.detail !== false; renderHelpers(); }); // Settings → AI changed it
+  window.assistant.helpers?.().then((on) => { if (typeof on === 'boolean') helpersOn = on; renderHelpers(); });
+  renderHelpers();
+}
 
 // The composer's persistent indicator: only while Bypass is on; it opens the setting.
 const permBadge = document.createElement('button');
@@ -9719,6 +9742,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
+    if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false })); // [subagents] the sidebar's Helpers button follows Settings → AI
     accent = p.accent || null;
     applyAccent();
   };

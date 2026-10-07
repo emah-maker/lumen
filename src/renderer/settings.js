@@ -313,6 +313,9 @@ async function buildAi(card) {
   showPermWarn(st.prefs.aiPermissionMode);
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
+    toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
+    select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
+      ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
@@ -2799,6 +2802,13 @@ async function init() {
     return;
   }
   st = await S.get();
+  // [subagents] the sidebar's Helpers button changes the same setting: coming back to this page shows what it is now
+  window.addEventListener('focus', async () => {
+    try {
+      const fresh = await S.get();
+      if (st && fresh.prefs.aiSubagents !== st.prefs.aiSubagents) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'aiSubagents' } })); }
+    } catch { /* the page is closing */ }
+  });
   window.setI18n?.(await S.strings?.().catch(() => null)); // renderer/i18n.js
   applyPageClasses();
   // The sidebar and the pages, in order. Titles in the system's language; English (above) when a locale lacks one.

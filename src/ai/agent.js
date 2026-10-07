@@ -23,6 +23,7 @@ const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, PROBE_SCRIPT }
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
 const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
@@ -419,6 +420,18 @@ snapshot.extendTools(TOOLS);
 // --- end efficiency hook ---
 imageRouter.extendTools(TOOLS); // [image routing]
 
+// [subagents] delegate is for the sidebar's API chats only (not listed to MCP clients or the CLI engines, which have their own helpers), and only
+// while Settings > AI > "Let the AI use helpers" is on (requestFor / otherTurn leave it out otherwise).
+const DELEGATE_TOOL = {
+  name: 'delegate',
+  description: 'Run 2-5 independent read-only jobs in parallel helpers (they read URLs and search, never act in tabs). tasks:[{task,urls?}], each self-contained. Returns each answer.',
+  input_schema: {
+    type: 'object',
+    properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['task'] } } },
+    required: ['tasks'],
+  },
+  eager_input_streaming: true,
+};
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
 // Other providers get a client-side search tool (DuckDuckGo's HTML results, read without cookies).
 const SEARCH_TOOL = {
@@ -444,6 +457,13 @@ function slimTool(tool) {
   return { name: tool.name, description: tool.description, input_schema: { type: 'object', properties, ...(required.length ? { required } : {}) } };
 }
 const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
+const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS, slimTool(DELEGATE_TOOL)];
+// What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
+const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
+  const properties = { ...t.input_schema.properties };
+  delete properties.as_user;
+  return { name: t.name, description: t.description, input_schema: { ...t.input_schema, properties } };
+});
 const BASIC_SEARCH_TOOLS = [...TOOLS, { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
 
 // Which model wrote each assistant turn (a WeakMap, so nothing extra is serialized into requests).
@@ -767,7 +787,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true } = {}) { // delegate: the helpers setting (the tool is offered)
   const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
   const cfg = MODELS[model];
   const params = {
@@ -781,7 +801,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool(cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS),
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [])),
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -798,6 +818,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
 }
 const TOOL_SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.input_schema]));
 TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for non-Claude models
+TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -815,6 +836,7 @@ const ONE_OF = { click: [['element_id', 'text']], wait_for: [['text', 'url', 'go
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
+// (delegate is not here: it marks the chat tainted itself once a helper has read a page, delegate(), so the helpers' own first reads are judged like the chat's)
 const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
@@ -826,7 +848,7 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
+const TAB_FREE_TOOLS = new Set(['delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -2790,7 +2812,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget);
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn() });
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -2843,7 +2865,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS), ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
       noTools,
@@ -3047,6 +3069,107 @@ ${prompt}` : prompt), historyImages: [] };
     emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
   }
 
+  // ---- [subagents] delegate (ai/subagents.js): 1-5 read-only helpers working side by side, each a small model loop on a cheaper
+  // model of the chat's provider (Settings > AI > helpers). They get read_urls (signed out), web_search and analyze_posts and nothing
+  // else, so no click, text, form, tab, script or upload can come from one. The approval rules are the chat's own: a helper that has
+  // read a page needs the user's OK for every new site it heads to (its own taint, started from the chat's), through the same cards
+  // and the chat's approved sites; a redirect is checked by the same guard. Their tokens count in the chat's usage.
+  subagentsOn() {
+    return this.browser.subagents ? this.browser.subagents() !== false : true;
+  }
+
+  // One helper model call, in the shape of a Claude turn ({ content, stop_reason, model, usage }); noTools: answer in text.
+  async helperCall(model, { system, messages, tools, signal, noTools }) {
+    const { provider, model: id } = providers.splitModel(model);
+    if (provider === 'anthropic') {
+      const params = { model: id, max_tokens: 4096, system, tools, messages, ...(noTools ? { tool_choice: { type: 'none' } } : {}) };
+      return this.getClient().beta.messages.stream(params, { signal }).finalMessage();
+    }
+    const apiKey = this.getKey(provider);
+    if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
+    return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages, tools, signal, emit: () => {}, noTools });
+  }
+
+  async delegate(input) {
+    const scope = taskScope.getStore();
+    const gate = scope?.gate;
+    const emit = gate?.emit || (() => {});
+    const signal = gate?.signal || new AbortController().signal;
+    const chat = scope?.chat || null;
+    const { tasks, dropped } = subagents.cleanTasks(input);
+    const own = chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
+    const cheap = subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
+    const used = { model: cheap };
+    const turn = async (args) => {
+      const model = used.model;
+      let message;
+      try {
+        message = await this.helperCall(model, args);
+      } catch (err) { // the cheaper model is not on this key (or was refused): the chat's own model, for this and the other helpers
+        if (model === own || signal.aborted || args.signal?.aborted || !(err?.status === 404 || err?.status === 400 || err?.status === 403 || /model/i.test(String(err?.message)))) throw err;
+        used.model = own;
+        message = await this.helperCall(own, args);
+      }
+      const counted = used.model;
+      if (chat && message?.usage) recordUsage(chat, { model: counted, usage: message.usage }, emit); // [usage] in the chat's totals
+      if (message?.usage) this.reportApi(providers.splitModel(counted).provider, { model: counted, usage: message.usage }, emit); // ...and the app's usage log
+      return message;
+    };
+    const taint = gate?.run ? Boolean(taintHolder(gate.run)?.tainted) : false;
+    const helpers = new Map(); // helper number -> { run: its own taint holder }
+    let read = false;
+    const who = `${gate?.who || 'Claude'}'s helper`;
+    const exec = async (name, args, { helper }) => {
+      const problem = validateInput(name, args);
+      if (problem) throw new Error(`INVALID_INPUT: ${problem}`);
+      if (name === 'read_urls') {
+        if (args.as_user) throw new Error('Helpers read signed out only. Tell the main assistant if a page needs the user\'s sign-in.');
+        args = { ...args, max_chars: args.max_chars ?? subagents.READ_CHARS };
+      }
+      if (!helpers.has(helper)) helpers.set(helper, { run: { tainted: taint } });
+      const state = helpers.get(helper);
+      const hostGate = gate ? { ...gate, who, run: state.run } : null;
+      if (hostGate && DESTINATION_TOOLS.has(name) && state.run.tainted) { // a helper that has read a page: each new site or search needs the user's OK, as in the chat
+        const search = name === 'web_search' ? { query: String(args.query ?? ''), title: `${who} wants to search DuckDuckGo for ${quote(String(args.query ?? ''), 120)}` } : undefined;
+        for (const host of destinationHosts(name, args)) {
+          if (!(await this.askOpen(host, hostGate, search))) throw new Error(search ? 'The user did not allow this search to go to DuckDuckGo.' : `The user did not allow opening ${host}.`);
+        }
+      }
+      const run = () => this.execute(name, args);
+      const value = await (scope ? taskScope.run({ ...scope, ...(hostGate ? { gate: hostGate } : {}) }, run) : run());
+      if (name === 'read_urls') { state.run.tainted = true; read = true; }
+      return value;
+    };
+    const ids = new Map();
+    const short = (task) => String(task).replace(/\s+/g, ' ').slice(0, 70);
+    const labelOf = (n, task, doing) => `Helper ${n}: ${short(task)}${doing ? ` (${doing})` : ''}`;
+    const onEvent = (e) => {
+      if (e.type === 'start') {
+        const id = `helper-${++this.approvalSeq}`;
+        ids.set(e.n, id);
+        emit({ type: 'tool', id, name: 'helper', input: { n: e.n, task: short(e.task) }, label: labelOf(e.n, e.task) });
+      } else if (e.type === 'step') {
+        const doing = e.kind === 'read_urls' ? 'reading pages' : e.kind === 'web_search' ? 'searching' : e.kind === 'think' ? 'thinking' : 'working';
+        emit({ type: 'tool_update', id: ids.get(e.n), name: 'helper', input: { n: e.n, task: short(e.task), doing: e.kind }, label: labelOf(e.n, e.task, doing) });
+      } else if (e.type === 'done') {
+        const id = ids.get(e.n);
+        if (e.status === 'done') emit({ type: 'tool_done', id, ok: true });
+        else if (e.status === 'stopped') emit({ type: 'tool_done', id, ok: false, stopped: true });
+        else emit({ type: 'tool_done', id, ok: false, error: e.status === 'timeout' ? `${e.error}; partial answer` : e.error });
+      }
+    };
+    const limits = this.browser.subagentLimits?.() || {};
+    let results;
+    try {
+      results = await subagents.runHelpers({ tasks, turn, exec, signal, tools: HELPER_TOOL_DEFS, maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent });
+    } finally {
+      if (read) this.markTainted(gate?.run); // what the helpers read is now in this chat
+    }
+    if (signal.aborted) throw new (sdk().APIUserAbortError)();
+    return subagents.formatResults(results, { dropped, model: used.model === own ? '' : authorName(used.model) });
+  }
+  // ---- [/subagents]
+
   // Human-readable step text for the sidebar, e.g. Clicking “Sign in” button.
   async describeStep(name, input) {
     try {
@@ -3070,6 +3193,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_pdf') return 'Reading the PDF';
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
+      if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
@@ -4594,6 +4718,7 @@ ${same}
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
       case 'analyze_posts': return postAnalysis.run(input);
+      case 'delegate': return this.delegate(input); // [subagents]
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
         while (Date.now() < until && !this.signalAborted()) await sleep(Math.min(250, until - Date.now()));

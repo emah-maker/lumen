@@ -27,7 +27,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // What the page may ask main for, beyond the chat channels main.js already serves the sidebar:
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made

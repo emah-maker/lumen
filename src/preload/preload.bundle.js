@@ -633,6 +633,7 @@ contextBridge.exposeInMainWorld('assistant', {
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions] 'ask' | 'auto' | 'bypass'; no argument: just read it
+  helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents] true | false; no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card

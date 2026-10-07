@@ -53,6 +53,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
+    helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
