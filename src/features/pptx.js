@@ -11,7 +11,7 @@
 // inflated (MAX_UNCOMPRESSED: a zip bomb stops there), the number of zip entries, slides, shapes per
 // slide, XML nodes and depth, and the bytes of pictures handed to the page.
 // Fidelity is "readable": text boxes, pictures, solid and gradient fills, simple shapes, lines and
-// tables in the right places. Charts, SmartArt, equations, EMF/WMF pictures, animations and effects
+// tables in the right places. Equations, EMF/WMF pictures, animations and effects
 // are not drawn. Charts are read from their cached values (bar, line, area, pie, doughnut, scatter; other
 // types keep a labelled box), SmartArt from the drawing PowerPoint saved with it (or its data model's text).
 const zlib = require('zlib');
