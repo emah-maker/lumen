@@ -19,7 +19,7 @@ const genImages = require('../features/gen-images'); // pictures the AI made or 
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
-const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
+const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
@@ -1135,11 +1135,27 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
 async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle } = {}) {
   const t0 = Date.now();
   let loaded = false;
+  // Same-document targets never fire did-finish-load: a #fragment-only change completes at did-navigate-in-page (Chromium
+  // scrolls to the anchor itself); the identical URL is a real reload. Returns 'hash' | 'reload' | undefined for the caller's note.
+  const same = sameDocument(wc.getURL(), url);
+  if (same === 'hash') {
+    const moved = new Promise((resolve) => { wc.once('did-navigate-in-page', resolve); wc.once('destroyed', resolve); });
+    wc.loadURL(url).catch(() => {});
+    await Promise.race([moved, sleep(2000)]);
+    return 'hash';
+  }
+  if (same === 'identical') {
+    wc.reload();
+    await Promise.race([new Promise((resolve) => { wc.once('did-stop-loading', resolve); wc.once('destroyed', resolve); }), sleep(capMs)]);
+    return 'reload';
+  }
   const full = wc.loadURL(url).catch(() => {}).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
-  if (mode === 'load') return void await Promise.race([full, sleep(capMs)]);
+  // A pushState/replaceState route (or a redirect landing on a fragment) ends the wait at did-navigate-in-page too, not at the cap.
+  const inPage = new Promise((resolve) => wc.once('did-navigate-in-page', (_e, _u, isMain) => { if (isMain !== false) { loaded = true; resolve(); } }));
+  if (mode === 'load') return void await Promise.race([full, inPage, sleep(capMs)]);
   let ready;
   const domReady = new Promise((resolve) => { ready = resolve; wc.once('dom-ready', ready); wc.once('destroyed', ready); });
-  await Promise.race([full, domReady, sleep(capMs)]);
+  await Promise.race([full, inPage, domReady, sleep(capMs)]);
   if (!wc.isDestroyed()) { wc.removeListener('dom-ready', ready); wc.removeListener('destroyed', ready); }
   for (;;) {
     if (wc.isDestroyed() || (loaded && mode !== 'networkidle')) return;
@@ -4410,12 +4426,12 @@ ${same}
         // Redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js); networkidle asks the tab's own
         // request tracker when it has one (executeDebugged started it), the same one wait_for network_idle uses.
         const tracker = pageDebugShared.captureOf(wc)?.tracker;
-        await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined });
+        const kind = await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined });
         // Returned early (the page shows text, images and trackers still loading): only the DOM settling is waited for, not the rest of the load.
         if (wait === 'interactive' && wc.isLoading()) await quietWait(wc);
         else await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
         await this.settleRedirects(wc);
-        let loaded = `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
+        let loaded = `${kind === 'hash' ? 'Jumped to the #fragment on the same page (no reload needed)' : kind === 'reload' ? 'Same URL, reloaded' : 'Loaded'} ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
         if (input.wait_for) {
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
@@ -4865,4 +4881,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
