@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A new-tab widget's Edit / gear button opens that widget's own editor.** It went to Settings > Appearance and relied on a reload to find the widget, so an already-open Settings tab could miss it. It now opens Settings > Home > Widgets (`lumen://settings/widgets`), reuses the open Settings tab without reloading it, opens the widget's form and highlights it.
+
 ## 0.5.17 (2026-10-07)
 
 - **Claude Code stays reachable while it is busy elsewhere.** A slow start (many Claude Code sessions running at once) no longer counts as "Couldn’t reach Claude Code": a fresh start gets five minutes before it is treated as hung, says "still starting" when it is slow, and a Claude Code that merely went quiet is reported instead of handing your message to another model. A transient failure (an overloaded or rate-limited API, a spawn error such as EBUSY, a CLI that exited at once) is retried once before anything else happens. When Claude Code really cannot be reached the notice now says why ("it is overloaded", "claude exited with code 1: …"), and your next message tries Claude Code again instead of staying on the stand-in.

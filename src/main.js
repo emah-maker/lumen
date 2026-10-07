@@ -6853,10 +6853,13 @@ const widgets = createWidgets({
   },
   t: (key) => t(key),
   focusApp: () => { const w = BrowserWindow.getFocusedWindow() || winRecs.values().next().value?.win; if (w && !w.isDestroyed()) { if (w.isMinimized()) w.restore(); w.show(); w.focus(); app.focus?.({ steal: true }); } },
-  // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
+  // A card's gear (edit mode on the new-tab page): Settings > Home > Widgets opens that widget's editor. An open Settings tab
+  // is reused (not reloaded, not duplicated) and told to read the request; a new or still-loading one reads it as it builds.
   onConfigure: () => {
-    const wc = tabs.find((t) => t.id === openSettingsPage('appearance'))?.view?.webContents;
-    if (wc && !wc.isDestroyed() && !wc.isLoading()) wc.reload(); // an open Settings page reads the request when it builds
+    const tab = tabs.find((t) => t.id === openSettingsPage('widgets'));
+    const wc = tab?.view?.webContents;
+    const tell = () => { if (wc && !wc.isDestroyed()) wc.send('widgets:edit'); };
+    if (wc && !wc.isDestroyed()) { if (wc.isLoading()) wc.once('did-finish-load', tell); else tell(); }
   },
   // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
