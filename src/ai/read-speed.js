@@ -57,8 +57,9 @@ class ReaderPool {
 // sidebar vs MCP client). Callers never put signed-in (as_user) reads in it; it also refuses failed reads and a page
 // whose final address left the host that was asked for (a redirect the approval gate may have had to ask about).
 class ResultCache {
-  constructor({ max = 50, ttlMs = 5 * 60 * 1000, now = Date.now } = {}) {
-    Object.assign(this, { max, ttlMs, now });
+  // `maxBytes`: the pages' text kept at once (50 long pages was tens of MB of main-process memory): the oldest go first.
+  constructor({ max = 50, ttlMs = 5 * 60 * 1000, now = Date.now, maxBytes = 6 * 1024 * 1024 } = {}) {
+    Object.assign(this, { max, ttlMs, now, maxBytes });
     this.map = new Map(); // insertion order = recency
     this.hits = 0;
   }
@@ -80,9 +81,10 @@ class ResultCache {
     const key = this.key(url, options, scope);
     this.map.delete(key);
     this.map.set(key, { at: this.now(), page });
-    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value);
+    while (this.map.size > this.max || (this.map.size > 1 && this.bytes() > this.maxBytes)) this.map.delete(this.map.keys().next().value);
     return true;
   }
+  bytes() { let n = 0; for (const { page } of this.map.values()) n += (page.text?.length || 0) * 2; return n; } // (UTF-16: two bytes a character)
   clear() { this.map.clear(); }
 }
 const hostOf = (u) => { try { return new URL(u).host; } catch { return null; } };

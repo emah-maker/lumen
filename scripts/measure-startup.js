@@ -53,9 +53,11 @@ async function mem(app) {
     // The user's own profile, minus secrets and sessions: extensions, history, favicons, usage log and every setting, so
     // startup does what a normal launch does (AI engine warmups, extension loading, widgets).
     const real = path.join(process.env.APPDATA || os.homedir(), 'Lumen');
-    for (const name of ['Extensions', 'Local Extension Settings', 'history.json', 'favicons.json', 'usage.json', 'skills.json', 'downloads.json', 'site-activity.json', 'background-tasks.json']) {
+    for (const name of [...(flag('no-ext') ? [] : ['Extensions', 'Local Extension Settings']), 'history.json', 'favicons.json', 'usage.json', 'skills.json', 'downloads.json', 'site-activity.json', 'background-tasks.json']) {
       try { fs.cpSync(path.join(real, name), path.join(profile, name), { recursive: true }); } catch { /* not there */ }
     }
+    const only = args[args.indexOf('--only-ext') + 1];
+    if (flag('only-ext')) for (const d of fs.readdirSync(path.join(profile, 'Extensions'), { withFileTypes: true })) if (!d.name.startsWith(only)) fs.rmSync(path.join(profile, 'Extensions', d.name), { recursive: true, force: true });
     try { settings = JSON.parse(fs.readFileSync(path.join(real, 'settings.json'), 'utf8')); } catch { /* none */ }
     delete settings.keys; delete settings.automationEnabled;
   }
@@ -96,6 +98,16 @@ async function mem(app) {
     await ui.evaluate(() => [...document.querySelectorAll('.tab')].find((t) => /Page 10\b/.test(t.textContent))?.click());
     for (let i = 0; i < 200; i++) { const done = await app.evaluate(({ webContents }) => webContents.getAllWebContents().some((w) => /\/10$/.test(w.getURL()) && !w.isLoading())); if (done) break; await sleep(25); }
     out.wakePlaceholderTabMs = Date.now() - wakeAt;
+    if (flag('sleep')) {
+      // Open 6 more tabs, then put every background tab to sleep: the renderers must go.
+      for (let i = 0; i < 6; i++) { await ui.click('#new-tab'); await ui.fill('#address', `${base}/${2000 + i}`); await ui.press('#address', 'Enter'); await sleep(400); }
+      await sleep(2500);
+      out.awake = await mem(app);
+      const slept = await app.evaluate(async () => { const st = global.__tabSleep.state(); let n = 0; for (const t of st) if (t.view && !t.sleeping) { try { await global.__tabSleep.sleepNow(t.id); n++; } catch { /* active tab */ } } return n; });
+      await sleep(4000);
+      out.asleep = await mem(app);
+      out.sleptTabs = slept;
+    }
     if (flag('leak')) {
       await sleep(3000);
       out.firstLeakId = Math.max(...(await app.evaluate(() => global.__tabSleep.state().map((t) => t.id)))) + 1;
@@ -121,6 +133,7 @@ async function mem(app) {
       console.log(`main process: ${JSON.stringify(out.mainMem)}`);
       console.log(`web contents:\n  ${out.contents.join('\n  ')}`);
       console.log(`new tab navigation ${out.newTabNavMs} ms; wake restored tab ${out.wakePlaceholderTabMs} ms`);
+      if (out.asleep) console.log(`sleep check: ${out.sleptTabs} tabs slept; before ${out.awake.procs} procs ${out.awake.wsMB} MB -> after ${out.asleep.procs} procs ${out.asleep.wsMB} MB`);
       if (out.afterLeak) console.log(`leak check: before ${out.beforeLeak.procs} procs ${out.beforeLeak.wsMB} MB -> after ${out.afterLeak.procs} procs ${out.afterLeak.wsMB} MB`);
     }
   } finally {

@@ -4793,11 +4793,16 @@ function restoreTabsFrom(saved) {
   }
   tabGroups.restore(saved.groups);
   const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
+  const live = require('./features/session-restore').liveIndices(saved.urls.length, active);
   let activeTabId = null;
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
-    if (i === active) activeTabId = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null }).id;
-    const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
+    let tab;
+    if (live.has(i)) {
+      const opened = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null });
+      if (i === active) activeTabId = opened.id;
+      tab = tabs.find((t) => t.id === opened.id);
+    } else tab = addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
@@ -5445,6 +5450,7 @@ const CARD_HEAD = 36;
 const CARD_HOLD = { x: CARD_PAD + 26, y: CARD_PAD + 18 }; // the card is held by its icon, as the tab was
 let dragCard = null; // { win, loaded, hideTimer }
 function dragCardWindow() {
+  dragCardReaper.touch();
   if (dragCard && !dragCard.win.isDestroyed()) return dragCard;
   const w = new BrowserWindow({
     width: CARD_WIDTH + CARD_PAD * 2, height: 260, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
@@ -5462,9 +5468,13 @@ function dragCardWindow() {
   return dragCard;
 }
 function closeDragCard() {
+  dragCardReaper.cancel();
   if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.destroy();
   dragCard = null;
 }
+// The card's window is a renderer of its own (~50 MB): made when a tab drag first needs it, closed again once no drag
+// has used it for two minutes (the next drag makes it again, ahead of the card being shown).
+const dragCardReaper = require('./features/idle-reaper').createIdleReaper({ ms: 2 * 60e3, busy: () => Boolean(tabDrag), onIdle: () => closeDragCard() });
 const cardCall = (fn, ...args) => {
   if (!dragCard || dragCard.win.isDestroyed()) return;
   dragCard.win.webContents.executeJavaScript(`window.lumenCard && window.lumenCard.${fn}(...${JSON.stringify(args)})`).catch(() => {});
@@ -8309,7 +8319,6 @@ function setupTaskbar() {
 app.whenReady().then(async () => {
   perf.mark('ready');
   // The drag card's window, made once things are quiet, so the first tear-off of a session shows it at once.
-  setTimeout(() => { if (!TEST_BACKGROUND) dragCardWindow(); }, 8000);
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
@@ -8358,12 +8367,15 @@ app.whenReady().then(async () => {
   await Promise.all([atMost(extending, EXTENSIONS_WAIT_MS), atMost(fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null)]);
   perf.mark('adblockReady');
   openTabsGate();
-  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
-  firstTabLoaded.then(() => { makeSpareNewTab(); warmSoon(400); }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page, once the first tab has loaded
-  perfMode.start(); // Performance mode: power events, and whether the GPU really draws
+  // Everything below waits for the first tab to have loaded, then runs one task at a time, a gap apart (features/startup-queue.js).
+  const startup = require('./features/startup-queue').createStartupQueue();
+  startup.add('spare new-tab page and warm renderer', () => { makeSpareNewTab(); warmSoon(400); }, { priority: 1 }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page
+  startup.add('performance mode', () => perfMode.start(), { priority: 2 }); // power events, and whether the GPU really draws
+  startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
+  startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
-  updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
+  firstTabLoaded.then(() => startup.release());
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
