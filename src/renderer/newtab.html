@@ -284,7 +284,7 @@
     .w-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     @media (prefers-color-scheme: dark) { .w-card { --cloud: #9aa1ab; --drop: #64b5ff; --moon: #c9c7ff; --warn: #ff6961; } }
     body.on-media .w-card { --cloud: #eef1f5; --drop: #8fd0ff; --warn: #ff8a80; }
-    .w-instant .w-card, .w-instant .w-ghost, body.calm .w-card, body.calm .w-ghost, body.calm main { transition: none; }
+    .w-instant .w-card, .w-instant .w-ghost, body.calm .w-card, body.calm .w-ghost, body.calm main, .w-card.w-placing { transition: none; }
     .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; touch-action: none; user-select: none; flex: none; }
     .w-head a, .w-head button:not(.w-grip) { cursor: default; }
     .w-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
@@ -1055,6 +1055,7 @@
   <script src="../features/widget-system.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="../features/widget-card-key.js"></script>
   <script src="../features/clock-styles.js"></script>
   <script src="newtab-system.js"></script>
   <script src="../features/worldclock-view.js"></script>
