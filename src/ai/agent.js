@@ -31,6 +31,7 @@ const { captureTab } = require('../features/tab-capture');
 const videoCapture = require('../features/video-capture'); // video_overview, video_frames
 const videoBudget = require('./video-budget');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
+const pdfInput = require('../features/pdf-input'); // scroll / click_at / press_key on a tab showing the built-in PDF viewer
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
 
@@ -4614,6 +4615,9 @@ ${same}
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
         await this.waitForUserTyping(wc); // [ai manners]
+        const pdfMove = pdfInput.keyMove(input.key, modifiers); // paging keys on a PDF tab scroll the viewer (it takes keys only with the plugin focused)
+        const pdfScroll = pdfMove && await pdfInput.scrollPdf(wc, pdfMove);
+        if (pdfScroll) return `Pressed ${[...modifiers, input.key].join('+')}: ${JSON.stringify(pdfScroll)}`;
         // The focus is inside an embedded frame: the key goes there through the DevTools session (frames.js).
         // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
         const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
@@ -4630,6 +4634,14 @@ ${same}
         const urlBefore = wc.getURL();
         // [ai manners] A tab behind another one (the AI's own, opened in the background) gets the click as page events at that point.
         const inFront = this.taskTabInFront();
+        // A PDF tab: the document is in the viewer's frame, out of reach of the page's click probe and DOM events (features/pdf-input.js).
+        const pdfAt = { x: Math.round(input.x * ratio / wc.getZoomFactor()), y: Math.round(input.y * ratio / wc.getZoomFactor()) };
+        const pdfClick = await this.keepUserFocus(wc, () => pdfInput.clickPdf(wc, pdfAt.x, pdfAt.y, { around: (fn) => manners.agentInputAsync(wc, fn) }));
+        if (pdfClick !== null) {
+          if (!pdfClick) throw new Error(`The click could not be sent to the PDF viewer. ${pdfInput.READ_PDF_HINT}`);
+          await settleAfterAction(wc);
+          return `Clicked at (${input.x}, ${input.y}) in the PDF viewer (sent; a click there only follows a link or selects text, and nothing confirms it landed). ${pdfInput.READ_PDF_HINT}`;
+        }
         await this.keepUserFocus(wc, async () => {
           if (inFront && await this.verifiedClick(wc, () => this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)))) return;
           const zoom = wc.getZoomFactor();
@@ -4691,6 +4703,8 @@ ${same}
       case 'scroll': {
         const wc = this.requireTab();
         const screens = Math.min(Math.max(input.screens || 1, 0.25), 10);
+        const pdf = await pdfInput.scrollPdf(wc, { screens: input.direction === 'up' ? -screens : screens }); // the viewer's own scroll (null: not a PDF tab)
+        if (pdf) return JSON.stringify(pdf);
         const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens)); // (resolves once the scroll position is stable)
         return JSON.stringify(result);
       }
