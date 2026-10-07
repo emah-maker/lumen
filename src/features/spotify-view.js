@@ -177,6 +177,29 @@ function progressNow(data, now = Date.now()) {
   const at = data.progressMs + moved;
   return data.durationMs > 0 ? Math.min(at, data.durationMs) : at;
 }
+// Did a player call fail only because no Spotify device is active (nothing has played for a while, or the app was closed)?
+function noActiveDevice(status, text) {
+  const { reason } = errorCode(text);
+  return reason === 'NO_ACTIVE_DEVICE' || (status === 404 && !reason);
+}
+// GET /me/player/devices -> the id of the device to wake for a button pressed with none active, or ''. The active one if any, else one
+// that takes commands: this computer first (Lumen's own web player, the desktop app), then any other. Restricted devices can't be driven.
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+function pickDevice(text) {
+  let body;
+  try { body = JSON.parse(text); } catch { return ''; }
+  const list = (Array.isArray(body?.devices) ? body.devices : []).filter((d) => d && typeof d.id === 'string' && DEVICE_ID_RE.test(d.id) && d.is_restricted !== true);
+  const pick = list.find((d) => d.is_active === true) || list.find((d) => d.type === 'Computer') || list[0];
+  return pick ? pick.id : '';
+}
+// A button pressed with no active device -> the call that makes `deviceId` play (or skip) instead: play goes straight to that device,
+// and next / previous first move playback there (PUT /me/player, which then plays) and are pressed again. null for anything else.
+function deviceRequest(name, deviceId) {
+  if (!DEVICE_ID_RE.test(String(deviceId || ''))) return null;
+  if (name === 'play') return { method: 'PUT', path: `/me/player/play?device_id=${encodeURIComponent(deviceId)}`, retry: false };
+  if (name === 'next' || name === 'previous') return { method: 'PUT', path: '/me/player', body: { device_ids: [deviceId], play: true }, retry: true };
+  return null;
+}
 // A card's button -> the player call it makes, or null.
 function actionRequest(name) {
   const a = Object.prototype.hasOwnProperty.call(ACTIONS, name) ? ACTIONS[name] : null;
@@ -186,5 +209,5 @@ function actionRequest(name) {
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
-  isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest,
+  isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

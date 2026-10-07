@@ -534,7 +534,17 @@ const CONNECTORS = {
       if (c.mode === 'status') return x.spotifyEngine ? engineAct(x.spotifyEngine, 'Spotify', action, x, cached) : false;
       const req = SV.actionRequest(action.do);
       if (!req) return false;
-      const res = await spotifyCall(x, c, req.method, req.path);
+      let res = await spotifyCall(x, c, req.method, req.path);
+      // No device is active (Spotify forgets one after a while idle): wake one the account has (this computer's first) and press again there,
+      // rather than only saying "No active Spotify device". Pause has nothing to pause then.
+      if (!res.ok && action.do !== 'pause' && SV.noActiveDevice(res.status, res.body)) {
+        const devices = await spotifyCall(x, c, 'GET', '/me/player/devices');
+        const wake = devices.ok ? SV.deviceRequest(action.do, SV.pickDevice(devices.body)) : null;
+        if (wake) {
+          const moved = await spotifyCall(x, c, wake.method, wake.path, wake.body);
+          res = moved.ok && wake.retry ? await spotifyCall(x, c, req.method, req.path) : moved;
+        }
+      }
       if (!res.ok) throw new Error(SV.playerError(res.status, res.body));
       // An idle card has no track to show as playing (it would read "playing" with a blank title until the next fetch):
       // it only gets its answer from the fetch that follows.
