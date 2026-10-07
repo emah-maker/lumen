@@ -1806,17 +1806,37 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
 let spareForTest = false; // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it)
+const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
+let spareForced = false; // tests: make one regardless of start-up state
+const spareMemory = () => { // the cheap facts (no per-process metrics): system free memory
+  try { const m = process.getSystemMemoryInfo(); return { totalBytes: m.total * 1024, freeBytes: m.free * 1024 }; } catch { return {}; }
+};
+function closeSpareNewTab() {
+  const s = spareNewTab;
+  spareNewTab = null;
+  if (s && !s.view.webContents.isDestroyed()) { try { s.view.webContents.close(); } catch {} }
+}
 function makeSpareNewTab() {
   if ((TEST && !spareForTest) || spareNewTab || !app.isReady()) return;
+  if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory() }) !== 'make') return; // (still starting up, or short of memory: the check below makes it later)
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
   try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
+  // A spare whose renderer died (out of memory, killed) is replaced shortly, not found dead at the next Ctrl+T.
+  view.webContents.once('render-process-gone', () => { if (spareNewTab === s) { closeSpareNewTab(); setTimeout(makeSpareNewTab, 2000).unref?.(); } });
   view.webContents.loadURL(newTabUrl()).catch(() => {});
   spareNewTab = s;
 }
+// Every minute: the spare is dropped while memory is tight, and made again (once start-up is over) when it is not.
+setInterval(() => {
+  if (TEST && !spareForTest) return;
+  const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: spareMemory() });
+  if (action === 'drop') closeSpareNewTab();
+  else if (action === 'make') makeSpareNewTab();
+}, 60 * 1000).unref();
 // { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
   const s = spareNewTab;
@@ -1828,7 +1848,7 @@ function takeSpareNewTab() {
 }
 // The next one is made right away: Ctrl+T pressed again a moment later finds
 // it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
-if (TEST) global.__spareNewTab = { enable: (on = true) => { spareForTest = on; if (on) makeSpareNewTab(); else if (spareNewTab) { try { spareNewTab.view.webContents.close(); } catch {} spareNewTab = null; } }, ready: () => Boolean(spareNewTab?.ready) };
+if (TEST) global.__spareNewTab = { enable: (on = true) => { spareForTest = on; spareForced = on; if (on) makeSpareNewTab(); else closeSpareNewTab(); }, ready: () => Boolean(spareNewTab?.ready) };
 const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
