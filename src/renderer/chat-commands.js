@@ -10,6 +10,7 @@
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
 //   /help      lists every command.
+/* global shownChatId */ // renderer/chat-core.js: the chat the view shows
 (() => {
   const slash = window.slashCommands;
   const newChat = document.getElementById('new-chat');
