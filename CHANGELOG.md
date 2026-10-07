@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Fixed: the AI navigating to a URL that differs only by its #fragment (or is identical) no longer stalls and gets worked around with a cache-busting URL. A hash-only change completes at once on the same page, an identical URL reloads, and in-page (pushState) route changes end the load wait early.
+
 ## 0.5.16 (2026-10-06)
 
 - **The AI can look at videos.** Ask about a video in a tab (a YouTube page, a lecture, a screen recording, or a video file you opened) and the AI now gets one contact sheet of frames evenly spaced through it, each stamped with its time, then full-size frames at the moments that matter. Lumen pauses the video, steps through it with the browser's own decoder (nothing to install), and puts playback back exactly as you had it: position, sound and playing or paused. The sheet is sized to a token budget for the model that is answering. Videos protected by DRM and live streams are refused with a plain message, and the frames only go to the AI you asked. The new **/watch-video** command does the whole thing: overview, closer look, answer with times.

@@ -33,4 +33,17 @@ const PROBE_SCRIPT = `(() => {
   return { readyState: document.readyState, textChars: body ? (body.innerText || '').length : 0, idleMs: Math.round(performance.now() - last) };
 })()`;
 
-module.exports = { MODES, DEFAULT_WAIT, MEANINGFUL_TEXT, IDLE_MS, normalizeWait, loadDone, PROBE_SCRIPT };
+// Is loading `target` in a tab now at `current` a same-document navigation? Chromium does not load a page for those:
+//   'hash'       only the #fragment differs (and target has one): did-navigate-in-page fires, never did-finish-load
+//   'identical'  the same URL: loadURL(same) is treated as a reload-ish no-op, so the caller does wc.reload()
+//   null         a normal navigation (a fragment-less target of a page that has one is a real load too)
+function sameDocument(current, target) {
+  if (!current || !target) return null;
+  if (current === target) return 'identical';
+  const i = target.indexOf('#'), j = current.indexOf('#');
+  if (i < 0) return null;
+  const tb = target.slice(0, i), cb = j < 0 ? current : current.slice(0, j);
+  return tb === cb ? 'hash' : null;
+}
+
+module.exports = { sameDocument, MODES, DEFAULT_WAIT, MEANINGFUL_TEXT, IDLE_MS, normalizeWait, loadDone, PROBE_SCRIPT };
