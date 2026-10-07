@@ -58,7 +58,8 @@ module.exports = async function appleMusicEngineUnits(check) {
   check('apple engine: nothing is loaded until a card reads it', player.ensured === 0 && player.wc === null, '');
   const first = await e.read();
   check('apple engine: the first read loads the hidden page and answers "starting" (idle, reason loading, not signed-in-known)', player.ensured === 1 && first.state === 'idle' && first.reason === 'loading' && first.signedIn === null, JSON.stringify(first));
-  check('apple engine: commands are refused until the page says it is ready', (await e.control('play')) === false && e.playItem('song', '1') === false && e.search('x') === false && sentCmds().length === 0, JSON.stringify(sentCmds()));
+  check('apple engine: commands before the page says it is ready are kept for it (accepted), and nothing is sent to it yet', (await e.control('play')) === true && e.playItem('song', '1') === true && e.search('x') === true && sentCmds().length === 0, JSON.stringify(sentCmds()));
+  check('apple engine: …a search cleared meanwhile is not kept', e.search('') === true && (await e.read()).query === '', '');
 
   // ---- ready, signed out ----
   e.onMessage('{"t":"ready"}');
@@ -82,7 +83,7 @@ module.exports = async function appleMusicEngineUnits(check) {
 
   // ---- play something ----
   check('apple engine: playItem sends the fixed command', e.playItem('song', '1440933651') === true && JSON.stringify(sentCmds().at(-1)) === '{"cmd":"playItem","kind":"song","id":"1440933651"}', '');
-  check('apple engine: a bad kind or id is not sent', e.playItem('format', '1') === false && e.playItem('song', 'a b') === false && sentCmds().at(-1).cmd === 'playItem' && sentCmds().filter((c) => c.cmd === 'playItem').length === 1, '');
+  check('apple engine: a bad kind or id is not sent', e.playItem('format', '1') === false && e.playItem('song', 'a b') === false && sentCmds().at(-1).cmd === 'playItem' && sentCmds().filter((c) => c.cmd === 'playItem').length === 2, JSON.stringify(sentCmds().filter((c) => c.cmd === 'playItem'))); // (the one kept before the page was ready, sent when it was, and this one)
   const n0 = changes.n;
   e.onMessage(state());
   const playing = await e.read();
@@ -192,7 +193,7 @@ module.exports = async function appleMusicEngineUnits(check) {
   const oldWc = player.wc;
   player.wc = null; // the page crashed; the next read makes a new one
   const again = await e.read();
-  check('apple engine: a new page starts from nothing (not ready, nothing remembered) and commands wait for it', player.wc && player.wc !== oldWc && again.reason === 'loading' && again.signedIn === null && e.search('x') === false, JSON.stringify(again).slice(0, 120));
+  check('apple engine: a new page starts from nothing (not ready, nothing remembered) and commands wait for it', player.wc && player.wc !== oldWc && again.reason === 'loading' && again.signedIn === null && e.search('x') === true && !sentCmds().some((c) => c.cmd === 'search'), JSON.stringify(again).slice(0, 120));
   e.onMessage('{"t":"ready"}');
   e.onMessage(state({ auth: false, state: 0, item: null }));
 
