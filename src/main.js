@@ -6936,7 +6936,11 @@ function aiStatusFacts() {
 // several widgets often finish together).
 let widgetRefreshTimer = null;
 // The widgets' view of an engine (features/music-engine.js): its calls, with a test fake able to stand in for any of them.
-const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : engine()[name](...args))]));
+// A music card's read starts the engine's hidden page (a whole web player: ~300 MB). A page nobody can see (the spare
+// new-tab page waiting for Ctrl+T, a new-tab page in a background tab) must not start it: no new-tab page in front of
+// any window means a read only looks at what is already known. The page asks again when it is shown (it refreshes when it becomes visible).
+const newTabInFront = () => [...winRecs].some((rec) => rcAlive(rec) && !isSpare(rec) && !rec.agent && !rec.win.isMinimized() && tabsOf(rec).some((t) => t.id === activeIdOf(rec) && alive(t) && isNewTab(t.view.webContents.getURL())));
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),

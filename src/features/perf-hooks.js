@@ -53,8 +53,27 @@ function install(mainFile) {
     });
   } catch { /* not the main process */ }
 
+  // LUMEN_CPU_PROFILE=1: a V8 CPU profile of the main process from the first line (stopProfile writes it).
+  let inspectorSession = null;
+  if (process.env.LUMEN_CPU_PROFILE) {
+    try {
+      inspectorSession = new (require('inspector').Session)();
+      inspectorSession.connect();
+      inspectorSession.post('Profiler.enable');
+      inspectorSession.post('Profiler.setSamplingInterval', { interval: 500 });
+      inspectorSession.post('Profiler.start');
+    } catch { inspectorSession = null; }
+  }
+
   const api = {
     mark,
+    stopProfile: (file) => new Promise((resolve) => {
+      if (!inspectorSession) { resolve(false); return; }
+      inspectorSession.post('Profiler.stop', (err, { profile } = {}) => {
+        if (!err) require('fs').writeFileSync(file, JSON.stringify(profile));
+        resolve(!err);
+      });
+    }),
     loads: () => loads.map((l) => ({ ...l })),
     origin: () => origin,
     loopDelay: (reset = false) => { const r = { meanMs: Math.round(loop.mean / 1e5) / 10, p99Ms: Math.round(loop.percentile(99) / 1e5) / 10, maxMs: Math.round(loop.max / 1e5) / 10 }; if (reset) loop.reset(); return r; },

@@ -253,8 +253,10 @@ function createMusicEngine(deps) {
   }
   // What the card shows now: the engine when it is playing (or paused on something), else the desktop app when it is playing,
   // else the idle card with the lists and the search.
-  async function read({ app = true } = {}) {
-    wake();
+  // `wake: false`: look at what is already known without starting the hidden page (a page nobody can see asked: main.js).
+  async function read({ app = true, wake: start = true } = {}) {
+    if (start) wake();
+    else app = false;
     const st = player.status();
     const e = engineCard();
     if (e && (e.state === 'playing' || e.state === 'paused')) { lastSource = 'engine'; return extras(e); }

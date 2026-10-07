@@ -14,12 +14,22 @@ const WRITE_DELAY_MS = 1000;
 function createFaviconStore(dir, legacyFavicons) {
   const file = path.join(dir, 'favicons.json');
   let map = new Map(); // host -> data URL; Map iteration order doubles as LRU order (oldest first)
-  try {
-    map = new Map(Object.entries(JSON.parse(fs.readFileSync(file, 'utf8'))));
-  } catch {
-    // First run, or file not written yet — fall through to the legacy migration below.
-    if (legacyFavicons && typeof legacyFavicons === 'object') map = new Map(Object.entries(legacyFavicons));
-  }
+  // The file (~0.4 MB) is read off the main thread while the window starts; a lookup that comes before that read
+  // has finished reads it itself (the first read of it took ~90 ms of the main thread before the first window).
+  let loaded = false;
+  const adopt = (text) => {
+    if (loaded) return;
+    loaded = true;
+    try {
+      map = new Map(Object.entries(JSON.parse(text)));
+    } catch {
+      // First run, or file not written yet — fall through to the legacy migration below.
+      if (legacyFavicons && typeof legacyFavicons === 'object') map = new Map(Object.entries(legacyFavicons));
+    }
+    if (map.size && !fs.existsSync(file)) writeSoon(); // persist the migrated-from-settings.json data
+  };
+  const ensure = () => { if (!loaded) { let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { /* none yet */ } adopt(text); } };
+  fs.promises.readFile(file, 'utf8').then(adopt, () => adopt('')).catch(() => {});
 
   let timer = null;
   function writeSoon() {
@@ -35,12 +45,11 @@ function createFaviconStore(dir, legacyFavicons) {
       }
     }, WRITE_DELAY_MS);
   }
-  if (map.size && !fs.existsSync(file)) writeSoon(); // persist the migrated-from-settings.json data
-
   return {
-    has: (host) => map.has(host),
+    has: (host) => { ensure(); return map.has(host); },
     // Reading counts as use for LRU purposes (it's what "keep the ones the new-tab page actually shows" means).
     get(host) {
+      ensure();
       if (!map.has(host)) return undefined;
       const value = map.get(host);
       map.delete(host);
@@ -48,6 +57,7 @@ function createFaviconStore(dir, legacyFavicons) {
       return value;
     },
     set(host, dataUrl) {
+      ensure();
       map.delete(host);
       map.set(host, dataUrl);
       while (map.size > MAX_HOSTS) map.delete(map.keys().next().value); // drop least-recently-used

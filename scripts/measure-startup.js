@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const n = u.pathname.slice(1);
   hits.push({ n, at: Date.now() });
-  const delay = Number(u.searchParams.get('delay') || 60 + (Number(n) % 5) * 40); // artificial latency 60-220 ms
+  const delay = Number(u.searchParams.get('delay') || 60 + ((Number(n) || 0) % 5) * 40); // artificial latency 60-220 ms
   const kb = Number(u.searchParams.get('kb') || 120);
   setTimeout(() => {
     res.setHeader('Content-Type', 'text/html');
@@ -33,10 +33,13 @@ const server = http.createServer((req, res) => {
 });
 
 async function mem(app) {
-  const m = await app.evaluate(({ app: a }) => a.getAppMetrics().map((x) => ({ type: x.type, ws: x.memory.workingSetSize, priv: x.memory.privateBytes ?? 0 })));
+  const m = await app.evaluate(({ app: a, webContents }) => {
+    const urls = new Map(webContents.getAllWebContents().map((w) => [w.getOSProcessId(), (w.getURL() || '').slice(0, 60)]));
+    return a.getAppMetrics().map((x) => ({ type: x.type, name: x.name || '', url: urls.get(x.pid) || '', ws: x.memory.workingSetSize, priv: x.memory.privateBytes ?? 0 }));
+  });
   const by = {};
   for (const x of m) { const t = by[x.type] ||= { n: 0, wsMB: 0, privMB: 0 }; t.n++; t.wsMB += mb(x.ws); t.privMB += mb(x.priv); }
-  return { procs: m.length, wsMB: mb(m.reduce((s, x) => s + x.ws, 0)), privMB: mb(m.reduce((s, x) => s + x.priv, 0)), by };
+  return { list: m.map((x) => `${x.type} ${x.name} ${x.url} ws=${mb(x.ws)} priv=${mb(x.priv)}`), procs: m.length, wsMB: mb(m.reduce((s, x) => s + x.ws, 0)), privMB: mb(m.reduce((s, x) => s + x.priv, 0)), by };
 }
 
 (async () => {
@@ -67,6 +70,8 @@ async function mem(app) {
     const uiTabMs = Date.now() - t0;
     for (let i = 0; i < 200 && !hits.some((h) => h.n === String(ACTIVE)); i++) await sleep(50);
     await sleep(flag('quick') ? 1500 : 6000);
+    // A real run keeps a spare new-tab page and a warm renderer ready once the first tab has loaded; tests leave them off.
+    if (!flag('bare')) { await app.evaluate(() => { global.__spareNewTab.enable(true); global.__warmTabs.enable(true); }); await sleep(2500); }
     const out = { tabs: TABS, launchToUiTabMs: uiTabMs };
     out.marks = await app.evaluate(() => global.__perf.marks());
     out.origin = await app.evaluate(() => global.__perf.origin());
@@ -74,12 +79,15 @@ async function mem(app) {
     out.firstRequestFromProcStartMs = hits.length ? hits[0].at - out.origin : null;
     out.loop = await app.evaluate(() => global.__perf.loopDelay());
     out.activePaint = await app.evaluate(async ({ webContents }, active) => {
-      const wc = webContents.getAllWebContents().find((w) => new RegExp(`127\.0\.0\.1:\d+/${active}$`).test(w.getURL()));
+      const wc = webContents.getAllWebContents().find((w) => new RegExp(`127\\.0\\.0\\.1:\\d+/${active}$`).test(w.getURL()));
       if (!wc) return null;
       return wc.executeJavaScript('({ origin: performance.timeOrigin, fcp: (performance.getEntriesByName("first-contentful-paint")[0]||{}).startTime })').catch(() => null);
     }, ACTIVE);
     if (out.activePaint?.fcp) out.activeFcpFromProcStartMs = Math.round(out.activePaint.origin + out.activePaint.fcp - out.origin);
+    if (process.env.LUMEN_CPU_PROFILE) { await app.evaluate((_m, f) => global.__perf.stopProfile(f), path.join(os.tmpdir(), 'lumen-main.cpuprofile')); console.log('profile written to', path.join(os.tmpdir(), 'lumen-main.cpuprofile')); }
     out.memory = await mem(app);
+    out.mainMem = await app.evaluate(() => { const m = process.memoryUsage(); const mb = (b) => Math.round(b / 1048576); return { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal), external: mb(m.external), arrayBuffers: mb(m.arrayBuffers) }; });
+    out.contents = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => `${w.getType()}:${w.getOSProcessId()}:${(w.getURL() || '').slice(0, 70)}`));
     const navAt = Date.now();
     await ui.click('#new-tab'); await ui.fill('#address', `${base}/900`); await ui.press('#address', 'Enter');
     await ui.waitForFunction(() => document.querySelector('.tab.active .tab-title')?.textContent.includes('Page 900'), null, { timeout: 15000 });
@@ -109,6 +117,9 @@ async function mem(app) {
       console.log('page loads (start/finish ms):', out.loads.map((l) => `${l.url.split('/').pop()}:${l.start}/${l.finish}`).join(' '));
       console.log(`event loop (main): ${JSON.stringify(out.loop)}`);
       console.log(`memory: ${out.memory.procs} procs ${out.memory.wsMB} MB ws ${out.memory.privMB} MB private ${JSON.stringify(out.memory.by)}`);
+      console.log(`processes:\n  ${out.memory.list.join('\n  ')}`);
+      console.log(`main process: ${JSON.stringify(out.mainMem)}`);
+      console.log(`web contents:\n  ${out.contents.join('\n  ')}`);
       console.log(`new tab navigation ${out.newTabNavMs} ms; wake restored tab ${out.wakePlaceholderTabMs} ms`);
       if (out.afterLeak) console.log(`leak check: before ${out.beforeLeak.procs} procs ${out.beforeLeak.wsMB} MB -> after ${out.afterLeak.procs} procs ${out.afterLeak.wsMB} MB`);
     }
