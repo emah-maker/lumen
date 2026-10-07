@@ -1888,23 +1888,7 @@ function finishTabsRender(state, before, container, switched) {
 }
 
 window.browser.onTabs(renderTabs);
-window.browser.onFocusAddress((how) => { if (how?.reveal) revealChrome(true); window.browser.addressTouched?.(); address.focus(); address.select(); });
-
-// ---------- full screen (F11 on Windows and Linux) ----------
-// As in Chrome, the tab strip and toolbar go while the window is in full screen (main.js, features/fullscreen-chrome.js),
-// so the page fills the screen edge to edge: the new-tab page's background reached only the toolbar's edge before. The
-// viewport grows and reportBounds() hands main the new page area. The address bar stays focusable (a new tab still
-// puts the cursor there); typing in it or Ctrl+L brings the chrome back until it loses focus.
-function revealChrome(on) {
-  if (!document.body.classList.contains('window-fullscreen')) on = false;
-  document.body.classList.toggle('chrome-reveal', on);
-}
-window.browser.onWindowFullscreen?.((on) => {
-  document.body.classList.toggle('window-fullscreen', on === true);
-  revealChrome(document.body.classList.contains('chrome-reveal') && document.activeElement === address);
-});
-address.addEventListener('input', () => revealChrome(true));
-address.addEventListener('blur', () => revealChrome(false));
+window.browser.onFocusAddress(() => { window.browser.addressTouched?.(); address.focus(); address.select(); });
 
 // ---------- address bar suggestions (history + inline completion) ----------
 

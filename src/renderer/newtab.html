@@ -26,11 +26,19 @@
       }
     }
     html, body { margin: 0; min-height: 100%; }
-    html { scrollbar-gutter: stable; } /* a scrollbar appearing never narrows the page (and the column's column count) */
-    /* Over a background, a picture or an effect there is no scrollbar column: a reserved gutter is painted in the root's
-       plain colour (black here), never by the fixed #backdrop or #effect, so the page showed a 15 px black band down its
-       right edge (most visible in full screen). The page still scrolls (wheel, keys, touch) and its width stays fixed. */
-    html:has(> body.on-media), html:has(> body.has-effect) { scrollbar-gutter: auto; scrollbar-width: none; }
+    /* No native scrollbar and no reserved gutter, so the page and its background run to the right edge on every background
+       (a native Windows scrollbar always takes layout width, and a reserved gutter is painted black). The page still scrolls
+       with the wheel, keys and touch. newtab-scrollbar.js draws a thin overlay thumb on top of the page, fixed to the right
+       edge (zero layout width, nothing shifts), that fades in only while the pointer is near that edge or the page scrolls. */
+    html { scrollbar-width: none; }
+    html::-webkit-scrollbar { display: none; }
+    #sbar { position: fixed; top: 0; right: 0; bottom: 0; width: 14px; z-index: 50; pointer-events: none; opacity: 0; transition: opacity 0.2s ease; }
+    #sbar-thumb { position: absolute; right: 3px; width: 6px; border-radius: 3px; min-height: 28px; pointer-events: none;
+      background: color-mix(in srgb, currentColor 50%, transparent); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--bg) 55%, transparent); transition: width 0.12s ease, background 0.12s ease; }
+    html.show-scrollbar #sbar { opacity: 1; }
+    html.show-scrollbar #sbar-thumb { pointer-events: auto; }
+    html.show-scrollbar #sbar-thumb:hover, html.sb-drag #sbar-thumb { width: 8px; right: 2px; background: color-mix(in srgb, currentColor 70%, transparent); }
+    html.sb-drag { user-select: none; }
     body {
       background: var(--bg); color: var(--text);
       font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
@@ -1067,5 +1075,6 @@
   <script src="newtab-edit.js"></script>
   <script src="newtab.js"></script>
   <script src="newtab-drift.js"></script>
+  <script src="newtab-scrollbar.js"></script>
 </body>
 </html>
