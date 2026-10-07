@@ -458,6 +458,29 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
       check('engine not signed in: error shown, no switch, no cooldown', log.turns.length === 0 && errors(log).length === 1 && fallback.shared.size(clock) === 0, J({ turns: log.turns, errors: errors(log) }));
     }
 
+    // 8d) an engine that only went quiet (slowness, noFallback) is reported, never handed to another model.
+    {
+      fallback.shared.clear();
+      const { agent, log } = makeAgent({ ccText: async (emit) => { emit({ type: 'error', noFallback: true, text: 'Claude Code stopped responding for 90 seconds, so Lumen ended it.' }); } });
+      agent.claudeCodePlan = () => ({ routed: { auto: false }, spawn: {} });
+      const messages = fresh('claudecode:opus');
+      await run(agent, messages, log);
+      check('engine went quiet: the error stands, no switch, no cooldown', log.turns.length === 0 && errors(log).length === 1 && messages.settings.model === 'claudecode:opus' && fallback.shared.size(clock) === 0, J({ turns: log.turns, errors: errors(log), n: notices(log) }));
+    }
+
+    // 8e) an engine that is really unreachable: the notice says why, and the engine is tried again on the next message.
+    {
+      fallback.shared.clear();
+      const { agent, log } = makeAgent({ ccText: async (emit) => { emit({ type: 'error', text: 'Claude Code stopped (exit 1): API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}' }); } });
+      agent.claudeCodePlan = () => ({ routed: { auto: false }, spawn: {} });
+      const messages = fresh('claudecode:opus');
+      await run(agent, messages, log);
+      check('engine overloaded: the notice names the reason', /^Couldn’t reach Claude Code \(it is overloaded\), switched to /.test(notices(log)[0] || '') && errors(log).length === 0, J(notices(log)));
+      check('engine overloaded: Claude Code is not left alone for long (its next message tries it again)', !fallback.shared.cooling('claudecode:opus', Date.now() + 5000) && !fallback.shared.cooling('claudecode:sonnet', Date.now() + 5000), J(fallback.shared.snapshot()));
+      check('reasonFor: exit with the first stderr line, rate limit, slowness', fallback.reasonFor({ detail: 'Claude Code stopped (exit 3): EPERM: operation not permitted', status: null }, 'claudecode:opus') === 'claude exited with code 3: EPERM: operation not permitted' && fallback.reasonFor({ status: 429, detail: '' }, 'claudecode:opus') === 'it is rate-limited' && fallback.reasonFor({ detail: 'Claude Code stopped responding for 90 seconds' }, 'claudecode:opus') === 'it stopped responding');
+      fallback.shared.clear();
+    }
+
     // 9) an API model unreachable at step 0 may go to an engine (nothing ran); after a tool it may not.
     {
       fallback.shared.clear();

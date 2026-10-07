@@ -53,6 +53,19 @@ async function findClaude() {
   return null;
 }
 
+// A failure that is likely gone in a moment: a spawn that failed (EBUSY / EPERM / EAGAIN while the machine is busy), an
+// overloaded or rate-limited API (429 / 5xx / 529), a connection reset, or a CLI that exited at once with nothing to say.
+// A plan's usage limit, a sign-in problem and a vanished session are not (they would say the same thing again).
+const PERMANENT_FAILURE = /usage limit|limit reached|out of (extra )?usage|quota|credit balance|not logged in|\/login|invalid api key|unauthori[sz]ed|oauth|no conversation found|session.*not found|isn't installed/i;
+const TRANSIENT_FAILURE = /overloaded|\b(429|500|502|503|504|529)\b|EBUSY|EPERM|EAGAIN|EMFILE|ENFILE|ETIMEDOUT|ECONNRESET|EPIPE|temporarily unavailable|try again|server error|rate.?limit|at capacity/i;
+function transientFailure(text, code) {
+  const t = String(text || '').trim();
+  if (PERMANENT_FAILURE.test(t)) return false;
+  if (code === -1) return true; // the spawn itself failed
+  if (TRANSIENT_FAILURE.test(t)) return true;
+  return !t && typeof code === 'number' && code !== 0; // exited at once, silent
+}
+
 // Turns a CLI failure into what the user should do about it.
 function describeFailure(text, code) {
   const t = String(text || '').trim();
@@ -132,6 +145,15 @@ const WARM_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // A message whose process says nothing (no stdout line, no Lumen tool call in flight) for this long
 // is ended with an error; the next message starts the process again with --resume.
 const WATCHDOG_MS = 90 * 1000;
+// A fresh process that has not printed its first line yet is only starting (the CLI loads its settings and connects its MCP
+// servers, slowly on a machine busy with other Claude Code sessions), so it gets this much longer before it counts as hung.
+// Slowness alone is never a failure, and never a reason to hand the message to another model.
+const STARTUP_WATCHDOG_MS = 5 * 60 * 1000;
+// A start still silent after this long says so on screen, instead of looking stuck.
+const SLOW_START_MS = 12 * 1000;
+// A transient failure (a spawn error, an overloaded or rate-limited API, a CLI that died at once) is tried once more after this
+// pause before anything is reported or any other model is asked.
+const RETRY_DELAY_MS = 2500;
 // Stop first asks the kept CLI to interrupt (a stream-json control_request); it is kept when the
 // interrupted turn's `result` comes within this long, else the process tree is killed as before.
 const INTERRUPT_MS = 1500;
@@ -274,13 +296,16 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
     this.prewarmIdleMs = prewarmIdleMs;
     this.warmBackoffMs = warmBackoffMs;
     this.warmBackoffMaxMs = warmBackoffMaxMs;
     this.warmBlock = { until: 0, delay: 0 }; // pre-warm pause after unused warm processes died (warmFailed)
     this.watchdogMs = watchdogMs;
+    this.startupWatchdogMs = startupWatchdogMs;
+    this.slowStartMs = slowStartMs;
+    this.retryDelayMs = retryDelayMs;
     this.interruptMs = interruptMs;
     this.onFresh = onFresh;
     this.gen = 0; // bumped by release(): a warm() started before it disposes its process when it lands
@@ -623,7 +648,7 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '' }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '' }, { fresh = false, attempt = 0 } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -664,11 +689,17 @@ class ClaudeCodeEngine {
     let stalled = false;
     // Watchdog: any line from the CLI restarts it; it is off while a Lumen tool call runs (an approval card
     // can wait on the user). A CLI that says nothing for watchdogMs is hung: end it and say so.
+    // A fresh process that has said nothing yet is starting, not hung: it gets the longer startup allowance, and a note on
+    // screen when it is slow (heard: its first line has come).
+    let heard = reused;
+    let slow = null;
+    const waitMs = () => (heard ? this.watchdogMs : Math.max(this.watchdogMs, this.startupWatchdogMs));
     active.arm = () => {
       clearTimeout(active.dog);
       if (!this.watchdogMs || over || active.inflight > 0) return;
-      active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, this.watchdogMs);
+      active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, waitMs());
     };
+    if (!reused && this.slowStartMs) { slow = setTimeout(() => { if (!heard && !over) emit({ type: 'status', text: 'Claude Code is still starting (this computer is busy)…' }); }, this.slowStartMs); slow.unref?.(); }
     // "Reply complete" (once per message): the screen clears its working state and takes the next message now. This run
     // goes on to `result` for its cost, usage and session id (`done`), and a message sent meanwhile waits for it
     // (agent.js run: a run that is settling is waited for, not aborted). Never while a tool call is in flight, in a
@@ -680,6 +711,8 @@ class ClaudeCodeEngine {
       emit({ type: 'reply_complete' });
     };
     const handle = (msg) => {
+      heard = true;
+      clearTimeout(slow);
       active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
         rateLimit = msg.rate_limit_info;
@@ -757,6 +790,7 @@ class ClaudeCodeEngine {
     const { code } = await ended;
     over = true;
     clearTimeout(active.dog);
+    clearTimeout(slow);
     signal.removeEventListener('abort', onAbort);
     if (proc.turn === current) proc.turn = null; // (not an interrupt's drain, which clears itself)
     this.clearEarly(emit);
@@ -777,7 +811,8 @@ class ClaudeCodeEngine {
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
     if (code === 'ENOENT') { this.bin = null; return notInstalled(); }
     if (stalled) {
-      emit({ type: 'error', text: `Claude Code stopped responding for ${Math.round(this.watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
+      // noFallback: slowness alone never hands the message to another model (agent.js runTask).
+      emit({ type: 'error', noFallback: true, text: `Claude Code stopped responding for ${Math.round(waitMs() / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId: newSession, failed: true, rateLimit };
     }
     // Sent again on a fresh process only when nothing ran: a turn that called a tool may have acted already.
@@ -806,6 +841,12 @@ class ClaudeCodeEngine {
           emit({ type: 'notice', text: 'Claude Code needed your own Claude Code settings (~/.claude/settings.json) to connect, so Lumen loaded them for this chat. To always load them, turn on Settings → AI → Use my Claude Code settings in Lumen chats.' });
         }
         return again;
+      }
+      // A transient failure (see transientFailure) with nothing run and nothing shown: once more on a fresh process after a short pause.
+      if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code)) {
+        emit({ type: 'status', text: 'Claude Code is busy, trying again…' });
+        await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
+        if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort }, { fresh: true, attempt: 1 });
       }
       emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
@@ -836,4 +877,4 @@ function dirsInCommand(command) {
   return out;
 }
 
-module.exports = { MCP_STARTUP_WAIT_MS, PREWARM_IDLE_MS, modelOnlyDiff, ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };
+module.exports = { transientFailure, STARTUP_WATCHDOG_MS, MCP_STARTUP_WAIT_MS, PREWARM_IDLE_MS, modelOnlyDiff, ClaudeCodeEngine, findClaude, buildArgs, settingsRetryable, SETTING_SOURCES_PROJECT, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, dirsInCommand, IDLE_MS, EARLY_STEP_MS };

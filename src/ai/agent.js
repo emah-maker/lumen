@@ -1820,7 +1820,9 @@ class Agent {
     const current = settings.model;
     const info = fallback.classify(err);
     if (info.kind !== 'limit' && info.kind !== 'unreachable') return null;
-    fallback.shared.mark(current, info);
+    // An engine's own process failing (it would not start, it exited) is not a verdict on the service: the next message tries it again.
+    const own = fallback.isEngine(current) && info.kind === 'unreachable';
+    fallback.shared.mark(current, own ? { ...info, scope: 'provider', brief: true } : info);
     tried.add(current);
     const options = this.browser.fallbackOptions();
     const choice = fallback.choose({ current, options, cooldowns: fallback.shared, allowEngines, tried: [...tried], need: { chars: historyChars(messages), images: hasImages(messages) } });
@@ -1829,7 +1831,7 @@ class Agent {
     if (!settings.fallbackFrom) settings.fallbackFrom = current;
     settings.fallbackSession = fallback.SESSION;
     settings.model = next;
-    emit({ type: 'notice', text: fallback.noticeFor({ kind: info.kind, from: current, to: next, resetsAt: info.resetsAt, exact: info.exact, restart: partial, trim: choice.trim, noImages: choice.noImages }, options), fallback: { from: settings.fallbackFrom, to: next, kind: info.kind, until: info.resetsAt, fromName: fallback.nameOf(settings.fallbackFrom, options) } });
+    emit({ type: 'notice', text: fallback.noticeFor({ kind: info.kind, from: current, to: next, resetsAt: info.resetsAt, exact: info.exact, restart: partial, reason: info.kind === 'unreachable' && fallback.isEngine(current) ? fallback.reasonFor(info, current) : '', trim: choice.trim, noImages: choice.noImages }, options), fallback: { from: settings.fallbackFrom, to: next, kind: info.kind, until: info.resetsAt, fromName: fallback.nameOf(settings.fallbackFrom, options) } });
     this.browser.onFallback?.();
     return next;
   }
@@ -1999,7 +2001,8 @@ class Agent {
       }
       plan = null; // (a later attempt plans for its own model)
       if (!held.error) return;
-      const quiet = !held.shown && callsNow() === fb.calls0 && !controller.signal.aborted;
+      // (held.error.noFallback: slowness alone, such as a CLI that went quiet, is reported, never handed to another model)
+      const quiet = !held.shown && callsNow() === fb.calls0 && !controller.signal.aborted && !held.error.noFallback;
       const next = quiet ? (this.escalateFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true }) || this.failoverFor(messages, held.error.text, emit, { tried: fb.tried, allowEngines: true })) : null;
       if (!next) { emit(held.error); return; }
       if (toClaudeCode && !next.startsWith('claudecode:')) this.engineFor('claudecode').release?.();

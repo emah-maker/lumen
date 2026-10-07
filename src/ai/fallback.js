@@ -27,6 +27,7 @@ const COOLDOWN = {
   unreachable: 15 * MINUTE, // network, timeout, 5xx, overloaded
   rate: 10 * MINUTE, // an API 429 that names no reset time (these clear within minutes)
   plan: 30 * MINUTE, // "usage limit reached" text that names no reset time (a plan window, hours long)
+  brief: 2e3, // an engine's own hiccup (see mark's brief): left alone just long enough for this turn's other hops
   min: 30e3, // a reset time that is nearly now still leaves the model alone this long
   max: 8 * 24 * 60 * MINUTE, // a weekly limit can be days away; a misread date is never trusted further than this
 };
@@ -225,7 +226,8 @@ function createCooldowns() {
     // Leave `model` alone until the failure's reset time (info from classify). Only limit and unreachable cool a model.
     mark(model, info, at = Date.now()) {
       if (!info || (info.kind !== 'limit' && info.kind !== 'unreachable')) return null;
-      const until = Math.max(info.resetsAt || 0, at + COOLDOWN.min);
+      // brief: a failure of the engine's own process (a CLI that would not start), not of the service: the next message tries it again.
+      const until = info.brief ? at + COOLDOWN.brief : Math.max(info.resetsAt || 0, at + COOLDOWN.min);
       const e = { until, kind: info.kind, scope: info.scope, exact: Boolean(info.exact) };
       const keep = (key) => { const old = entries.get(key); entries.set(key, old && old.until > until && old.until > at ? old : e); };
       if (info.scope === 'provider') keep(`p:${providerOf(model)}`); else keep(`m:${model}`);
@@ -405,22 +407,40 @@ const providerName = (id, options = []) => {
 // stand-in) | 'back' (the cooldown ended). `when` formats a time ("3:40 PM"); by default the local clock.
 // restart: the reply had started and its text is dropped, so the notice says it starts over. trim / noImages: the
 // new model can't hold all of the conversation, or can't see images (see choose).
-function noticeFor({ kind, from, to, resetsAt = 0, exact = false, restart = false, trim = false, noImages = false }, options = [], { when, now = Date.now() } = {}) {
+function noticeFor({ kind, from, to, resetsAt = 0, exact = false, restart = false, trim = false, noImages = false, reason = '' }, options = [], { when, now = Date.now() } = {}) {
   const a = nameOf(from, options);
   const b = nameOf(to, options);
   const clock = when || ((ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
   // A reset time is named only when the error gave one (not a guess) and it is within a day.
   const back = exact && resetsAt > now && resetsAt - now < 24 * 60 * MINUTE ? ` Back on ${a} at ${clock(resetsAt)}.` : '';
+  const why = reason ? ` (${reason})` : '';
   const extra = `${trim ? ' Its context window is smaller, so the oldest messages are left out.' : ''}${noImages ? ' It can’t see images, so the ones in this chat are left out.' : ''}`;
   if (restart && (kind === 'limit' || kind === 'unreachable')) {
-    const head = kind === 'limit' ? `${a} hit its limit` : `Couldn’t reach ${providerName(from, options)}`;
+    const head = kind === 'limit' ? `${a} hit its limit` : `Couldn’t reach ${providerName(from, options)}${why}`;
     return `${head} — restarting the reply on ${b}.${back}${extra}`;
   }
   if (kind === 'limit') return `${a} hit its usage limit, switched to ${b}.${back}${extra}`;
-  if (kind === 'unreachable') return `Couldn’t reach ${providerName(from, options)}, switched to ${b}.${extra}`;
+  if (kind === 'unreachable') return `Couldn’t reach ${providerName(from, options)}${why}, switched to ${b}.${extra}`;
   if (kind === 'still') return `${a} is still unavailable, using ${b} for now.${back}${extra}`;
   if (kind === 'back') return `Back on ${a}.`;
   return `Switched to ${b}.`;
+}
+
+// The plain reason a model was unreachable, for the notice (from classify's info: status, detail): "it is rate-limited",
+// "it is overloaded", "claude exited with code 1: <first line>", else the error's own first line.
+function reasonFor(info, model = '') {
+  const detail = String(info?.detail || '').trim();
+  const status = info?.status;
+  if (status === 429) return 'it is rate-limited';
+  if (status === 529 || /overloaded/i.test(detail)) return 'it is overloaded';
+  const exit = /^(?:Claude Code|Grok Build|Antigravity|Codex) stopped(?: \(exit (-?\d+|[A-Z]+)\))?:\s*(.*)$/i.exec(detail);
+  if (exit) {
+    const bin = providerOf(model) === 'claudecode' ? 'claude' : 'the CLI';
+    const first = exit[2].replace(/^no output$/i, '').slice(0, 120);
+    return `${bin} exited${exit[1] ? ` with code ${exit[1]}` : ''}${first ? `: ${first}` : ''}`;
+  }
+  if (/stopped responding/i.test(detail)) return 'it stopped responding';
+  return detail.slice(0, 140);
 }
 
 // Which run of the app a stand-in was made in. A chat saved with a stand-in (settings.fallbackFrom) and opened after a
@@ -429,4 +449,4 @@ const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, providerOf, familyOf, isEngine, relatedOf, COOLDOWN, MAX_HOPS };
+module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, COOLDOWN, MAX_HOPS };
