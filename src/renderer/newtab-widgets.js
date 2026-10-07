@@ -330,14 +330,16 @@ const ENGINES = {
     changed: 'Apple Music changed its page, so Lumen can’t read it. Use the Web player mode for now.',
   },
   spotify: {
-    name: 'Spotify', site: 'https://open.spotify.com/', signIn: 'Sign in to Spotify',
+    name: 'Spotify', site: 'https://open.spotify.com/', signIn: 'Sign in to Spotify in Lumen',
     reasons: { offline: 'Can’t reach Spotify. Check your internet connection.', failed: 'Spotify didn’t load.', unsupported: 'The Spotify status card isn’t available here. Use the web player mode instead.' },
     idleHint: (signedIn, loading) => (loading ? 'Starting Spotify…' : signedIn ? 'Search, or play on any Spotify device' : 'Sign in to play music here'),
     preview: '',
-    searchNote: (d) => (d.signedIn === false ? 'Sign in to Spotify to play these.' : ''),
+    searchNote: (d) => (d.signedIn === false ? 'Sign in to Spotify in Lumen to play these.' : ''),
     changed: 'Spotify changed its page, so Lumen can’t read it. Open this card’s settings and choose Web player or Now playing card.',
   },
 };
+// Why a search found nothing (main says: features/music-engine.js searchWhy), in words; the detail (the page's address and what it showed) is the hover text.
+const searchFailText = (o, d) => (d.searchWhy === 'signedOut' ? `Sign in to ${o.name} in Lumen to search and play.` : d.searchWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found. Is the web player signed in?` : d.searchWhy === 'timeout' ? `${o.name} didn’t show search results in time. Try again.` : `${o.name} didn’t answer the search. It may have changed its page; try again.`);
 const ICON_SEARCH = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3.2"/><path d="m7.5 7.5 3 3"/></svg>';
 const SEARCH_GROUPS = [['song', 'Songs', 'am-songs'], ['album', 'Albums', 'am-albums'], ['artist', 'Artists', 'am-artists'], ['playlist', 'Playlists', 'am-playlists']];
 const searchUi = new Map(); // widget id -> { open, term, timer, active }: the typing survives the card being drawn again
@@ -453,7 +455,7 @@ function searchBox(w, card, o, d) {
     }
     if (d.searching === true || d.query !== term) { pop.append(el('p', 'w-note am-pop-note', 'Searching…')); if (note) pop.append(el('p', 'w-note am-pop-note', note)); return; }
     const results = (Array.isArray(d.results) ? d.results : []).filter((i) => i && typeof i.id === 'string' && SAFE_ID.test(i.id) && typeof i.title === 'string');
-    if (d.searchOk === false) pop.append(el('p', 'w-note am-pop-note', `${o.name} didn’t answer the search. It may have changed its page; try again.`));
+    if (d.searchOk === false) { const fail = el('p', 'w-note am-pop-note', searchFailText(o, d)); if (typeof d.searchDetail === 'string' && d.searchDetail) fail.title = text(d.searchDetail, 120); pop.append(fail); }
     else if (!results.length) pop.append(el('p', 'w-note am-pop-note', 'No results.'));
     for (const [kind, heading, cls] of SEARCH_GROUPS) {
       const items = results.filter((i) => i.kind === kind).slice(0, 8);
@@ -543,9 +545,9 @@ function engineCard(w, card, o) {
     warn.append(msg, show);
     card.body.append(warn);
   }
+  if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120))); // (a control the page didn't show, a play button that wasn't there: also when nothing is playing)
   if (playing) {
     if (d.preview === true && d.source !== 'app' && o.preview) card.body.append(el('p', 'w-note am-note', o.preview));
-    if (typeof d.error === 'string' && d.error) card.body.append(el('p', 'w-note am-note', text(d.error, 120)));
     return;
   }
   if (loading) return;

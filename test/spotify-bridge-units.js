@@ -48,6 +48,7 @@ function harness({ dom = {}, md = null, media = null, path = '/' } = {}) {
     location, CustomEvent, PopStateEvent, Event, HTMLInputElement, JSON, String, Number, Math, Object, Array, Boolean, isFinite, encodeURIComponent, RegExp,
     Date: { now: () => clock },
     setTimeout: (f, ms) => { timers.push({ f, at: clock + (ms || 0), once: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].dead = true; },
     setInterval: (f, ms) => { timers.push({ f, at: clock + ms, every: ms }); return timers.length; },
     __media: media,
   };
@@ -183,41 +184,24 @@ module.exports = async function spotifyBridgeUnits(check) {
   check('spotify bridge (page): a bad seek does nothing', Number(range.__v) === 100000, '');
 
   // ---- search and play through the page's router ----
-  const row = (id, title, artists, dur) => el({ sub: { 'a[href^="/track/"]': el({ textContent: title, attrs: { href: `/track/${id}` } }), 'a[href^="/artist/"]': artists.map((a) => el({ textContent: a })), 'div, span': [el({ textContent: dur })], img: el({ src: ART }) } });
-  const rows = [row('4uLU6hMCjMI75M1A2tKUQC', 'Shake It Off', ['Taylor Swift'], '3:39'), row('abc123', 'Shake It Off (Live)', ['Taylor Swift', 'Guest'], '4:01')];
-  const albumLink = el({ textContent: '1989', attrs: { href: '/album/2QJmrSgbdM35R67eoGQo4j?si=x' }, sub: { img: el({ src: ART, alt: '1989' }) } });
-  const artistLink = el({ textContent: 'Taylor Swift', attrs: { href: '/artist/06HL4z0CvFAxyc27GXpf02' } });
-  const hq = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play'), '[data-testid="tracklist-row"]': rows, 'a[href^="/album/"]': albumLink, 'a[href^="/artist/"]': artistLink } });
-  hq.out.length = 0;
-  hq.send({ cmd: 'search', term: 'shake it / off?', rid: 7 });
-  hq.advance(1000);
-  const list = hq.out.find((x) => x.t === 'list');
-  check('spotify bridge (page): search goes to the page\'s own search route (the term encoded, no reload) and reads the song rows, album and artist links', hq.pushed[0] === '/search/shake%20it%20%2F%20off%3F' && hq.events.includes('popstate') && list && list.rid === 7 && list.ok === true, JSON.stringify([hq.pushed, hq.events, hq.out]));
-  const parsedList = SPB.parseMessage(JSON.stringify(list));
-  check('spotify bridge (page): the results it sends are songs (title, artists, length, picture), then the album and the artist, and parse', parsedList.items.length >= 4 && parsedList.items[0].kind === 'song' && parsedList.items[0].title === 'Shake It Off' && parsedList.items[0].sub === 'Taylor Swift' && parsedList.items[0].ms === 219000 && parsedList.items[1].sub === 'Taylor Swift, Guest' && parsedList.items.some((i) => i.kind === 'album' && i.id === '2QJmrSgbdM35R67eoGQo4j' && i.title === '1989') && parsedList.items.some((i) => i.kind === 'artist' && i.id === '06HL4z0CvFAxyc27GXpf02'), JSON.stringify(parsedList.items));
-  const footerArtist = el({ textContent: 'Now Playing Artist', attrs: { href: '/artist/FOOTERFOOTERFOOTER1' }, closest: () => ({}) });
-  const hf = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play'), '[data-testid="tracklist-row"]': rows, 'a[href^="/artist/"]': [footerArtist, artistLink] } });
-  hf.out.length = 0;
-  hf.send({ cmd: 'search', term: 'x', rid: 1 });
-  hf.advance(1000);
-  check('spotify bridge (page): links inside the playbar are not search results (the now-playing artist is not an "Artists" hit)', (() => { const l = SPB.parseMessage(JSON.stringify(hf.out.find((x) => x.t === 'list'))); return l.items.some((i) => i.id === '06HL4z0CvFAxyc27GXpf02') && !l.items.some((i) => i.id === 'FOOTERFOOTERFOOTER1'); })(), JSON.stringify(hf.out));
+  // (reading the results, the stale-page rule and the playbar/library link exclusion are checked against saved pages in test/spotify-dom-units.js)
   const none = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play') } });
   none.out.length = 0;
   none.send({ cmd: 'search', term: 'zzz', rid: 8 });
-  none.advance(8000);
+  none.advance(12000);
   check('spotify bridge (page): a search page that never shows rows (signed out, or a changed page) ends with ok: false and no items, not a hang', (() => { const l = none.out.find((x) => x.t === 'list'); return l && l.ok === false && l.items.length === 0 && l.rid === 8; })(), JSON.stringify(none.out));
   const playBtn = el();
-  const hp = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play'), '[data-testid="play-button"]': playBtn } });
+  const hp = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play'), '[data-testid="action-bar-row"] [data-testid="play-button"]': playBtn } });
   hp.send({ cmd: 'playItem', kind: 'playlist', id: '37i9dQZF1DXcBWIGoYBM5M' });
-  hp.advance(1000);
+  hp.advance(2000);
   check('spotify bridge (page): playItem goes to that item\'s own page by the router and clicks its play button', hp.pushed[0] === '/playlist/37i9dQZF1DXcBWIGoYBM5M' && playBtn.clicks === 1, JSON.stringify([hp.pushed, playBtn.clicks]));
   hp.send({ cmd: 'playItem', kind: 'song', id: 'a b' }); hp.send({ cmd: 'playItem', kind: 'station', id: '1' }); hp.send({ cmd: 'playItem', kind: 'song', id: '../x' });
-  hp.advance(1000);
+  hp.advance(2000);
   check('spotify bridge (page): a bad kind or id navigates nowhere', hp.pushed.length === 1, JSON.stringify(hp.pushed));
   const hno = harness({ dom: { '[data-testid="control-button-playpause"]': bar('Play') } });
   hno.out.length = 0;
   hno.send({ cmd: 'playItem', kind: 'song', id: '4uLU6hMCjMI75M1A2tKUQC' });
-  hno.advance(8000);
+  hno.advance(10000);
   check('spotify bridge (page): when the page shows no play button it says so (an error message), instead of nothing', hno.out.some((x) => x.t === 'error' && /play button/.test(x.message)), JSON.stringify(hno.out));
 
   // ---- it makes no request and reads no token ----

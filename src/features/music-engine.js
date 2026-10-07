@@ -21,6 +21,7 @@ const PLAYER_MISSING_MS = 25e3; // signed in but the player's controls never sho
 const SIGNIN_SIZE = { width: 560, height: 780 };
 const RESPOND_MS = 3500; // a button pressed and nothing changed this long after: the player did not respond
 const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
+const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
@@ -40,7 +41,8 @@ function createMusicEngine(deps) {
   let error = null; // { message, at }: the player's last error, shown for a few seconds
   const lists = { recent: null, playlists: null }; // { items, at, signedOut }
   let listsAskedAt = 0;
-  let results = { rid: 0, term: '', items: [], at: 0, pending: false };
+  let results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' };
+  let searchCmd = null; // { cmd, at, gen }: the search asked last, kept until it is answered, so a new document of the page (a full navigation) is asked again
   const arts = new Map(); // address -> data: URL ('' when it has none), the last few
   const thumbs = new Map(); // search result picture address -> data: URL
   let lastSource = 'engine';
@@ -53,7 +55,9 @@ function createMusicEngine(deps) {
   const changed = () => { try { deps.onChange?.(); } catch { /* the card keeps what it shows */ } };
   const touch = () => { lastActivity = now(); };
   const caps = bridge.CAPS || {};
-  const authState = () => (deps.isAuthorized ? deps.isAuthorized() : (msg ? msg.auth : null));
+  // Signed in or out: the page's own word wins when it has one (a Log in button on the page: the session ended, whatever the cookie says), then the service's
+  // other way of knowing (Spotify's cookie), then the page's account claim.
+  const authState = () => (msg && msg.signedOut === true ? false : deps.isAuthorized ? deps.isAuthorized() : (msg ? msg.auth : null));
 
   // ---- the page ----
   // A command goes to the page as a DOM event run by executeJavaScript with a user gesture, so the click or play() the bridge does
@@ -71,6 +75,7 @@ function createMusicEngine(deps) {
     try {
       const done = wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('lumen-engine-in', { detail: ${JSON.stringify(json)} }))`, true);
       done?.catch?.(() => {});
+      if (cmd.cmd === 'search' && searchCmd && searchCmd.cmd.rid === cmd.rid) searchCmd.gen = player.generation ? player.generation() : 0;
       expectEffect(cmd);
       return true;
     } catch { return false; }
@@ -111,6 +116,12 @@ function createMusicEngine(deps) {
     queued = { control: null, search: null };
     for (const kind of ['search', 'control']) if (q[kind]) send(q[kind].cmd); // (a search first: playing an item navigates last, so it wins)
   }
+  // A search asked of a page document that has since been replaced (a full navigation, a reload, a sign-in round trip) is asked again of the new one.
+  function resumeSearch() {
+    if (!results.pending || !searchCmd || searchCmd.cmd.rid !== results.rid || now() - searchCmd.at > SEARCH_MS) return;
+    if (searchCmd.gen === readyGen) return; // (the document it was asked of is this one: it is on it)
+    send(searchCmd.cmd);
+  }
   function askLists(force = false) {
     if (!caps.lists || !ready || (!force && now() - listsAskedAt < LISTS_FRESH_MS)) return;
     listsAskedAt = now();
@@ -129,18 +140,19 @@ function createMusicEngine(deps) {
       timer.unref?.();
     }
   }
-  // A search kept for a page that never became ready says so (the card stops saying "Searching…"); a kept button just goes.
+  // A search kept for a page that never became ready, or asked and never answered, says so (the card stops saying "Searching…"); a kept button just goes.
   function expireQueue() {
+    if (results.pending && searchCmd && results.rid === searchCmd.cmd.rid && now() - searchCmd.at > SEARCH_MS) { results = { ...results, pending: false, ok: false, why: 'timeout', detail: 'no answer from the page' }; searchCmd = null; changed(); }
     for (const kind of ['search', 'control']) {
       const item = queued[kind];
       if (!item || now() - item.at <= QUEUE_MS) continue;
       queued[kind] = null;
-      if (kind === 'search' && results.rid === item.cmd.rid && results.pending) { results = { ...results, pending: false, ok: false }; changed(); }
+      if (kind === 'search' && results.rid === item.cmd.rid && results.pending) { results = { ...results, pending: false, ok: false, why: 'timeout', detail: 'the page was not ready' }; changed(); }
     }
   }
   const playing = () => Boolean(msg && bridge.playbackKind(msg.state) === 'playing' && msg.item);
   function unload() {
-    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false }; playerMissingSince = 0; pending = null;
+    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null;
     queued = { control: null, search: null };
     player.destroy();
     clearInterval(timer);
@@ -157,7 +169,7 @@ function createMusicEngine(deps) {
   function onMessage(raw) {
     const m = bridge.parseMessage(raw);
     if (!m) return;
-    if (m.t === 'ready') { ready = true; readyGen = player.generation ? player.generation() : 0; flushQueue(); changed(); return; }
+    if (m.t === 'ready') { ready = true; readyGen = player.generation ? player.generation() : 0; flushQueue(); resumeSearch(); changed(); return; }
     if (m.t === 'error') { error = { message: m.message, at: now() }; changed(); return; }
     if (m.t === 'state') {
       if (bridge.playbackKind(m.state) === 'seeking') return; // a seek in progress: the card keeps what it shows until the playhead lands
@@ -168,6 +180,7 @@ function createMusicEngine(deps) {
       if (m.player === false && authState() === true) playerMissingSince ||= now(); else playerMissingSince = 0;
       if (m.item?.art && !arts.has(m.item.art)) fetchArt(m.item.art);
       if (m.auth && (!was || !was.auth)) { askLists(true); closeSignIn(); }
+      if (m.signedOut === false && was && was.signedOut === true) { closeSignIn(); askLists(true); } // (the page itself shows the player instead of Log in: signed in again)
       if (!was) askLists(true);
       const flag = pageChanged();
       const flagMoved = flag !== lastFlag;
@@ -178,7 +191,8 @@ function createMusicEngine(deps) {
     if (m.t === 'list') {
       if (m.kind === 'search') {
         if (m.rid !== results.rid) return; // an older search
-        results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok };
+        results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
+        if (m.ok === false || m.items.length) searchCmd = null;
         fetchThumbs(m.items, results.rid);
       } else {
         lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut };
@@ -223,6 +237,8 @@ function createMusicEngine(deps) {
       playlists: listCard(lists.playlists),
       results: resultCard(results.items),
       searchOk: results.ok !== false,
+      searchWhy: results.ok === false ? results.why || '' : '',
+      searchDetail: results.ok === false ? results.detail || '' : '',
       query: results.term,
       searching: results.pending,
       error: error && now() - error.at < 8000 ? error.message : '',
@@ -269,10 +285,12 @@ function createMusicEngine(deps) {
     touch();
     if (!caps.search) return false;
     const clean = bridge.clip(term, 80);
-    if (!clean) { queued.search = null; results = { rid: ++rid, term: '', items: [], at: 0, pending: false }; changed(); return true; }
-    results = { rid: ++rid, term: clean, items: [], at: 0, pending: true };
-    const ok = sendOrQueue({ cmd: 'search', term: clean, rid: results.rid }, 'search'); // (a page still loading gets it once its bridge is ready)
-    if (!ok) results = { rid: results.rid, term: clean, items: [], at: now(), pending: false, ok: false }; // nothing to ask: the card says the search got no answer, not "Searching…" for ever
+    if (!clean) { queued.search = null; searchCmd = null; results = { rid: ++rid, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; changed(); return true; }
+    results = { rid: ++rid, term: clean, items: [], at: 0, pending: true, why: '', detail: '' };
+    const cmd = { cmd: 'search', term: clean, rid: results.rid };
+    searchCmd = { cmd, at: now(), gen: -1 };
+    const ok = sendOrQueue(cmd, 'search'); // (a page still loading gets it once its bridge is ready)
+    if (!ok) { searchCmd = null; results = { rid: results.rid, term: clean, items: [], at: now(), pending: false, ok: false, why: 'page', detail: '' }; } // nothing to ask: the card says the search got no answer, not "Searching…" for ever
     changed(); // the card shows "Searching…" for this term now, not only once the answer comes
     return ok;
   }
