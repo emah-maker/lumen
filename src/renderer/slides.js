@@ -218,17 +218,46 @@
     return box;
   }
 
+  // A chart: inline SVG (slides-chart.js) in the frame's box. A kind it can't draw keeps the labelled box.
+  function drawChartBox(s) {
+    const chart = s.chart || {};
+    if (!window.lumenChart || !(chart.plots || []).some((p) => p.kind)) {
+      const other = (chart.plots || []).find((p) => p.type);
+      return drawPlaceholder({ ...s, label: `Chart${other ? ` (${other.type})` : ''}${s.name ? `: ${s.name}` : ''}` });
+    }
+    const box = el('div', 'chartbox');
+    placeBox(box, s);
+    box.append(window.lumenChart.drawChart(document, chart, Math.max(1, pt(s.w)), Math.max(1, pt(s.h))));
+    return box;
+  }
+  // SmartArt: its saved drawing's shapes (already in stage coordinates), or the data model's text as a boxed list.
+  function drawDiagram(s, stage) {
+    if (Array.isArray(s.shapes) && s.shapes.length) { for (const inner of s.shapes) drawInto(stage, inner); return; }
+    const box = el('div', 'dialist');
+    placeBox(box, s);
+    const ul = el('ul');
+    for (const item of (s.items || []).slice(0, 500)) {
+      const li = el('li');
+      li.style.marginLeft = `${Math.max(0, Math.min(8, Number(item.level) || 0)) * 14}px`;
+      li.textContent = String(item.text || '');
+      ul.append(li);
+    }
+    box.append(ul);
+    stage.append(box);
+  }
+  function drawInto(stage, s) {
+    try {
+      if (s.type === 'diagram') { drawDiagram(s, stage); return; }
+      const node = s.type === 'pic' ? drawPicture(s) : s.type === 'line' ? drawLine(s) : s.type === 'table' ? drawTable(s) : s.type === 'placeholder' ? drawPlaceholder(s) : s.type === 'chart' ? drawChartBox(s) : drawShape(s);
+      stage.append(node);
+    } catch (err) { console.error('[slides] a shape could not be drawn:', err); }
+  }
   function drawStage(slide) {
     const stage = el('div', 'stage');
     stage.style.width = `${pt(deck.width)}px`;
     stage.style.height = `${pt(deck.height)}px`;
     applyFill(stage, slide.background);
-    for (const s of slide.shapes || []) {
-      try {
-        const node = s.type === 'pic' ? drawPicture(s) : s.type === 'line' ? drawLine(s) : s.type === 'table' ? drawTable(s) : s.type === 'placeholder' ? drawPlaceholder(s) : drawShape(s);
-        stage.append(node);
-      } catch (err) { console.error('[slides] a shape could not be drawn:', err); }
-    }
+    for (const s of slide.shapes || []) drawInto(stage, s);
     return stage;
   }
 
