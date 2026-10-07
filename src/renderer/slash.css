@@ -27,6 +27,27 @@
 .slash-chip-x:hover { background: var(--hover); color: var(--text); }
 .slash-chip-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* /btw: side-question cards above the composer's text (renderer/chat-commands.js). Muted, apart from the conversation. */
+.btw-tray { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; max-height: min(40vh, 320px); overflow-y: auto; margin: 0 0 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.btw-tray[hidden] { display: none; }
+.btw-card { padding: 6px 8px 8px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; color: var(--muted); background: color-mix(in srgb, var(--muted) 10%, transparent); box-shadow: inset 0 0 0 1px var(--hairline); }
+.btw-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btw-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.btw-tag { flex: none; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.btw-q { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; }
+.btw-x { flex: none; align-self: center; border: 0; padding: 0 6px; border-radius: 6px; font: inherit; line-height: 1.3; color: var(--muted); background: transparent; }
+.btw-x:hover { background: var(--hover); color: var(--text); }
+.btw-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btw-body { margin-top: 4px; color: var(--text); white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+.btw-body > :first-child { margin-top: 0; }
+.btw-body > :last-child { margin-bottom: 0; }
+.btw-body.btw-waiting { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.btw-body.btw-error { color: var(--warning, #b25000); }
+.btw-spinner { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--border); border-top-color: var(--accent); animation: btw-spin 0.8s linear infinite; }
+@keyframes btw-spin { to { transform: rotate(360deg); } }
+.btw-foot { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.btw-foot[hidden] { display: none; }
+
 /* A skill's message: a small tag, what was typed after the command, and the full prompt on demand. */
 .msg.user[data-skill] { white-space: normal; }
 .skill-tag { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }

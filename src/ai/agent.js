@@ -24,6 +24,7 @@ const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader view
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
+const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
@@ -3110,6 +3111,42 @@ ${prompt}` : prompt), historyImages: [] };
     if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
     return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages, tools, signal, emit: () => {}, noTools });
   }
+
+  // ---- [btw] /btw (ai/btw.js): a side question answered at once, beside whatever the chat is doing. It reads a snapshot of the chat
+  // (never changes it: no message, no step, no loop-guard count), has no tools, and streams its answer to `onText`; the tokens join the
+  // chat's usage totals. Not part of run(): it never aborts, waits for or queues behind the chat's task.
+  // `messages`: the chat; `tab`: { title, url } of the tab in front; returns btw.run's result plus `engine` / `viaDefault` / `name`.
+  async btw({ messages, tab = null, question, signal, onText = () => {}, emit = () => {} }) {
+    const settings = messages?.settings || {};
+    const options = this.fallbackOptionsList();
+    const transcript = (() => { try { return earlierText(messages || [], transcriptFor(messages || [])); } catch { return ''; } })();
+    const call = async (model, { system, messages: sent, signal: sig, onText: text }) => {
+      const { provider, model: id } = providers.splitModel(model);
+      if (provider === 'anthropic') {
+        const stream = this.getClient().beta.messages.stream({ model: id, max_tokens: btwLib.MAX_TOKENS, system, messages: sent }, { signal: sig });
+        for await (const event of stream) if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') text(event.delta.text);
+        return stream.finalMessage();
+      }
+      const apiKey = this.getKey(provider);
+      if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
+      return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages: sent, tools: [], signal: sig, emit: (e) => { if (e?.type === 'text') text(e.text); }, noTools: true });
+    };
+    const result = await btwLib.run({
+      chatModel: settings.model || '',
+      defaultModel: this.getOptions().model || '',
+      options,
+      mode: this.browser.subagentModel?.() === 'same' ? 'same' : 'auto',
+      transcript, tab, question, signal, onText, call,
+      onUsage: (message, model) => {
+        if (!message?.usage) return;
+        recordUsage(messages, { model, usage: message.usage }, emit); // [usage] in the chat's totals
+        this.reportApi(providers.splitModel(model).provider, { model, usage: message.usage }, emit); // ...and the app's usage log
+      },
+    });
+    const shown = result.model || result.own;
+    return { ...result, ...(shown ? { name: fallback.nameOf(shown, options) } : {}), ...(result.engine ? { engineName: fallback.nameOf(result.engine, options) } : {}) };
+  }
+  // ---- [/btw]
 
   async delegate(input) {
     const scope = taskScope.getStore();

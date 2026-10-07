@@ -23,7 +23,7 @@ const TAB_CHARS = 6000;
 const MAX_TABS = 8;
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
 // Commands other features register (renderer/chat-commands.js has the chat's own: /clear, /compact, /context, …).
-const RESERVED = new Set(['background', 'watch', 'skills', 'create-skill', 'help', 'clear', 'compact', 'context', 'cost', 'usage', 'model', 'think', 'deep', 'fast']);
+const RESERVED = new Set(['background', 'watch', 'skills', 'create-skill', 'help', 'clear', 'compact', 'context', 'cost', 'usage', 'model', 'think', 'deep', 'fast', 'btw']);
 const INPUTS = ['page', 'selection', 'tabs', 'clipboard'];
 const MODES = ['chat', 'no-tools', 'agent'];
 const VARIABLES = ['page', 'selection', 'clipboard', 'tabs', 'input', 'date', 'language', 'content'];
