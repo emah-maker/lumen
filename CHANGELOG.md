@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can scroll and click in a PDF tab.** Scrolling a PDF used to report "nothing scrolled" and click_at ended in "Nothing is at that position", because the document lives inside Chromium's own PDF viewer, out of reach of the page tools. Now scroll, the paging keys (PageDown, PageUp, Space, Home, End, arrows) and click_at drive the viewer itself, scroll says which page it is on, and when nothing can move (the end of the document) it says so and points to `read_pdf` for the text.
+
 ## 0.5.16 (2026-10-06)
 
 - **The AI can look at videos.** Ask about a video in a tab (a YouTube page, a lecture, a screen recording, or a video file you opened) and the AI now gets one contact sheet of frames evenly spaced through it, each stamped with its time, then full-size frames at the moments that matter. Lumen pauses the video, steps through it with the browser's own decoder (nothing to install), and puts playback back exactly as you had it: position, sound and playing or paused. The sheet is sized to a token budget for the model that is answering. Videos protected by DRM and live streams are refused with a plain message, and the frames only go to the AI you asked. The new **/watch-video** command does the whole thing: overview, closer look, answer with times.
