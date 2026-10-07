@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **The new-tab page's colours reach every edge in full screen.** In full screen (F11) on Windows and Linux, the tab strip and toolbar now go away as in Chrome, so the page and the new-tab page's background, gradient or picture fill the whole screen instead of stopping below the toolbar. Typing in the address bar (a new tab still puts the cursor there) or pressing Ctrl+L brings the toolbar back until you leave it; F11 again exits full screen. macOS keeps its toolbar in full screen. The new-tab page also no longer shows a black band down its right edge over a background or effect (the space kept for a scrollbar was painted black); it still scrolls with the wheel and keys.
+- **The new-tab page's background now reaches the right edge, and its scrollbar floats over it.** Over a background, a picture or an effect the page showed a black band down its right edge (space kept for a scrollbar). The scrollbar is now hidden and takes no width; move the pointer to the right edge of the page and a thin scrollbar fades in on top of the background, and fades out when you move away (it also shows briefly while the page scrolls). It can be dragged, and the wheel and keys scroll as always.
 
 ## 0.5.16 (2026-10-06)
 
