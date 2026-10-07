@@ -1845,16 +1845,24 @@ function renderWidgets(list) {
   const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, setup, stack, sid, top, rotate, smart, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
-    const key = JSON.stringify(rest);
+    // A new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked), and
+    // a music card read again with its playhead where the card already shows it is kept (features/widget-card-key.js): drawing a card
+    // again replaces its buttons and its search field mid-use.
+    const key = window.WidgetCardKey.cardKey(w);
     const kept = shownWidgets.get(w.id);
-    const card = kept && kept.key === key ? kept.el : buildCard(w);
+    const card = kept && window.WidgetCardKey.sameCard(kept.key, key) ? kept.el : buildCard(w);
     if (card !== kept?.el) {
-      if (kept?.el) { kept.el.replaceWith(card); } // same place in the DOM order
+      if (kept?.el) { // same place in the DOM order, and on the grid: the new card starts where the old one is, it does not slide in from the corner
+        card.style.transform = kept.el.style.transform;
+        card.style.width = kept.el.style.width;
+        card.style.height = kept.el.style.height;
+        card._pos = kept.el._pos;
+        kept.el.replaceWith(card);
+      }
       shownWidgets.set(w.id, { key, el: card });
     }
     updateFoot(card, w);
-    card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(colors) ? colors : 'calendar';
+    card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
     return card;
   });
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
