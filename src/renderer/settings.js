@@ -1884,9 +1884,29 @@ async function buildWidgets(card) {
     h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
-  const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
-  if (target) { openForm(target); forceRoute = 'widgets'; } // a card's gear on the new-tab page
-  else if (ws.create && ws.types.some((t) => t.type === ws.create)) { openForm(null, ws.create); forceRoute = 'widgets'; } // its Add widget picker
+  // A card's gear on the new-tab page opens that widget's editor; its Add widget picker opens the form for a new one.
+  // Returns whether it opened one (the page was built with a request pending, or Settings was already open and was told).
+  const applyEdit = (state) => {
+    const target = state.edit && state.widgets.find((w) => w.id === state.edit);
+    if (target) openForm(target);
+    else if (state.create && state.types.some((t) => t.type === state.create)) openForm(null, state.create);
+    else return false;
+    forceRoute = 'widgets';
+    return true;
+  };
+  applyEdit(ws);
+  // Settings already open: the new-tab page's gear sends this instead of reloading the tab (and the tab is reused, never duplicated).
+  S.widgets.onEdit?.(async () => {
+    const fresh = await S.widgets.state().catch(() => null);
+    if (!fresh) return;
+    ws = fresh;
+    renderList();
+    if (!applyEdit(fresh)) return;
+    if (location.hash === '#widgets') route(); else location.hash = '#widgets'; // (hashchange routes)
+    const form = formHost.firstElementChild;
+    if (form) { form.classList.remove('flash-target'); void form.offsetWidth; form.classList.add('flash-target'); setTimeout(() => form.classList.remove('flash-target'), 1800); }
+  });
+  window.__widgetEditRoute = { applyEdit }; // (the units drive this)
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();
