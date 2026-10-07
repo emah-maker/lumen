@@ -329,7 +329,7 @@ module.exports = async function spotifyDomUnits(check) {
   const clickedRow = song.clicked[0].closest('[data-testid="tracklist-row"]');
   check('dom: …and it is the right row\'s button (the title in its label is that row\'s)', clickedRow === row, '');
 
-  for (const [kind, name, id, route] of [['album', 'album', '2noRn2Aes5aoNVsU6iWThc'], ['playlist', 'playlist', '37i9dQZF1DX6mvEU1S6INL'], ['song', 'track', '0DiWol3AO6WpXZgp0goxAV']]) {
+  for (const [kind, name, id] of [['album', 'album', '2noRn2Aes5aoNVsU6iWThc'], ['playlist', 'playlist', '37i9dQZF1DX6mvEU1S6INL'], ['song', 'track', '0DiWol3AO6WpXZgp0goxAV']]) {
     const pg = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p === `/${name}/${id}`) h.after(700, signedIn(TREES[name])); } });
     pg.advance(500);
     pg.send({ cmd: 'playItem', kind, id });

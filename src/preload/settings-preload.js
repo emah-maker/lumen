@@ -29,6 +29,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       gmailSignIn: call('prefs:widget-gmail-signin'),
       gmailAccounts: call('prefs:widget-gmail-accounts'),
       gmailParseClient: call('prefs:widget-gmail-parse-client'),
+      onEdit: (cb) => ipcRenderer.on('widgets:edit', () => cb()), // a card's gear on the new-tab page while Settings is open
       onChanged: (cb) => ipcRenderer.on('widgets:changed', () => cb()), // a connection changed elsewhere (the card, Google)
       slackStart: call('prefs:slack-start'),
       slackCreateApp: call('prefs:slack-create-app'),
