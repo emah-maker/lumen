@@ -6524,6 +6524,7 @@ const agent = new Agent({
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  subagents: () => readSettings().aiSubagents !== false, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
@@ -7734,6 +7735,15 @@ ipcMain.handle('agent:permission-mode', (_e, mode) => {
     try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
   }
   return permissionModes.modeOf(readSettings());
+});
+
+// [subagents] The sidebar's Helpers button (and Settings → AI): on | off. No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js subagentsOn).
+ipcMain.handle('agent:helpers', (_e, on) => {
+  if (typeof on === 'boolean') {
+    writeSettings({ ...readSettings(), aiSubagents: on });
+    try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
+  }
+  return readSettings().aiSubagents !== false;
 });
 
 // The model the picker shows and the agent uses: one answer, so they can never disagree. A saved

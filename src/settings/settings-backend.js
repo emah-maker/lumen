@@ -106,6 +106,8 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  aiSubagents: true, // [ai] the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). The sidebar's Helpers button and Settings > AI are this one setting
+  aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
@@ -196,6 +198,7 @@ function validate(key, value) {
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
+    case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
@@ -313,7 +316,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p) };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -643,7 +646,7 @@ function create(deps) {
       case 'performanceMode': deps.performance?.refresh(); break;
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key)) (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
