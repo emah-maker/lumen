@@ -1405,6 +1405,11 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
 }
 
+/* Helpers (sidebar head, ai/subagents.js): the three nodes light up in accent while the AI may hand jobs to helpers. */
+.icon-btn.helpers-btn svg circle { fill: none; }
+.icon-btn.helpers-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.helpers-btn[aria-pressed="true"] svg circle { fill: currentColor; }
+
 /* Auto-allow actions (sidebar head): the bolt fills in accent while on. */
 .icon-btn.auto-allow svg path { fill: none; }
 .icon-btn.auto-allow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
