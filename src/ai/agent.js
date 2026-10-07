@@ -24,6 +24,7 @@ const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader view
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
+const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
@@ -3143,8 +3144,15 @@ ${prompt}` : prompt), historyImages: [] };
         this.reportApi(providers.splitModel(model).provider, { model, usage: message.usage }, emit); // ...and the app's usage log
       },
     });
+    // A readable name for the model that answered: the picker's own, else made from its id (the cheaper sibling is often not listed).
+    const nice = (id) => {
+      if (options.some((o) => o.id === id)) return fallback.nameOf(id, options);
+      const { provider, model } = providers.splitModel(id);
+      const pretty = modelNames.prettyModel(model) || model;
+      return provider === 'anthropic' ? pretty.replace(/(\d) (\d)(?!\d)/g, '$1.$2') : `${fallback.providerName(id, options)} ${pretty}`;
+    };
     const shown = result.model || result.own;
-    return { ...result, ...(shown ? { name: fallback.nameOf(shown, options) } : {}), ...(result.engine ? { engineName: fallback.nameOf(result.engine, options) } : {}) };
+    return { ...result, ...(shown ? { name: nice(shown) } : {}), ...(result.engine ? { engineName: nice(result.engine) } : {}) };
   }
   // ---- [/btw]
 
