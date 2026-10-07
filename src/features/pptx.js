@@ -719,7 +719,7 @@ function parseAxis(ax) {
     id: String(kid(ax, 'axId')?.attrs.val ?? ''), kind: ax.name === 'valAx' ? 'val' : 'cat', pos: kid(ax, 'axPos')?.attrs.val || null,
     deleted: flagOn(kid(ax, 'delete')), min: num(at(ax, 'scaling', 'min')?.attrs.val, null), max: num(at(ax, 'scaling', 'max')?.attrs.val, null),
     reverse: at(ax, 'scaling', 'orientation')?.attrs.val === 'maxMin', grid: Boolean(kid(ax, 'majorGridlines')), title: chartRichText(kid(ax, 'title')),
-    format: fmt && fmt.attrs.sourceLinked !== '1' ? fmt.attrs.formatCode || null : null, major: unit && unit > 0 ? unit : null, between: kid(ax, 'crossBetween')?.attrs.val !== 'midCat',
+    format: fmt && fmt.attrs.sourceLinked !== '1' ? fmt.attrs.formatCode || null : null, major: unit && unit > 0 ? unit : null, between: kid(ax, 'crossBetween')?.attrs.val ? kid(ax, 'crossBetween').attrs.val !== 'midCat' : null,
   };
 }
 
