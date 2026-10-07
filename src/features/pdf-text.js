@@ -19,7 +19,7 @@ class PdfError extends Error {}
 
 // What the AI is told about read_pdf (agent.js and snapshot.js both use these, so every registry agrees).
 // The per-call cap (MAX_CHARS) is not stated here: a cut-off read names the pages to ask for next.
-const READ_PDF_DESCRIPTION = 'Read a PDF in a tab (asks the user once); pages are marked "--- Page N of M ---"; query finds pages.';
+const READ_PDF_DESCRIPTION = 'Read a PDF or .pptx deck in a tab (asks the user once); pages (slides) are marked "--- Page N of M ---"; query finds pages.';
 const READ_PDF_PROPERTIES = {
   tab_id: { type: 'integer' },
   pages: { type: 'string', description: 'e.g. "3", "1-5", "4-"' },
@@ -343,10 +343,10 @@ function findInPage(body, query) {
 // -> { numPages, pages: [n…] (returned), text, truncated, next, hits? }
 // Without `query`: the wanted pages, each under a "--- Page N of M ---" marker, up to maxChars.
 // With `query`: only the pages (within the range) that contain it, with a snippet or two each.
-function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS } = {}) {
+function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS, noun = 'PDF' } = {}) {
   const total = texts.length;
   const wanted = parsePageRange(spec, total);
-  if (!wanted.length) throw new PdfError(`This PDF has ${total} page${total === 1 ? '' : 's'}; that range has none.`);
+  if (!wanted.length) throw new PdfError(`This ${noun} has ${total} page${total === 1 ? '' : 's'}; that range has none.`);
   if (query !== undefined && query !== null && String(query).trim() !== '') {
     const hits = [];
     for (const n of wanted) {
@@ -359,7 +359,7 @@ function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS } = {}) {
     let text = hits.length
       ? `"${String(query).trim()}" found on ${hits.length} page${hits.length === 1 ? '' : 's'} (${hits.map((h) => h.page).slice(0, MAX_HIT_PAGES).join(', ')}${hits.length > MAX_HIT_PAGES ? ', …' : ''}), searched ${searched}:
 ${lines.join('\n')}`
-      : `"${String(query).trim()}" was not found in ${searched}. ${texts.every((t) => !t) ? 'This PDF has no extractable text (scanned?).' : 'Try a shorter or differently spelled query; text is matched case-insensitively.'}`;
+      : `"${String(query).trim()}" was not found in ${searched}. ${texts.every((t) => !t) ? `This ${noun} has no extractable text${noun === 'PDF' ? ' (scanned?)' : ''}.` : 'Try a shorter or differently spelled query; text is matched case-insensitively.'}`;
     if (hits.length > MAX_HIT_PAGES) text += `
 (${hits.length - MAX_HIT_PAGES} more pages match; narrow with pages:"${shown[shown.length - 1].page + 1}-".)`;
     return { numPages: total, pages: shown.map((h) => h.page), text, truncated: false, next: null, hits: hits.map((h) => ({ page: h.page, count: h.count })) };

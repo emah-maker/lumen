@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **PowerPoint slides open in a tab.** Open a .pptx (File > Open, drag it onto a tab, type or paste its path, click a link to one) and Lumen shows the slides instead of only downloading the file. A deck downloaded from the web is saved as usual and then opens in a new tab. Slides scroll top to bottom with a "Slide N of M" counter. Arrow keys, Page Up/Down, Home and End move between them, and F5 or **Present** shows them full screen. Lumen reads the file on your computer: text, pictures, tables, fills and simple shapes appear where they are on the slide. Nothing in the deck runs and nothing is fetched from the web. Charts and diagrams show as labelled boxes. The AI can read a deck that is open in a tab, slide by slide with the speaker notes, through `read_pdf`, and it asks you once first, as it does for a PDF.
+
 ## 0.5.16 (2026-10-06)
 
 - **The AI can look at videos.** Ask about a video in a tab (a YouTube page, a lecture, a screen recording, or a video file you opened) and the AI now gets one contact sheet of frames evenly spaced through it, each stamped with its time, then full-size frames at the moments that matter. Lumen pauses the video, steps through it with the browser's own decoder (nothing to install), and puts playback back exactly as you had it: position, sound and playing or paused. The sheet is sized to a token budget for the model that is answering. Videos protected by DRM and live streams are refused with a plain message, and the frames only go to the AI you asked. The new **/watch-video** command does the whole thing: overview, closer look, answer with times.
