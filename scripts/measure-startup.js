@@ -88,6 +88,7 @@ async function mem(app) {
     }, ACTIVE);
     if (out.activePaint?.fcp) out.activeFcpFromProcStartMs = Math.round(out.activePaint.origin + out.activePaint.fcp - out.origin);
     if (process.env.LUMEN_CPU_PROFILE) { await app.evaluate((_m, f) => global.__perf.stopProfile(f), path.join(os.tmpdir(), 'lumen-main.cpuprofile')); console.log('profile written to', path.join(os.tmpdir(), 'lumen-main.cpuprofile')); }
+    out.activeRequests = hits.filter((h) => h.n === String(ACTIVE)).length;
     out.memory = await mem(app);
     out.mainMem = await app.evaluate(() => { const m = process.memoryUsage(); const mb = (b) => Math.round(b / 1048576); return { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal), external: mb(m.external), arrayBuffers: mb(m.arrayBuffers) }; });
     out.contents = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => `${w.getType()}:${w.getOSProcessId()}:${(w.getURL() || '').slice(0, 70)}`));
@@ -128,6 +129,7 @@ async function mem(app) {
       console.log(`tabs ${TABS}; strip visible ${uiTabMs} ms after launch; marks ${JSON.stringify(out.marks)}`);
       console.log(`first request at ${out.firstRequestFromProcStartMs} ms; active tab FCP ${out.activeFcpFromProcStartMs} ms (both from process start)`);
       console.log('page loads (start/finish ms):', out.loads.map((l) => `${l.url.split('/').pop()}:${l.start}/${l.finish}`).join(' '));
+      console.log(`requests for the front page: ${out.activeRequests} (2 = reloaded once for a late extension)`);
       console.log(`event loop (main): ${JSON.stringify(out.loop)}`);
       console.log(`memory: ${out.memory.procs} procs ${out.memory.wsMB} MB ws ${out.memory.privMB} MB private ${JSON.stringify(out.memory.by)}`);
       console.log(`processes:\n  ${out.memory.list.join('\n  ')}`);

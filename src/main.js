@@ -1146,11 +1146,11 @@ async function lateExtension(ext) {
   for (const rec of [...winRecs]) {
     if (!rcAlive(rec) || isSpare(rec) || rec.agent) continue;
     const front = tabsOf(rec).find((t) => t.id === activeIdOf(rec));
-    if (!alive(front) || front.isolated || front.settings || !isWebUrl(front.view.webContents.getURL())) continue;
+    if (!alive(front) || front.isolated || front.settings || front.lateReloaded || !isWebUrl(front.view.webContents.getURL())) continue; // (once per page: a second late extension doesn't reload it again)
     const wc = front.view.webContents;
     const busy = (await unsavedInputState(wc)) !== 'no';
     const [id] = matchPattern.pagesToReload(ext.manifest, [{ id: front.id, url: wc.getURL(), active: true, startedBeforeLoad: true, busy }]);
-    if (id !== undefined && alive(front)) wc.reload();
+    if (id !== undefined && alive(front)) { front.lateReloaded = true; wc.reload(); }
   }
 }
 
