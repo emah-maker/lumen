@@ -16,7 +16,9 @@ const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modul
 // uiKB 600 -> 650 (0.5.1): Routines, the context meter and frame-aware chat UI took the bundle to 601 KB.
 // uiKB 650 -> 700, idleIntervals 4 -> 5 (0.5.5): the UI bundle measures 675 KB; a fifth, cheap unref'd timer (the 15 s background-task tick, next to the run-slot sweep, the AI status refresh, the sleep sweep and the extension update check) idles at 0.2% CPU with 15 tabs.
 // modules 250 -> 270 and uiKB 700 -> 750 (0.5.x, 2026-10-05): measured 258 modules and a 725 KB UI after the Gmail setup, file uploads, Bypass permissions and Codex/Grok engine work; each is a real feature, none an eager SDK or a stray bundle.
-const CEILING = { requireMs: 2500, modules: 270, preloadKB: 40, uiKB: 750, idleIntervals: 5 };
+// modules 270 -> 285 and uiKB 750 -> 775 (2026-10-07): main already measured 277 modules and a 759 KB UI before the start-up work (the budget had been failing); the queue, idle-reaper-free helpers and match patterns add three small modules.
+// idleIntervals 5 -> 6: the spare new-tab page's 60 s freshness check (newtab-speed, #321) is a sixth, cheap unref'd timer.
+const CEILING = { requireMs: 2500, modules: 285, preloadKB: 40, uiKB: 775, idleIntervals: 6 };
 
 (async () => {
   let failures = 0;

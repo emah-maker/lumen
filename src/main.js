@@ -36,6 +36,7 @@ const path = require('path');
 const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
+const matchPattern = require('./browser/match-pattern'); // which pages an extension's content scripts apply to
 const { shortcutMod } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere
 // The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
@@ -1135,6 +1136,24 @@ function isContentBlocker(manifest = {}, name = '') {
   return /ad ?block|\bads\b|\bblock(er|ing|s)?\b|ublock|tracker|\bfilter|privacy badger|ghostery|content block/i.test(text);
 }
 
+// An extension that finished loading after the first tabs opened: pages loaded before it have none of its content
+// scripts. In the first moments of a run, the page in front of each window reloads once when they match it (and
+// nothing was typed in it). Never later: a reload then would lose the user's place.
+const STARTED_AT = Date.now();
+const EXTENSIONS_WAIT_MS = 250; // how long the first tabs wait for extensions
+async function lateExtension(ext) {
+  if (Date.now() - STARTED_AT > 20000) return;
+  for (const rec of [...winRecs]) {
+    if (!rcAlive(rec) || isSpare(rec) || rec.agent) continue;
+    const front = tabsOf(rec).find((t) => t.id === activeIdOf(rec));
+    if (!alive(front) || front.isolated || front.settings || front.lateReloaded || !isWebUrl(front.view.webContents.getURL())) continue; // (once per page: a second late extension doesn't reload it again)
+    const wc = front.view.webContents;
+    const busy = (await unsavedInputState(wc)) !== 'no';
+    const [id] = matchPattern.pagesToReload(ext.manifest, [{ id: front.id, url: wc.getURL(), active: true, startedBeforeLoad: true, busy }]);
+    if (id !== undefined && alive(front)) { front.lateReloaded = true; wc.reload(); }
+  }
+}
+
 async function setupExtensions() {
   const ses = session.defaultSession;
   const { ElectronChromeExtensions } = require('electron-chrome-extensions');
@@ -1220,10 +1239,25 @@ async function setupExtensions() {
   });
   // Installed extensions: registered now (tabs are created with them in chrome.tabs); their background service
   // workers, which took ~100-500 ms each one after another before the first tab, start once the tabs are going.
-  const workerScopes = [];
-  await loadAllExtensions({ extensions: ses.extensions, serviceWorkers: { startWorkerForScope: (scope) => { workerScopes.push(scope); return Promise.resolve(); } } },
-    path.join(app.getPath('userData'), 'Extensions'));
-  tabsGate.then(() => setTimeout(() => { for (const scope of workerScopes) ses.serviceWorkers.startWorkerForScope(scope).catch(() => console.error(`Failed to start worker for ${scope}`)); }, 300));
+  perf.mark('extStoreReady');
+  // One folder per extension, loaded side by side (the library loads them one after another, and one with a big rule
+  // set takes seconds). Their background workers start after the first tabs, 300 ms apart from the tabs' own start.
+  // An extension that finishes after the first tabs opened missed those pages' content scripts: lateExtension()
+  // reloads the front page once if its scripts match it.
+  const extensionsRoot = path.join(app.getPath('userData'), 'Extensions');
+  const startWorker = (scope) => tabsGate.then(() => setTimeout(() => ses.serviceWorkers.startWorkerForScope(scope).catch(() => console.error(`Failed to start worker for ${scope}`)), 300));
+  const loadTarget = { extensions: ses.extensions, serviceWorkers: { startWorkerForScope: (scope) => { startWorker(scope); return Promise.resolve(); } } };
+  const folders = await fs.promises.readdir(extensionsRoot, { withFileTypes: true }).then((list) => list.filter((d) => d.isDirectory()).map((d) => path.join(extensionsRoot, d.name)), () => []);
+  const seen = new Set();
+  await Promise.all(folders.map((dir) => loadAllExtensions(loadTarget, dir).then(() => {
+    perf.mark(`ext:${path.basename(dir).slice(0, 6)}`);
+    for (const ext of ses.extensions.getAllExtensions()) {
+      if (seen.has(ext.id)) continue;
+      seen.add(ext.id);
+      if (tabsGateOpen) lateExtension(ext).catch(() => {});
+    }
+  })));
+  perf.mark('extLoaded');
   // Store extensions' updates: looked for once the first tab has loaded, then every 5 hours, as the library did.
   const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
   firstTabLoaded.then(() => setTimeout(checkUpdates, 30000).unref?.());
@@ -4779,11 +4813,16 @@ function restoreTabsFrom(saved) {
   }
   tabGroups.restore(saved.groups);
   const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
+  const live = require('./features/session-restore').liveIndices(saved.urls.length, active);
   let activeTabId = null;
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
-    if (i === active) activeTabId = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null }).id;
-    const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
+    let tab;
+    if (live.has(i)) {
+      const opened = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null });
+      if (i === active) activeTabId = opened.id;
+      tab = tabs.find((t) => t.id === opened.id);
+    } else tab = addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
@@ -5431,6 +5470,7 @@ const CARD_HEAD = 36;
 const CARD_HOLD = { x: CARD_PAD + 26, y: CARD_PAD + 18 }; // the card is held by its icon, as the tab was
 let dragCard = null; // { win, loaded, hideTimer }
 function dragCardWindow() {
+  dragCardReaper.touch();
   if (dragCard && !dragCard.win.isDestroyed()) return dragCard;
   const w = new BrowserWindow({
     width: CARD_WIDTH + CARD_PAD * 2, height: 260, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
@@ -5448,9 +5488,13 @@ function dragCardWindow() {
   return dragCard;
 }
 function closeDragCard() {
+  dragCardReaper.cancel();
   if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.destroy();
   dragCard = null;
 }
+// The card's window is a renderer of its own (~50 MB): made when a tab drag first needs it, closed again once no drag
+// has used it for two minutes (the next drag makes it again, ahead of the card being shown).
+const dragCardReaper = require('./features/idle-reaper').createIdleReaper({ ms: 2 * 60e3, busy: () => Boolean(tabDrag), onIdle: () => closeDragCard() });
 const cardCall = (fn, ...args) => {
   if (!dragCard || dragCard.win.isDestroyed()) return;
   dragCard.win.webContents.executeJavaScript(`window.lumenCard && window.lumenCard.${fn}(...${JSON.stringify(args)})`).catch(() => {});
@@ -6020,8 +6064,9 @@ let firstTabDone = false;
 firstTabLoaded.then(() => { firstTabDone = true; });
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
+let tabsGateOpen = false; // (read by lateExtension)
 const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab's page goes before the UI has said (content-bounds)
-const tabsGate = new Promise((resolve) => { openTabsGate = resolve; });
+const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
 // `agent` ({ label }): the window of an outside agent's session (openAgentWindow below): shown without taking focus, one blank tab,
 // never saved with the session.
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null, agent: agentOf = null } = {}) {
@@ -6921,7 +6966,11 @@ function aiStatusFacts() {
 // several widgets often finish together).
 let widgetRefreshTimer = null;
 // The widgets' view of an engine (features/music-engine.js): its calls, with a test fake able to stand in for any of them.
-const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : engine()[name](...args))]));
+// A music card's read starts the engine's hidden page (a whole web player: ~300 MB). A page nobody can see (the spare
+// new-tab page waiting for Ctrl+T, a new-tab page in a background tab) must not start it: no new-tab page in front of
+// any window means a read only looks at what is already known. The page asks again when it is shown (it refreshes when it becomes visible).
+const newTabInFront = () => [...winRecs].some((rec) => rcAlive(rec) && !isSpare(rec) && !rec.agent && !rec.win.isMinimized() && tabsOf(rec).some((t) => t.id === activeIdOf(rec) && alive(t) && isNewTab(t.view.webContents.getURL())));
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'search', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),
@@ -8289,8 +8338,7 @@ function setupTaskbar() {
 
 app.whenReady().then(async () => {
   perf.mark('ready');
-  // The drag card's window, made once things are quiet, so the first tear-off of a session shows it at once.
-  setTimeout(() => { if (!TEST_BACKGROUND) dragCardWindow(); }, 8000);
+  // (The drag card's window is no longer made here: a tab drag makes it when it starts, see dragCardReaper.)
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
@@ -8331,18 +8379,23 @@ app.whenReady().then(async () => {
   setAboutPanel();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
+  const blocking = adblock.setup().then(() => perf.mark('adblockSetup')).catch((err) => console.error('Ad blocker failed to start:', err));
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
-  const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
-  await atMost(Promise.all([extending, fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null]));
+  const atMost = (p, ms = 3000) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+  // Extensions: registered by now if they load quickly; one with a big rule set takes seconds, and the pages must not wait
+  // for it (a restored session sat on a blank tab 3 s). It finishes meanwhile; see lateExtension().
+  await Promise.all([atMost(extending, EXTENSIONS_WAIT_MS), atMost(fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null)]);
   perf.mark('adblockReady');
   openTabsGate();
-  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
-  firstTabLoaded.then(() => { makeSpareNewTab(); warmSoon(400); }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page, once the first tab has loaded
-  perfMode.start(); // Performance mode: power events, and whether the GPU really draws
-  setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
-  updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
+  // Everything below waits for the first tab to have loaded, then runs one task at a time, a gap apart (features/startup-queue.js).
+  const startup = require('./features/startup-queue').createStartupQueue();
+  startup.add('spare new-tab page and warm renderer', () => { makeSpareNewTab(); warmSoon(400); }, { priority: 1 }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page
+  startup.add('performance mode', () => perfMode.start(), { priority: 2 }); // power events, and whether the GPU really draws
+  startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
+  startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
+  startup.add('GPU check', () => { setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); }, { priority: 2 }); // the GPU process has reported by then
+  firstTabLoaded.then(() => startup.release());
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
