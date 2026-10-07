@@ -141,6 +141,9 @@ contextBridge.exposeInMainWorld('assistant', {
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
   reset: () => ipcRenderer.send('agent:reset'),
   rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back
+  btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task (features/btw-side.js); streamed through onBtw
+  btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
+  onBtw: on('agent:btw-event'),
   // The chat history list (renderer/chats.js)
   // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
   images: {

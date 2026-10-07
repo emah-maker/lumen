@@ -211,7 +211,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
@@ -7553,6 +7553,37 @@ ipcMain.handle('agent:rewind', (_e, expected) => {
   if (result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); } // the other view drops it too
   return result;
 });
+// [btw] /btw <question>: answered at once from a snapshot of the open chat, by one tool-less model call (agent.js btw), beside whatever the
+// chat is doing: it never touches the run, its history or its steps. The answer streams to the asking view ('agent:btw-event'); the tokens
+// join the chat's usage. `id` names the card in the sidebar; Esc / the card's × cancels it (agent:btw-cancel).
+const btwRuns = new Map(); // `${sender id}:${card id}` -> AbortController
+ipcMain.handle('agent:btw', async (event, id, text) => {
+  if (typeof id !== 'string' || !/^[\w-]{1,40}$/.test(id) || btwRuns.size >= 12) return { ok: false, error: 'busy' };
+  syncToSender(event);
+  const runChat = chatId;
+  const messages = agent.messages;
+  const at = agentActiveTab();
+  const url = at?.webContents && !at.webContents.isDestroyed?.() ? at.webContents.getURL() : '';
+  const tab = at && !aiSites.isOff(url) ? { title: at.webContents.getTitle(), url } : null; // (a site the user keeps the AI off is not told)
+  const key = `${event.sender.id}:${id}`;
+  const ctrl = new AbortController();
+  btwRuns.set(key, ctrl);
+  const send = (payload) => { if (!event.sender.isDestroyed()) event.sender.send('agent:btw-event', { id, ...payload }); };
+  const emit = (msg) => {
+    if (msg.type !== 'usage') return;
+    if (runChat === chatId && messages === agent.messages) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); saveChatSoon(chatGeneration); }
+    else saveChatOfSoon(runChat, messages);
+  };
+  try {
+    const r = await agent.btw({ messages, tab, question: String(text || ''), signal: ctrl.signal, emit, onText: (chunk) => send({ type: 'text', text: chunk }) });
+    return { ok: r.ok, text: r.text, error: r.error, model: r.model, name: r.name, engine: r.engine || null, engineName: r.engineName || null, viaDefault: Boolean(r.viaDefault) };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 300) };
+  } finally {
+    btwRuns.delete(key);
+  }
+});
+ipcMain.on('agent:btw-cancel', (event, id) => { btwRuns.get(`${event.sender.id}:${id}`)?.abort(); });
 ipcMain.on('agent:reset', (event) => {
   syncToSender(event);
   switchChat(null);
