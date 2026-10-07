@@ -115,6 +115,9 @@ function createWebPlayer(deps, spec) {
   let failedAt = 0;
   let drmTimer = null;
   let drmTries = 0;
+  // Counts the main-frame documents the view has started loading (not in-page route changes): an engine's bridge belongs to the document it
+  // ran in, so a command sent after a reload (or a sign-in round trip) must wait for the new document's bridge, not go to nobody.
+  let generation = 0;
   const alive = () => view && !view.webContents.isDestroyed();
   const baseUrl = () => deps.testUrl?.() || spec.url;
   const testOrigin = () => { try { return deps.testUrl?.() ? new URL(deps.testUrl()).origin : ''; } catch { return ''; } };
@@ -210,8 +213,9 @@ function createWebPlayer(deps, spec) {
     wc.on('render-process-gone', () => destroy());
     // A blank frame says nothing: when the page can't load, the card says why (and tries again).
     let failedLoad = false; // Chromium finishes loading its own error page afterwards: that is not the site being ready
-    wc.on('did-start-navigation', (event, url, _inPlace, isMainFrame) => {
+    wc.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
       const main = event?.isMainFrame ?? isMainFrame;
+      if (main && !(event?.isSameDocument ?? inPlace)) generation++;
       if (main && !String(event?.url ?? url).startsWith('chrome-error:')) failedLoad = false;
     });
     wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => {
@@ -235,6 +239,7 @@ function createWebPlayer(deps, spec) {
   function destroy() {
     const v = view;
     view = null;
+    generation++;
     emulating = false;
     clearTimeout(drmTimer);
     state = 'loading';
@@ -329,6 +334,7 @@ function createWebPlayer(deps, spec) {
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,
     isSignedIn: () => signedIn,
     ensure, showIn, release,
+    generation: () => generation, // (see above: which document the view is on)
     webContents: () => (alive() ? view.webContents : null),
     view: () => (alive() ? view : null), // for the window's overlay stacking (main.js raiseOverlays)
   };

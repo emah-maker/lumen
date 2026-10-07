@@ -89,6 +89,10 @@
   function setBox(card, px) {
     const key = `${px.left},${px.top},${px.width},${px.height}`;
     if (card._pos === key) return;
+    if (!card._pos) { // never placed (a card just added): it appears in its place, it does not slide there from the grid's corner
+      card.classList.add('w-placing');
+      requestAnimationFrame(() => requestAnimationFrame(() => card.classList.remove('w-placing')));
+    }
     card._pos = key;
     card.style.transform = `translate3d(${px.left}px, ${px.top}px, 0)`;
     card.style.width = `${px.width}px`;
