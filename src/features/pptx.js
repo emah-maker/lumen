@@ -12,7 +12,8 @@
 // slide, XML nodes and depth, and the bytes of pictures handed to the page.
 // Fidelity is "readable": text boxes, pictures, solid and gradient fills, simple shapes, lines and
 // tables in the right places. Charts, SmartArt, equations, EMF/WMF pictures, animations and effects
-// are not drawn (a labelled box stands in for charts and diagrams).
+// are not drawn. Charts are read from their cached values (bar, line, area, pie, doughnut, scatter; other
+// types keep a labelled box), SmartArt from the drawing PowerPoint saved with it (or its data model's text).
 const zlib = require('zlib');
 const { promisify } = require('util');
 
@@ -563,6 +564,21 @@ function drawShape(node, ctx) {
     if (tbl) return { type: 'table', ...base, ...drawTable(tbl, ctx) };
     const pic = data ? [...walk(data)].find((n) => n.name === 'pic') : null;
     if (pic) { const p = drawShape(pic, ctx); if (p) return { ...p, x: base.x, y: base.y, w: base.w, h: base.h }; }
+    const chartRel = /\/chart$/i.test(uri) ? ctx.rels.get(relAttr(kid(data, 'chart'), 'id') || '') : null;
+    const chartDoc = chartRel && chartRel.target && ctx.parts ? ctx.parts.get(chartRel.target) : null;
+    if (chartDoc) {
+      const chart = parseChart(chartDoc, ctx);
+      if (chart) return { type: 'chart', ...base, name: name.slice(0, 60), chart };
+    }
+    const dmRel = /\/diagram$/i.test(uri) ? ctx.rels.get(relAttr(kid(data, 'relIds'), 'dm') || '') : null;
+    const dmPart = dmRel && dmRel.target && ctx.parts ? ctx.parts.get(`dm:${dmRel.target}`) : null;
+    if (dmPart) {
+      const inner = [];
+      const spTree = dmPart.drawing ? at(dmPart.drawing.doc, 'drawing', 'spTree') : null;
+      if (spTree) drawTree(spTree, { ...ctx, kind: 'slide', rels: dmPart.drawing.rels, layout: null, master: null }, inner, { ox: base.x, oy: base.y, sx: 1, sy: 1 });
+      const items = inner.length ? [] : diagramItems(dmPart.dm);
+      if (inner.length || items.length) return { type: 'diagram', ...base, name: name.slice(0, 60), shapes: inner, items };
+    }
     const label = /chart/i.test(uri) ? 'Chart' : /diagram/i.test(uri) ? 'Diagram' : 'Object';
     return { type: 'placeholder', ...base, label: name ? `${label}: ${name.slice(0, 60)}` : label };
   }
@@ -627,6 +643,252 @@ function drawTable(tbl, ctx) {
   return { cols, rows };
 }
 
+// ---- charts (ppt/charts/chartN.xml) and SmartArt (ppt/diagrams) ----
+// Only the values cached in the chart part are read (c:numCache / c:strCache): the embedded workbook is never opened.
+const MAX_CHART_POINTS = 10000; // values in one chart, all series together
+const MAX_CHART_SERIES = 60;
+const MAX_CHART_XML = 8 * 1024 * 1024;
+const MAX_OBJECTS = 400; // charts, and diagrams, per deck
+const MAX_ITEMS = 500; // data-model entries listed for a diagram that has no drawing
+const OFFICE_ACCENTS = ['4472c4', 'ed7d31', 'a5a5a5', 'ffc000', '5b9bd5', '70ad47'];
+const CHART_KINDS = { barChart: 'bar', bar3DChart: 'bar', lineChart: 'line', line3DChart: 'line', pieChart: 'pie', pie3DChart: 'pie', doughnutChart: 'doughnut', areaChart: 'area', area3DChart: 'area', scatterChart: 'scatter' };
+const CHART_OTHER = { radarChart: 'radar', bubbleChart: 'bubble', stockChart: 'stock', surfaceChart: 'surface', surface3DChart: 'surface', ofPieChart: 'pie-of-pie' };
+
+// Series i's default color: the theme's accent1..6, then darker and lighter turns of them.
+function accentColors(ctx, count) {
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const base = ctx.theme?.colors?.[`accent${(i % 6) + 1}`] || OFFICE_ACCENTS[i % 6];
+    const turn = Math.floor(i / 6);
+    let rgb = [0, 2, 4].map((k) => parseInt(base.slice(k, k + 2), 16));
+    if (turn) { const hsl = toHsl(rgb); hsl[2] = turn % 2 ? hsl[2] * 0.65 : Math.min(0.9, hsl[2] * 0.4 + 0.6); rgb = fromHsl(hsl); }
+    out.push(`#${rgb.map(hex2).join('')}`);
+  }
+  return out;
+}
+const firstColor = (fill) => (fill && fill.type === 'solid' ? { color: fill.color, alpha: fill.alpha } : fill && fill.type === 'gradient' && fill.stops[0] ? { color: fill.stops[0].color, alpha: fill.stops[0].alpha } : null);
+
+// The values of a c:cat / c:val / c:xVal / c:yVal: { values, format }. `budget` caps the points of the whole chart.
+function cacheValues(node, budget, numeric) {
+  const holder = node && node.children.find((c) => /^(numRef|strRef|multiLvlStrRef|numLit|strLit)$/.test(c.name));
+  if (!holder) return null;
+  const cache = /Lit$/.test(holder.name) ? holder : kid(holder, 'numCache') || kid(holder, 'strCache') || kid(holder, 'multiLvlStrCache');
+  const src = cache && cache.name === 'multiLvlStrCache' ? kid(cache, 'lvl') : cache;
+  if (!src) return null;
+  const declared = Math.max(0, num(kid(cache, 'ptCount')?.attrs.val, 0));
+  const pts = kids(src, 'pt');
+  const top = pts.reduce((m, p) => Math.max(m, num(p.attrs.idx, -1) + 1), 0);
+  const want = Math.max(declared, top);
+  const size = Math.min(want, budget.left);
+  if (want > budget.left) budget.cut = true;
+  budget.left -= size;
+  const values = new Array(size).fill(numeric ? null : '');
+  for (const p of pts) {
+    const idx = num(p.attrs.idx, -1);
+    if (idx < 0 || idx >= size) continue;
+    const v = String(kid(p, 'v')?.text ?? '');
+    if (numeric) { const x = v.trim() === '' ? NaN : Number(v); values[idx] = Number.isFinite(x) ? x : null; } else values[idx] = v.slice(0, 200);
+  }
+  return { values, format: String(kid(cache, 'formatCode')?.text || '').slice(0, 60) };
+}
+function chartRichText(node) {
+  const rich = at(node, 'tx', 'rich');
+  if (!rich) return null;
+  const ps = kids(rich, 'p');
+  const text = ps.map((p) => p.children.filter((r) => r.name === 'r' || r.name === 'fld').map((r) => String(at(r, 't')?.text ?? '')).join('')).join('\n').trim().slice(0, 300);
+  if (!text) return null;
+  const sz = num(at(ps[0], 'pPr', 'defRPr')?.attrs.sz, null) ?? num(at(ps[0], 'r', 'rPr')?.attrs.sz, null);
+  return { text, size: sz === null ? null : sz / 100 };
+}
+const seriesName = (ser) => {
+  const tx = kid(ser, 'tx');
+  const v = at(tx, 'strRef', 'strCache', 'pt', 'v') || kid(tx, 'v');
+  return v ? String(v.text || '').slice(0, 120) : '';
+};
+const flagOn = (node) => Boolean(node) && node.attrs.val !== '0' && node.attrs.val !== 'false';
+function parseLabels(node) {
+  if (!node || flagOn(kid(node, 'delete'))) return null;
+  const on = (k) => bool(kid(node, k)?.attrs.val);
+  const labels = { val: on('showVal'), pct: on('showPercent'), cat: on('showCatName'), format: kid(node, 'numFmt')?.attrs.formatCode || null };
+  return labels.val || labels.pct || labels.cat ? labels : null;
+}
+function parseAxis(ax) {
+  const unit = num(kid(ax, 'majorUnit')?.attrs.val, null);
+  const fmt = kid(ax, 'numFmt');
+  return {
+    id: String(kid(ax, 'axId')?.attrs.val ?? ''), kind: ax.name === 'valAx' ? 'val' : 'cat', pos: kid(ax, 'axPos')?.attrs.val || null,
+    deleted: flagOn(kid(ax, 'delete')), min: num(at(ax, 'scaling', 'min')?.attrs.val, null), max: num(at(ax, 'scaling', 'max')?.attrs.val, null),
+    reverse: at(ax, 'scaling', 'orientation')?.attrs.val === 'maxMin', grid: Boolean(kid(ax, 'majorGridlines')), title: chartRichText(kid(ax, 'title')),
+    format: fmt && fmt.attrs.sourceLinked !== '1' ? fmt.attrs.formatCode || null : null, major: unit && unit > 0 ? unit : null, between: kid(ax, 'crossBetween')?.attrs.val !== 'midCat',
+  };
+}
+
+function parseChart(root, ctx) {
+  const space = kid(root, 'chartSpace');
+  const chart = kid(space, 'chart');
+  const plotArea = kid(chart, 'plotArea');
+  if (!plotArea) return null;
+  const budget = { left: MAX_CHART_POINTS, cut: false };
+  const accents = accentColors(ctx, 80);
+  const plots = [];
+  let nSeries = 0;
+  for (const el of plotArea.children) {
+    const kind = CHART_KINDS[el.name] || null;
+    if (!kind && !CHART_OTHER[el.name]) continue;
+    const grouping = kid(el, 'grouping')?.attrs.val || 'standard';
+    const vary = kid(el, 'varyColors') ? bool(kid(el, 'varyColors').attrs.val ?? '1') : kind === 'pie' || kind === 'doughnut';
+    const plotLabels = parseLabels(kid(el, 'dLbls'));
+    const xNumeric = el.name === 'scatterChart' || el.name === 'bubbleChart';
+    const series = [];
+    for (const ser of kids(el, 'ser')) {
+      if (nSeries >= MAX_CHART_SERIES) { ctx.warnings.add('Some chart series were left out: a chart has too many.'); break; }
+      const idx = num(kid(ser, 'idx')?.attrs.val, nSeries);
+      nSeries++;
+      const spPr = kid(ser, 'spPr');
+      const fill = firstColor(fillIn(spPr, ctx));
+      const line = lineIn(spPr, ctx);
+      const lineColor = line && line.color ? { color: line.color, alpha: line.alpha ?? 1 } : null;
+      const own = kind === 'line' || kind === 'scatter' ? lineColor || fill : fill || lineColor;
+      const cats = cacheValues(kid(ser, 'cat') || kid(ser, 'xVal'), budget, xNumeric);
+      const vals = cacheValues(kid(ser, 'val') || kid(ser, 'yVal'), budget, true);
+      const points = {};
+      for (const dPt of kids(ser, 'dPt')) {
+        const c = firstColor(fillIn(kid(dPt, 'spPr'), ctx));
+        const i = num(kid(dPt, 'idx')?.attrs.val, -1);
+        if (c && i >= 0 && i < MAX_CHART_POINTS) points[i] = c.color;
+      }
+      const marker = kid(ser, 'marker');
+      const markerFill = firstColor(fillIn(kid(marker, 'spPr'), ctx));
+      series.push({
+        name: seriesName(ser), color: own ? own.color : accents[idx % accents.length], alpha: own ? own.alpha : 1,
+        lineWidth: line && line.width ? line.width : null, noLine: Boolean(line && line.type === 'none'),
+        cats: cats ? cats.values : null, values: vals ? vals.values : [], format: vals ? vals.format : '',
+        points: Object.keys(points).length ? points : null, labels: kid(ser, 'dLbls') ? parseLabels(kid(ser, 'dLbls')) : plotLabels,
+        marker: marker ? { symbol: kid(marker, 'symbol')?.attrs.val || null, size: num(kid(marker, 'size')?.attrs.val, null), color: markerFill ? markerFill.color : null } : null,
+      });
+    }
+    plots.push({
+      kind, type: kind ? null : CHART_OTHER[el.name], dir: kid(el, 'barDir')?.attrs.val === 'bar' ? 'bar' : 'col', grouping, vary,
+      gap: num(kid(el, 'gapWidth')?.attrs.val, 150), overlap: num(kid(el, 'overlap')?.attrs.val, null),
+      hole: num(kid(el, 'holeSize')?.attrs.val, 50), firstAngle: num(kid(el, 'firstSliceAng')?.attrs.val, 0), scatterStyle: kid(el, 'scatterStyle')?.attrs.val || '',
+      markers: kid(el, 'marker') ? bool(kid(el, 'marker').attrs.val ?? '1') : true,
+      axIds: kids(el, 'axId').map((a) => String(a.attrs.val ?? '')), series,
+    });
+  }
+  if (!plots.length) return null;
+  if (budget.cut) ctx.warnings.add('Some chart data was left out: a chart has too many points.');
+  const axes = plotArea.children.filter((c) => c.name === 'catAx' || c.name === 'valAx' || c.name === 'dateAx' || c.name === 'serAx').slice(0, 8).map(parseAxis);
+  const legendNode = kid(chart, 'legend');
+  const only = plots.length === 1 && plots[0].series.length === 1 ? plots[0].series[0] : null;
+  const titleNode = kid(chart, 'title');
+  const autoDeleted = kid(chart, 'autoTitleDeleted') && bool(kid(chart, 'autoTitleDeleted').attrs.val ?? '1');
+  let title = chartRichText(titleNode);
+  if (!title && titleNode && !autoDeleted && only && only.name) title = { text: only.name, size: null };
+  const defRPr = at(space, 'txPr', 'p', 'pPr', 'defRPr');
+  const textFill = defRPr ? colorIn(kid(defRPr, 'solidFill'), ctx) : null;
+  const bg = firstColor(fillIn(kid(space, 'spPr'), ctx));
+  for (const p of plots) {
+    if (p.kind === 'pie' || p.kind === 'doughnut') {
+      const s = p.series[0];
+      if (!s) continue;
+      const n = Math.max(s.values.length, s.cats ? s.cats.length : 0);
+      s.slice = Array.from({ length: n }, (_v, i) => (s.points && s.points[i]) || accents[i % accents.length]);
+    } else if (p.vary && p.series.length === 1 && !p.series[0].points) {
+      p.series[0].points = Object.fromEntries(p.series[0].values.map((_v, i) => [i, accents[i % accents.length]]));
+    }
+  }
+  return {
+    title, legend: legendNode ? kid(legendNode, 'legendPos')?.attrs.val || 'r' : null,
+    fontSize: defRPr && num(defRPr.attrs.sz, null) ? num(defRPr.attrs.sz, 1200) / 100 : null, textColor: textFill ? textFill.color : null,
+    background: bg && bg.alpha > 0 ? bg.color : null, plots, axes,
+  };
+}
+
+// The chart as text, for the AI: its title, then a table of the cached values.
+function chartAsText(chart) {
+  const lines = [`[Chart${chart.title ? `: ${chart.title.text.replace(/\s*\n\s*/g, ' ')}` : ''}]`];
+  const plots = chart.plots.filter((p) => p.series.length);
+  const pie = plots.find((p) => p.kind === 'pie' || p.kind === 'doughnut');
+  const cell = (v) => (v === null || v === undefined ? '' : String(typeof v === 'number' ? Math.round(v * 1e6) / 1e6 : v).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '/'));
+  let header; let rows;
+  if (plots.some((p) => p.kind === 'scatter' || p.type === 'bubble')) {
+    header = ['Series', 'X', 'Y'];
+    rows = [];
+    for (const p of plots) for (const s of p.series) s.values.forEach((y, i) => rows.push([s.name, s.cats ? s.cats[i] : i + 1, y]));
+  } else {
+    const list = pie ? [pie.series[0]] : plots.flatMap((p) => p.series);
+    const withCats = list.find((s) => s && s.cats);
+    const n = Math.max(0, ...list.map((s) => Math.max(s.values.length, s.cats ? s.cats.length : 0)));
+    header = ['', ...list.map((s, i) => s.name || (pie ? 'Value' : `Series ${i + 1}`))];
+    rows = Array.from({ length: n }, (_v, i) => [withCats && withCats.cats[i] !== undefined ? withCats.cats[i] : i + 1, ...list.map((s) => s.values[i])]);
+  }
+  lines.push(header.map(cell).join(' | '));
+  for (const r of rows.slice(0, 100)) lines.push(r.map(cell).join(' | '));
+  if (rows.length > 100) lines.push(`(${rows.length - 100} more rows)`);
+  return lines.join('\n');
+}
+
+// Loads, before a slide is drawn, the chart parts and SmartArt parts its frames point to (drawing is synchronous).
+// SmartArt: PowerPoint stores the finished drawing next to the data model (ppt/diagrams/drawingN.xml, dsp:drawing),
+// pointed to by a dsp:dataModelExt in the data part and by a slide relationship of type diagramDrawing.
+async function loadObjects(slide, zip, counts, warnings) {
+  const parts = new Map();
+  if (!slide.spTree) return parts;
+  const safeText = async (part) => {
+    try { const xml = await zip.text(part); return xml && xml.length <= MAX_CHART_XML ? xml : null; } catch (err) {
+      if (err instanceof PptxError && /too large/.test(err.message)) { warnings.add('Some charts or diagrams were left out: the presentation is too large.'); return null; }
+      throw err;
+    }
+  };
+  for (const node of walk(slide.spTree)) {
+    if (node.name !== 'graphicData') continue;
+    const uri = String(node.attrs.uri || '');
+    if (/\/chart$/i.test(uri)) {
+      const rel = slide.rels.get(relAttr(kid(node, 'chart'), 'id') || '');
+      if (!rel || !rel.target || parts.has(rel.target)) continue;
+      if (counts.chart >= MAX_OBJECTS) { warnings.add('Some charts were left out: the presentation has too many.'); continue; }
+      counts.chart++;
+      const xml = await safeText(rel.target);
+      if (xml) parts.set(rel.target, parseXml(xml));
+    } else if (/\/diagram$/i.test(uri)) {
+      const dmRel = slide.rels.get(relAttr(kid(node, 'relIds'), 'dm') || '');
+      if (!dmRel || !dmRel.target || parts.has(`dm:${dmRel.target}`)) continue;
+      if (counts.diagram >= MAX_OBJECTS) { warnings.add('Some diagrams were left out: the presentation has too many.'); continue; }
+      counts.diagram++;
+      const dmXml = await safeText(dmRel.target);
+      if (!dmXml) continue;
+      const dm = parseXml(dmXml);
+      const ext = [...walk(dm)].find((n) => n.name === 'dataModelExt');
+      const rel = (ext && slide.rels.get(ext.attrs.relId || '')) || relOfType(slide.rels, 'diagramDrawing');
+      let drawing = null;
+      if (rel && rel.target) {
+        const xml = await safeText(rel.target);
+        if (xml) drawing = { doc: parseXml(xml), rels: await loadRels(zip, rel.target) };
+      }
+      parts.set(`dm:${dmRel.target}`, { dm, drawing });
+    }
+  }
+  return parts;
+}
+
+// The data model's own text (a diagram saved without a drawing): the content points, indented by their depth.
+function diagramItems(dm) {
+  const model = kid(dm, 'dataModel');
+  const kind = new Map(); const text = new Map(); const order = [];
+  for (const pt of kids(kid(model, 'ptLst'), 'pt')) {
+    const id = pt.attrs.modelId;
+    const type = pt.attrs.type || 'node';
+    kind.set(id, type);
+    if (type !== 'node') continue;
+    const t = kids(kid(pt, 't'), 'p').map((p) => [...walk(p)].filter((n) => n.name === 't').map((n) => n.text).join('')).join(' ').replace(/\s+/g, ' ').trim();
+    if (t) { text.set(id, t.slice(0, 300)); order.push(id); }
+  }
+  const parent = new Map();
+  for (const c of kids(kid(model, 'cxnLst'), 'cxn')) if (!c.attrs.type || c.attrs.type === 'parOf') parent.set(c.attrs.destId, c.attrs.srcId);
+  const depth = (id) => { let d = 0; let p = parent.get(id); while (p && d < 20) { if (kind.get(p) === 'node') d++; p = parent.get(p); } return d; };
+  return order.slice(0, MAX_ITEMS).map((id) => ({ text: text.get(id), level: Math.min(8, depth(id)) }));
+}
+
 function backgroundOf(doc, ctx) {
   const bg = at(doc, 'cSld', 'bg');
   if (!bg) return null;
@@ -648,6 +910,11 @@ function slideText(shapes) {
     else if (s.type === 'table') parts.push(s.rows.map((r) => r.cells.filter(Boolean).map((c) => paragraphsText(c.paragraphs).replace(/\n/g, ' ')).join(' | ')).join('\n'));
     else if (s.type === 'pic' && s.alt) parts.push(`[Picture: ${s.alt}]`);
     else if (s.type === 'placeholder') parts.push(`[${s.label}]`);
+    else if (s.type === 'chart') parts.push(chartAsText(s.chart));
+    else if (s.type === 'diagram') {
+      const lines = s.items.length ? s.items.map((i) => `${'  '.repeat(i.level)}- ${i.text}`) : [...s.shapes].filter((x) => x.text).sort((a, b) => Math.round(a.y / 50000) - Math.round(b.y / 50000) || a.x - b.x).map((x) => paragraphsText(x.text.paragraphs)).filter(Boolean);
+      if (lines.length) parts.push(`[Diagram${s.name ? `: ${s.name}` : ''}]\n${lines.join('\n')}`);
+    }
   }
   return parts.join('\n\n');
 }
@@ -684,6 +951,7 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
   const defaultTextStyle = kid(presentation, 'defaultTextStyle');
   const warnings = new Set();
   const mediaParts = new Set();
+  const counts = { chart: 0, diagram: 0 };
   const cache = new Map(); // layout / master / theme parts, shared by the slides that use them
 
   async function loadPart(part, kind) {
@@ -717,7 +985,8 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
       master.clrMap = kid(master.doc, 'clrMap')?.attrs || {};
     }
     const theme = master?.theme || { colors: {} };
-    const common = { theme, clrMap: master?.clrMap || {}, layout, master, defaultTextStyle, warnings, media: mediaParts };
+    const parts = await loadObjects(slide, zip, counts, warnings);
+    const common = { theme, clrMap: master?.clrMap || {}, layout, master, defaultTextStyle, warnings, media: mediaParts, parts };
     const shapes = [];
     // Behind the slide's own shapes: the master's, then the layout's (unless either hides them).
     if (master && layout && slide.showMasterSp && layout.showMasterSp) drawTree(master.spTree, { ...common, kind: 'master', rels: master.rels }, shapes);
@@ -765,5 +1034,5 @@ const isPptxName = (name) => /\.pptx$/i.test(String(name || '').split(/[?#]/)[0]
 
 module.exports = {
   parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, PptxError,
-  MAX_UNCOMPRESSED, MAX_FILE_BYTES, MAX_SLIDES, EMU_PER_PT,
+  MAX_UNCOMPRESSED, MAX_FILE_BYTES, MAX_SLIDES, EMU_PER_PT, MAX_CHART_POINTS,
 };
