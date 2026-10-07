@@ -845,7 +845,7 @@ class ClaudeCodeEngine {
       // A transient failure (see transientFailure) with nothing run and nothing shown: once more on a fresh process after a short pause.
       if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code)) {
         emit({ type: 'status', text: 'Claude Code is busy, trying again…' });
-        await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); t.unref?.(); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
+        await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
         if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort }, { fresh: true, attempt: 1 });
       }
       emit({ type: 'error', ...describeFailure(failure, code) });
