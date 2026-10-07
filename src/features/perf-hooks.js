@@ -36,8 +36,28 @@ function install(mainFile) {
     return realClear.call(this, handle);
   };
 
+  // Event-loop delay of the main process (how long it stalled), and when each page's load events fired.
+  const { monitorEventLoopDelay } = require('perf_hooks');
+  const loop = monitorEventLoopDelay({ resolution: 5 });
+  loop.enable();
+  const loads = []; // { url, start, dom, finish } in ms since process creation, in creation order
+  try {
+    const { app } = require('electron');
+    app.on('web-contents-created', (_e, wc) => {
+      const rec = { id: wc.id, url: '', created: Math.round(Date.now() - origin) };
+      loads.push(rec);
+      const at = () => Math.round(Date.now() - origin);
+      wc.on('did-start-navigation', (details) => { if (details.isMainFrame && /^https?:/.test(details.url)) { rec.url = details.url; rec.start ??= at(); } });
+      wc.once('dom-ready', () => { rec.dom = at(); });
+      wc.once('did-finish-load', () => { rec.finish = at(); });
+    });
+  } catch { /* not the main process */ }
+
   const api = {
     mark,
+    loads: () => loads.map((l) => ({ ...l })),
+    origin: () => origin,
+    loopDelay: (reset = false) => { const r = { meanMs: Math.round(loop.mean / 1e5) / 10, p99Ms: Math.round(loop.percentile(99) / 1e5) / 10, maxMs: Math.round(loop.max / 1e5) / 10 }; if (reset) loop.reset(); return r; },
     marks: () => ({ ...marks }),
     requires: () => requires.map((r) => ({ ...r, ms: Math.round(r.ms * 10) / 10 })),
     requireTotalMs: () => Math.round(requires.reduce((s, r) => s + r.ms, 0)),
