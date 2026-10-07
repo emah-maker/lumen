@@ -61,8 +61,9 @@ const SELECTORS = {
   rowPlay: ['button[aria-label^="Play "]'],
   // Containers whose links are not search results: the song rows' own links, the playbar, the side and top bars.
   chrome: ['[data-testid="tracklist-row"]', 'footer', '[data-testid="now-playing-bar"]', '[data-testid="now-playing-widget"]', 'nav', 'header', '[data-testid="topbar"]'],
-  // The big Play button of an item's own page (track, album, artist, playlist): its action bar first, then the sticky top bar's copy.
-  entityPlay: ['[data-testid="action-bar-row"] [data-testid="play-button"]', '[data-testid="topbar-content"] [data-testid="play-button"]', 'main [data-testid="play-button"]'],
+  // The big Play button of an item's own page (track, album, artist, playlist): its action bar first, then the sticky top bar's copy. Never
+  // a bare play-button of the main area: that is a card of some other item.
+  entityPlay: ['[data-testid="action-bar-row"] [data-testid="play-button"]', '[data-testid="topbar-content"] [data-testid="play-button"]'],
 };
 // Words the page shows for states with no element of their own (lower case, matched in the page's main text).
 const TEXT = { noResults: ['no results found'] };
@@ -260,7 +261,8 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   function seek(sec) {
     var input = q('progressInput');
     var s = read();
-    if (input && s.dur > 0) {
+    if (input && !(s.dur > 0)) return; // (the page has the slider but nothing is loaded: nothing to seek)
+    if (input) {
       var max = Number(input.max) || s.dur;
       var value = Math.max(0, Math.min(max, (sec / s.dur) * max));
       var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -389,7 +391,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       var sig = sigOf(items);
       if (sig !== stableSig) { stableSig = sig; stableAt = Date.now(); poke(STABLE_MS + 20); return null; }
       if (Date.now() - stableAt < STABLE_MS) { poke(STABLE_MS - (Date.now() - stableAt) + 20); return null; }
-      if (sig === startSig && !wasThere && age < 2500) { poke(2500 - age + 20); return null; } // (the previous search's rows, until the page replaces them)
+      if (sig === startSig && !wasThere) return null; // (what the page showed before: until it shows this search's results, or the wait ends)
       return { items: items };
     }, SEARCH_MS, function (found) {
       if (seq !== searchSeq) return;
@@ -418,6 +420,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       out({ t: 'list', kind: 'search', rid: rid, ok: true, items: merged });
     });
   }
+  function pageKey() { var m = q('main'); return m ? text(m).slice(0, 300) : ''; } // (what the page is about: its text differs from one item's page to the next)
   // Play an item: a song listed on this page by its own row's button; anything else by its own page's big Play button.
   function playItem(kind, id) {
     var seg = KIND_PATH[kind];
@@ -430,8 +433,18 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       }
     }
     var path = '/' + seg + '/' + id;
+    var wasHere = onPath(path), before = pageKey(), seenKey = '', seenAt = 0;
     nav(path);
-    watch(function () { if (!onPath(path)) return null; var b = q('entityPlay'); return b && !b.disabled ? b : null; }, PLAY_MS, function (b) {
+    // The item's own page: on its route, with its Play button, and not the page that was showing before (until the router replaces it), standing still.
+    watch(function (poke) {
+      if (!onPath(path)) return null;
+      var b = q('entityPlay');
+      if (!b || b.disabled) return null;
+      var key = pageKey();
+      if (!wasHere && before && key === before) return null;
+      if (key !== seenKey) { seenKey = key; seenAt = Date.now(); poke(STABLE_MS / 2 + 20); return null; }
+      return Date.now() - seenAt >= STABLE_MS / 2 ? b : null;
+    }, PLAY_MS, function (b) {
       if (b) b.click();
       else out({ t: 'error', message: q('playPause') ? 'Spotify didn’t show a play button for that item.' : NO_PLAYER });
     });

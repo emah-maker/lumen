@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Spotify search and play work again in the music widget.** The "Play as Lumen" search could show "Spotify didn’t answer the search": it took the previous search's results (or the page's cards) for the new ones, and waited on a result list that the page did not draw in time. It now opens the search route in the page itself, waits (with the page's own change notifications, not fixed sleeps) until the results for your term stand still, then loads a longer songs list; a song or album plays through its own Play button; a signed-out Spotify page shows "Sign in to Spotify in Lumen"; and a control the page doesn’t show says "Spotify’s player controls weren’t found" instead of timing out. All of Spotify’s selectors are in one table in `src/features/spotify-bridge.js`.
+
 ## 0.5.17 (2026-10-07)
 
 - **Claude Code stays reachable while it is busy elsewhere.** A slow start (many Claude Code sessions running at once) no longer counts as "Couldn’t reach Claude Code": a fresh start gets five minutes before it is treated as hung, says "still starting" when it is slow, and a Claude Code that merely went quiet is reported instead of handing your message to another model. A transient failure (an overloaded or rate-limited API, a spawn error such as EBUSY, a CLI that exited at once) is retried once before anything else happens. When Claude Code really cannot be reached the notice now says why ("it is overloaded", "claude exited with code 1: …"), and your next message tries Claude Code again instead of staying on the stand-in.

@@ -51,7 +51,7 @@ if (shots) fs.mkdirSync(shots, { recursive: true });
   // search signed out: the card says to sign in; the bridge's navigation finds no rows and says so
   await page(`${card}.querySelector('.am-searchbtn').click()`);
   await page(`(() => { const i = ${card}.querySelector('.am-searchfield input'); i.value = 'shake it off'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  check('real: signed out, the search panel says playing needs a sign-in', await waitFor(`/Sign in to Spotify to play/.test(${card}.querySelector('.am-pop')?.textContent || '')`, 40), await page(`${card}.querySelector('.am-pop')?.textContent || ''`));
+  check('real: signed out, the search panel says playing needs a sign-in', await waitFor(`/Sign in to Spotify in Lumen to play/.test(${card}.querySelector('.am-pop')?.textContent || '')`, 40), await page(`${card}.querySelector('.am-pop')?.textContent || ''`));
   await sleep(8000);
   const afterSearch = await engine(`JSON.stringify({ path: location.pathname, rows: document.querySelectorAll('[data-testid="tracklist-row"]').length })`);
   console.log(`      (signed-out search page through the page's router: ${afterSearch})`);

@@ -29,7 +29,7 @@ const ART = (() => {
 
 const SERVICES = [
   { type: 'applemusic', fake: '__appleMusicFake', name: 'Apple Music', queue: true, note: /short previews/, slug: 'apple' },
-  { type: 'spotify', fake: '__spotifyEngineFake', name: 'Spotify', queue: false, note: /Sign in to Spotify to play/, slug: 'spotify' },
+  { type: 'spotify', fake: '__spotifyEngineFake', name: 'Spotify', queue: false, note: /Sign in to Spotify in Lumen to play/, slug: 'spotify' },
 ];
 
 (async () => {

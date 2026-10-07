@@ -69,7 +69,7 @@ function route() {
       + '<a href="/album/CCCCCCCCCCCCCCCCCCCCC1">The Album</a><a href="/artist/BBBBBBBBBBBBBBBBBBBBB1">Taylor</a></div>';
   } else if (/^\\/(track|album|playlist|artist)\\//.test(p)) {
     __log.push('route:' + p);
-    m.innerHTML = '<button data-testid="play-button" aria-label="Play">Play</button>';
+    m.innerHTML = '<div data-testid="action-bar-row"><button data-testid="play-button" aria-label="Play">Play</button></div>';
     m.querySelector('button').onclick = () => { __log.push('play:' + p); sp.title = 'Played ' + p.split('/')[2]; sp.artist = 'Result'; sp.artists = ['Result']; sp.playing = true; sp.pos = 0; mediaSession(); drawFoot(); };
   }
 }
