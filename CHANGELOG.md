@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Choose when and how unused tabs sleep.** Settings > Tabs > Memory now picks the mode (off, after a time unused, only when memory is low, or both), the time (5 minutes to 8 hours, or any number of minutes), and how: Unload frees the page's memory and reloads it on return (as before), Sleep keeps it paused in memory and wakes at once. Memory is low under a free-memory percentage you choose, or when Lumen itself uses more than a chosen number of GB, checked every 30 seconds. You can keep pinned tabs and listed sites awake (also from a tab's right-click menu: Never Sleep this site), limit how many background tabs stay awake, and put a tab to sleep or wake it from its menu. Sleeping tabs show "Sleeping — click to wake" in their hover card. Tabs sharing the camera, microphone or screen never sleep. Changes apply at once; the defaults behave as before.
+
 ## 0.5.17 (2026-10-07)
 
 - **Claude Code stays reachable while it is busy elsewhere.** A slow start (many Claude Code sessions running at once) no longer counts as "Couldn’t reach Claude Code": a fresh start gets five minutes before it is treated as hung, says "still starting" when it is slow, and a Claude Code that merely went quiet is reported instead of handing your message to another model. A transient failure (an overloaded or rate-limited API, a spawn error such as EBUSY, a CLI that exited at once) is retried once before anything else happens. When Claude Code really cannot be reached the notice now says why ("it is overloaded", "claude exited with code 1: …"), and your next message tries Claude Code again instead of staying on the stand-in.

@@ -99,7 +99,15 @@ const DEFAULTS = {
   minimumFontSize: 0,
   focusRings: false,
   hardwareAcceleration: true, // restart
-  tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep)
+  tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep); false = off, whatever the mode
+  tabSleepMode: 'both', // [tabs] off | idle (after tabSleepMinutes) | memory (only when memory is low) | both (features/tab-sleep.js)
+  tabSleepMinutes: 20, // [tabs] idle time before a tab sleeps (1 to 10080)
+  tabSleepHow: 'unload', // [tabs] unload (close the page, reload on return) | freeze (keep it paused in memory)
+  tabSleepFreePercent: 10, // [tabs] memory is low when under this % of the computer's memory is free
+  tabSleepLumenGb: 0, // [tabs] ...or when Lumen itself uses more than this many GB (0: not checked)
+  tabSleepMaxAwake: 0, // [tabs] most background tabs kept awake; the least recently used sleep (0: no limit)
+  tabSleepKeepPinned: false, // [tabs] pinned tabs never sleep
+  tabSleepNever: [], // [tabs] sites whose tabs never sleep
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
@@ -172,6 +180,7 @@ const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
 const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
+const TS = require('../features/tab-sleep'); // [tabs] the sleep settings' choices
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
@@ -207,6 +216,13 @@ function validate(key, value) {
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
+    case 'tabSleepMode': return pick(value, TS.MODES, null);
+    case 'tabSleepHow': return pick(value, TS.HOWS, null);
+    case 'tabSleepMinutes': return TS.cleanMinutes(value);
+    case 'tabSleepFreePercent': return pick(Number(value), TS.FREE_PERCENT_CHOICES, null);
+    case 'tabSleepLumenGb': return pick(Number(value), TS.LUMEN_GB_CHOICES, null);
+    case 'tabSleepMaxAwake': return pick(Number(value), TS.MAX_AWAKE_CHOICES, null);
+    case 'tabSleepNever': return TS.cleanHosts(value);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
@@ -644,6 +660,7 @@ function create(deps) {
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
+      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepNever': deps.onTabSleepChange?.(key); break;
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
@@ -681,6 +698,7 @@ function create(deps) {
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxMinutes: TS.MAX_MINUTES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
       clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,

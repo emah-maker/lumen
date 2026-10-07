@@ -6331,7 +6331,8 @@ function fillHoverCard(el) {
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
   if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
-  hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff;
+  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover')].filter(Boolean).join(' · '); // asleep: the card says how to wake it
+  hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
 
