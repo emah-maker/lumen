@@ -18,7 +18,8 @@ const settingsFile = require('../settings/settings-file'); // tmp + rename + .ba
 const RISKY_TYPES = /^\.(exe|msi|msp|mst|msix|msixbundle|bat|cmd|com|scr|pif|cpl|msc|ps1|ps1xml|psm1|psd1|vbs|vbe|vb|js|jse|wsf|wsh|wsc|sct|hta|jar|jnlp|dll|ocx|lnk|url|scf|inf|reg|appx|appxbundle|appinstaller|application|gadget|diagcab|settingcontent-ms)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
 
-// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)? }
+// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)?,
+//         openInstead(item, contents)? (true: not downloaded, shown instead), onCompleted(entry)? }
 function createDownloads(deps) {
   const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk, url, started, endedAt, speed } (+ item, contents: not sent)
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
@@ -94,7 +95,9 @@ function createDownloads(deps) {
   }
 
   function setup() {
-    deps.session.defaultSession.on('will-download', (_event, item, contents) => {
+    deps.session.defaultSession.on('will-download', (event, item, contents) => {
+      // A file the browser shows itself instead (a local .pptx opened in a tab: features/slides-viewer.js).
+      if (deps.openInstead?.(item, contents)) { event.preventDefault(); return; }
       const dir = deps.downloadDir(); // [settings] Downloads folder unless changed in Settings
       const base = path.basename(item.getFilename() || 'download');
       const url = item.getURL();
@@ -116,7 +119,7 @@ function createDownloads(deps) {
         else item.setSavePath(target);
       }
       const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now(), url, endedAt: null, speed: 0 };
-      Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents } });
+      Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents }, saveAs: { value: ask } });
       let lastAt = Date.now();
       let lastReceived = 0;
       downloads.unshift(entry);
@@ -170,6 +173,7 @@ function createDownloads(deps) {
     progress();
     sendDownloads();
     if (entry.state === 'completed') loadIcon(entry);
+    if (entry.state === 'completed') deps.onCompleted?.(entry); // a downloaded deck opens in the slide viewer (main.js)
     const w = deps.win();
     if (entry.state === 'completed' && w && !w.isDestroyed()) w.flashFrame(!w.isFocused());
   }

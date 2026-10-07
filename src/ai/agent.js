@@ -23,6 +23,7 @@ const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, 
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
@@ -3787,6 +3788,8 @@ ${rendered.text}
     if (!tab) throw new Error(input.tab_id !== undefined ? `No tab with id ${input.tab_id}. Call list_tabs.` : this.browser.noTabReason?.() || 'No tab is open.');
     const wc = tab.webContents;
     const url = wc.getURL();
+    const deck = slidesViewer.deckUrlOf(url); // a PowerPoint deck in the slide viewer: its file is what is read (and asked about)
+    if (deck) return { wc, url: deck, kind: 'pptx' };
     const web = /^(file|https?):/i.test(url);
     const isPdf = web && (/\.pdf$/i.test(url.split(/[?#]/)[0]) || (await runScript(wc, 'document.contentType', 2000).catch(() => '')) === 'application/pdf');
     if (!isPdf) throw new Error('That tab is not showing a PDF. Use read_page for web pages.');
@@ -3812,11 +3815,13 @@ ${rendered.text}
   }
 
   async readPdf(input) {
-    const { wc, url } = await this.pdfTarget(input);
+    const { wc, url, kind } = await this.pdfTarget(input);
     const holder = taintHolder(taskScope.getStore()?.gate?.run);
     if (!holder?.pdfAllowed?.has(pdfText.pdfKey(url))) throw new Error('The user has not allowed reading this PDF in this chat.'); // the tab changed after the card
+    const deck = kind === 'pptx';
     try {
-      const out = pdfText.formatPages(await pdfText.loadPdfPages(wc.session, url), { pages: input.pages, query: input.query });
+      const texts = deck ? await slidesViewer.loadSlideTexts(url) : await pdfText.loadPdfPages(wc.session, url);
+      const out = pdfText.formatPages(texts, { pages: input.pages, query: input.query, noun: deck ? 'presentation' : 'PDF' });
       const lo = out.pages[0];
       const hi = out.pages[out.pages.length - 1];
       const showing = input.query ? `searched for "${String(input.query).slice(0, 80)}"` : out.pages.length ? `showing pages ${lo === hi ? lo : `${lo}-${hi}`}` : 'no pages';
@@ -3824,13 +3829,13 @@ ${rendered.text}
       const note = out.truncated ? `
 [Cut off at ${pdfText.MAX_CHARS} characters. ${more}]` : '';
       return `<untrusted_page_content>
-PDF: ${pdfText.pdfName(url)} (${out.numPages} pages; ${showing})
+${deck ? 'Presentation' : 'PDF'}: ${pdfText.pdfName(url)} (${out.numPages} ${deck ? 'slides, one page each' : 'pages'}; ${showing})
 
 ${out.text}${note}
 </untrusted_page_content>`;
     } catch (err) {
-      if (err instanceof pdfText.PdfError) throw new Error(err.message);
-      throw new Error('The PDF could not be read.');
+      if (err instanceof pdfText.PdfError || err instanceof require('../features/pptx').PptxError) throw new Error(err.message);
+      throw new Error(deck ? 'The presentation could not be read.' : 'The PDF could not be read.');
     }
   }
 

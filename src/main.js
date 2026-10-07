@@ -97,6 +97,8 @@ const settingsPage = require('./settings/settings-backend'); // [settings] lumen
 const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
+const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
+const slidesRt = slidesViewer.create();
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
 const pageTools = require('./features/page-tools').createPageTools({
   t,
@@ -134,7 +136,7 @@ const translate = require('./features/translate').createTranslate({
   popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
   openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
 });
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
@@ -1588,7 +1590,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -2127,6 +2129,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
+  slidesRt.attach(tab); // the slide viewer gets its deck once loaded (features/slides-viewer.js)
   translate.attach(tab);
   passwordsRt?.attach(tab); // [passwords] offers to save a sign-in; features/passwords.js decides which tabs
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
@@ -3606,6 +3609,21 @@ const downloads = createDownloads({
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   onChange: () => managers?.pushDownloads(),
+  // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
+  // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
+  openInstead: (item, contents) => {
+    if (!slidesViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() })) return false;
+    const tab = contents && tabByContents(contents);
+    if (tab) return slidesRt.openInPlace(contents, item.getURL());
+    openTab(slidesViewer.viewerUrl(item.getURL()));
+    return true;
+  },
+  onCompleted: (entry) => {
+    if (!slidesViewer.shouldOpenFinished(entry)) return;
+    const from = entry.contents && !entry.contents.isDestroyed?.() ? tabByContents(entry.contents) : null;
+    if (entry.contents && !from) return; // a private window's, a research tab's or a background download: not opened here
+    openTab(slidesViewer.viewerUrl(pathToFileURL(entry.path).href), { openerId: from?.id ?? null });
+  },
 });
 
 // ---------- Bookmarks and Downloads pages (features/managers.js) ----------
@@ -3923,6 +3941,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
+  else if (key === 'f5' && !input.shift && !input.control && slidesViewer.isViewerUrl(wc?.getURL())) slidesRt.present(wc); // F5 presents a deck, as in PowerPoint
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
@@ -6220,7 +6239,7 @@ pendingLinks.push(...linksIn(process.argv));
 app.on('open-url', (event, url) => { event.preventDefault(); openLinksFromOtherApps([url]); });
 app.on('open-file', (event, filePath) => { event.preventDefault(); openLinksFromOtherApps(fileUrlsFor([filePath])); });
 // File > Open File… (Cmd/Ctrl+O): pages, PDFs, images, text and media open in tabs, as in Chrome.
-const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'txt', 'md', 'json', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac'];
+const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'pptx', 'txt', 'md', 'json', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac'];
 async function openFileDialog() {
   if (!win || win.isDestroyed()) return;
   const { canceled, filePaths } = await electronDialog.showOpenDialog(win, {
