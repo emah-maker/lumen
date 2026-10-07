@@ -129,11 +129,6 @@ button:active:not(:disabled) { transform: scale(0.94); }
 /* ---------- chrome ---------- */
 
 .chrome { flex: none; user-select: none; position: relative; }
-/* Full screen on Windows and Linux (app.js, features/fullscreen-chrome.js): the tab strip and toolbar collapse, as in
-   Chrome, so the page reaches every edge of the screen. Clipped to no height rather than display: none, so the address
-   bar can still take the keyboard (overflow: clip never scrolls to a focused field); typing there shows them again. */
-body.window-fullscreen:not(.chrome-reveal) { --chrome-h: 0px; }
-body.window-fullscreen:not(.chrome-reveal) .chrome { height: 0; overflow: clip; }
 
 /* The tab strip doubles as the title bar; leave room for the native window controls. */
 .tabstrip {
