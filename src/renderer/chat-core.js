@@ -1099,6 +1099,21 @@ function appendToTurn(el) {
   return el;
 }
 
+// [annotate] A finished annotate step: "Drew N marks on the page" with Show again / Clear (the drawing is in the tab itself).
+function annotateChip(step) {
+  const count = Number(step.dataset.marks) || 0;
+  if (!count) return; // clear only
+  const label = t(count === 1 ? 'tool.annotate.done.one' : 'tool.annotate.done.other', { count });
+  step.firstChild.textContent = label;
+  step.title = label;
+  if (!window.assistant?.annotate) return;
+  for (const [action, key] of [['show', 'tool.annotate.show'], ['clear', 'tool.annotate.clear']]) {
+    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'step-action', textContent: t(key) });
+    button.onclick = () => { button.disabled = true; window.assistant.annotate(action).finally(() => { button.disabled = false; }); };
+    step.append(button);
+  }
+}
+
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
   screenshot: () => t('tool.screenshot'),
@@ -1118,6 +1133,7 @@ const TOOL_LABELS = {
   fill_form: () => t('tool.fill_form'),
   click_at: () => t('tool.click_at'),
   hover: () => t('tool.hover'),
+  annotate: () => t('tool.annotate'),
   upload_file: () => t('tool.upload_file'),
   go_forward: () => t('tool.go_forward'),
   reload: () => t('tool.reload'),
@@ -1293,6 +1309,7 @@ window.assistant.onEvent((event) => {
       step.className = event.id ? 'step running' : 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) turn.steps.set(event.id, step);
+      if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
       step.title = label;
@@ -1315,6 +1332,7 @@ window.assistant.onEvent((event) => {
       const step = turn.steps.get(event.id);
       if (!step) break;
       step.className = event.ok ? 'step done' : event.stopped ? 'step stopped' : 'step failed';
+      if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
       if (!event.ok && event.error) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
         const reason = lines.find((l) => /failed/i.test(l) && !/^\d+ of \d+ fields failed:?$/i.test(l)) || lines[0] || '';
