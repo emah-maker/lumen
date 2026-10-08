@@ -92,7 +92,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   burst('w'); burst('x', true);
   timers.splice(0).forEach((fn) => fn());
   check('default is non-quiet; keys are separate', fired.length === 4 && fired[2][1] === false && fired[3][1] === true, JSON.stringify(fired));
-  burst('w', undefined === 1 ? true : { not: 'true' });
+  burst('w', { not: 'true' });
   timers.splice(0).forEach((fn) => fn());
   check('a non-boolean argument (event object) is not quiet', fired[4][1] === false);
 
