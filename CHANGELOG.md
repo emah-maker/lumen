@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **"What is this?" now shows the AI your screen.** When a message points at what you are looking at ("explain this error", "is this a scam?", "what am I looking at", "solve this", "look at my screen") the sidebar attaches a screenshot of the current tab, so you no longer have to describe it; a model that can't see images gets the page's text instead. A camera button in the composer lights up as you type when it will happen; click it to leave the screenshot out, or to include one when your words don't ask for it. A chip under your message shows what went along (hover for the picture, × takes it out of the chat), and the AI is also told to call `screenshot` itself when you say "this" or "here" with nothing attached. Never taken for sites where you turned AI off, Lumen's own pages, or (from the words alone) payment, checkout and password pages.
+
 ## 0.5.18 (2026-10-07)
 
 - **Pages load sooner at start-up, and Lumen uses less memory.** Extensions now load side by side and no longer hold the first tab back (one with a big rule set made a restored session wait about 3 seconds on a blank page; the page now starts in under a second, and the front page reloads once if an extension that finished late has scripts for it). The music widget's hidden web player (about 300 MB) no longer starts for a new-tab page nobody can see, the tab-drag card's window is closed again after two minutes unused, the favicon file is read off the main thread, the first tab's follow-up work (new-tab page, update check, model lists) runs one task at a time after it has loaded, and the AI's page-read cache is capped at 6 MB. `node scripts/measure-startup.js` measures it all.

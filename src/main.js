@@ -212,7 +212,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
@@ -7478,7 +7478,8 @@ ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSele
 
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = []) => {
+const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
@@ -7572,7 +7573,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     const leftOut = chatImages.rejectionNotice(rejected);
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
@@ -7615,6 +7616,14 @@ ipcMain.on('agent:stop', (event, id) => {
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
+// [screen context] The chip's x: the screenshot of one earlier message is taken out of the chat (never mid-run), so later turns don't carry it.
+ipcMain.handle('agent:screen-drop', (_e, id) => {
+  syncToSender(_e);
+  if (typeof id !== 'string' || !/^[\w-]{1,40}$/.test(id) || agent.runningFor(agent.messages)) return false;
+  const n = screenContext.dropFrom(agent.messages, id);
+  if (n) { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); }
+  return n > 0;
+});
 ipcMain.handle('agent:rewind', (_e, expected) => {
   syncToSender(_e);
   if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return false; // never mid-run
