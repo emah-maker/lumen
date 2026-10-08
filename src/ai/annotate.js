@@ -25,7 +25,7 @@ const COORD_LIMIT = 20000;
 
 const TOOL = {
   name: 'annotate',
-  description: 'Draw on the page to explain it: marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline, target: element id or "text:…", x,y,w,h: screenshot px, to:{target|x,y} (arrow tip), text, color}]. Screenshot or find first; number steps like your answer. clear:true removes drawings.',
+  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline, target:id or "text:…", x,y,w,h:screenshot px, to:{target|x,y} arrow tip, text, color}]. Screenshot/find first; number steps like your answer. clear:true removes.',
   input_schema: {
     type: 'object',
     properties: {
@@ -40,7 +40,7 @@ const TOOL = {
             y: { type: 'number' },
             w: { type: 'number' },
             h: { type: 'number' },
-            to: { type: 'object', properties: { target: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
+            to: { type: 'object' },
             text: { type: 'string' },
             color: { type: 'string', enum: COLORS },
           },
