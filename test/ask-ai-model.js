@@ -59,7 +59,7 @@ const LIMIT_MS = 200;
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   const opts = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   const OPUS = 'claude-opus-5-5';
-  const HAIKU = 'claude-haiku-4-5';
+  const HAIKU = 'claude-haiku-5-5';
   const GPT = opts.find((o) => o.startsWith('openai:') && !o.endsWith(':auto'));
   check('the picker lists Claude and OpenAI models', opts.includes(OPUS) && opts.includes(HAIKU) && Boolean(GPT), JSON.stringify(opts));
 

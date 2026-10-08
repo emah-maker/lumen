@@ -36,10 +36,10 @@ const OPTIONS = [
   check('request: no tab is said, not guessed', /<current_tab>\(none\)<\/current_tab>/.test(B.buildMessages({ question: 'q' })[0].content));
 
   // ---- which model answers
-  check('plan: an API chat uses its provider\'s cheaper sibling', B.plan({ chatModel: 'claude-opus-5-5', options: OPTIONS }).model === 'claude-haiku-4-5' && B.plan({ chatModel: 'openai:gpt-5.6', options: OPTIONS }).model === 'openai:gpt-5.6-mini' && B.plan({ chatModel: 'xai:grok-4', options: OPTIONS }).model === 'xai:grok-4');
+  check('plan: an API chat uses its provider\'s cheaper sibling', B.plan({ chatModel: 'claude-opus-5-5', options: OPTIONS }).model === 'claude-haiku-5-5' && B.plan({ chatModel: 'openai:gpt-5.6', options: OPTIONS }).model === 'openai:gpt-5.6-mini' && B.plan({ chatModel: 'xai:grok-4', options: OPTIONS }).model === 'xai:grok-4');
   check('plan: "same model" keeps the chat\'s own', B.plan({ chatModel: 'claude-opus-5-5', options: OPTIONS, mode: 'same' }).model === 'claude-opus-5-5');
   let p = B.plan({ chatModel: 'claudecode:default', defaultModel: 'openai:gpt-5.6', options: OPTIONS });
-  check('plan: Claude Code falls back to its own vendor\'s API model first, cheaper sibling', p.model === 'claude-haiku-4-5' && p.engine === 'claudecode:default' && p.viaDefault === false, J(p));
+  check('plan: Claude Code falls back to its own vendor\'s API model first, cheaper sibling', p.model === 'claude-haiku-5-5' && p.engine === 'claudecode:default' && p.viaDefault === false, J(p));
   p = B.plan({ chatModel: 'codex:default', defaultModel: 'xai:grok-4', options: OPTIONS });
   check('plan: Codex falls back to OpenAI', p.model === 'openai:gpt-5.6-mini' && p.engine === 'codex:default' && !p.viaDefault, J(p));
   p = B.plan({ chatModel: 'antigravity:default', defaultModel: 'xai:grok-4', options: OPTIONS });
@@ -57,11 +57,11 @@ const OPTIONS = [
     const chunks = [];
     const usage = [];
     const r = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, transcript: 'User: hi', tab: null, question: '/btw hi?', call, onText: (c) => chunks.push(c), onUsage: (m, model) => usage.push(model) });
-    check('run: streams the text, answers, reports usage once on the model that answered', r.ok && r.text === 'Hello' && chunks.join('') === 'Hello' && r.model === 'claude-haiku-4-5' && J(usage) === '["claude-haiku-4-5"]', J(r));
+    check('run: streams the text, answers, reports usage once on the model that answered', r.ok && r.text === 'Hello' && chunks.join('') === 'Hello' && r.model === 'claude-haiku-5-5' && J(usage) === '["claude-haiku-5-5"]', J(r));
     check('run: the model call gets a system prompt and messages only (no tools)', calls.length === 1 && Object.keys(calls[0]).sort().join() === 'messages,model,onText,signal,system' && /no tools/i.test(calls[0].system), J(Object.keys(calls[0])));
     const refusing = []; // the cheaper model is not on this key: the chat's own, once
-    const r2 = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', call: async (model) => { refusing.push(model); if (model === 'claude-haiku-4-5') throw Object.assign(new Error('model not found'), { status: 404 }); return { content: [{ type: 'text', text: 'ok' }], usage: null }; } });
-    check('run: a refused cheaper model falls back to the chat\'s own', r2.ok && J(refusing) === '["claude-haiku-4-5","claude-opus-5-5"]' && r2.model === 'claude-opus-5-5', J(r2));
+    const r2 = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', call: async (model) => { refusing.push(model); if (model === 'claude-haiku-5-5') throw Object.assign(new Error('model not found'), { status: 404 }); return { content: [{ type: 'text', text: 'ok' }], usage: null }; } });
+    check('run: a refused cheaper model falls back to the chat\'s own', r2.ok && J(refusing) === '["claude-haiku-5-5","claude-opus-5-5"]' && r2.model === 'claude-opus-5-5', J(r2));
     const r3 = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', call: async () => { throw new Error('boom\nstack'); } });
     check('run: an error is a result, never a throw', r3.ok === false && r3.error === 'boom', J(r3));
     check('run: nothing typed / nothing connected are results too', (await B.run({ chatModel: 'x', question: '/btw ', call })).error === 'empty' && (await B.run({ chatModel: 'claudecode:default', defaultModel: '', options: [], question: 'q', call })).error === 'no-provider');
@@ -103,7 +103,7 @@ const OPTIONS = [
     const r = await agent.btw({ messages: chat, tab: { title: 'Pricing', url: 'https://a.test/pricing?x=1' }, question: '/btw which page was that?', signal: new AbortController().signal, onText: (c) => streamed.push(c), emit: (e) => usageEvents.push(e) });
     check('btw: answered while the main task is still held (it did not wait for it, stop it or queue)', r.ok && r.text === 'It was the pricing page.' && streamed.join('') === 'It was the pricing page.' && !events.some((e) => e.type === 'done') && Date.now() - t0 < 2000, J(r));
     const btwReq = requests.find((q) => /Side question:/.test(J(q.messages)));
-    check('btw: one request, on the cheaper sibling, with no tools and no tool_choice', requests.length === 2 && btwReq.model === 'claude-haiku-4-5' && btwReq.tools === undefined && btwReq.tool_choice === undefined && typeof btwReq.system === 'string', J(Object.keys(btwReq)));
+    check('btw: one request, on the cheaper sibling, with no tools and no tool_choice', requests.length === 2 && btwReq.model === 'claude-haiku-5-5' && btwReq.tools === undefined && btwReq.tool_choice === undefined && typeof btwReq.system === 'string', J(Object.keys(btwReq)));
     check('btw: the request holds the chat so far and the tab, not the main prompt\'s tools or page text', /open the pricing page/.test(J(btwReq.messages)) && /Title: Pricing/.test(J(btwReq.messages)) && !/browser_state/.test(J(btwReq)), J(btwReq.messages).slice(0, 300));
     check('btw: the chat\'s history is untouched while it runs', J(chat) === historyBefore || (J(chat.slice(0, 1)) === J(JSON.parse(historyBefore).slice(0, 1)) && !J(chat).includes('which page was that')));
     check('btw: its tokens join the chat\'s usage totals and the sidebar is told', chat.settings.usage.turns === usageBefore + 1 && chat.settings.usage.input >= 100 && chat.settings.usage.output >= 7 && usageEvents.some((e) => e.type === 'usage' && e.usage.turns === usageBefore + 1), J(chat.settings.usage));
@@ -141,8 +141,8 @@ const OPTIONS = [
       c3.settings = { model: 'claudecode:default', ccSession: 'abc' };
       const r3 = await eng.btw({ messages: c3, question: 'what did I ask?' });
       const anth = seen.find((s) => s.anthropic)?.anthropic;
-      check('engine: a Claude Code chat is answered by Claude Haiku over the API, no tools, no engine process', r3.ok && r3.text === 'From Haiku.' && anth?.model === 'claude-haiku-4-5' && anth.tools === undefined && r3.engine === 'claudecode:default' && r3.viaDefault === false, J(r3));
-      check('engine: the result names who answered and which engine was not asked', r3.name === 'Claude Haiku 4.5' && r3.engineName === 'Claude Code', J([r3.name, r3.engineName]));
+      check('engine: a Claude Code chat is answered by Claude Haiku over the API, no tools, no engine process', r3.ok && r3.text === 'From Haiku.' && anth?.model === 'claude-haiku-5-5' && anth.tools === undefined && r3.engine === 'claudecode:default' && r3.viaDefault === false, J(r3));
+      check('engine: the result names who answered and which engine was not asked', r3.name === 'Claude Haiku 5.5' && r3.engineName === 'Claude Code', J([r3.name, r3.engineName]));
       check('engine: the chat\'s Claude Code session and history are untouched', c3.settings.ccSession === 'abc' && c3.length === 2 && c3.settings.usage.turns === 1);
       const lone = new Agent(fakeBrowser({ fallbackOptions: () => OPTIONS.filter((o) => /^(claudecode|codex):/.test(o.id)) }), () => null, () => ({ model: 'claudecode:default' }));
       const c4 = [user('x')];
@@ -196,9 +196,9 @@ const OPTIONS = [
     check('card: streamed text appears as it arrives', card.children[1].textContent === 'Part one.' && !card.children[1].className.includes('btw-waiting'));
     const r2 = cmd.run({ input: 'and another?', ask: () => {} });
     check('card: several can be open at once', r2.ok && tray.children.length === 2 && calls.length === 2);
-    finishers[0]({ ok: true, text: 'Part one.', name: 'Claude Haiku 4.5', engineName: 'Claude Code', engine: 'claudecode:default', viaDefault: false });
+    finishers[0]({ ok: true, text: 'Part one.', name: 'Claude Haiku 5.5', engineName: 'Claude Code', engine: 'claudecode:default', viaDefault: false });
     await sleep(5);
-    check('card: when done it renders the answer and says which model answered, and why not the engine', card.children[1].innerHTML === '<p>Part one.</p>' && /Answered by Claude Haiku 4\.5, not Claude Code/.test(card.children[2].textContent) && card.children[2].hidden === false, J([card.children[1].innerHTML, card.children[2].textContent]));
+    check('card: when done it renders the answer and says which model answered, and why not the engine', card.children[1].innerHTML === '<p>Part one.</p>' && /Answered by Claude Haiku 5.5, not Claude Code/.test(card.children[2].textContent) && card.children[2].hidden === false, J([card.children[1].innerHTML, card.children[2].textContent]));
     // dismiss: the close button cancels one still running and removes the card; Esc in the empty composer takes the newest
     const second = tray.children[1];
     const closeBtn = second.children[0].children[2];

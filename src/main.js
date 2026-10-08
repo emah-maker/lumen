@@ -3206,7 +3206,7 @@ function translateEngine() {
   if (!base) return null;
   const { provider } = providers.splitModel(base);
   if (provider === 'anthropic' ? !anthropicUsable() : !providerKey(provider)) return null;
-  let model = 'claude-haiku-4-5';
+  let model = 'claude-haiku-5-5';
   if (provider !== 'anthropic') {
     const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
     model = `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
@@ -3381,7 +3381,7 @@ function cheapTopicModelFor() {
   if (/^codex:/.test(chosen)) chosen = modelOptions().find((o) => !/^codex:/.test(o.id) && !o.id.endsWith(':__more') && o.signedIn !== false && !autoModel.isAuto(o.id))?.id || DEFAULT_MODEL;
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
-  if (provider === 'anthropic') return 'claude-haiku-4-5';
+  if (provider === 'anthropic') return 'claude-haiku-5-5';
   const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
   return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
 }

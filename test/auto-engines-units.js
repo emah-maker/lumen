@@ -27,7 +27,9 @@ const ccArgs = (id) => claude.buildArgs({ mcpConfig: 'm', sessionId: 's', resume
 let pick = route(cc, FAST);
 check('Claude Code, quick: haiku, as `--model haiku`', pick.id === 'claudecode:haiku' && after(ccArgs(pick.id), '--model') === 'haiku', JSON.stringify([pick.id, ccArgs(pick.id)]));
 pick = route(cc, { prompt: 'find the cheapest flight from Boston to Denver next month on this site' });
-check('Claude Code, typical: sonnet', pick.id === 'claudecode:sonnet' && after(ccArgs(pick.id), '--model') === 'sonnet', pick.id);
+check('Claude Code, an everyday browsing task: haiku (Haiku 5.5 is capable enough)', pick.id === 'claudecode:haiku', pick.id);
+pick = route(cc, { prompt: 'fix the login bug on this page' });
+check('Claude Code, code: sonnet', pick.id === 'claudecode:sonnet' && after(ccArgs(pick.id), '--model') === 'sonnet', pick.id);
 pick = route(cc, { prompt: HEAVY });
 check('Claude Code, hard: a strong model (opus or fable), never "auto"', ['claudecode:opus', 'claudecode:fable'].includes(pick.id) && !ccArgs(pick.id).includes('auto'), pick.id);
 check('Claude Code with only its own default: no --model flag (the CLI chooses: native auto)', (() => { const only = [cc.find((o) => o.id === 'claudecode:default')]; const p = route(only, FAST); return p.id === 'claudecode:default' && after(ccArgs(p.id), '--model') === null; })());
@@ -54,12 +56,12 @@ check('Antigravity with no models listed: its default, no --model flag', (() => 
 
 // ---- API providers: the request carries the provider and the concrete model
 const api = [
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', group: 'Claude' }, { id: 'claude-sonnet-5', label: 'Sonnet 5', group: 'Claude' }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', group: 'Claude' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', group: 'Claude' }, { id: 'claude-sonnet-5', label: 'Sonnet 5', group: 'Claude' }, { id: 'claude-haiku-5-5', label: 'Haiku 5.5', group: 'Claude' },
   { id: 'openai:gpt-5.6', label: 'GPT-5.6', group: 'OpenAI' }, { id: 'openai:gpt-5.6-mini', label: 'GPT-5.6 mini', group: 'OpenAI' },
   { id: 'xai:grok-4', label: 'Grok 4', group: 'Grok' }, { id: 'gemini:gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Gemini' }, { id: 'gemini:gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Gemini' },
   { id: 'openrouter:anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', group: 'OpenRouter' }, { id: 'openrouter:openai/gpt-5.6', label: 'GPT-5.6', group: 'OpenRouter' }, { id: 'openrouter:google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'OpenRouter' },
 ];
-for (const [scope, fast, strong] of [['anthropic', 'claude-haiku-4-5', 'claude-opus-5-5'], ['openai', 'gpt-5.6-mini', 'gpt-5.6'], ['gemini', 'gemini-2.5-flash', 'gemini-2.5-pro'], ['openrouter', 'google/gemini-2.5-flash', null]]) {
+for (const [scope, fast, strong] of [['anthropic', 'claude-haiku-5-5', 'claude-opus-5-5'], ['openai', 'gpt-5.6-mini', 'gpt-5.6'], ['gemini', 'gemini-2.5-flash', 'gemini-2.5-pro'], ['openrouter', 'google/gemini-2.5-flash', null]]) {
   const f = A.route({ options: api, request: FAST, scope });
   const s = A.route({ options: api, request: { prompt: HEAVY }, scope });
   const fs = providers.splitModel(f.id);
