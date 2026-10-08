@@ -1,3 +1,4 @@
+/* global document */
 // Idle main-process wakeups and settings.json writes (hidden window, throwaway profile, never focused).
 //   node scripts/measure-idle.js [--secs 120] [--quiet] [--app <checkout dir>]
 // Seeds a session of 3 tabs, one of them a background tab whose title ticks every second, launches Lumen hidden
@@ -29,7 +30,7 @@ for (const name of ['setTimeout', 'setInterval']) {
   };
 }
 const fs = require('fs');
-const note = (dest) => { const d = String(dest); if (/settings\.json$/.test(d)) stats.settingsWrites++; else if (/history\.json$/.test(d)) stats.historyWrites++; else if (/\.json$/.test(d)) stats.otherWrites++; };
+const note = (dest) => { const d = String(dest); if (/settings[.]json$/.test(d)) stats.settingsWrites++; else if (/history[.]json$/.test(d)) stats.historyWrites++; else if (/[.]json$/.test(d)) stats.otherWrites++; };
 const rn = fs.promises.rename; fs.promises.rename = function (a, b) { note(b); return rn.apply(this, arguments); };
 const rs = fs.renameSync; fs.renameSync = function (a, b) { note(b); return rs.apply(this, arguments); };
 `);
