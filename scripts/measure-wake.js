@@ -23,7 +23,7 @@ const KB = value('kb', 400);
 const RUNS = value('runs', 5);
 const HOVER = value('hover-ms', 400);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const hardStop = setTimeout(() => { console.error('hard timeout'); process.exit(2); }, 300000);
+const hardStop = setTimeout(() => { console.error('hard timeout'); process.exit(2); }, 540000);
 const median = (xs) => { const v = xs.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : NaN; };
 
 const hits = new Map();
@@ -100,7 +100,8 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
       const mark = await lastMark();
       const shown = mark && mark.shownAt >= clickAt - 5 && (!fcp || mark.shownAt <= fcp) ? mark.shownAt : 0;
       if (flag('verbose')) console.error(name, n, JSON.stringify(mark && { c: mark.coverAt - clickAt, s: mark.shownAt - clickAt, p: mark.paintAt - clickAt }), 'visible', (shown || fcp) - clickAt, 'fcp', fcp ? fcp - clickAt : 'none');
-      record(name, { visible: (shown || fcp) - clickAt || NaN, fcp: fcp ? fcp - clickAt : NaN });
+      // A page that had already painted when it was clicked (preloaded, hovered, frozen) is on screen at once: 0 (its time is before the click).
+      record(name, { visible: Math.max(0, (shown || fcp) - clickAt) || (fcp ? 0 : NaN), fcp: fcp ? Math.max(0, fcp - clickAt) : NaN });
       await sleep(300);
     }
     const visit = async (n) => { await click(n); await fcpOf(app, urlRe(n)); await sleep(1800); await click(0); await sleep(700); }; // load it, then leave (its snapshot is taken then)
