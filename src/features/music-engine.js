@@ -3,7 +3,9 @@
 // session), and a fixed bridge script in it (a bridge module such as features/apple-music-bridge.js: the script, the checks on every
 // message it sends and every command main sends). The music plays inside Lumen, so it keeps playing when the new-tab page is left
 // and the operating system shows Chromium's media session for it. This file keeps what the card shows (what is playing, search
-// results, recent plays and playlists where the service has them, whether the user is signed in) and presses its buttons.
+// results, recent plays and playlists where the service has them, the queue, the album or playlist playing, lyrics, whether the
+// user is signed in) and presses its buttons: play, pause, next, previous, seek, like, shuffle, repeat, volume, play an item or a queue
+// row, add to the queue. What the bridge says it can do (its CAPS, narrowed by what its page showed: `has`) is what the card is told in `can`.
 //
 // The engine is only loaded when a card asks for its state, and unloaded after a long idle while nothing plays. A desktop app source
 // (features/apple-music-native.js) may be a fallback: shown, with its own buttons, when the engine is not playing but the app is.
@@ -51,6 +53,11 @@ function createMusicEngine(deps) {
   let pending = null; // { cmd, before, effect(m), timer, late }: a button pressed whose effect has not shown yet
   let readyGen = -1; // the page document (player.generation()) whose bridge said ready
   let queued = { control: null, search: null }; // { cmd, at }: what was asked before the bridge was ready (the latest of each kind)
+  const blankList = () => ({ rid: 0, items: [], title: '', current: -1, at: 0, pending: false, ok: true, why: '', detail: '' });
+  let pageLists = { queue: blankList(), tracks: blankList() }; // what is next / the whole album or playlist playing, asked when the card's tab is open
+  let lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' };
+  let wantTab = { name: '', at: 0 }; // the card's open tab: its list is asked again when the song changes
+  let tabTimer = null;
 
   const changed = () => { try { deps.onChange?.(); } catch { /* the card keeps what it shows */ } };
   const touch = () => { lastActivity = now(); };
@@ -133,7 +140,7 @@ function createMusicEngine(deps) {
     touch();
     player.ensure();
     const wc = player.webContents();
-    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; playerMissingSince = 0; pending = null; }
+    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; playerMissingSince = 0; pending = null; pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; }
     expireQueue();
     if (!timer) {
       timer = (deps.setInterval || setInterval)(unloadIfIdle, 60e3);
@@ -154,6 +161,8 @@ function createMusicEngine(deps) {
   function unload() {
     ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null;
     queued = { control: null, search: null };
+    pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; wantTab = { name: '', at: 0 };
+    clearTimeout(tabTimer);
     player.destroy();
     clearInterval(timer);
     timer = null;
@@ -169,7 +178,12 @@ function createMusicEngine(deps) {
   function onMessage(raw) {
     const m = bridge.parseMessage(raw);
     if (!m) return;
-    if (m.t === 'ready') { ready = true; readyGen = player.generation ? player.generation() : 0; flushQueue(); resumeSearch(); changed(); return; }
+    if (m.t === 'ready') {
+      ready = true; readyGen = player.generation ? player.generation() : 0; flushQueue(); resumeSearch();
+      if (wantTab.name && ['queue', 'tracks', 'lyrics'].includes(wantTab.name) && now() - wantTab.at < 30 * 60e3) askPage(wantTab.name);
+      changed();
+      return;
+    }
     if (m.t === 'error') { error = { message: m.message, at: now() }; changed(); return; }
     if (m.t === 'state') {
       if (bridge.playbackKind(m.state) === 'seeking') return; // a seek in progress: the card keeps what it shows until the playhead lands
@@ -185,10 +199,25 @@ function createMusicEngine(deps) {
       const flag = pageChanged();
       const flagMoved = flag !== lastFlag;
       lastFlag = flag;
-      if (!was || was.auth !== m.auth || was.state !== m.state || was.item?.id !== m.item?.id || was.item?.title !== m.item?.title || was.device !== m.device || was.player !== m.player || flagMoved || Math.abs((was.pos || 0) - m.pos) > 2.5 + (playing() ? 5 : 0)) changed();
+      if (was && was.item?.title !== m.item?.title) songChanged(m);
+      if (!was || was.auth !== m.auth || was.state !== m.state || was.item?.id !== m.item?.id || was.item?.title !== m.item?.title || was.device !== m.device || was.player !== m.player || flagMoved || was.liked !== m.liked || was.shuffle !== m.shuffle || was.repeat !== m.repeat || was.volume !== m.volume || JSON.stringify(was.has) !== JSON.stringify(m.has) || Math.abs((was.pos || 0) - m.pos) > 2.5 + (playing() ? 5 : 0)) changed();
+      return;
+    }
+    if (m.t === 'lyrics') {
+      if (m.rid !== lyr.rid) return; // an older ask
+      lyr = { ...lyr, lines: m.lines, at: now(), pending: false, ok: m.ok, why: m.why };
+      changed();
       return;
     }
     if (m.t === 'list') {
+      if (m.kind === 'queue' || m.kind === 'tracks') {
+        const cur = pageLists[m.kind];
+        if (m.rid !== cur.rid) return; // an older ask
+        pageLists[m.kind] = { ...cur, items: m.items, title: m.title || '', current: m.current, at: now(), pending: false, ok: m.ok, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || ''), signedOut: m.signedOut };
+        if (m.kind === 'queue') fetchThumbs(m.items.slice(0, MAX_THUMBS), -1);
+        changed();
+        return;
+      }
       if (m.kind === 'search') {
         if (m.rid !== results.rid) return; // an older search
         results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
@@ -218,11 +247,51 @@ function createMusicEngine(deps) {
     if (!wanted.length) return;
     for (const u of wanted) thumbs.set(u, '');
     while (thumbs.size > 80) thumbs.delete(thumbs.keys().next().value);
-    Promise.all(wanted.map((u) => toData(u).then((d) => { thumbs.set(u, d); }, () => {}))).then(() => { if (forRid === results.rid) changed(); });
+    Promise.all(wanted.map((u) => toData(u).then((d) => { thumbs.set(u, d); }, () => {}))).then(() => { if (forRid === results.rid || forRid === -1) changed(); }); // (-1: not a search: the queue's)
+  }
+  // The open tab's list goes stale when the song changes: the queue and the lyrics are asked again (a moment later: the page is busy changing song);
+  // the album or playlist playing only when the new song is not in the list shown.
+  function songChanged(m) {
+    if (!wantTab.name || now() - wantTab.at > 30 * 60e3) return;
+    const t = pageLists.tracks;
+    if (t.items.length) { const at = t.items.findIndex((i) => i.title === m.item?.title); pageLists.tracks = { ...t, current: at }; }
+    clearTimeout(tabTimer);
+    tabTimer = (deps.setTimeout || setTimeout)(() => {
+      if (wantTab.name === 'tracks' && pageLists.tracks.current < 0) askPage('tracks');
+      else if (wantTab.name === 'queue' || wantTab.name === 'lyrics') askPage(wantTab.name);
+      changed();
+    }, 700);
+    tabTimer.unref?.();
+  }
+  // Ask the page for a list that needs a look at its pages (the queue, the album or playlist playing) or for the lyrics. Nothing goes to a page that is
+  // not ready: the card then says so, rather than waiting for ever.
+  function askPage(name) {
+    if (name === 'lyrics') {
+      if (!caps.lyrics) return false;
+      const sent = send({ cmd: 'lyrics', rid: ++rid });
+      lyr = { rid, lines: [], at: now(), pending: sent, ok: sent, why: sent ? '' : 'page', forTitle: msg?.item?.title || '' };
+      return sent;
+    }
+    if (!caps[name === 'queue' ? 'queue' : 'tracks']) return false;
+    const sent = send({ cmd: 'list', kind: name, rid: ++rid });
+    pageLists[name] = { ...pageLists[name], rid, pending: sent, ok: sent, why: sent ? '' : 'page', detail: '', at: now(), items: sent ? pageLists[name].items : [] };
+    return sent;
   }
 
   // ---- the card's data ----
-  const listCard = (l) => (l ? l.items.slice(0, 8).map((i) => ({ id: i.id, kind: i.kind, title: i.title, sub: i.sub })) : []);
+  const listCard = (l, max = 8) => (l ? l.items.slice(0, max).map((i) => ({ id: i.id, kind: i.kind, title: i.title, sub: i.sub })) : []);
+  const rowsCard = (items, max) => items.slice(0, max).map((i) => ({ id: i.id, kind: i.kind, title: i.title, sub: i.sub, ms: i.ms || 0, thumb: i.art ? thumbs.get(i.art) || '' : '' }));
+  const pageCard = (l) => ({ items: rowsCard(l.items, 100), title: l.title, current: l.current, pending: l.pending, ok: l.ok !== false, why: l.ok === false ? l.why || 'page' : '', signedOut: l.signedOut === true });
+  // What the card may draw: the bridge's table, narrowed by what its page showed (`has`) and by whether the user is signed in.
+  function canNow(auth) {
+    const has = msg?.has || {};
+    const flag = (k) => Boolean(caps[k]) && has[k] !== false;
+    return {
+      search: Boolean(caps.search), lists: Boolean(caps.lists), seek: Boolean(caps.seek), queue: Boolean(caps.queue), playNext: Boolean(caps.playNext) && auth !== false, playLater: Boolean(caps.playLater) && auth !== false,
+      like: flag('like') && has.like === true && auth !== false, shuffle: flag('shuffle'), repeat: flag('repeat'), volume: flag('volume'),
+      library: Boolean(caps.lists) && auth === true, tracks: Boolean(caps.tracks), lyrics: Boolean(caps.lyrics) && auth === true, devices: caps.devices || false,
+    };
+  }
   const resultCard = (items) => items.slice(0, 32).map((i) => ({ id: i.id, kind: i.kind, title: i.title, sub: i.sub, ms: i.ms || 0, thumb: i.art ? thumbs.get(i.art) || '' : '' }));
   function extras(d) {
     const st = player.status();
@@ -232,9 +301,13 @@ function createMusicEngine(deps) {
       signedIn: auth,
       engine: st.state,
       drm: st.drm,
-      can: { search: Boolean(caps.search), lists: Boolean(caps.lists), seek: Boolean(caps.seek), queue: Boolean(caps.queue) },
-      recent: listCard(lists.recent),
-      playlists: listCard(lists.playlists),
+      can: canNow(auth),
+      recent: listCard(lists.recent, 10),
+      playlists: listCard(lists.playlists, 25),
+      queue: pageCard(pageLists.queue),
+      tracks: pageCard(pageLists.tracks),
+      lyrics: { pending: lyr.pending, ok: lyr.ok !== false, why: lyr.ok === false ? lyr.why || 'page' : '', lines: lyr.ok === false ? [] : lyr.lines.slice(0, 250), forTitle: lyr.forTitle },
+      devices: caps.devices === 'browser' ? [{ id: 'browser', name: 'This browser', type: 'Computer', active: !msg?.device }, ...(msg?.device ? [{ id: 'connect', name: msg.device, type: 'Connect', active: true }] : [])] : [],
       results: resultCard(results.items),
       searchOk: results.ok !== false,
       searchWhy: results.ok === false ? results.why || '' : '',
@@ -282,7 +355,74 @@ function createMusicEngine(deps) {
   }
   function seek(sec) { touch(); return Boolean(caps.seek) && lastSource === 'engine' && sendOrQueue({ cmd: 'seek', sec }, 'control'); }
   function playItem(kind, id) { touch(); lastSource = 'engine'; return sendOrQueue({ cmd: 'playItem', kind, id }, 'control'); }
-  const queueItem = (cmd, kind, id) => { touch(); return Boolean(caps.queue) && send({ cmd, kind, id }); };
+  const queueItem = (cmd, kind, id) => { touch(); return Boolean(caps[cmd]) && authState() !== false && send({ cmd, kind, id }); }; // (Spotify's queue is an account's)
+  // The switches and the tabs (what the card's medium and large sizes add). An optimistic change first (the card moves at once; the page's own
+  // state, which comes back within a second, has the last word). `arg`: like / shuffle: true | false | undefined (flip it); repeat: 'off' | 'all' | 'one'
+  // | undefined (the next); volume: 0..100; tab: a tab name; playQueue / playFrom: { index, id }.
+  function command(name, arg) {
+    touch();
+    if (lastSource === 'app') return false; // (the desktop app has no such buttons here)
+    const set = (key, value) => { if (msg) { msg = { ...msg, [key]: value }; changed(); } };
+    switch (name) {
+      case 'like': {
+        if (!canNow(authState()).like) return false;
+        const on = typeof arg === 'boolean' ? arg : msg?.liked !== true;
+        const ok = send({ cmd: 'like', on });
+        if (ok) set('liked', on);
+        return ok;
+      }
+      case 'shuffle': {
+        if (!canNow(authState()).shuffle) return false;
+        const on = typeof arg === 'boolean' ? arg : msg?.shuffle !== true;
+        const ok = sendOrQueue({ cmd: 'shuffle', on }, 'control');
+        if (ok) set('shuffle', on);
+        return ok;
+      }
+      case 'repeat': {
+        if (!canNow(authState()).repeat) return false;
+        const modes = bridge.REPEAT_MODES || ['off', 'all', 'one'];
+        const mode = modes.includes(arg) ? arg : modes[(modes.indexOf(msg?.repeat) + 1) % modes.length];
+        const ok = sendOrQueue({ cmd: 'repeat', mode }, 'control');
+        if (ok) set('repeat', mode);
+        return ok;
+      }
+      case 'volume': {
+        if (!canNow(authState()).volume || !Number.isFinite(arg)) return false;
+        const level = Math.max(0, Math.min(100, Math.round(arg))) / 100;
+        const ok = sendOrQueue({ cmd: 'volume', level }, 'control');
+        if (ok) set('volume', level);
+        return ok;
+      }
+      case 'tab': return tab(arg);
+      case 'playQueue': case 'playFrom': {
+        if (!arg || !Number.isInteger(arg.index)) return false;
+        if (name === 'playQueue' && !caps.queue) return false;
+        if (name === 'playFrom' && !caps.tracks) return false;
+        lastSource = 'engine';
+        return sendOrQueue({ cmd: name, index: arg.index, ...(typeof arg.id === 'string' && arg.id ? { id: arg.id } : {}) }, 'control');
+      }
+      default: return false;
+    }
+  }
+  // The card opened a tab: its data is asked for (not again within a few seconds of the last ask).
+  const TAB_FRESH_MS = 4000;
+  function tab(name) {
+    if (!['queue', 'library', 'tracks', 'lyrics', 'devices', 'search'].includes(name)) return false;
+    wantTab = { name, at: now() };
+    if (name === 'library') { askLists(true); return true; }
+    if (name === 'devices' || name === 'search') return true;
+    wake();
+    const fresh = name === 'lyrics' ? lyr.at && now() - lyr.at < TAB_FRESH_MS && lyr.forTitle === (msg?.item?.title || '') : pageLists[name].at && now() - pageLists[name].at < TAB_FRESH_MS;
+    if (fresh) return true;
+    if (!bridgeUp()) { // the page is still starting: the card shows it is loading, and the tab is asked again when the bridge is ready
+      if (name === 'lyrics') lyr = { ...lyr, pending: true, ok: true, at: 0 }; else pageLists[name] = { ...pageLists[name], pending: true, ok: true, at: 0 };
+      changed();
+      return true;
+    }
+    const ok = askPage(name);
+    changed();
+    return ok;
+  }
   function search(term) {
     touch();
     if (!caps.search) return false;
@@ -329,7 +469,7 @@ function createMusicEngine(deps) {
   }
 
   return {
-    read, control, seek, playItem, playNext: (kind, id) => queueItem('playNext', kind, id), playLater: (kind, id) => queueItem('playLater', kind, id),
+    read, control, seek, playItem, playNext: (kind, id) => queueItem('playNext', kind, id), playLater: (kind, id) => queueItem('playLater', kind, id), command,
     search, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
     status: () => ({ ...player.status(), ready, signedIn: authState(), playing: playing() }),
     signedIn: authState,

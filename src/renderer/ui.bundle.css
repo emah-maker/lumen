@@ -771,6 +771,8 @@ body.chat-full .setup { text-align: left; }
 .step.failed { color: var(--danger); }
 .step.stopped::before { background: var(--faint); }
 .step .step-detail { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.step .step-action { flex: none; margin: 0; padding: 0 2px; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.step .step-action:disabled { opacity: .5; cursor: default; }
 .step .step-error { flex-basis: 100%; min-width: 0; padding-left: 14px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; animation: fade-in var(--t-base) ease-out; }
 
 details.thinking { margin: 6px 0; color: var(--muted); font-size: 12px; }

@@ -1,0 +1,32 @@
+:root { --stage: #e9e9ec; --page-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 6px 20px rgba(0, 0, 0, 0.12); }
+@media (prefers-color-scheme: dark) { :root { --stage: #2a2a2e; --page-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 6px 20px rgba(0, 0, 0, 0.45); } }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--stage); color: var(--text); }
+body { font: 13px/1.4 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+#bar { flex: none; display: flex; align-items: center; gap: 14px; padding: 6px 14px; background: var(--bg); border-bottom: 1px solid var(--hairline); z-index: 3; }
+#name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
+.group { display: flex; align-items: center; gap: 6px; }
+button, a.button, select, input[type=text], input[type=search], input[type=password] { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: 4px 9px; cursor: default; text-decoration: none; transition: background var(--t-fast); }
+button:hover, a.button:hover { background: var(--hover); }
+button:focus-visible, a.button:focus-visible, select:focus-visible, input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+button[disabled] { opacity: 0.4; }
+button.primary { background: var(--accent); color: #fff; }
+#pageNumber { width: 3.2em; text-align: center; font-variant-numeric: tabular-nums; }
+#pageCount { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#findBar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: var(--bg); border-bottom: 1px solid var(--hairline); z-index: 3; }
+#findBar[hidden], #message[hidden], #password[hidden] { display: none; }
+#findInput { width: 260px; }
+#findCount { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 7em; }
+.check { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+#stage { position: relative; flex: 1; min-height: 0; }
+#viewerContainer { position: absolute; inset: 0; overflow: auto; outline: none; background: var(--stage); }
+.pdfViewer { padding: 8px 0 24px; }
+.pdfViewer .page { margin: 12px auto; border: 0; box-shadow: var(--page-shadow); background-clip: content-box; background-color: #fff; }
+.pdfViewer .page .loadingIcon { position: absolute; inset: 0; display: block; }
+.pdfViewer .page .loadingIcon::after { content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border: 2px solid rgba(0, 0, 0, 0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pdfViewer .page .loadingIcon::after { animation: none; } }
+.textLayer ::selection { background: rgba(10, 132, 255, 0.35); }
+#message { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 460px; padding: 18px 22px; border-radius: 10px; background: var(--bg); border: 1px solid var(--hairline); box-shadow: var(--page-shadow); text-align: center; z-index: 4; }
+#password { position: absolute; left: 50%; top: 35%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 18px 20px; border-radius: 10px; background: var(--bg); border: 1px solid var(--hairline); box-shadow: var(--page-shadow); z-index: 5; }
+#password p { margin: 0; }
+@media print { #bar, #findBar, #message, #password { display: none !important; } }

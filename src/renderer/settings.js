@@ -2238,6 +2238,7 @@ async function buildDownloads(card) {
       h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
       h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }))),
     toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
+    select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
   );
   const list = h('div', { class: 'list', id: 'downloads-list' });
   const render = async () => {

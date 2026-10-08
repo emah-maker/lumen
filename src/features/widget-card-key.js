@@ -4,10 +4,15 @@
 // just because it was read again: every read stamps a new `at` (when the playhead was where `progressMs` says), and while a song plays
 // both move on together. What the card shows is the same as long as the playhead lands where the card already shows it.
 //
-//   cardKey(w)            -> { key, head }: `key` is everything the card is drawn from except where the playhead is; `head` is where
+//   cardKey(w)            -> { key, head, shell, inPlace }: `key` is everything the card is drawn from except where the playhead is; `head` is where
 //                            the playhead is (null: the card has none): { playing, start } (start: when the song would have begun, ms) or
-//                            { playing: false, at } (paused at, ms)
-//   sameCard(prev, next)  -> may the card drawn for `prev` stay for `next`?
+//                            { playing: false, at } (paused at, ms). `shell` is what a music card's own parts are NOT drawn from (its type, id,
+//                            title and which engine it is), `inPlace` whether the card updates its parts itself (a music card with a player:
+//                            not the web player, not "unavailable").
+//   sameCard(prev, next)  -> may the card drawn for `prev` stay for `next`, untouched?
+//   updatesInPlace(prev, next) -> may it stay if it is told the new data (renderer/newtab-music.js update())? Yes for a music card with the same shell:
+//                            the song, a switch, a list that arrived, search results are all parts it updates, so a typed search, an open tab,
+//                            a scrolled list and a slider being dragged stay where they are.
 //
 // Pure, no DOM: the page loads it as a script (globalThis.WidgetCardKey) and the unit tests require it.
 (function () {
@@ -28,7 +33,11 @@ function cardKey(w) {
     rest.data = still;
     head = d.state === 'playing' ? { playing: true, start: at - progressMs } : { playing: false, at: progressMs };
   }
-  return { key: JSON.stringify(rest), head };
+  const inPlace = Boolean(PLAYHEAD.has(rest.type) && d && typeof d === 'object' && d.mode !== 'web' && d.state !== 'unavailable' && Number.isFinite(d.at));
+  // Spotify's API mode has no `mode` in its data (the card's config has it); the engine's says 'status'.
+  const shellRest = { ...rest };
+  delete shellRest.data;
+  return { key: JSON.stringify(rest), head, inPlace, shell: inPlace ? `${JSON.stringify(shellRest)}|${d.mode === 'status' ? 'status' : 'api'}` : '' };
 }
 
 function sameCard(prev, next) {
@@ -40,7 +49,11 @@ function sameCard(prev, next) {
   return a.playing ? Math.abs(a.start - b.start) <= DRIFT_MS : Math.abs(a.at - b.at) <= DRIFT_MS;
 }
 
-const api = { cardKey, sameCard, DRIFT_MS };
+function updatesInPlace(prev, next) {
+  return Boolean(prev && next && prev.inPlace && next.inPlace && prev.shell === next.shell);
+}
+
+const api = { cardKey, sameCard, updatesInPlace, DRIFT_MS };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetCardKey = api;
 })();

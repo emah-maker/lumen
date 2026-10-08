@@ -92,6 +92,7 @@ const DEFAULTS = {
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
   askWhereToSave: false,
+  pdfViewer: 'lumen', // lumen | chrome: which viewer a PDF opens in (features/pdf-viewer.js)
   spellcheck: true,
   spellcheckLanguages: [],
   languages: [], // Accept-Language, most preferred first; empty = Chromium's default
@@ -229,6 +230,7 @@ function validate(key, value) {
     case 'tabSleepFreezeFirstMinutes': return pick(Number(value), require('../features/tab-wake').FREEZE_FIRST_CHOICES, null);
     case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
+    case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
