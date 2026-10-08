@@ -24,6 +24,8 @@ const SIGNIN_SIZE = { width: 560, height: 780 };
 const RESPOND_MS = 3500; // a button pressed and nothing changed this long after: the player did not respond
 const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
 const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
+const WARM_MS = 10 * 60e3; // the card's search is open (or its box was focused): the hidden page is not unloaded for being idle this long after the last sign of it
+const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
@@ -37,6 +39,7 @@ function createMusicEngine(deps) {
   let ready = false; // the page's bridge found the service's player
   let msg = null; // the last state message
   let lastActivity = 0;
+  let warmUntil = 0; // the card's search is open: no idle unload before this
   let timer = null;
   let signInWin = null;
   let rid = 0;
@@ -159,7 +162,7 @@ function createMusicEngine(deps) {
   }
   const playing = () => Boolean(msg && bridge.playbackKind(msg.state) === 'playing' && msg.item);
   function unload() {
-    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null;
+    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null; warmUntil = 0;
     queued = { control: null, search: null };
     pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; wantTab = { name: '', at: 0 };
     clearTimeout(tabTimer);
@@ -168,7 +171,7 @@ function createMusicEngine(deps) {
     timer = null;
   }
   function unloadIfIdle() {
-    if (!player.webContents() || playing() || signInWin) return;
+    if (!player.webContents() || playing() || signInWin || now() < warmUntil) return;
     const idle = now() - lastActivity;
     if (idle > UNLOAD_MS || (deps.hasCard && !deps.hasCard() && idle > NO_CARD_UNLOAD_MS)) unload();
   }
@@ -220,9 +223,10 @@ function createMusicEngine(deps) {
       }
       if (m.kind === 'search') {
         if (m.rid !== results.rid) return; // an older search
-        results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
+        if (m.ok === false && results.items.length && results.ok !== false) { searchCmd = null; changed(); return; } // (rows were already shown: a page that never stood still ends them, it does not take them away)
+        results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, partial: m.partial === true, more: m.more === true, moreAt: m.more === true ? 0 : results.moreAt, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
         if (m.ok === false || m.items.length) searchCmd = null;
-        fetchThumbs(m.items, results.rid);
+        // (the pictures are asked for by the card when the rows are on screen: loadThumbs)
       } else {
         lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut };
       }
@@ -248,6 +252,14 @@ function createMusicEngine(deps) {
     for (const u of wanted) thumbs.set(u, '');
     while (thumbs.size > 80) thumbs.delete(thumbs.keys().next().value);
     Promise.all(wanted.map((u) => toData(u).then((d) => { thumbs.set(u, d); }, () => {}))).then(() => { if (forRid === results.rid || forRid === -1) changed(); }); // (-1: not a search: the queue's)
+  }
+  // The pictures of the result rows the card has on screen (it names the rows by id; the addresses are the ones the page sent, never the card's).
+  function loadThumbs(ids) {
+    touch();
+    const want = new Set((Array.isArray(ids) ? ids : []).filter((x) => typeof x === 'string').slice(0, MAX_THUMBS));
+    const items = results.items.filter((i) => want.has(i.id));
+    if (items.length) fetchThumbs(items, results.rid);
+    return items.length > 0;
   }
   // The open tab's list goes stale when the song changes: the queue and the lyrics are asked again (a moment later: the page is busy changing song);
   // the album or playlist playing only when the new song is not in the list shown.
@@ -314,6 +326,9 @@ function createMusicEngine(deps) {
       searchDetail: results.ok === false ? results.detail || '' : '',
       query: results.term,
       searching: results.pending,
+      searchPartial: results.partial === true,
+      moreSongs: Boolean(caps.searchMore) && results.ok !== false && !results.pending && !results.more && results.items.some((i) => i.kind === 'song') && results.items.filter((i) => i.kind === 'song').length < 8,
+      moreLoading: Boolean(results.moreAt) && now() - results.moreAt < MORE_MS,
       error: error && now() - error.at < 8000 ? error.message : '',
       pageChanged: pageChanged(),
       unresponsive: unresponsive(),
@@ -410,7 +425,8 @@ function createMusicEngine(deps) {
     if (!['queue', 'library', 'tracks', 'lyrics', 'devices', 'search'].includes(name)) return false;
     wantTab = { name, at: now() };
     if (name === 'library') { askLists(true); return true; }
-    if (name === 'devices' || name === 'search') return true;
+    if (name === 'search') { warm(); return true; }
+    if (name === 'devices') return true;
     wake();
     const fresh = name === 'lyrics' ? lyr.at && now() - lyr.at < TAB_FRESH_MS && lyr.forTitle === (msg?.item?.title || '') : pageLists[name].at && now() - pageLists[name].at < TAB_FRESH_MS;
     if (fresh) return true;
@@ -428,12 +444,28 @@ function createMusicEngine(deps) {
     if (!caps.search) return false;
     const clean = bridge.clip(term, 80);
     if (!clean) { queued.search = null; searchCmd = null; results = { rid: ++rid, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; changed(); return true; }
+    warmUntil = Math.max(warmUntil, now() + WARM_MS);
     results = { rid: ++rid, term: clean, items: [], at: 0, pending: true, why: '', detail: '' };
     const cmd = { cmd: 'search', term: clean, rid: results.rid };
     searchCmd = { cmd, at: now(), gen: -1 };
     const ok = sendOrQueue(cmd, 'search'); // (a page still loading gets it once its bridge is ready)
     if (!ok) { searchCmd = null; results = { rid: results.rid, term: clean, items: [], at: now(), pending: false, ok: false, why: 'page', detail: '' }; } // nothing to ask: the card says the search got no answer, not "Searching…" for ever
     changed(); // the card shows "Searching…" for this term now, not only once the answer comes
+    return ok;
+  }
+  // The card's search box was focused or its tab opened: the hidden page is started now (not at the first key) and kept for a while.
+  function warm() {
+    wake();
+    warmUntil = now() + WARM_MS;
+    return true;
+  }
+  // The songs-only list for the search shown (the card's "More songs", or scrolling to the end of the songs): one more route in the page.
+  function searchMore() {
+    touch();
+    if (!caps.searchMore || !results.term || results.pending || results.ok === false || results.more) return false;
+    if (results.moreAt && now() - results.moreAt < MORE_MS) return true; // (asked already)
+    const ok = send({ cmd: 'searchMore', term: results.term, rid: results.rid });
+    if (ok) { results = { ...results, moreAt: now() }; changed(); }
     return ok;
   }
   function refreshLists() { touch(); askLists(true); }
@@ -470,7 +502,7 @@ function createMusicEngine(deps) {
 
   return {
     read, control, seek, playItem, playNext: (kind, id) => queueItem('playNext', kind, id), playLater: (kind, id) => queueItem('playLater', kind, id), command,
-    search, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
+    search, searchMore, loadThumbs, warm, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
     status: () => ({ ...player.status(), ready, signedIn: authState(), playing: playing() }),
     signedIn: authState,
     isPlaying: playing,

@@ -103,6 +103,9 @@ async function engineAct(am, name, action, x, cached) {
   if (action.do === 'eshow') { am.showPlayer(); return { local: true }; }
   if (action.do === 'elists') { am.refreshLists(); return { local: true }; }
   if (action.do === 'esearch') { am.search(action.text); return { local: true }; }
+  if (action.do === 'ewarm') { am.warm?.(); return { local: true }; } // the card's search box was focused: the hidden page starts now
+  if (action.do === 'emore') { am.searchMore?.(); return { local: true }; } // more songs for the search shown (Spotify's songs-only list)
+  if (action.do === 'ethumb') { am.loadThumbs?.(action.ids); return { local: true }; } // the pictures of the rows on screen (the engine tells the card when they are in)
   if (action.do === 'playitem') {
     if (!am.playItem(action.kind, action.item)) throw new Error(`${name} isn’t ready yet. Try again in a moment.`);
     return { delay: 1500 };
@@ -175,6 +178,7 @@ const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
 const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
+const SEARCH_RATE = { window: 60e3, max: 90 }; // ...and a search the user typed (and the pictures of its rows) has a budget of its own: polling can't make it wait
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
 const MUSE_TIMEOUT = 60e3; // a model answer (with web search) takes longer than a lookup
@@ -533,7 +537,9 @@ const CONNECTORS = {
       if (c.mode === 'status') { // the engine's card (features/spotify-engine.js)
         if (!x.spotifyEngine) return AMV.unavailable('unsupported', x.now());
         const d = await x.spotifyEngine.read();
-        return c.art === false ? { ...d, art: '' } : d;
+        const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
+        const merged = shown ? { ...d, ...shown } : d;
+        return c.art === false ? { ...merged, art: '' } : merged;
       }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
@@ -554,9 +560,16 @@ const CONNECTORS = {
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
-      if (c.mode === 'status') return x.spotifyEngine ? engineAct(x.spotifyEngine, 'Spotify', action, x, cached) : false;
+      if (c.mode === 'status') {
+        if (!x.spotifyEngine) return false;
+        const direct = await statusSearch(c, action, x, cached); // (the Web API answers searches when the account is connected, whatever plays the music)
+        if (direct) return direct;
+        return engineAct(x.spotifyEngine, 'Spotify', action, x, cached);
+      }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b);
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image };
+      const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage };
+      if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
         Object.assign(cached, await SAC.extras(callIt, sctx, cached).catch(() => ({})));
@@ -1209,12 +1222,44 @@ async function completedToday(x) {
   });
 }
 
+// Spotify's card in "Play as Lumen" mode, when the account is also connected to the Web API (a token is kept and the Client ID is there): a search is ONE
+// request (GET /v1/search) instead of two page routes. -> an act() result when it handled the action, else falsy (the engine's page does it).
+const apiConnected = (c, x) => Boolean(x.secret() && SV.effectiveClientId(c.clientId));
+async function statusSearch(c, action, x, cached) {
+  if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
+  if (!apiConnected(c, x)) return false;
+  const ui = x.ui(c.id);
+  const sctx = { ui, now: x.now, image: x.image, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchImage };
+  if (action.do === 'esearch') {
+    const term = typeof action.text === 'string' ? action.text.trim() : '';
+    if (!term) { SAC.clearSearch(ui); return false; } // (the engine clears its own)
+    const got = await SAC.runSearch(ui, term, sctx);
+    if (got.stale) return { local: true }; // a newer search was asked meanwhile: it has the card
+    if (!got.ok) { SAC.clearSearch(ui); return false; } // the Web API said no (scope, limit, network): the page searches instead
+    x.spotifyEngine.warm?.(); // (a click on a result plays in the hidden page: started now, not at the click)
+    Object.assign(cached, SAC.directResults(ui));
+    return { local: true };
+  }
+  if (action.do === 'ethumb' && ui.search?.api) {
+    await SAC.loadThumbs(ui, action.ids, sctx);
+    Object.assign(cached, SAC.directResults(ui));
+    return { local: true };
+  }
+  if (action.do === 'emore' && ui.search?.api) return { local: true }; // (nothing more to load: the Web API sent its whole list)
+  return false;
+}
+// The search box was focused: the access token is asked for now (the first search then has one), and the hidden page started where it plays.
+function warmSpotify(c, x) {
+  if (apiConnected(c, x)) spotifyAccess(x, SV.effectiveClientId(c.clientId)).catch(() => {});
+  if (c.mode === 'status') x.spotifyEngine?.warm?.();
+}
+
 // One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
 // a 429 already backs every request off (request() below) and reads as a calm message.
-async function spotifyCall(x, cfg, method, path, body) {
+async function spotifyCall(x, cfg, method, path, body, budget) {
   const go = async (force) => {
     const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
-    return x.raw(`${x.endpoint('spotify')}${path}`, {
+    return (budget === 'search' && x.rawSearch ? x.rawSearch : x.raw)(`${x.endpoint('spotify')}${path}`, {
       method, max: 262144, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     });
@@ -1419,6 +1464,7 @@ function applyRects(widgets, items) {
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
+  const recentSearch = []; // the same for the user's own searches (SEARCH_RATE)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
   const uiState = new Map(); // widget id -> what the card keeps between looks (features/spotify-api-card.js)
@@ -1459,16 +1505,18 @@ function createWidgets(deps) {
   const forget = (prefix) => { for (const k of [...memoCache.keys()]) if (k.startsWith(prefix)) memoCache.delete(k); };
 
   // ---- network helpers handed to connectors (x) ----
-  function spend() {
+  function spend(budget) {
     const t = now();
     if (t < backoffUntil) throw new Error('The service asked Lumen to slow down. It will try again shortly.');
-    while (recent.length && t - recent[0] > RATE.window) recent.shift();
-    if (recent.length >= (Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
-    recent.push(t);
+    const bucket = budget === 'search' ? recentSearch : recent;
+    const win = budget === 'search' ? SEARCH_RATE.window : RATE.window;
+    while (bucket.length && t - bucket[0] > win) bucket.shift();
+    if (bucket.length >= (budget === 'search' ? Number(deps.searchRateMax?.()) || SEARCH_RATE.max : Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
+    bucket.push(t);
   }
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT } = {}) {
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
-    spend();
+    spend(budget);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
@@ -1565,6 +1613,15 @@ function createWidgets(deps) {
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
       ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
+      rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)
+      // The same picture as image(), for a result row the user is looking at (the search budget).
+      searchImage: (url) => memo(`img:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/*' }, budget: 'search' });
+        const data = res.ok && !res.truncated ? SV.dataUrl(res.bytes) : null;
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
         if (!res.ok) throw failure(res);
@@ -2247,7 +2304,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2280,6 +2337,10 @@ function createWidgets(deps) {
       if (!AMB.KINDS.includes(action.kind) || !AMB.ID_RE.test(action.item || '')) return { invalid: true };
     }
     if (action.do === 'esearch') action.text = AMB.clip(params.get('arg') || '', 80); // may be empty: clears the search
+    if (action.do === 'ethumb') { // the result rows on screen (their ids, comma-joined): their small pictures are fetched now
+      action.ids = String(params.get('arg') || '').split(',').filter((id) => AMB.ID_RE.test(id)).slice(0, 12);
+      if (!action.ids.length) return { invalid: true };
+    }
     // The music card's other buttons (renderer/newtab-music.js): every argument is checked here, whichever engine gets it.
     if (action.do === 'like' || action.do === 'shuffle') {
       action.arg = params.get('arg');

@@ -21,7 +21,7 @@ const MAX_MESSAGE = 200000;
 const KINDS = ['song', 'album', 'playlist', 'artist']; // what playItem takes
 // What the card may offer from this engine (features/music-card-features.js has the same table by name). `has` in every state message narrows
 // like / shuffle / repeat / volume further: only the controls the page really shows are drawn.
-const CAPS = { search: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: 'browser' };
+const CAPS = { search: true, searchMore: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: 'browser' };
 const LIST_KINDS = ['search', 'queue', 'playlists', 'recent', 'tracks']; // the lists the page can send ('recent': always empty here, Spotify's page has no such list)
 const REPEAT_MODES = ['off', 'all', 'one'];
 const MAX_TRACKS = 100; // a context's songs, an album or a playlist's first rows
