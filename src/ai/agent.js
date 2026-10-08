@@ -27,6 +27,7 @@ const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, 
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const localPdf = require('./local-pdf'); // navigate / open_tab: a local .pdf the user named (path or file:// address), checked there
 const pdfViewer = require('../features/pdf-viewer'); // a PDF in Lumen's own viewer: the PDF's address is the page's address for every rule below
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const modelNames = require('../features/model-names');
@@ -55,15 +56,17 @@ const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user wh
 // Two chats' runs never drive one tab (see tabBusyElsewhere).
 const TAB_BUSY = 'That tab is in use by a task running in another chat. Open a new tab with open_tab (or switch_tab to another tab) to work here.';
 
-// Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
-// dynamic-filtering web search; Opus 5.5 defaults to medium effort, so ask for high explicitly.
+// Models the user can pick. Opus 5.5 defaults to medium effort, so ask for high explicitly. Haiku 4.5 (a saved
+// choice from before Haiku 5.5) predates adaptive thinking and the dynamic-filtering web search; it is not offered any more
+// and runs as Haiku 5.5 (LEGACY_MODELS).
 const MODELS = {
   'claude-opus-5': { label: 'Opus 5', detail: 'Best balance for browsing tasks.', fallbacks: true },
   'claude-opus-5-5': { label: 'Opus 5.5', detail: 'Default. Newest Opus, and cheaper than Opus 5.', fallbacks: true, effort: 'high' },
   'claude-fable-5-1': { label: 'Fable 5.1', detail: 'Most capable. Slowest and most expensive.', fallbacks: true },
   'claude-sonnet-5': { label: 'Sonnet 5', detail: 'Faster and cheaper.' },
-  'claude-haiku-4-5': { label: 'Haiku 4.5', detail: 'Fastest and cheapest. Best for simple pages.', legacyThinking: true, basicWebSearch: true },
+  'claude-haiku-5-5': { label: 'Haiku 5.5', detail: 'Fast and cheap, and now capable: most chat, page questions and browsing.' },
 };
+const LEGACY_MODELS = { 'claude-haiku-4-5': 'claude-haiku-5-5' };
 const DEFAULT_MODEL = 'claude-opus-5-5'; // the newest Opus
 
 // ADHD-friendly answer shape (from the i-have-adhd skill), adapted to a browser sidebar.
@@ -140,7 +143,7 @@ const TOOLS = [
   },
   {
     name: 'navigate',
-    description: 'Load a URL in the active tab; read:true returns the new outline.',
+    description: 'Load a URL or local .pdf path in the active tab; read:true returns the new outline.',
     input_schema: {
       type: 'object',
       properties: { url: { type: 'string' }, wait: { type: 'string', enum: WAIT_MODES } /* interactive (default): once the page shows text (load-wait.js) */ },
@@ -388,7 +391,7 @@ const TOOLS = [
   },
   {
     name: 'open_tab',
-    description: 'Open a URL in a background tab to work in; show:true fronts it.',
+    description: 'Open a URL or local .pdf path in a background tab to work in; show:true fronts it.',
     input_schema: {
       type: 'object',
       properties: { url: { type: 'string' }, show: { type: 'boolean' } },
@@ -813,7 +816,8 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
 function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true } = {}) { // delegate: the helpers setting (the tool is offered)
-  const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
+  const picked = LEGACY_MODELS[settings.model] || settings.model;
+  const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
   const params = {
     model,
@@ -1003,8 +1007,14 @@ function webUrl(raw) {
   } catch {
     throw new Error(`Not a valid URL: ${raw}`);
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Only http and https pages can be opened.');
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Only http and https pages can be opened (navigate and open_tab also take a local .pdf path).');
   return parsed.href;
+}
+
+// navigate / open_tab: a web page, or a local .pdf (a path or file:// address) shown in Lumen's PDF viewer, the same as File > Open.
+function navUrl(raw) {
+  const local = localPdf.resolve(raw);
+  return local ? pdfViewer.viewerUrl(local.fileUrl) : webUrl(raw);
 }
 
 // Waits for a navigation the caller has just started: until the page stops loading, then until its DOM has
@@ -2851,7 +2861,13 @@ ${prompt}` : prompt), historyImages: [] };
   async annotateTool(input) {
     const wc = this.requireTab();
     const scope = taskScope.getStore();
-    const shot = this.screenshotScale && this.screenshotScale.wc === wc ? { ratio: this.screenshotScale.ratio, zoom: wc.getZoomFactor() } : null;
+    let shot = null;
+    if (this.screenshotScale && this.screenshotScale.wc === wc) {
+      const { wc: _wc, ...taken } = this.screenshotScale;
+      let now = null; // the page may have scrolled since the screenshot
+      try { now = await runScript(wc, '({ x: scrollX, y: scrollY })', 2000); } catch { /* no delta */ }
+      shot = { ...taken, zoom: taken.zoom || wc.getZoomFactor(), now };
+    }
     const spec = annotate.normalize(input, shot);
     const viewer = pdfViewer.isViewerUrl(wc.getURL()); // Lumen's PDF viewer
     const chromePdf = !viewer && Boolean(pdfZoom.viewerFrame(wc)); // Chrome's: out of reach of any script
@@ -3574,6 +3590,13 @@ ${prompt}` : prompt), historyImages: [] };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
+    // A local PDF named in navigate / open_tab: opening shows (and reads) its text, so it asks like read_pdf does: once per file per chat,
+    // the card names the file, never the folder. The same answer then covers read_pdf of it. Only the AI's own tool call gets here.
+    if ((name === 'navigate' || name === 'open_tab') && localPdf.isLocalRef(input?.url)) {
+      const pdf = localPdf.resolve(String(input.url)); // refuses anything but an existing .pdf file, with a plain message
+      const ok = await pdfText.requirePdfPermission(taintHolder(run), pdf.fileUrl, (fileName) => (noAsk ? true : this.askApproval(fileName, emit, signal, { action: 'pdf', who, title: `Allow the AI to open and read ${fileName}?` })));
+      if (!ok) throw new Error(`The user did not allow opening ${pdf.name}. Ask them what to do instead.`);
+    }
     if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
       const search = searchCard(name, input, who);
       for (const host of destinationHosts(name, input)) {
@@ -3640,7 +3663,7 @@ ${prompt}` : prompt), historyImages: [] };
       const urls = name === 'read_urls' ? (Array.isArray(input.urls) ? input.urls.slice(0, 6) : []) : [input.url];
       for (const raw of urls) {
         let url = '';
-        try { url = webUrl(String(raw ?? '')); } catch {}
+        try { url = name === 'read_urls' ? webUrl(String(raw ?? '')) : navUrl(String(raw ?? '')); } catch {}
         if (url && off(url)) refuse(url);
       }
     }
@@ -4740,8 +4763,8 @@ ${same}
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
         // click_at maps screenshot pixels back to view pixels with this ratio.
-        const viewWidth = (await runScript(wc, 'innerWidth')) * wc.getZoomFactor();
-        this.screenshotScale = { wc, ratio: viewWidth / size.width };
+        const view = await runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+        this.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
         return [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.toJPEG(75).toString('base64') } },
           { type: 'text', text: `Screenshot of ${wc.getURL()}, ${size.width}x${size.height} px. Use these coordinates with click_at.` },
@@ -4749,7 +4772,7 @@ ${same}
       }
       case 'navigate': {
         const wc = this.requireTab();
-        const url = webUrl(input.url);
+        const url = navUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
         const wait = normalizeWait(input.wait);
         // Redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js); networkidle asks the tab's own
@@ -5056,7 +5079,7 @@ ${same}
           }));
       }
       case 'open_tab': {
-        const tab = this.browser.openTab(webUrl(input.url), { ai: true, show: input.show === true }); // [ai manners] opens behind the user's tab, marked as the AI's
+        const tab = this.browser.openTab(navUrl(input.url), { ai: true, show: input.show === true }); // [ai manners] opens behind the user's tab, marked as the AI's
         this.pinTab(tab.id); // the task carries on there, in front or not
         const redirects = this.guardRedirects(tab.webContents, { clientSide: true });
         try {
@@ -5230,4 +5253,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };

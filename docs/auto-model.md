@@ -22,8 +22,8 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
 
 ## Where the choice is shown
 
-- The reply is labelled **Auto · Claude Haiku 4.5**; hover for the reason ("Auto: Haiku 4.5 for a quick question").
-- The picker's Auto row says what Auto chose last in the open chat ("Auto · Haiku 4.5"), with the reason as its note. It stays selected.
+- The reply is labelled **Auto · Claude Haiku 5.5**; hover for the reason ("Auto: Haiku 5.5 for a quick question").
+- The picker's Auto row says what Auto chose last in the open chat ("Auto · Haiku 5.5"), with the reason as its note. It stays selected.
 - A quiet note appears when Auto changes model mid-message (see Escalation).
 - The usage log, the context bar, the chat's cost line and the AI status card all record the **concrete** model that ran, never "auto".
 
@@ -32,8 +32,8 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
 1. **Tier of each model.** Fast (Haiku, mini, nano, flash, lite), balanced (Sonnet, GPT-4o, an engine's own default), strong (Opus, Fable, GPT-5, o3, Pro, reasoning models). An option can carry its own `tier` (a catalog or engine that knows better); otherwise it is read from the model's name.
 2. **What the request needs.**
    - A quick lookup, summary, translation, classification or title (the one-shot jobs name their kind): a fast model. A summary of a very long page: balanced.
-   - A chat message is scored from its wording the way `model-route.js` always did: a greeting, "open this", "what time is it" is light; a typical request is standard; a multi-step brief, a stack trace, code, "refactor / debug / design / investigate" is heavy. Several attached tabs raise the score. A short follow-up ("continue", "yes", "fix it") never drops below the previous turn's tier, and inside a running CLI session the tier never goes down (a different model would lose the prompt cache).
-   - A long conversation (over about 60,000 characters) lifts "fast" to "balanced"; a very long one (over about 240,000) lifts everything to "strong".
+   - A chat message is scored from its wording the way `model-route.js` always did: since Haiku 5.5, everyday chat is light: a greeting, "open this", "what time is it", a question about the page, a summary, an email draft, a plain browsing task. A message about code or config (fix, bug, function, test, SQL, API...) is standard (Sonnet); a multi-step brief, a stack trace, "refactor / debug / design / investigate" scoring 6 or more is heavy (Opus). Several attached tabs raise the score. A short follow-up ("continue", "yes", "fix it") never drops below the previous turn's tier, and inside a running CLI session the tier never goes down (a different model would lose the prompt cache).
+   - A long conversation (over about 120,000 characters) lifts "fast" to "balanced"; a very long one (over about 240,000) lifts everything to "strong".
    - **/think** and **/deep** at the start of a message ask for the strongest model for that message; **/fast** asks for the quickest. The command is removed before the message goes anywhere. They work only on Auto: with a model picked, the command asks you to pick Auto first, and a message typed that way goes as typed (Claude Code has a `/fast` of its own).
 3. **Which models can answer.** Only models that are connected and signed in; not turned off for Auto (Settings → AI → **Auto may use**); not cooling down after a usage limit, rate limit or outage (the same cooldowns as [model fallback](settings.md#ai-and-agents)); not refused for this account this session ("not available on your plan", no access to the model: Opus-only plans, models gated by plan); able to use tools when the message needs them (chat-only models are skipped); able to see images when the message holds some; with a context window that holds the conversation. A CLI engine is left out while another chat is running, because the CLIs take turns.
 4. **Choosing.** The candidate whose tier is nearest the need wins (a stronger model before a weaker one that may not manage it). Ties go to the provider already answering in the chat, then the one you were on before choosing Auto, then the cheaper (the catalog price when there is one), then the picker's order. The same inputs always give the same answer.

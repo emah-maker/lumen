@@ -19,6 +19,7 @@ const NAMES = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 const HEAVY_WORDS = /\b(refactor\w*|architect\w*|design(?:ing)?|debug\w*|root cause|investigat\w+|implement\w*|migrat\w+|optimi[sz]\w+|audit|race condition|deadlock|memory leak|trade-?offs?|algorithm\w*|rewrite|redesign|codebase|multi-?file|across (?:the )?(?:files|repo|project)|end-to-end|integrat\w+|concurren\w+|prove|derive|analy[sz]e|review (?:the|this|my)|why (?:does|is|do|are|did|isn'?t|doesn'?t|won'?t)|step[- ]by[- ]step|from scratch|comprehensive|in depth|thorough\w*)\b/gi;
 const MEDIUM_WORDS = /\b(fix|bug|error|exception|crash\w*|write|build|script|code|function|test\w*|plan|compare|research|explain|regex|sql|api|config\w*|compile\w*)\b/gi;
 const LIGHT_WORDS = /\b(what(?:'s| is) the (?:time|date|weather)|what time|summari[sz]e|tl;?dr|translate|define|definition of|spell\w*|convert|weather|who is|open|go to|navigate to|search for|look up|scroll|click|bookmark|close (?:this|the) tab|rephrase|proofread|hello|hi|hey|thanks|thank you)\b/gi;
+const CODE_WORDS = /\b(fix|bugs?|errors?|exception|crash\w*|script|code|coding|function|test\w*|regex|sql|api|config\w*|compile\w*|implement\w*|refactor\w*|debug\w*|stack ?trace|commit|repo)\b|```/i;
 const ACK = /^\s*(?:continue|go on|keep going|carry on|yes|yeah|yep|y|ok|okay|sure|do it|fix it|try again|retry|proceed|go ahead|next|more|and\??|then\??|please|thanks?|sounds good|that works|again)[\s.!?]*$/i;
 
 // A pure sign-off ("thanks", "great, thank you so much", "got it"): nothing to read or do, so the smallest model
@@ -48,7 +49,11 @@ function score(prompt, { imageCount = 0, tabCount = 0 } = {}) {
   return s;
 }
 
-const tierOf = (s) => (s <= -2 ? 'light' : s >= 5 ? 'heavy' : 'standard');
+// Haiku 5.5 handles ordinary chat, page questions, summaries and plain browsing well, so 'light' (Haiku) reaches up to a score of 1,
+// unless the message is about code (CODE_WORDS): that stays on Sonnet. Only a clearly hard brief (6+) goes to Opus.
+const LIGHT_MAX = 1;
+const HEAVY_MIN = 6;
+const tierOf = (s, coding = false) => (s >= HEAVY_MIN ? 'heavy' : s <= (coding ? -2 : LIGHT_MAX) ? 'light' : 'standard');
 
 // Tier for this message given the conversation so far. `previous` is { tier, turns } from the last
 // routed turn. A short follow-up ("continue", "fix it", "yes") never drops below the previous turn's
@@ -59,8 +64,8 @@ const tierOf = (s) => (s <= -2 ? 'light' : s >= 5 ? 'heavy' : 'standard');
 // scratch. It can still go up for a harder message. A new session is scored on its own again.
 function tierFor(prompt, { imageCount = 0, tabCount = 0, previous = null, pinned = false } = {}) {
   const s = score(prompt, { imageCount, tabCount });
-  let tier = tierOf(s);
   const t = String(prompt || '').trim();
+  let tier = tierOf(s, CODE_WORDS.test(t));
   if (!pinned && !imageCount && !tabCount && t.length <= 60 && CLOSER.test(t)) return { tier: 'light', score: s, followUp: false, closer: true };
   const prev = previous && TIERS.includes(previous.tier) && previous.turns > 0 ? previous.tier : null;
   const followUp = Boolean(prev) && (ACK.test(t) || (t.length <= 40 && !imageCount && !count(t, LIGHT_WORDS)));
@@ -82,4 +87,4 @@ function route({ engine, picked = 'default', prompt, imageCount = 0, tabCount = 
   return { model, auto: true, tier, score: s, followUp, label: labelFor(model) };
 }
 
-module.exports = { TIERS, TABLE, score, tierOf, tierFor, modelForTier, labelFor, route };
+module.exports = { TIERS, TABLE, LIGHT_MAX, HEAVY_MIN, score, tierOf, tierFor, modelForTier, labelFor, route };

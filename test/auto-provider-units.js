@@ -22,7 +22,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
 const QUICK = { prompt: 'what time is it in Tokyo' };
 
 // ---- the picker's options, as main.js builds them
-const claudeApi = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', name: 'Opus 5.5', provider: 'Claude', group: 'Claude' }, { id: 'claude-sonnet-5', label: 'Sonnet 5', name: 'Sonnet 5', provider: 'Claude', group: 'Claude' }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', name: 'Haiku 4.5', provider: 'Claude', group: 'Claude' }];
+const claudeApi = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', name: 'Opus 5.5', provider: 'Claude', group: 'Claude' }, { id: 'claude-sonnet-5', label: 'Sonnet 5', name: 'Sonnet 5', provider: 'Claude', group: 'Claude' }, { id: 'claude-haiku-5-5', label: 'Haiku 5.5', name: 'Haiku 5.5', provider: 'Claude', group: 'Claude' }];
 const openai = [{ id: 'openai:gpt-5.6', label: 'GPT-5.6', name: 'GPT-5.6', provider: 'OpenAI', group: 'OpenAI' }, { id: 'openai:gpt-5.6-mini', label: 'GPT-5.6 mini', name: 'GPT-5.6 mini', provider: 'OpenAI', group: 'OpenAI' }];
 const xai = [{ id: 'xai:grok-4', label: 'Grok 4', name: 'Grok 4', provider: 'Grok', group: 'Grok' }];
 const gemini = [{ id: 'gemini:gemini-2.5-pro', label: 'Gemini 2.5 Pro', name: 'Gemini 2.5 Pro', provider: 'Gemini', group: 'Gemini' }, { id: 'gemini:gemini-2.5-flash', label: 'Gemini 2.5 Flash', name: 'Gemini 2.5 Flash', provider: 'Gemini', group: 'Gemini' }];
@@ -50,11 +50,11 @@ check('background tasks: engineOfModel reads an engine\'s Auto as that engine', 
 
 // ---- 2) the router, per provider: a quick message goes to the small model, a hard one to a strong one
 const only = (id, options, request) => { const d = scoped(id, options, request); return d.id; };
-check('Claude Code Auto: quick -> haiku, typical -> sonnet, hard -> opus or fable', only('claudecode', ALL, QUICK) === 'claudecode:haiku' && only('claudecode', ALL, { prompt: 'find the cheapest flight from Boston to Denver next month on this site' }) === 'claudecode:sonnet' && ['claudecode:opus', 'claudecode:fable'].includes(only('claudecode', ALL, { prompt: HEAVY })));
+check('Claude Code Auto: quick -> haiku, code -> sonnet, hard -> opus or fable', only('claudecode', ALL, QUICK) === 'claudecode:haiku' && only('claudecode', ALL, { prompt: 'fix the login bug on this page' }) === 'claudecode:sonnet' && only('claudecode', ALL, { prompt: 'find the cheapest flight from Boston to Denver next month on this site' }) === 'claudecode:haiku' && ['claudecode:opus', 'claudecode:fable'].includes(only('claudecode', ALL, { prompt: HEAVY })));
 check('Claude Code Auto never picks its own default while it lists models', !['claudecode:default'].includes(only('claudecode', ALL, QUICK)));
 check('Grok Build Auto: quick -> the fast build model, hard -> a strong grok', only('grokbuild', ALL, QUICK) === 'grokbuild:grok-4.7-build-fast' && /^grokbuild:grok-4\.[67]$/.test(only('grokbuild', ALL, { prompt: HEAVY })), J([only('grokbuild', ALL, QUICK), only('grokbuild', ALL, { prompt: HEAVY })]));
 check('Antigravity Auto: quick -> flash, hard -> pro', only('antigravity', ALL, QUICK) === 'antigravity:gemini-3-flash' && only('antigravity', ALL, { prompt: HEAVY }) === 'antigravity:gemini-3.1-pro-high');
-check('Anthropic (Claude API) Auto: quick -> Haiku, hard -> Opus', only('anthropic', ALL, QUICK) === 'claude-haiku-4-5' && only('anthropic', ALL, { prompt: HEAVY }) === 'claude-opus-5-5');
+check('Anthropic (Claude API) Auto: quick -> Haiku, hard -> Opus', only('anthropic', ALL, QUICK) === 'claude-haiku-5-5' && only('anthropic', ALL, { prompt: HEAVY }) === 'claude-opus-5-5');
 check('OpenAI Auto: quick -> mini, hard -> the flagship', only('openai', ALL, QUICK) === 'openai:gpt-5.6-mini' && only('openai', ALL, { prompt: HEAVY }) === 'openai:gpt-5.6');
 check('Gemini Auto: quick -> flash, hard -> pro', only('gemini', ALL, QUICK) === 'gemini:gemini-2.5-flash' && only('gemini', ALL, { prompt: HEAVY }) === 'gemini:gemini-2.5-pro');
 check('OpenRouter Auto: stays on OpenRouter models (never its "More models" row), quick -> flash, hard -> a strong one', only('openrouter', ALL, QUICK) === 'openrouter:google/gemini-2.5-flash' && /^openrouter:/.test(only('openrouter', ALL, { prompt: HEAVY })) && !only('openrouter', ALL, { prompt: HEAVY }).endsWith('__more'));
