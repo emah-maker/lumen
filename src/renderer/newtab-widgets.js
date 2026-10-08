@@ -1591,6 +1591,8 @@ const liveTicker = VisibleTicker.createTicker({
   run() { if (clockRows.size) tickClocks(); if (liveTicks.size) tickLive(); },
 });
 window.liveTicker = liveTicker; // (tests: whether a timer is armed)
+// The music card's playhead joins the same ticker while a song plays (renderer/newtab-music.js): one wakeup a second for clocks and music together.
+window.liveTick = { add(el, paint) { if (liveTicks.get(el) !== paint) { paint.coarse = false; liveTicks.set(el, paint); } liveTicker.poke(); }, remove(el) { liveTicks.delete(el); } };
 document.addEventListener('visibilitychange', () => liveTicker.onVisibility());
 // A row or card that just appeared is drawn at once (it is drawn before it is put on the page: tickClocks keeps it a while); the ticker then lines up.
 const wakeLive = () => { setTimeout(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 0); liveTicker.poke(); };

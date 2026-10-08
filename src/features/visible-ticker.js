@@ -12,7 +12,6 @@
 //     period     ms, or a function giving the current one (re-read each time the timer is armed; poke() re-arms sooner if it got shorter)
 //     visible()  default: !document.hidden
 //     align      land on multiples of `period` of the wall clock (default true)
-//     offset()   ms: land on multiples of `period` plus this instead (a song's playhead: whole seconds of the song, so the digits never lag)
 //   -> { poke(), onVisibility(), stop(), active() }
 /* global document */
 (function () {
@@ -29,8 +28,7 @@ function createTicker(o) {
   let timer = null;
   let due = 0;
   const periodNow = () => Math.max(50, Number(typeof o.period === 'function' ? o.period() : o.period) || 1000);
-  const offsetNow = () => (typeof o.offset === 'function' ? Number(o.offset()) || 0 : 0);
-  function wait(p) { return align ? p - (((now() - offsetNow()) % p) + p) % p + 2 : p; } // (+2 ms: a timer that fires a hair early must not tick in the same second twice)
+  function wait(p) { return align ? p - (now() % p) + 2 : p; } // (+2 ms: a timer that fires a hair early must not tick in the same second twice)
   function arm() {
     if (!visible() || !needed()) { stop(); return; }
     const w = wait(periodNow());
