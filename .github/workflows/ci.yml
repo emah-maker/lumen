@@ -37,3 +37,7 @@ jobs:
 
       - name: Unit tests
         run: node scripts/test-units.js
+
+      # Pure node (no Electron, about a minute): prompt and tool budgets, docs and contracts the unit suites do not cover.
+      - name: Acceptance tests
+        run: node scripts/test-acceptance.js
