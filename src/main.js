@@ -1819,9 +1819,16 @@ let spareNewTab = null; // { view, prefs, ready, at }
 let spareForTest = false; // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it)
 const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
 let spareForced = false; // tests: make one regardless of start-up state
-const spareMemory = () => { // the cheap facts (no per-process metrics): system free memory
+// One scheduler for the always-on housekeeping timers and one shared memory sample (features/scheduler.js). While every
+// window is hidden or minimised, the screen is locked, or the system is idle, jobs run at their slower `whenHidden` period.
+const scheduler = require('./features/scheduler').createScheduler({
+  idleState: (s) => require('electron').powerMonitor.getSystemIdleState(s),
+  readMemory: () => memoryInfo(),
+});
+if (TEST) { scheduler.setQuietOverride(false); global.__scheduler = scheduler; } // (test windows are hidden by design: they keep the normal cadence unless a test forces quiet)
+const spareMemory = () => scheduler.lastMemory() || (() => { // the last shared sample, else the cheap facts (system free memory)
   try { const m = process.getSystemMemoryInfo(); return { totalBytes: m.total * 1024, freeBytes: m.free * 1024 }; } catch { return {}; }
-};
+})();
 function closeSpareNewTab() {
   const s = spareNewTab;
   spareNewTab = null;
@@ -1842,12 +1849,13 @@ function makeSpareNewTab() {
   spareNewTab = s;
 }
 // Every minute: the spare is dropped while memory is tight, and made again (once start-up is over) when it is not.
-setInterval(() => {
+scheduler.every('spare-policy', 60 * 1000, async () => {
   if (TEST && !spareForTest) return;
-  const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: spareMemory() });
+  const memory = await scheduler.memorySample(); // (shared with the tab-sleep sweep)
+  const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: Object.keys(memory).length ? memory : spareMemory() });
   if (action === 'drop') closeSpareNewTab();
   else if (action === 'make') makeSpareNewTab();
-}, 60 * 1000).unref();
+}, { whenHidden: 2 * 60 * 1000 });
 // { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
   const s = spareNewTab;
@@ -2333,7 +2341,7 @@ function memoryInfo() {
   });
 }
 async function memoryPressure() { // (the test hook too) is memory low by the current settings?
-  return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await memoryInfo());
+  return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await scheduler.memorySample({ ttlMs: 0 }));
 }
 
 function sleepTab(tab) {
@@ -2531,8 +2539,8 @@ function tabSleepSettingChanged() {
   }
   setTimeout(() => { sweepSleep().catch(() => {}); }, 300).unref?.();
 }
-let pressureCheck = memoryInfo;
-setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
+let pressureCheck = () => scheduler.memorySample(); // (one sample shared with the spare-tab policy)
+scheduler.every('tab-sleep-sweep', SLEEP_CHECK_MS, () => sweepSleep().catch(() => {}), { whenHidden: 2 * 60 * 1000 }); // (still swept while minimised: that is when memory is wanted)
 if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve({ pressure: on }); }, frozen: (id) => Boolean(tabs.find((x) => x.id === id)?.frozen), freeze: (id) => freezeTab(tabs.find((x) => x.id === id)), thaw: (id) => thawTab(tabs.find((x) => x.id === id)), sleepNow: (id) => putToSleep(tabs.find((x) => x.id === id), tabSleep.normalize(readSettings()).how), menuItems: (id) => sleepMenuItems(tabs.find((x) => x.id === id)).map((i) => ({ label: i.label, enabled: i.enabled !== false })), changed: tabSleepSettingChanged, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
@@ -4347,7 +4355,7 @@ const runSlots = tabChatsLib.createRunSlots({
   onError: (id, err) => chatRuns.get(id)?.fail?.(err),
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
-setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
+scheduler.every('run-slots', 5000, () => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, { whenHidden: 15000 });
 const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
 const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
 onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
@@ -5670,6 +5678,19 @@ function takeSpare(size) {
   return rec;
 }
 const isSpare = (rec) => Boolean(rec?.prepared);
+// The scheduler runs its jobs slowly while no window can be seen (all hidden or minimised), the screen is locked, or the machine sleeps.
+function refreshSchedulerVisibility() {
+  if (TEST) return;
+  const seen = [...winRecs].some((r) => rcAlive(r) && !isSpare(r) && r.win.isVisible() && !r.win.isMinimized());
+  if (seen) scheduler.resume('hidden'); else scheduler.pause('hidden');
+}
+function wireSchedulerPower() {
+  const pm = require('electron').powerMonitor;
+  pm.on('lock-screen', () => scheduler.pause('locked'));
+  pm.on('unlock-screen', () => scheduler.resume('locked'));
+  pm.on('suspend', () => scheduler.pause('suspended'));
+  pm.on('resume', () => { scheduler.resume('suspended'); scheduler.resume('locked'); });
+}
 
 function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = false } = {}) {
   const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside) && (d.hover?.edge || 0) === (hit?.edge || 0);
@@ -6145,6 +6166,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   });
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
+  for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
   w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1 ? rec : null }); });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
@@ -6797,6 +6819,7 @@ const bgTasks = require('./features/background-runner').create({
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
   activeUrl: () => { const u = activeTab()?.webContents.getURL(); return isWebUrl(u) ? u : ''; },
   openTab: (url) => openTab(url), focusApp: () => focusWindow(),
+  every: (...a) => scheduler.every(...a), // (the 15 s task check shares the scheduler's one timer)
   isOnline: () => net.isOnline(), powerMonitor: () => require('electron').powerMonitor, // routines: skip while offline, catch up after sleep
 });
 bgTasks.register(ipcMain);
@@ -7033,7 +7056,7 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 aiStatusSoon = widgets.aiStatusSoon;
-setInterval(() => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, 15e3).unref?.(); // a limit that ended, a tab the AI opened or closed: nothing else announces them
+scheduler.every('ai-status', 15e3, () => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, { whenHidden: 60e3 }); // (runs at once when a window is back) // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
 
 // [widgets] Gmail through the Google sign-in in Lumen (features/gmail-atom.js): one GET of an account's inbox Atom feed,
@@ -8401,6 +8424,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   crashRecovery.begin({ mode: settingsBackend.startupPlan().mode }); // (before the first window saves a session over the last run's)
   setAboutPanel();
+  wireSchedulerPower();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().then(() => perf.mark('adblockSetup')).catch((err) => console.error('Ad blocker failed to start:', err));
