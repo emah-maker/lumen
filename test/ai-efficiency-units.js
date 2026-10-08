@@ -47,6 +47,7 @@ const size = (x) => JSON.stringify(x).length;
     const m = history(6);
     m.push({ role: 'user', content: [{ type: 'text', text: page(50) + 'next' }] });
     const normal = requestFor(m.settings, m);
+    check('request: Haiku 5.5 is a model of its own, and a chat saved on Haiku 4.5 runs as 5.5 (not as the default)', requestFor({ ...m.settings, model: 'claude-haiku-5-5' }, m).model === 'claude-haiku-5-5' && requestFor({ ...m.settings, model: 'claude-haiku-4-5' }, m).model === 'claude-haiku-5-5');
     check('request: normal turn sends old pages whole (cache prefix untouched)', JSON.stringify(normal.messages[0]) === JSON.stringify(m[0]));
     const small = history(1);
     small.push({ role: 'user', content: [{ type: 'text', text: page(7) + 'q' }] });

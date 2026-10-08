@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Auto sends more work to Haiku 5.5.** Haiku is far more capable now, so Auto (the picker's Auto, each provider's Auto and Claude Code's "Pick the Claude Code model for me") gives the fast tier everyday chat, questions about the page, summaries, email drafts and plain browsing, not just greetings and lookups; messages about code or config (fix, bug, function, test, SQL, API, a code fence) stay on Sonnet, and Opus is kept for clearly hard multi-step briefs (the "heavy" score moved from 5 to 6). A long conversation or attachment is only lifted off the fast model past 120,000 characters (it was 60,000; attachments 80,000, was 40,000). Haiku 5.5 (`claude-haiku-5-5`) replaces Haiku 4.5 in the model list, in helpers, side questions, tab-group suggestions and the cost estimate; a chat saved on Haiku 4.5 now runs as Haiku 5.5. A model you pick yourself is always used.
+
 ## 0.5.19 (2026-10-08)
 
 - **Research: a red "Retracted" label now needs Crossref to confirm it.** OpenAlex's retraction flag has false positives (it marked the Lancet 2020 dementia commission report, which is not retracted), so OpenAlex or PubMed alone now shows an amber "Retraction flag (unconfirmed)" chip (tooltip: check the publisher's page); "Retracted (Crossref)" in red appears only when Crossref's Retraction Watch data (or a "RETRACTED:" title) says so. Crossref expressions of concern and corrections get their own softer chips, and the AI is told to confirm on the publisher's page and not to call an unconfirmed flag a retraction.

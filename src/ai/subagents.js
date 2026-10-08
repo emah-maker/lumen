@@ -28,7 +28,7 @@ function helperModel(model, mode = 'auto') {
   const prefixed = /^(openai|xai|gemini|openrouter):/.exec(id);
   const provider = prefixed ? prefixed[1] : 'anthropic';
   const name = prefixed ? id.slice(prefixed[0].length) : id;
-  if (provider === 'anthropic') return /haiku/i.test(name) ? id : /^claude-/.test(name) ? 'claude-haiku-4-5' : id;
+  if (provider === 'anthropic') return /haiku/i.test(name) ? id : /^claude-/.test(name) ? 'claude-haiku-5-5' : id;
   if (provider === 'openai') return /(mini|nano)/i.test(name) ? id : /^gpt-[\d.]+$/.test(name) ? `openai:${name}-mini` : id;
   if (provider === 'gemini') return /(flash|lite)/i.test(name) ? id : /^gemini-/.test(name) ? 'gemini:gemini-2.5-flash' : id;
   return id;

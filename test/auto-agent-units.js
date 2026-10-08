@@ -13,7 +13,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
 const OPTS = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5', name: 'Opus 5.5', group: 'Claude' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5', name: 'Sonnet 5', group: 'Claude' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', name: 'Haiku 4.5', group: 'Claude' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', name: 'Haiku 5.5', group: 'Claude' },
   { id: 'openai:gpt-5.6', label: 'GPT-5.6', name: 'GPT-5.6', group: 'OpenAI' },
   { id: 'openai:gpt-5.6-mini', label: 'GPT-5.6 mini', name: 'GPT-5.6 mini', group: 'OpenAI' },
   { id: 'claudecode:sonnet', label: 'Claude Code · Sonnet', name: 'Sonnet', group: 'Your Claude account', signedIn: true },

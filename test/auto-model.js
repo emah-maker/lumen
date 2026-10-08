@@ -211,9 +211,9 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   // ---- existing choices are never migrated
   await ui.evaluate(() => document.getElementById('new-chat').click()); // (the open chat's own pick is Auto: a new chat starts on the saved one)
   await sleep(300);
-  await app.evaluate(() => global.__patchSettings({ model: 'claude-haiku-4-5' }));
+  await app.evaluate(() => global.__patchSettings({ model: 'claude-haiku-5-5' }));
   await app.evaluate(() => global.__modelsChanged());
-  check('a saved model stays the pick (no migration to Auto)', (await settings()).model === 'claude-haiku-4-5', (await settings()).model);
+  check('a saved model stays the pick (no migration to Auto)', (await settings()).model === 'claude-haiku-5-5', (await settings()).model);
   await app.evaluate(() => global.__patchSettings({ model: 'openai:no-such-model' }));
   const gone = (await settings()).model;
   check('a saved model that disappears falls back as before, not to Auto', gone !== 'auto' && gone !== 'openai:no-such-model', gone);
