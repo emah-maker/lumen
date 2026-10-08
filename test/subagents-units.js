@@ -209,7 +209,7 @@ const text = (t) => ({ type: 'text', text: t });
     const chat = chatOf();
     const on = requestFor(chat.settings, chat);
     const off = requestFor(chat.settings, chat, undefined, { delegate: false });
-    check('tool: offered by default, with the whole tool list still under budget', on.tools.some((t) => t.name === 'delegate') && JSON.stringify(on.tools).length < 15500, String(JSON.stringify(on.tools).length));
+    check('tool: offered by default, with the whole tool list still under budget (16.7k, the same budget as units.js: raised from 15.5k for drag, list_files, clipboard and upload_file paths)', on.tools.some((t) => t.name === 'delegate') && JSON.stringify(on.tools).length < 16700, String(JSON.stringify(on.tools).length));
     check('setting off: the tool is not in the request', !off.tools.some((t) => t.name === 'delegate') && off.tools.length === on.tools.length - 1);
     check('tool: a short definition', JSON.stringify(on.tools.find((t) => t.name === 'delegate')).length < 700, String(JSON.stringify(on.tools.find((t) => t.name === 'delegate')).length));
     check('tool: input is checked like any other tool\'s', validateInput('delegate', { tasks: [{ task: 'x' }] }) === null && validateInput('delegate', {}) !== null && validateInput('delegate', { tasks: [{}] }) !== null && validateInput('delegate', { tasks: 'x' }) !== null);

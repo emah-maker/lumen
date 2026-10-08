@@ -602,6 +602,13 @@ const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   showNotes: (opts) => dialogs.showNotes(opts),
 }));
 if (TEST) global.__whatsNew = whatsNew;
+// "Turn this on?" for features that ship off (features/feature-offers.js): once, right after the notes.
+const featureOffers = lazy(() => require('./features/feature-offers').createFeatureOffers({
+  readSettings, writeSettings, t, test: TEST,
+  setSetting: (key, value) => settingsBackend.set(key, value),
+  showMessageBox: (opts) => dialogs.showMessageBox(null, { type: 'question', ...opts }),
+}));
+if (TEST) global.__featureOffers = featureOffers;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
 // overlay per window (features/tool-overlay.js). Loaded on first use.
@@ -6602,7 +6609,12 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     openLinksFromOtherApps(pendingLinks.splice(0));
     // After an update, the release notes come up once, a moment after the restored tabs (only the
     // first normal window asks; whatsNew.check runs once per launch).
-    if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
+    if (firstWindow) setTimeout(() => {
+      if (w.isDestroyed()) return;
+      featureOffers.prepare(); // before the notes record the version: it tells an update from a fresh install
+      whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message))
+        .then(() => featureOffers.present()).catch((err) => console.error('[lumen] feature offers:', err.message));
+    }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
     if (firstWindow && crashRecovery.pending()) setTimeout(() => { offerCrashRestore().catch((err) => console.error('[lumen] crash recovery:', err.message)); }, 600); // the last run crashed and the startup setting wouldn't bring its tabs back
@@ -7032,6 +7044,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
