@@ -56,15 +56,17 @@ const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user wh
 // Two chats' runs never drive one tab (see tabBusyElsewhere).
 const TAB_BUSY = 'That tab is in use by a task running in another chat. Open a new tab with open_tab (or switch_tab to another tab) to work here.';
 
-// Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
-// dynamic-filtering web search; Opus 5.5 defaults to medium effort, so ask for high explicitly.
+// Models the user can pick. Opus 5.5 defaults to medium effort, so ask for high explicitly. Haiku 4.5 (a saved
+// choice from before Haiku 5.5) predates adaptive thinking and the dynamic-filtering web search; it is not offered any more
+// and runs as Haiku 5.5 (LEGACY_MODELS).
 const MODELS = {
   'claude-opus-5': { label: 'Opus 5', detail: 'Best balance for browsing tasks.', fallbacks: true },
   'claude-opus-5-5': { label: 'Opus 5.5', detail: 'Default. Newest Opus, and cheaper than Opus 5.', fallbacks: true, effort: 'high' },
   'claude-fable-5-1': { label: 'Fable 5.1', detail: 'Most capable. Slowest and most expensive.', fallbacks: true },
   'claude-sonnet-5': { label: 'Sonnet 5', detail: 'Faster and cheaper.' },
-  'claude-haiku-4-5': { label: 'Haiku 4.5', detail: 'Fastest and cheapest. Best for simple pages.', legacyThinking: true, basicWebSearch: true },
+  'claude-haiku-5-5': { label: 'Haiku 5.5', detail: 'Fast and cheap, and now capable: most chat, page questions and browsing.' },
 };
+const LEGACY_MODELS = { 'claude-haiku-4-5': 'claude-haiku-5-5' };
 const DEFAULT_MODEL = 'claude-opus-5-5'; // the newest Opus
 
 // ADHD-friendly answer shape (from the i-have-adhd skill), adapted to a browser sidebar.
@@ -814,7 +816,8 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
 function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true } = {}) { // delegate: the helpers setting (the tool is offered)
-  const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
+  const picked = LEGACY_MODELS[settings.model] || settings.model;
+  const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
   const params = {
     model,
@@ -5250,4 +5253,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };

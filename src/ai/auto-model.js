@@ -87,9 +87,9 @@ const providerOf = fallback.providerOf;
 // ---------- what a request needs ----------
 
 const TOOL_KINDS = new Set(['chat', 'agentic', 'code']);
-const LONG_HISTORY_CHARS = 60_000; // a long conversation is not left to the smallest model
+const LONG_HISTORY_CHARS = 120_000; // a very long conversation is not left to the smallest model (Haiku 5.5 holds far more than it used to)
 const HUGE_HISTORY_CHARS = 240_000;
-const BIG_ATTACHMENT_CHARS = 40_000; // page text, a PDF, a pasted file: summarising it is no quick lookup
+const BIG_ATTACHMENT_CHARS = 80_000; // page text, a PDF, a pasted file: summarising it is no quick lookup
 
 // The tier the request wants and what a model must be able to do for it.
 // request: {

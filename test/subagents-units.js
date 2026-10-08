@@ -18,7 +18,7 @@ const text = (t) => ({ type: 'text', text: t });
 
 (async () => {
   // ---- the cheaper model, per provider
-  check('model: Claude chats use Haiku, Haiku stays', S.helperModel('claude-opus-5-5') === 'claude-haiku-4-5' && S.helperModel('claude-fable-5-1') === 'claude-haiku-4-5' && S.helperModel('claude-haiku-4-5') === 'claude-haiku-4-5');
+  check('model: Claude chats use Haiku, Haiku stays', S.helperModel('claude-opus-5-5') === 'claude-haiku-5-5' && S.helperModel('claude-fable-5-1') === 'claude-haiku-5-5' && S.helperModel('claude-haiku-5-5') === 'claude-haiku-5-5');
   check('model: OpenAI gets its mini, Gemini its flash', S.helperModel('openai:gpt-5.6') === 'openai:gpt-5.6-mini' && S.helperModel('openai:gpt-5.6-mini') === 'openai:gpt-5.6-mini' && S.helperModel('gemini:gemini-2.5-pro') === 'gemini:gemini-2.5-flash' && S.helperModel('gemini:gemini-2.5-flash') === 'gemini:gemini-2.5-flash');
   check('model: Grok and OpenRouter (no known cheaper one) and "same" keep the chat\'s model', S.helperModel('xai:grok-4') === 'xai:grok-4' && S.helperModel('openrouter:anthropic/claude-opus-5.5') === 'openrouter:anthropic/claude-opus-5.5' && S.helperModel('claude-opus-5-5', 'same') === 'claude-opus-5-5');
 
@@ -85,8 +85,8 @@ const text = (t) => ({ type: 'text', text: t });
     const results = await S.runHelpers({ tasks: [{ task: 'fine one', urls: [] }, { task: 'boom', urls: [] }, { task: 'fine two', urls: [] }], turn, exec, tools: [], onEvent: (e) => events.push(`${e.type}${e.n}${e.status ? `:${e.status}` : ''}`) });
     check('isolation: one helper failing leaves the others\' answers', J(results.map((r) => r.status)) === '["done","failed","done"]' && /fine one/.test(results[0].text) && /provider exploded/.test(results[1].error), J(results));
     check('progress: every helper reports start and done', ['start1', 'start2', 'start3', 'done1:done', 'done2:failed', 'done3:done'].every((e) => events.includes(e)), J(events));
-    const body = S.formatResults(results, { dropped: 2, model: 'Haiku 4.5' });
-    check('combined: one block, every helper numbered with its state, the dropped tasks named, all as untrusted content', /^<untrusted_page_content>/.test(body) && /Helper 1 \[done/.test(body) && /Helper 2 \[FAILED: provider exploded\]/.test(body) && /Helper 3 \[done/.test(body) && /Not run: 2 more tasks/.test(body) && /on Haiku 4\.5/.test(body) && /nothing was clicked/.test(body), body);
+    const body = S.formatResults(results, { dropped: 2, model: 'Haiku 5.5' });
+    check('combined: one block, every helper numbered with its state, the dropped tasks named, all as untrusted content', /^<untrusted_page_content>/.test(body) && /Helper 1 \[done/.test(body) && /Helper 2 \[FAILED: provider exploded\]/.test(body) && /Helper 3 \[done/.test(body) && /Not run: 2 more tasks/.test(body) && /on Haiku 5.5/.test(body) && /nothing was clicked/.test(body), body);
   }
 
   // ---- the limiter keeps page reads bounded across helpers
@@ -121,7 +121,7 @@ const text = (t) => ({ type: 'text', text: t });
     const chat = chatOf();
     const t0 = Date.now();
     const { value, events } = await inChat(agent, chat, () => agent.delegate({ tasks: [{ task: 'A' }, { task: 'B' }, { task: 'C' }] }));
-    check('delegate: three helpers on the cheaper model run side by side and come back as one result', Date.now() - t0 < 400 && used.length === 6 && used.every((m) => m === 'claude-haiku-4-5') && /Helper 1 \[done/.test(value) && /Helper 3 \[done/.test(value) && /on Haiku 4\.5/.test(value), `${Date.now() - t0} ms ${value}`);
+    check('delegate: three helpers on the cheaper model run side by side and come back as one result', Date.now() - t0 < 400 && used.length === 6 && used.every((m) => m === 'claude-haiku-5-5') && /Helper 1 \[done/.test(value) && /Helper 3 \[done/.test(value) && /on Haiku 5.5/.test(value), `${Date.now() - t0} ms ${value}`);
     check('delegate: the tools a helper runs are the chat\'s own read_urls, with a page-size default and no sign-in', ran.length === 3 && ran.every(([n, a]) => n === 'read_urls' && a.max_chars === S.READ_CHARS && !a.as_user), J(ran));
     check('usage: the helpers\' tokens are summed into the chat\'s totals (6 turns, priced as Haiku)', chat.settings.usage.turns === 6 && chat.settings.usage.input === 7500 && chat.settings.usage.output === 450 && chat.settings.usage.cost > 0, J(chat.settings.usage));
     check('usage: the sidebar gets the new total as each helper turn lands', events.filter((e) => e.type === 'usage').length === 6);
@@ -179,9 +179,9 @@ const text = (t) => ({ type: 'text', text: t });
   {
     const agent = makeAgent();
     const used = [];
-    agent.helperCall = async (model, { messages }) => { used.push(model); if (model === 'claude-haiku-4-5') throw Object.assign(new Error('model: claude-haiku-4-5 not found'), { status: 404 }); return reply([text('ok on own model')]); };
+    agent.helperCall = async (model, { messages }) => { used.push(model); if (model === 'claude-haiku-5-5') throw Object.assign(new Error('model: claude-haiku-5-5 not found'), { status: 404 }); return reply([text('ok on own model')]); };
     const { value } = await inChat(agent, chatOf(), () => agent.delegate({ tasks: [{ task: 'A' }] }));
-    check('fallback: a cheaper model the key cannot use falls back to the chat\'s own model', used.join() === 'claude-haiku-4-5,claude-opus-5-5' && /ok on own model/.test(value), J([used, value]));
+    check('fallback: a cheaper model the key cannot use falls back to the chat\'s own model', used.join() === 'claude-haiku-5-5,claude-opus-5-5' && /ok on own model/.test(value), J([used, value]));
     const same = makeAgent({ subagentModel: () => 'same' });
     const sameUsed = [];
     same.helperCall = async (model) => { sameUsed.push(model); return reply([text('x')]); };
