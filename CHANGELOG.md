@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.19 (2026-10-08)
+
 - **Research: a red "Retracted" label now needs Crossref to confirm it.** OpenAlex's retraction flag has false positives (it marked the Lancet 2020 dementia commission report, which is not retracted), so OpenAlex or PubMed alone now shows an amber "Retraction flag (unconfirmed)" chip (tooltip: check the publisher's page); "Retracted (Crossref)" in red appears only when Crossref's Retraction Watch data (or a "RETRACTED:" title) says so. Crossref expressions of concern and corrections get their own softer chips, and the AI is told to confirm on the publisher's page and not to call an unconfirmed flag a retraction.
 
 
