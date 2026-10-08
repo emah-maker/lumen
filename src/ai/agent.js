@@ -17,6 +17,9 @@ const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseCon
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
+const annotate = require('./annotate'); // [annotate] the annotate tool: marks drawn over the page (or the PDF viewer, or a screenshot)
+const annotateRaster = require('./annotate-raster');
+const pdfZoom = require('../features/pdf-zoom'); // viewerFrame: the PDF viewer's own frame
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const screenContext = require('./screen-context'); // [screen context] a screenshot of the tab when the message points at what is on screen
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
@@ -425,6 +428,7 @@ const snapshot = require('./snapshot');
 snapshot.extendTools(TOOLS);
 // --- end efficiency hook ---
 imageRouter.extendTools(TOOLS); // [image routing]
+annotate.extendTools(TOOLS); // [annotate] draw on the page to explain it
 
 // [subagents] delegate is for the sidebar's API chats only (not listed to MCP clients or the CLI engines, which have their own helpers), and only
 // while Settings > AI > "Let the AI use helpers" is on (requestFor / otherTurn leave it out otherwise).
@@ -836,7 +840,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Eager input streaming skips server-side validation, so check inputs against the schema here.
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
-const ONE_OF = { click: [['element_id', 'text']], wait_for: [['text', 'url', 'gone', 'network_idle']] };
+const ONE_OF = { annotate: [['marks', 'clear']], click: [['element_id', 'text']], wait_for: [['text', 'url', 'gone', 'network_idle']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
 // (handle_dialog: accepting a page's confirm is part of the interaction the user allowed on that site, so it asks like a click does.)
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', ...snapshot.ACTING]);
@@ -913,6 +917,7 @@ function validateInput(name, input) {
   if (!schema) return `Unknown tool: ${name}`;
   if (!input || typeof input !== 'object') return 'Input must be an object';
   for (const key of ['start', 'end']) if (name === 'video_overview' && typeof input[key] === 'number') input[key] = String(input[key]); // a model sends 83 as often as "1:23"
+  if (name === 'annotate') annotate.coerce(input); // a target sent as a number
   if (name === 'video_frames' && Array.isArray(input.at)) input.at = input.at.map((t) => (typeof t === 'number' ? String(t) : t));
   for (const key of schema.required || []) {
     if (!(key in input)) return `Missing required field: ${key}`;
@@ -2801,6 +2806,118 @@ ${prompt}` : prompt), historyImages: [] };
     return imageRouter.toolResult(made);
   }
 
+  // ---- [annotate] (ai/annotate.js) The annotate tool: marks drawn over the page the user is looking at.
+  // On a web page or the slide viewer: an overlay in Claude's isolated world. On a PDF tab: the same overlay inside the PDF
+  // viewer's frame. Only when that can't be done: the marks drawn onto a screenshot, shown in the chat.
+  async annotateRun(wc, code, pdf, timeoutMs = 5000) {
+    if (pdf) {
+      const frame = pdfZoom.viewerFrame(wc);
+      if (!frame) return null;
+      let timer;
+      try {
+        return await Promise.race([frame.executeJavaScript(code), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The PDF viewer did not respond.')), timeoutMs); })]);
+      } finally { clearTimeout(timer); }
+    }
+    return runScript(wc, code, timeoutMs);
+  }
+
+  // Refs of embedded frames (and the screenshot path) become boxes of the main frame's viewport.
+  async annotateBoxOf(wc, ref) {
+    const at = frames.decodeId(ref);
+    if (!at) return runScript(wc, annotate.rectScript(ref), 3000);
+    const frame = await frames.find(wc, at.n, { allow: this.frameAllow() });
+    const r = frame && await frames.run(wc, frame, annotate.rectScript(at.k), 3000);
+    return r && { x: frame.x + r.x, y: frame.y + r.y, w: r.w, h: r.h };
+  }
+
+  async annotateTool(input) {
+    const wc = this.requireTab();
+    const scope = taskScope.getStore();
+    const shot = this.screenshotScale && this.screenshotScale.wc === wc ? { ratio: this.screenshotScale.ratio, zoom: wc.getZoomFactor() } : null;
+    const spec = annotate.normalize(input, shot);
+    const pdf = Boolean(pdfZoom.viewerFrame(wc));
+    const last = this.lastDrawing && this.lastDrawing.wc === wc ? this.lastDrawing : null;
+    if (!spec.marks.length) { // clear:true alone
+      await this.annotateRun(wc, annotate.clearScript(), pdf).catch(() => {});
+      if (last) last.marks = [];
+      return 'Cleared the drawings.';
+    }
+    if (scope && scope.idsFresh === false && spec.usesRefs) throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use "text:…" or screenshot coordinates.');
+    if (pdf && (spec.usesRefs || spec.usesText)) throw new Error('This is a PDF: it has no element ids or page text to point at. Take a screenshot and place marks with x,y,w,h of it.');
+    // Elements inside embedded frames can't be followed by the page overlay: they are drawn where they are now.
+    for (const m of spec.marks) {
+      for (const key of ['at', 'to']) {
+        const a = m[key];
+        if (a && a.ref && frames.decodeId(a.ref)) {
+          const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
+          m[key] = box ? { box } : null;
+        }
+      }
+    }
+    const title = String(wc.getTitle?.() || '').slice(0, 40);
+    const where = title ? quote(title) : 'the page';
+    const steps = spec.marks.some((m) => m.type === 'step');
+    let result = null;
+    const path = annotate.choosePath({ pdf });
+    try { result = await this.annotateRun(wc, annotate.overlayScript({ marks: spec.marks, clear: spec.clear, seconds: spec.seconds }, { pdf: path === 'pdf' }), path === 'pdf'); } catch { result = null; }
+    if (result && result.ok) {
+      const keep = (spec.clear || !last ? [] : last.marks).concat(result.frozen || []).slice(-annotate.MAX_TOTAL);
+      this.lastDrawing = { wc, pdf: path === 'pdf', marks: keep, url: wc.getURL(), title };
+      return annotate.resultText({ drawn: result.drawn, added: result.frozen.length, missing: result.missing || [], dropped: spec.dropped, where: path === 'pdf' ? `the PDF ${where}` : where, seconds: spec.seconds, steps });
+    }
+    return this.annotateOnScreenshot(wc, spec, scope, { where, steps });
+  }
+
+  // The overlay could not go into the tab: the marks are drawn on a screenshot of it, shown in the chat (and returned to the model).
+  async annotateOnScreenshot(wc, spec, scope, { where, steps }) {
+    const missing = [];
+    const marks = [];
+    for (const [i, m] of spec.marks.entries()) {
+      const out = { ...m };
+      let ok = true;
+      for (const key of ['at', 'to']) {
+        const a = m[key];
+        if (!a) continue;
+        if (a.text) { missing.push(`marks[${i}] ${m.type}: text targets need the page overlay`); ok = false; } else if (a.ref) {
+          const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
+          if (box) out[key] = { box }; else { missing.push(`marks[${i}] ${m.type}: element ${a.ref} is gone or not visible`); ok = false; }
+        }
+      }
+      if (ok) marks.push(out);
+    }
+    const cssW = await runScript(wc, 'innerWidth', 2000).catch(() => 0);
+    const cssH = await runScript(wc, 'innerHeight', 2000).catch(() => 0);
+    if (!marks.length || !cssW || !cssH) throw new Error(`Could not draw on this page${missing.length ? `: ${missing.join('; ')}` : ''}. Use screenshot coordinates, or describe it in words.`);
+    let image = await captureTab(wc);
+    const outW = Math.min(image.getSize().width, 1280);
+    if (image.getSize().width > outW) image = image.resize({ width: outW });
+    const outH = Math.round(outW * cssH / cssW);
+    const drawn = annotate.staticSvg(marks, { w: cssW, h: cssH, image: `data:image/jpeg;base64,${image.toJPEG(82).toString('base64')}` });
+    if (!drawn.svg) throw new Error(`Nothing could be drawn: ${drawn.missing.join('; ')}`);
+    const png = await annotateRaster.rasterize(drawn.svg, outW, outH);
+    const data = png.toString('base64');
+    if (scope?.chat && scope.gate?.external !== true) (scope.toolImages ||= []).push({ data, alt: `Marks drawn on ${where}`, credit: 'Lumen' });
+    this.lastDrawing = null;
+    return [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
+      { type: 'text', text: `${annotate.resultText({ drawn: drawn.drawn, added: drawn.drawn, missing: missing.concat(drawn.missing || []), dropped: spec.dropped, where: `a screenshot of ${where}`, seconds: null, steps })} The page itself could not be drawn on, so the marks are on this screenshot, shown to the user in the chat.` },
+    ];
+  }
+
+  // The sidebar's "Show again" / "Clear" on a drawing step. -> boolean
+  async annotateAgain(action) {
+    const d = this.lastDrawing;
+    if (!d || d.wc.isDestroyed()) return false;
+    try {
+      if (action === 'clear') return Boolean(await this.annotateRun(d.wc, annotate.clearScript(), d.pdf, 3000));
+      if (action !== 'show' || !d.marks.length) return false;
+      if (d.wc.getURL() !== d.url) return false; // the page moved on
+      const r = await this.annotateRun(d.wc, annotate.overlayScript({ marks: d.marks, clear: true }, { pdf: d.pdf }), d.pdf);
+      return Boolean(r && r.ok);
+    } catch { return false; }
+  }
+  // ---- [/annotate]
+
   // Pictures queued on this run's scope by tools (an outside MCP tool's, generate_image): shown and kept. -> blocks
   async scopeImages(emit) {
     const scope = taskScope.getStore();
@@ -3336,6 +3453,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
       if (name === 'hover') return 'Pointing at an element';
+      if (name === 'annotate') return input.clear === true && !input.marks?.length ? 'Clearing the drawings' : `Drawing ${Array.isArray(input.marks) ? input.marks.length : 0} mark${input.marks?.length === 1 ? '' : 's'} on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}`;
       if (name === 'upload_file') return this.uploadLabel(input);
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name !== 'click' && name !== 'type_text') return null;
@@ -4637,6 +4755,7 @@ ${same}
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
       case 'generate_image': return this.generateImageTool(input); // [image routing]
+      case 'annotate': return this.annotateTool(input); // [annotate]
       case 'read_pdf': return this.readPdf(input);
       case 'video_overview':
       case 'video_frames': return this.videoTool(name, input);
