@@ -463,18 +463,20 @@ function build(w, card, o) {
     bar.setAttribute('aria-valuetext', `${spClock(now)} of ${spClock(p.duration)}`);
     return now;
   }
-  const clock = setInterval(() => {
-    if (!root.isConnected) { clearInterval(clock); return; } // the card was removed (a kept card stays connected)
+  // No timer of its own: while a song plays the card's progress is one of the page's live ticks (renderer/newtab-widgets.js liveTicker, which also
+  // drives the clocks): one wakeup a second for all of them, none while the page is hidden or nothing is playing. The position is never counted:
+  // drawProgress() works it out from where the playhead was and when, so a page that was hidden is right again the moment it is shown.
+  function progressTick() {
     const p = view.prog;
-    if (!p || !p.playing || document.hidden) return;
+    if (!p || !p.playing) return;
     if (drawProgress() >= p.duration && p.endedKey !== `${p.from}|${p.at}`) {
       p.endedKey = `${p.from}|${p.at}`;
       // The track is over: the service has moved on to the next one (or stopped). Without this the card sat at the end of the old song until its
       // next scheduled refresh. The later asks cover the service still answering with the old song.
       for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh'); }, wait);
     }
-  }, 1000);
-  view.timers.add(clock);
+  }
+  const clock = { poke() { if (view.prog?.playing) window.liveTick.add(root, progressTick); else window.liveTick.remove(root); }, stop() { window.liveTick.remove(root); } };
 
   // ---- update: everything the data can change, each part only when it changed ----
   let adTimer = null;
@@ -556,6 +558,7 @@ function build(w, card, o) {
     view.prog = duration && !isIdle ? { from: Number.isFinite(d.progressMs) ? d.progressMs : 0, at: Number.isFinite(d.at) ? d.at : Date.now(), duration, playing: state === 'playing', seek: seekable, endedKey: view.prog && view.prog.from === d.progressMs && view.prog.at === d.at ? view.prog.endedKey : '' } : null;
     setText(total, duration ? spClock(duration) : '');
     drawProgress();
+    clock.poke();
     // the header search
     const canSearch = cap('search');
     toggle.hidden = !canSearch || loading;
@@ -690,7 +693,7 @@ function build(w, card, o) {
   view.settleTabIndex = () => { if (!document.body.classList.contains('w-editing')) card.el.tabIndex = 0; };
 
   view.update = (nextW) => { update(nextW); view.settleTabIndex(); };
-  view.destroy = () => { for (const t of view.timers) { clearTimeout(t); clearInterval(t); } view.timers.clear(); clearTimeout(adTimer); view.ro?.disconnect(); };
+  view.destroy = () => { for (const t of view.timers) clearTimeout(t); view.timers.clear(); clearTimeout(adTimer); clock.stop(); view.ro?.disconnect(); };
   return view;
 }
 

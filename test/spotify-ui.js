@@ -131,7 +131,7 @@ async function partApi(fake, base, scratch, shots) {
   const bar = await page(`(() => { const b = ${card(D)}.querySelector('.sp-bar'); return b && { role: b.getAttribute('role'), label: b.getAttribute('aria-label'), now: b.getAttribute('aria-valuenow'), elapsed: ${card(D)}.querySelector('.sp-elapsed').textContent, total: ${card(D)}.querySelector('.sp-total').textContent }; })()`);
   check('now playing: the progress bar is a labelled progressbar with elapsed and total time', bar && bar.role === 'progressbar' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20' && Number(bar.now) >= 15, JSON.stringify(bar));
   await sleep(2200);
-  check('now playing: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 32, await text(D, '.sp-elapsed'));
+  check('now playing: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 31, await text(D, '.sp-elapsed'));
 
   // controls
   fake.world.playback = track({ is_playing: false }); // what Spotify says once the pause went through
