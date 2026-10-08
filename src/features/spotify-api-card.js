@@ -16,7 +16,8 @@ const { PLAYER } = SV;
 
 const TAB_MAX_AGE_MS = 5000;
 const THUMBS = 6; // pictures fetched for a list (each distinct picture is a request, and all widgets share 40 a minute: a queue of one album is one)
-const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played' };
+const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played', liked: 'user-library-read' };
+const MAX_SONGS = 30; // songs a search can grow to by "more songs" (three pages of 10)
 const TABS = ['queue', 'library', 'devices', 'tracks', 'search'];
 
 const failure = (res, what) => {
@@ -64,11 +65,29 @@ async function loadThumbs(ui, ids, ctx) {
   for (const i of todo) i.thumbAsked = true;
   await Promise.all(todo.map(async (i) => { i.thumb = await pic(i.images, ctx.searchImage || ctx.image); }));
 }
+// Is a "More songs" offered: the Web API answered a full page of songs and the list is not at its end.
+const moreSongsOf = (s) => { const songs = s.items.filter((i) => i.kind === 'song').length; return s.ok !== false && !s.moreDone && songs >= 10 && songs < MAX_SONGS; };
 // What the search adds to the card's data (the engine's card too, when the Web API answered): null when there is no answered search.
 function directResults(ui) {
   const s = ui && ui.search;
   if (!s || !s.api) return null;
-  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: false, moreLoading: false };
+  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: moreSongsOf(s), moreLoading: false };
+}
+// "More songs": the next page of songs for the search shown (offset paging, 10 a request), merged in under the songs already listed. A newer search
+// meanwhile drops it. Returns { ok, stale }.
+async function searchMore(ui, ctx, call = ctx.searchCall) {
+  const s = ui.search;
+  if (!s || !s.api || s.ok === false || s.moreDone || !s.term) return { ok: true, stale: false, none: true };
+  const seq = ui.searchSeq;
+  const songs = s.items.filter((i) => i.kind === 'song');
+  const res = await ask(call, ui, PLAYER.searchMore(s.term, songs.length), 'search').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
+  if (seq !== ui.searchSeq || ui.search !== s) return { ok: false, stale: true };
+  if (!res.ok) { s.moreDone = true; return { ok: false, stale: false }; }
+  const have = new Set(songs.map((i) => i.id));
+  const fresh = SV.normalizeSearch(res.body).filter((i) => i.kind === 'song' && !have.has(i.id)).slice(0, MAX_SONGS - songs.length);
+  if (!fresh.length || songs.length + fresh.length >= MAX_SONGS) s.moreDone = true;
+  s.items = [...songs, ...fresh, ...s.items.filter((i) => i.kind !== 'song')];
+  return { ok: true, stale: false };
 }
 
 async function loadTab(call, name, ctx, playback) {
@@ -81,9 +100,10 @@ async function loadTab(call, name, ctx, playback) {
     return;
   }
   if (name === 'library') {
-    const [recent, playlists] = await Promise.all([ask(call, ui, PLAYER.recent(), 'recent'), ask(call, ui, PLAYER.playlists(), 'library')]);
+    const [recent, playlists, liked] = await Promise.all([ask(call, ui, PLAYER.recent(), 'recent'), ask(call, ui, PLAYER.playlists(), 'library'), ask(call, ui, PLAYER.liked(), 'liked')]);
     ui.library = {
-      at, ok: recent.ok || playlists.ok,
+      at, ok: recent.ok || playlists.ok || liked.ok,
+      liked: liked.ok ? bare(SV.normalizeLiked(liked.body)) : [],
       recent: recent.ok ? bare(SV.normalizeRecent(recent.body)).slice(0, 10) : [],
       playlists: playlists.ok ? bare(SV.normalizePlaylists(playlists.body)).slice(0, 25) : [],
     };
@@ -97,6 +117,7 @@ async function loadTab(call, name, ctx, playback) {
   if (name === 'tracks') {
     const c = playback?.context || ui.context;
     if (!c) { ui.tracks = { ok: true, at, title: '', current: -1, items: [], none: true }; return; }
+    if (c.kind === 'artist') { ui.tracks = { ok: true, at, title: '', current: -1, items: [], none: true, artist: true, key: `${c.kind}:${c.id}` }; return; } // (no top-tracks endpoint since February 2026: nothing to list)
     const res = await ask(call, ui, PLAYER.context(c.kind, c.id), 'tracks');
     if (!res.ok) { ui.tracks = { ok: false, at, title: '', current: -1, items: [], why: SV.scopeError(res.status, res.body) ? 'scope' : 'page' }; return; }
     const got = SV.normalizeContext(c.kind, res.body);
@@ -159,7 +180,7 @@ async function act(call, action, ctx) {
       return { local: true };
     }
     case 'ethumb': { await loadThumbs(ui, action.ids, ctx); return { local: true }; }
-    case 'emore': return { local: true }; // (the whole list came in one request)
+    case 'emore': { await searchMore(ui, ctx, ctx.searchCall || call); return { local: true }; }
     case 'playitem': {
       if (!SV.PLAYABLE_KINDS.includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return false;
       let res = await call(...flat(PLAYER.playItem(action.kind, action.item)));
@@ -249,6 +270,7 @@ async function extras(call, ctx, playback) {
     queue: { items: q.items || [], pending: false, ok: q.ok !== false, why: q.ok === false ? q.why || 'page' : '', title: '', current: -1, signedOut: false },
     tracks,
     recent: lib ? lib.recent : [],
+    likedSongs: lib ? lib.liked || [] : [],
     playlists: lib ? lib.playlists : [],
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
@@ -257,9 +279,11 @@ async function extras(call, ctx, playback) {
     searchWhy: ui.search && ui.search.ok === false ? 'page' : '',
     query: ui.search ? ui.search.term : '',
     searching: false,
+    moreSongs: Boolean(ui.search && ui.search.api && moreSongsOf(ui.search)),
+    moreLoading: false,
     signedIn: true,
     lyrics: { pending: false, ok: true, why: '', lines: [], forTitle: '' },
   };
 }
 
-module.exports = { act, extras, loadTab, runSearch, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+module.exports = { act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };

@@ -228,7 +228,7 @@ function createMusicEngine(deps) {
         if (m.ok === false || m.items.length) searchCmd = null;
         // (the pictures are asked for by the card when the rows are on screen: loadThumbs)
       } else {
-        lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut };
+        lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut, ok: m.ok !== false, why: m.ok === false ? m.why || 'page' : '' };
       }
       changed();
     }
@@ -316,6 +316,8 @@ function createMusicEngine(deps) {
       can: canNow(auth),
       recent: listCard(lists.recent, 10),
       playlists: listCard(lists.playlists, 25),
+      libraryOk: !(lists.playlists && lists.playlists.ok === false), // (false: the page's library could not be read; the card says so and offers Try again)
+      libraryWhy: lists.playlists && lists.playlists.ok === false ? lists.playlists.why || 'page' : '',
       queue: pageCard(pageLists.queue),
       tracks: pageCard(pageLists.tracks),
       lyrics: { pending: lyr.pending, ok: lyr.ok !== false, why: lyr.ok === false ? lyr.why || 'page' : '', lines: lyr.ok === false ? [] : lyr.lines.slice(0, 250), forTitle: lyr.forTitle },

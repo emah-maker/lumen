@@ -754,14 +754,19 @@
     .mc .mc-prev, .mc .mc-like, .mc .mc-extra, .mc .sp-elapsed, .mc .sp-total { display: none; }
     .mc-like { align-self: center; }
     .mc-extra { align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
-    .mc-vol { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 60px; max-width: 150px; margin-left: 6px; color: var(--muted); }
-    .mc-vol-icon { display: grid; flex: none; }
-    .mc-vol-icon svg { width: 14px; height: 14px; fill: currentColor; }
+    /* The volume: a speaker button (mute / unmute) and a thin rounded slider. The filled part is the accent, the rest a tint of the muted text
+       colour (readable on the plain card, the frosted glass and over a wallpaper, light or dark); the thumb is a small white dot that grows on
+       hover and gets a ring on keyboard focus. Nothing of the browser's own slider is left. */
+    .mc-vol { display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 96px; max-width: 168px; margin-left: 4px; color: var(--muted); }
+    .mc-vol-icon { flex: none; width: 26px; height: 26px; }
+    .mc-vol-icon svg { width: 15px; height: 15px; fill: currentColor; }
     .mc-vol-icon .mc-stroke { fill: none; }
-    .mc-vol-range { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; cursor: default; }
-    .mc-vol-range::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--field) var(--v, 50%)); }
-    .mc-vol-range::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--text); }
-    .mc-vol-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+    .mc-vol-range { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 26px; margin: 0; padding: 0; border: 0; border-radius: 999px; box-shadow: none; background: transparent; outline: none; cursor: default; --track: color-mix(in srgb, var(--muted) 34%, transparent); }
+    .mc-vol-range::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--accent) 0, var(--accent) var(--v, 50%), var(--track) var(--v, 50%), var(--track) 100%); }
+    .mc-vol-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.35); transition: transform 120ms ease-out; }
+    .mc-vol-range:hover::-webkit-slider-thumb, .mc-vol-range:active::-webkit-slider-thumb { transform: scale(1.2); }
+    .mc-vol-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .mc-vol-range::-webkit-slider-thumb { transition: none; } }
     .mc-tabs { display: flex; gap: 2px; flex: none; margin-bottom: 6px; overflow-x: auto; scrollbar-width: none; }
     .mc-tab { appearance: none; flex: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
     .mc-tab:hover { color: var(--text); }

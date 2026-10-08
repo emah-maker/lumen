@@ -1,0 +1,447 @@
+{
+ "capturedFrom": "The Queue side panel as open.spotify.com showed it signed in on 2026-10-08 (hashed listrow ids, no track ids), trimmed to four rows.",
+ "tree": {
+  "t": "aside",
+  "a": {
+   "aria-label": "Queue"
+  },
+  "c": [
+   {
+    "t": "div",
+    "c": [
+     {
+      "t": "h1",
+      "c": [
+       "Queue"
+      ]
+     },
+     {
+      "t": "button",
+      "a": {
+       "data-testid": "PanelHeader_CloseButton",
+       "aria-label": "Close"
+      },
+      "c": []
+     }
+    ]
+   },
+   {
+    "t": "div",
+    "c": [
+     {
+      "t": "h2",
+      "c": [
+       "Now playing"
+      ]
+     },
+     {
+      "t": "ul",
+      "c": [
+       {
+        "t": "li",
+        "a": {
+         "role": "row",
+         "aria-posinset": "0",
+         "draggable": "true"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-91c716a69cd6b889b233"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "data-testid": "entity-image",
+             "alt": "Side Nigga Anthem",
+             "src": "https://i.scdn.co/image/ab67616d000011eb91c7"
+            },
+            "c": []
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "play-button",
+             "aria-label": "Play Side Nigga Anthem by Mike Sherm"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-91c716a69cd6b889b233"
+            },
+            "c": [
+             {
+              "t": "span",
+              "c": [
+               "Side Nigga Anthem"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle"
+            },
+            "c": [
+             {
+              "t": "span",
+              "a": {
+               "role": "img",
+               "aria-label": "Explicit"
+              },
+              "c": [
+               "E"
+              ]
+             },
+             {
+              "t": "a",
+              "a": {
+               "href": "/artist/3tqosLbNFNekyZyO2KJ6qd"
+              },
+              "c": [
+               "Mike Sherm"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "more-button",
+             "aria-label": "More options for Side Nigga Anthem"
+            },
+            "c": []
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "t": "div",
+    "c": [
+     {
+      "t": "h2",
+      "c": [
+       "Next from: ",
+       {
+        "t": "a",
+        "a": {
+         "href": "/album/2noRn2Aes5aoNVsU6iWThc"
+        },
+        "c": [
+         "Discovery"
+        ]
+       }
+      ]
+     },
+     {
+      "t": "ul",
+      "c": [
+       {
+        "t": "li",
+        "a": {
+         "role": "row",
+         "aria-posinset": "1",
+         "draggable": "true"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-a1b2c3d4e5f60718293a"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "data-testid": "entity-image",
+             "alt": "Aerodynamic",
+             "src": "https://i.scdn.co/image/ab67616d000011eba1b2"
+            },
+            "c": []
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "play-button",
+             "aria-label": "Play Aerodynamic by Daft Punk"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-a1b2c3d4e5f60718293a"
+            },
+            "c": [
+             {
+              "t": "span",
+              "c": [
+               "Aerodynamic"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle"
+            },
+            "c": [
+             {
+              "t": "span",
+              "a": {
+               "role": "img",
+               "aria-label": "Explicit"
+              },
+              "c": [
+               "E"
+              ]
+             },
+             {
+              "t": "a",
+              "a": {
+               "href": "/artist/4tZwfgrHOc3mvqYlEYSvVi"
+              },
+              "c": [
+               "Daft Punk"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "more-button",
+             "aria-label": "More options for Aerodynamic"
+            },
+            "c": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "li",
+        "a": {
+         "role": "row",
+         "aria-posinset": "2",
+         "draggable": "true"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-b2c3d4e5f60718293a4b"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "data-testid": "entity-image",
+             "alt": "Digital Love",
+             "src": "https://i.scdn.co/image/ab67616d000011ebb2c3"
+            },
+            "c": []
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "play-button",
+             "aria-label": "Play Digital Love by Daft Punk"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-b2c3d4e5f60718293a4b"
+            },
+            "c": [
+             {
+              "t": "span",
+              "c": [
+               "Digital Love"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle"
+            },
+            "c": [
+             {
+              "t": "span",
+              "a": {
+               "role": "img",
+               "aria-label": "Explicit"
+              },
+              "c": [
+               "E"
+              ]
+             },
+             {
+              "t": "a",
+              "a": {
+               "href": "/artist/4tZwfgrHOc3mvqYlEYSvVi"
+              },
+              "c": [
+               "Daft Punk"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "more-button",
+             "aria-label": "More options for Digital Love"
+            },
+            "c": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "li",
+        "a": {
+         "role": "row",
+         "aria-posinset": "3",
+         "draggable": "true"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-c3d4e5f60718293a4b5c"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "data-testid": "entity-image",
+             "alt": "Harder, Better, Faster, Stronger",
+             "src": "https://i.scdn.co/image/ab67616d000011ebc3d4"
+            },
+            "c": []
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "play-button",
+             "aria-label": "Play Harder, Better, Faster, Stronger by Daft Punk"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-c3d4e5f60718293a4b5c"
+            },
+            "c": [
+             {
+              "t": "span",
+              "c": [
+               "Harder, Better, Faster, Stronger"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle"
+            },
+            "c": [
+             {
+              "t": "span",
+              "a": {
+               "role": "img",
+               "aria-label": "Explicit"
+              },
+              "c": [
+               "E"
+              ]
+             },
+             {
+              "t": "a",
+              "a": {
+               "href": "/artist/4tZwfgrHOc3mvqYlEYSvVi"
+              },
+              "c": [
+               "Daft Punk"
+              ]
+             }
+            ]
+           },
+           {
+            "t": "button",
+            "a": {
+             "data-testid": "more-button",
+             "aria-label": "More options for Harder, Better, Faster, Stronger"
+            },
+            "c": []
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

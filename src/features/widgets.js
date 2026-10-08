@@ -1245,7 +1245,11 @@ async function statusSearch(c, action, x, cached) {
     Object.assign(cached, SAC.directResults(ui));
     return { local: true };
   }
-  if (action.do === 'emore' && ui.search?.api) return { local: true }; // (nothing more to load: the Web API sent its whole list)
+  if (action.do === 'emore' && ui.search?.api) { // the next ten songs of the search shown (Spotify's development mode answers ten a request)
+    const got = await SAC.searchMore(ui, sctx);
+    if (!got.stale) Object.assign(cached, SAC.directResults(ui));
+    return { local: true };
+  }
   return false;
 }
 // The search box was focused: the access token is asked for now (the first search then has one), and the hidden page started where it plays.

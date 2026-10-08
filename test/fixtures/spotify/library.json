@@ -1,0 +1,409 @@
+{
+ "capturedFrom": "Your Library as open.spotify.com showed it signed in on 2026-10-08 (rows without links; ids in listrow-title-spotify:<kind>:<id>), titles replaced.",
+ "tree": {
+  "t": "div",
+  "a": {
+   "aria-label": "Your Library"
+  },
+  "c": [
+   {
+    "t": "div",
+    "a": {
+     "role": "grid"
+    },
+    "c": [
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "2",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:collection:tracks"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:collection:tracks listrow-subtitle-spotify:collection:tracks"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://misc.scdn.co/liked-songs/liked-songs-64.png"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:collection:tracks"
+            },
+            "c": [
+             "Liked Songs"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:collection:tracks"
+            },
+            "c": [
+             "Playlist • 412 songs"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "3",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:playlist:6fkEZmCPjpLtGPnHSVYPbE"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:playlist:6fkEZmCPjpLtGPnHSVYPbE listrow-subtitle-spotify:playlist:6fkEZmCPjpLtGPnHSVYPbE"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://i.scdn.co/image/ab67706c0000da84aaaa"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:playlist:6fkEZmCPjpLtGPnHSVYPbE"
+            },
+            "c": [
+             "Late night drive"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:playlist:6fkEZmCPjpLtGPnHSVYPbE"
+            },
+            "c": [
+             "Playlist • Sam"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "4",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:album:2noRn2Aes5aoNVsU6iWThc"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:album:2noRn2Aes5aoNVsU6iWThc listrow-subtitle-spotify:album:2noRn2Aes5aoNVsU6iWThc"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://i.scdn.co/image/ab67616d00004851bbbb"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:album:2noRn2Aes5aoNVsU6iWThc"
+            },
+            "c": [
+             "Discovery"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:album:2noRn2Aes5aoNVsU6iWThc"
+            },
+            "c": [
+             "Album • Daft Punk"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "5",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:artist:4tZwfgrHOc3mvqYlEYSvVi"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:artist:4tZwfgrHOc3mvqYlEYSvVi listrow-subtitle-spotify:artist:4tZwfgrHOc3mvqYlEYSvVi"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://i.scdn.co/image/ab6761610000f178cccc"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:artist:4tZwfgrHOc3mvqYlEYSvVi"
+            },
+            "c": [
+             "Daft Punk"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:artist:4tZwfgrHOc3mvqYlEYSvVi"
+            },
+            "c": [
+             "Artist"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "6",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:playlist:37i9dQZF1DXcBWIGoYBM5M listrow-subtitle-spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://i.scdn.co/image/ab67706f00000002dddd"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+            },
+            "c": [
+             "Today's Top Hits"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+            },
+            "c": [
+             "Playlist • Spotify"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "div",
+      "a": {
+       "role": "row",
+       "aria-rowindex": "7",
+       "aria-setsize": "76",
+       "draggable": "true"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "gridcell"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:show:5CfCWKI5pZ28U0uOzXkDHe"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "role": "button",
+             "aria-labelledby": "listrow-title-spotify:show:5CfCWKI5pZ28U0uOzXkDHe listrow-subtitle-spotify:show:5CfCWKI5pZ28U0uOzXkDHe"
+            },
+            "c": []
+           },
+           {
+            "t": "img",
+            "a": {
+             "aria-hidden": "true",
+             "src": "https://i.scdn.co/image/ab6765630000ba8aeeee"
+            },
+            "c": []
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowTitle",
+             "id": "listrow-title-spotify:show:5CfCWKI5pZ28U0uOzXkDHe"
+            },
+            "c": [
+             "A podcast"
+            ]
+           },
+           {
+            "t": "p",
+            "a": {
+             "data-encore-id": "listRowSubtitle",
+             "id": "listrow-subtitle-spotify:show:5CfCWKI5pZ28U0uOzXkDHe"
+            },
+            "c": [
+             "Podcast • Someone"
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

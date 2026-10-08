@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The Spotify card's Library and Up next tabs work again in "Play as Lumen".** Spotify changed its web player: the library list no longer has links and the queue is now a side panel instead of a page, so Lumen found nothing and the tabs stayed on "Loading…". Lumen now reads the library from the page's new rows (Liked Songs is not listed) and opens the Queue panel to read what is next, and "play from the queue" presses that row's own play button. If a tab still can't be read it now says "Couldn't read your library." with a Try again button instead of loading forever. Shuffle stays hidden when the page shows no shuffle button.
+- **The Spotify card in Web API mode follows Spotify's February 2026 changes.** The heart and saving a song use the new library endpoints, and an artist playing has no track list (Spotify removed it), which the Album tab now says.
+- **A cleaner volume control on the music cards.** A thin rounded track filled in the accent colour, a small round thumb, a speaker button that mutes and unmutes (and shows the level), and a keyboard focus ring; it reads on the plain card, frosted glass and wallpapers, light or dark.
+
 ## 0.5.19 (2026-10-08)
 
 - **Research: a red "Retracted" label now needs Crossref to confirm it.** OpenAlex's retraction flag has false positives (it marked the Lancet 2020 dementia commission report, which is not retracted), so OpenAlex or PubMed alone now shows an amber "Retraction flag (unconfirmed)" chip (tooltip: check the publisher's page); "Retracted (Crossref)" in red appears only when Crossref's Retraction Watch data (or a "RETRACTED:" title) says so. Crossref expressions of concern and corrections get their own softer chips, and the AI is told to confirm on the publisher's page and not to call an unconfirmed flag a retraction.
