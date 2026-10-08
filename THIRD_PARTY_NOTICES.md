@@ -26,6 +26,7 @@ full license texts are in the linked projects and, for npm packages, in each pac
 | tldts-experimental (includes data from the Public Suffix List, MPL-2.0) | MIT | https://github.com/remusao/tldts |
 | qrcode-generator (makes the QR codes in features/qr.js, loaded on first use; MIT is compatible with GPL-3.0-or-later) | MIT | https://github.com/kazuhikoarase/qrcode-generator |
 | koffi and its prebuilt @koromix/koffi-win32-x64 (the FFI that calls Windows' webauthn.dll for passkeys, features/webauthn-windows.js; Windows builds only, loaded on first use) | MIT | https://github.com/Koromix/koffi |
+| pdf.js (pdfjs-dist 6.4.299: `pdf.min.mjs`, `pdf.worker.min.mjs`, the viewer component, CMaps, standard fonts and WebAssembly decoders, copied unmodified into `src/vendor/pdfjs/` with their licenses; Lumen's PDF viewer) | Apache-2.0 | https://github.com/mozilla/pdf.js |
 | @mozilla/readability 0.6.0 (Readability.js and Readability-readerable.js, copied unmodified into `vendor/readability/` with its license) | Apache-2.0 | https://github.com/mozilla/readability |
 | Bergamot translator 0.6.0 (`vendor/bergamot/`: the WebAssembly engine behind Firefox Translations and its loader, copied unmodified with its license; runs on-device translation. MPL-2.0 is compatible with GPL-3.0-or-later) | MPL-2.0 | https://github.com/mozilla/bergamot-translator, https://github.com/mozilla/translations |
 | Other transitive dependencies | MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, Unlicense | run `npx license-checker --production` for the full list |

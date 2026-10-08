@@ -6,6 +6,7 @@
 // same thing its scrollbar drives, so no focus or visible window is needed) and clicks go in over
 // the tab's DevTools session, which routes mouse input to the frame under the point.
 const { viewerFrame } = require('./pdf-zoom');
+const lumenViewer = require('./pdf-viewer');
 
 const READ_PDF_HINT = 'This is a PDF in the built-in viewer: use read_pdf for its text.';
 
@@ -48,11 +49,28 @@ function scrollScript(move) {
 
 // The scroll tool's answer for a PDF tab, or null when this tab is not showing the viewer (the caller
 // then scrolls as a web page).
+// Lumen's own viewer (features/pdf-viewer.js): the same move on its scroller (an ordinary element in the page), same answer.
+function lumenScrollScript(move) {
+  return `(() => {
+    const move = ${JSON.stringify(move)};
+    const c = document.getElementById('viewerContainer'), api = window.lumenPdf;
+    if (!c || !api) return { error: 'viewer' };
+    const start = c.scrollTop, max = Math.max(0, c.scrollHeight - c.clientHeight);
+    const target = move.to === 'top' ? 0 : move.to === 'bottom' ? max : start + (move.lines !== undefined ? move.lines : Math.round(c.clientHeight * 0.85 * move.screens));
+    c.scrollTo({ top: Math.min(Math.max(target, 0), max), behavior: 'instant' });
+    return new Promise((resolve) => setTimeout(() => { const s = api.state(); resolve({ y: s.scrollTop, max, page: s.page, pages: s.pages, moved: s.scrollTop !== start }); }, 120));
+  })()`;
+}
+
 async function scrollPdf(wc, move) {
-  const frame = viewerFrame(wc);
-  if (!frame) return null;
   let r;
-  try { r = await frame.executeJavaScript(scrollScript(move)); } catch { r = { error: 'viewer' }; }
+  if (lumenViewer.isViewerUrl(wc.getURL?.())) {
+    try { r = await wc.executeJavaScript(lumenScrollScript(move), true); } catch { r = { error: 'viewer' }; }
+  } else {
+    const frame = viewerFrame(wc);
+    if (!frame) return null;
+    try { r = await frame.executeJavaScript(scrollScript(move)); } catch { r = { error: 'viewer' }; }
+  }
   if (!r || r.error) return { scrolled: 'none', note: `The PDF viewer did not respond. ${READ_PDF_HINT}` };
   const where = `page ${r.page}${r.pages ? ` of ${r.pages}` : ''}`;
   if (!r.moved) {
@@ -98,4 +116,4 @@ async function clickPdf(wc, x, y, { around = (fn) => fn() } = {}) {
   }
 }
 
-module.exports = { scrollPdf, scrollScript, keyMove, clickPdf, READ_PDF_HINT };
+module.exports = { scrollPdf, scrollScript, lumenScrollScript, keyMove, clickPdf, READ_PDF_HINT };

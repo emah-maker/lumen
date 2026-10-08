@@ -148,3 +148,8 @@ try {
 try {
   contextBridge.executeInMainWorld({ func: () => { for (const name of ['SpeechRecognition', 'webkitSpeechRecognition']) { try { delete window[name]; } catch { /* not removable */ } } } });
 } catch { /* nothing to hide */ }
+
+// Lumen's PDF viewer page (features/pdf-viewer.js, lumen-pdf://app) may ask for the print preview, and nothing else.
+if (location.origin === 'lumen-pdf://app') {
+  contextBridge.exposeInMainWorld('lumenPdfHost', Object.freeze({ print: () => ipcRenderer.send('pdf:print') }));
+}
