@@ -1,0 +1,118 @@
+{
+ "status": "ok",
+ "message-type": "work-list",
+ "message": {
+  "items": [
+   {
+    "DOI": "10.1177/1758835919874651",
+    "type": "journal-article",
+    "title": [
+     "RETRACTED: Downregulation of long noncoding RNA LINC01419 inhibits cell migration, invasion, and tumor growth and promotes autophagy\n                    <i>via</i>\n                    inactivation of the PI3K/Akt1/mTOR pathway in gastric cancer"
+    ],
+    "container-title": [
+     "Therapeutic Advances in Medical Oncology"
+    ],
+    "author": [
+     {
+      "given": "Lin-Lin",
+      "family": "Wang",
+      "sequence": "first",
+      "affiliation": [
+       {
+        "name": "Department of Ultrasound, China-Japan Union Hospital of Jilin University, Changchun, China"
+       }
+      ],
+      "role": [
+       {
+        "role": "author",
+        "vocabulary": "crossref"
+       }
+      ]
+     },
+     {
+      "given": "Lei",
+      "family": "Zhang",
+      "sequence": "additional",
+      "affiliation": [
+       {
+        "name": "Department of Neurology, the Second Hospital of Jilin University, Changchun, China"
+       }
+      ],
+      "role": [
+       {
+        "role": "author",
+        "vocabulary": "crossref"
+       }
+      ]
+     },
+     {
+      "given": "Xiao-Feng",
+      "family": "Cui",
+      "sequence": "additional",
+      "affiliation": [
+       {
+        "name": "Department of Colorectal and Anal Surgery, China-Japan Union Hospital of Jilin University, No. 126, Xiantai Street, Changchun, Jilin Province 130033, China"
+       }
+      ],
+      "role": [
+       {
+        "role": "author",
+        "vocabulary": "crossref"
+       }
+      ]
+     }
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2019,
+       1
+      ]
+     ]
+    },
+    "volume": "11",
+    "publisher": "SAGE Publications",
+    "is-referenced-by-count": 38,
+    "updated-by": [
+     {
+      "DOI": "10.1177/17588359211061903",
+      "type": "retraction",
+      "label": "Retraction",
+      "source": "retraction-watch",
+      "updated": {
+       "date-parts": [
+        [
+         2021,
+         12,
+         15
+        ]
+       ],
+       "date-time": "2021-12-15T00:00:00Z",
+       "timestamp": 1639526400000
+      },
+      "record-id": "34999"
+     },
+     {
+      "DOI": "10.1177/17588359211061903",
+      "type": "retraction",
+      "label": "Retraction",
+      "source": "publisher",
+      "updated": {
+       "date-parts": [
+        [
+         2021,
+         12,
+         15
+        ]
+       ],
+       "date-time": "2021-12-15T00:00:00Z",
+       "timestamp": 1639526400000
+      }
+     }
+    ],
+    "URL": "https://doi.org/10.1177/1758835919874651",
+    "article-number": "1758835919874651"
+   }
+  ]
+ }
+}
