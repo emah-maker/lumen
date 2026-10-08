@@ -78,7 +78,7 @@ function resolveAsset(pathname) {
 function disposition(target) {
   let name = 'document.pdf';
   try { name = decodeURIComponent(new URL(target).pathname.split('/').pop() || '') || name; } catch { /* keep the default */ }
-  name = name.replace(/[\u0000-\u001f\u007f<>:"/\|?*]+/g, '_').slice(0, 120) || 'document.pdf';
+  name = name.replace(/[\u0000-\u001f\u007f<>:"/\\|?*]+/g, '_').slice(0, 120) || 'document.pdf';
   if (!/\.pdf$/i.test(name)) name += '.pdf';
   return `attachment; filename*=UTF-8''${encodeURIComponent(name)}`;
 }

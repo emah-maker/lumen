@@ -29,6 +29,8 @@ module.exports = [
       'no-redeclare': ['error', { builtinGlobals: false }],
     },
   },
+  // The PDF viewer page is an ES module (pdf.js is) with top-level await.
+  { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
   { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly', buildSkills: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
