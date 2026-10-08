@@ -98,6 +98,14 @@ function recency(src, now = new Date()) {
   return { year, age, label, text: month && age <= 1 ? `${monthName(month)} ${year}` : String(year) };
 }
 
+// Tooltip of the unconfirmed chip (ids research.chip.flag.tip and .tip.crossref carry the translations).
+function flagTip(by) {
+  const others = by.filter((x) => !/^Crossref/.test(x));
+  if (!others.length) return { tipId: 'flag.tip.crossref', tip: "Crossref lists a retraction notice deposited by the publisher, but Retraction Watch has no record of it. Check the publisher's page." };
+  const n = others.join(' and ');
+  return { tipId: 'flag.tip', n, tip: `${n} marks this as retracted, but Crossref doesn't. Check the publisher's page.` };
+}
+
 function assess(src, { now = new Date() } = {}) {
   const s = src || {};
   const kind = kindOf(s);
@@ -107,8 +115,13 @@ function assess(src, { now = new Date() } = {}) {
   // id: what the panel translates (renderer/research.js, research.chip.<id>); text: the English fallback; n: the number in it.
   const chip = (kind, id, text, tone, n) => chips.push({ kind, id, text, tone, ...(n !== undefined ? { n } : {}) });
   const by = Array.isArray(s.retractedBy) && s.retractedBy.length ? s.retractedBy.join(', ') : '';
+  const flagBy = Array.isArray(s.retractionFlag) ? s.retractionFlag.filter((x) => typeof x === 'string') : [];
+  // Red only when Crossref confirmed it (scholar.js sets retracted from Crossref alone). OpenAlex / PubMed alone: neutral amber.
   if (s.retracted === true) chip('retracted', by ? 'retracted.by' : 'retracted', by ? `Retracted (${by})` : 'Retracted', 'bad', by || undefined);
+  else if (flagBy.length) chips.push({ kind: 'retracted', id: 'flag', text: 'Retraction flag (unconfirmed)', tone: 'warn', ...flagTip(flagBy) });
   else if (s.retractionNotice === true) chip('retracted', 'notice', 'Retraction notice', 'bad');
+  if (s.concern === true) chip('retracted', 'concern', 'Expression of concern', 'warn');
+  if (s.corrected === true) chip('retracted', 'correction', 'Correction issued', 'info');
   chip('type', `type.${kind}`, KIND_LABEL[kind], TIER[kind] === 'high' ? 'good' : TIER[kind] === 'low' ? 'warn' : 'info');
   if (rec.year) chip('year', rec.label === 'dated' ? 'year.dated' : 'year', rec.label === 'dated' ? `${rec.text} (dated)` : rec.text, rec.label === 'dated' ? 'warn' : 'info', rec.text);
   if (Number.isFinite(s.citations) && s.citations >= 0) chip('cites', s.citations === 1 ? 'cites.one' : 'cites', `${s.citations.toLocaleString('en-US')} citation${s.citations === 1 ? '' : 's'}`, s.citations >= 100 ? 'good' : 'info', s.citations.toLocaleString('en-US'));
@@ -127,7 +140,10 @@ function shortLabel(src, opts) {
   const a = assess(src, opts);
   const parts = [];
   if (src.retracted) parts.push(Array.isArray(src.retractedBy) && src.retractedBy.length ? `RETRACTED per ${src.retractedBy.join(', ')}` : 'RETRACTED');
+  else if (Array.isArray(src.retractionFlag) && src.retractionFlag.length) parts.push(`RETRACTION FLAG, UNCONFIRMED (${src.retractionFlag.join(', ')} says retracted, Crossref does not confirm: verify on the publisher's page)`);
   else if (src.retractionNotice) parts.push('RETRACTION NOTICE');
+  if (src.concern) parts.push('EXPRESSION OF CONCERN (Crossref)');
+  if (src.corrected) parts.push('has a correction (Crossref)');
   parts.push(a.kindLabel.toLowerCase());
   if (a.recency.year) parts.push(String(a.recency.year));
   if (Number.isFinite(src.citations)) parts.push(`${src.citations} cited`);

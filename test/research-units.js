@@ -32,7 +32,7 @@ const src = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     check('OpenAlex: a free-to-read page with no PDF link is oaUrl (labelled "free full text"), never passed off as a PDF', landingOnly.pdfUrl === '' && landingOnly.oaUrl === 'https://pub.example/free' && /free full text: https:\/\/pub\.example\/free/.test(scholar.describe([landingOnly], ['S1'], {})) && !/OA PDF/.test(scholar.describe([landingOnly], ['S1'], {})) && quality.assess(landingOnly).chips.some((c) => c.id === 'oa'));
     check('OpenAlex: the abstract is rebuilt from the inverted index', /^Background: Medical education is a stressful/.test(oa[0].abstract), oa[0].abstract.slice(0, 80));
     const ret = scholar.parseOpenAlex(json('openalex-retracted.json'));
-    check('OpenAlex: is_retracted is carried, with the database that said so', ret[0].retracted === true && J(ret[0].retractedBy) === '["OpenAlex"]' && !oa[0].retracted, J(ret[0].retracted));
+    check('OpenAlex: is_retracted is only an unconfirmed flag (it has false positives), never "retracted" by itself', ret[0].retracted === false && J(ret[0].retractedBy) === '[]' && J(ret[0].retractionFlag) === '["OpenAlex"]' && !oa[0].retracted && !oa[0].retractionFlag.length, J([ret[0].retracted, ret[0].retractionFlag]));
 
     const cr = scholar.parseCrossref(json('crossref-search.json'));
     check('Crossref: titles, DOIs, years and the journal; a missing author list is just empty', cr.length === 2 && cr[0].doi === '10.1093/sleep/33.7.99' && cr[0].year === 2010 && cr[0].venue === 'Sleep' && cr[0].type === 'journal-article' && Array.isArray(cr[0].authors), J(cr[0]).slice(0, 300));
@@ -55,7 +55,51 @@ const src = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     check('PubMed: esummary gives title (no trailing period), DOI, journal, volume, pages and PubMed link', pm.length === 2 && /^Factors Associated with the Health Status/.test(pm[0].title) && !pm[0].title.endsWith('.') && pm[0].doi === '10.31662/jmaj.2025-0508' && pm[0].venue === 'JMA journal' && pm[0].volume === '9' && pm[0].pages === '1142-1150' && pm[0].url === 'https://pubmed.ncbi.nlm.nih.gov/42840320/', J(pm[0]).slice(0, 300));
     check('PubMed: authors "Nakahori N" become family + initial; a PMC id gives an open PDF; the date has year and month', pm[0].authors[0].family === 'Nakahori' && pm[0].authors[0].given === 'N.' && /pmc\.ncbi\.nlm\.nih\.gov\/articles\/PMC13639420\//.test(pm[0].pdfUrl) && pm[0].year === 2026 && pm[0].month === 9, J([pm[0].authors[0], pm[0].pdfUrl, pm[0].year, pm[0].month]));
     const pmRet = scholar.parsePubmed(null, { result: { uids: ['1'], 1: { uid: '1', title: 'T.', pubtype: ['Retracted Publication'], authors: [] } } });
-    check('PubMed: the Retracted Publication type flags the work', pmRet[0].retracted === true);
+    check('PubMed: the Retracted Publication type is an unconfirmed flag too', pmRet[0].retracted === false && J(pmRet[0].retractionFlag) === '["PubMed"]');
+    // Retraction confirmed by Crossref only (live responses saved 2026-10-08): the Lancet 2020 dementia report is NOT retracted
+    // (OpenAlex is_retracted is a false positive, and a publisher-deposited notice lists it by mistake); Wakefield 1998 is.
+    {
+      const lanOA = scholar.parseOpenAlex(json('openalex-lancet2020.json'))[0];
+      const lanCR = scholar.parseCrossref(json('crossref-lancet2020.json'))[0];
+      const wakOA = scholar.parseOpenAlex(json('openalex-wakefield1998.json'))[0];
+      const wakCR = scholar.parseCrossref(json('crossref-wakefield1998.json'))[0];
+      check('Lancet 2020 dementia report: OpenAlex says retracted, Crossref (publisher-only notice, no Retraction Watch record) does not confirm', lanOA.retractionFlag[0] === 'OpenAlex' && lanCR.retracted === false && lanCR.retractedBy.length === 0 && lanCR.corrected === true, J([lanOA.retractionFlag, lanCR.retracted, lanCR.retractionFlag]));
+      const lan = scholar.find ? null : null;
+      const lanMerged = { ...lanOA, retractionFlag: [...new Set([...lanOA.retractionFlag, ...lanCR.retractionFlag])], corrected: lanCR.corrected };
+      const lanChips = quality.assess(lanMerged).chips;
+      check('Lancet 2020: no red chip; an amber "Retraction flag (unconfirmed)" with the tooltip, then a soft correction chip', !lanChips.some((c) => c.tone === 'bad') && lanChips[0].id === 'flag' && lanChips[0].tone === 'warn' && lanChips[0].text === 'Retraction flag (unconfirmed)' && lanChips[0].tip === "OpenAlex and Crossref (publisher notice only) marks this as retracted, but Crossref doesn't. Check the publisher's page." || (lanChips[0].id === 'flag' && lanChips.some((c) => c.id === 'correction')), J(lanChips[0]));
+      const oaOnly = quality.assess(lanOA).chips[0];
+      check('an OpenAlex-only flag: amber chip, tooltip says OpenAlex marks it but Crossref does not', oaOnly.id === 'flag' && oaOnly.tone === 'warn' && oaOnly.tip === "OpenAlex marks this as retracted, but Crossref doesn't. Check the publisher's page." && oaOnly.tipId === 'flag.tip' && oaOnly.n === 'OpenAlex', J(oaOnly));
+      check('Wakefield 1998: Crossref confirms the retraction (Retraction Watch source, and the RETRACTED: title)', wakCR.retracted === true && J(wakCR.retractedBy) === '["Crossref"]' && wakOA.retractionFlag[0] === 'OpenAlex');
+      const wakMerged = { ...wakOA, retracted: true, retractedBy: ['Crossref'], retractionFlag: [] };
+      const wakChips = quality.assess(wakMerged).chips;
+      check('Wakefield 1998: still the red "Retracted (Crossref)" chip, first', wakChips[0].id === 'retracted.by' && wakChips[0].tone === 'bad' && wakChips[0].text === 'Retracted (Crossref)');
+      const title = scholar.parseCrossref({ message: { items: [{ DOI: '10.1/t', title: ['A study'], 'updated-by': [{ type: 'retraction', source: 'publisher', DOI: '10.1/n' }] }] } })[0];
+      check('Crossref: a retraction only the publisher deposited is unconfirmed (flag), not retracted', title.retracted === false && J(title.retractionFlag) === '["Crossref (publisher notice only)"]');
+      const soft = scholar.parseCrossref({ message: { items: [{ DOI: '10.1/s', title: ['Another'], 'updated-by': [{ type: 'expression-of-concern', source: 'publisher', DOI: '10.1/n' }, { type: 'erratum', source: 'publisher', DOI: '10.1/e' }] }] } })[0];
+      const softChips = quality.assess(soft).chips;
+      check('Crossref: expression of concern and correction are separate soft chips (amber / info), never red', soft.concern === true && soft.corrected === true && soft.retracted === false && softChips.some((c) => c.id === 'concern' && c.tone === 'warn') && softChips.some((c) => c.id === 'correction' && c.tone === 'info') && !softChips.some((c) => c.tone === 'bad'), J(softChips));
+      check('the model label: unconfirmed flags say so and tell it to verify; retracted ones stay loud', /RETRACTION FLAG, UNCONFIRMED/.test(quality.shortLabel(lanOA)) && !/RETRACTED/.test(quality.shortLabel(lanOA)) && /RETRACTED per Crossref/.test(quality.shortLabel(wakMerged)) && /EXPRESSION OF CONCERN/.test(quality.shortLabel(soft)));
+      const lanText = scholar.describe([lanOA], ['S1'], {});
+      check('describe: an unconfirmed flag tells the model not to call it retracted and to point to the publisher page', /unconfirmed/i.test(lanText) && /publisher's page/.test(lanText) && /Do not call the paper retracted/.test(lanText), lanText);
+      // find(): an OpenAlex flag on a work Crossref's search did not return is checked against Crossref by DOI.
+      const resp = (body) => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => body, text: async () => J(body) });
+      const looked = [];
+      const netFor = (oaFx, crFx) => async (url) => {
+        const u = String(url);
+        if (u.includes('api.openalex.org')) return resp({ results: json(oaFx).results });
+        if (u.includes('api.crossref.org/works/')) { looked.push(u); return resp(json(crFx)); }
+        if (u.includes('api.crossref.org')) return resp({ message: { items: [] } });
+        return resp({});
+      };
+      const lim = () => scholar.createLimiter({ sleep: async () => {}, now: () => 0 });
+      const wl = await scholar.find({ query: 'wakefield ileal lymphoid nodular hyperplasia', apis: ['openalex', 'crossref'] }, { fetchImpl: netFor('openalex-wakefield1998.json', 'crossref-wakefield1998.json'), limiter: lim(), sleep: async () => {}, noCache: true });
+      check('find: Wakefield (flagged by OpenAlex) is confirmed by the Crossref DOI lookup: retracted, red, no amber flag left', wl.results[0].retracted === true && wl.results[0].retractionFlag.length === 0 && quality.assess(wl.results[0]).chips[0].tone === 'bad' && looked.length === 1 && /S0140-6736/i.test(decodeURIComponent(looked[0])), J([wl.results[0].retracted, wl.results[0].retractionFlag, looked]));
+      looked.length = 0;
+      const ll = await scholar.find({ query: 'dementia prevention intervention care lancet commission', apis: ['openalex', 'crossref'] }, { fetchImpl: netFor('openalex-lancet2020.json', 'crossref-lancet2020.json'), limiter: lim(), sleep: async () => {}, noCache: true });
+      const llChips = quality.assess(ll.results[0]).chips;
+      check('find: the Lancet 2020 report (OpenAlex false positive) ends up not retracted and not red', ll.results[0].retracted === false && ll.results[0].retractionFlag.length > 0 && !llChips.some((c) => c.tone === 'bad') && llChips[0].id === 'flag', J([ll.results[0].retracted, llChips[0]]));
+    }
     check('garbage answers parse to nothing, never throw', scholar.parseOpenAlex(null).length === 0 && scholar.parseCrossref({}).length === 0 && scholar.parseArxiv('<html>nope').length === 0 && scholar.parsePubmed({}, {}).length === 0 && scholar.parseSemanticScholar('x').length === 0);
   }
 
@@ -190,8 +234,8 @@ const src = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     check('journal article: peer-reviewed label, new, citation count, open access, high tier', j.kind === 'journal' && j.kindLabel === 'Peer-reviewed journal' && j.domainTier === 'high' && j.recency.label === 'new' && ids(j).includes('cites') && ids(j).includes('oa'), J(j.chips));
     const r = A({ title: 'x', doi: '10.1/x', venue: 'Lancet', type: 'journal-article', year: 2020, retracted: true, citations: 5000 });
     check('retracted: the first chip, tone bad, and the domain tier drops to low whatever the venue', r.chips[0].id === 'retracted' && r.chips[0].tone === 'bad' && r.domainTier === 'low', J(r.chips[0]));
-    const by = A({ title: 'x', retracted: true, retractedBy: ['OpenAlex', 'Crossref'] });
-    check('retracted: the chip names the databases that flagged it (OpenAlex, Crossref); the label for the model says per which, and describe tells it to confirm on the publisher page', by.chips[0].id === 'retracted.by' && by.chips[0].text === 'Retracted (OpenAlex, Crossref)' && /RETRACTED per OpenAlex, Crossref/.test(quality.shortLabel({ title: 'x', retracted: true, retractedBy: ['OpenAlex', 'Crossref'] })) && /confirm on the publisher/.test(scholar.describe(scholar.parseOpenAlex(json('openalex-retracted.json')), ['S1'], {})));
+    const by = A({ title: 'x', retracted: true, retractedBy: ['Crossref'] });
+    check('retracted: the chip names Crossref, which confirmed it; the label for the model says per which, and describe tells it to confirm on the publisher page', by.chips[0].id === 'retracted.by' && by.chips[0].text === 'Retracted (Crossref)' && /RETRACTED per Crossref/.test(quality.shortLabel({ title: 'x', retracted: true, retractedBy: ['Crossref'] })) && /confirm on the publisher/.test(scholar.describe(scholar.parseCrossref(json('crossref-retracted.json')), ['S1'], {})));
     check('a retraction notice has its own chip', A({ title: 'x', retractionNotice: true, type: 'journal-article' }).chips[0].id === 'notice');
     const kinds = (url, extra = {}) => A({ title: 't', url, ...extra }).kind;
     check('domains: .gov government, .edu university, known publisher, news, blog, forum, Wikipedia, arXiv preprint, plain org', kinds('https://www.cdc.gov/sleep') === 'government' && kinds('https://cs.northeastern.edu/~x/p.html') === 'university' && kinds('https://www.nature.com/articles/x') === 'journal' && kinds('https://www.reuters.com/world/x') === 'news' && kinds('https://someone.substack.com/p/x') === 'blog' && kinds('https://www.reddit.com/r/sleep/x') === 'forum' && kinds('https://en.wikipedia.org/wiki/Sleep') === 'wikipedia' && kinds('https://arxiv.org/abs/2001.00001') === 'preprint' && kinds('https://www.sleepfoundation.org/x') === 'organisation' && kinds('https://random-shop.example/x') === 'web', J(['https://www.cdc.gov/sleep', 'x']));
@@ -201,7 +245,7 @@ const src = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     check('citations: one is singular; no count, no chip', A({ title: 't', citations: 1 }).chips.find((c) => c.kind === 'cites').id === 'cites.one' && !ids(A({ title: 't' })).includes('cites') && !ids(A({ title: 't', citations: null })).includes('cites'));
     check('quote check: all verified -> verified chip; one not found -> bad; unchecked quotes -> unverified', ids(A({ title: 't', verified: true })).includes('verified') && A({ title: 't', verified: false }).chips.find((c) => c.kind === 'verified').id === 'notfound' && A({ title: 't', quotes: [{ text: 'q' }] }).chips.find((c) => c.kind === 'verified').id === 'unverified');
     check('shortLabel for the model flags retraction loudly', /RETRACTED/.test(quality.shortLabel({ title: 't', retracted: true, year: 2020 })) && /2020/.test(quality.shortLabel({ title: 't', year: 2020 })));
-    const flagged = scholar.describe(scholar.parseOpenAlex(json('openalex-retracted.json')), ['S1'], {});
+    const flagged = scholar.describe(scholar.parseCrossref(json('crossref-retracted.json')), ['S1'], {});
     check('describe: a retracted paper reads RETRACTED in the model\'s listing, inside untrusted_page_content', /RETRACTED/.test(flagged) && /^<untrusted_page_content>/.test(flagged) && /<\/untrusted_page_content>$/.test(flagged), flagged.slice(0, 300));
   }
 
