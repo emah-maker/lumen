@@ -9,8 +9,9 @@ const PRICES = {
   'claude-fable-5-1': { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 },
   'claude-opus-5-5': { in: 4, out: 20, cacheWrite: 5, cacheRead: 0.2 },
   'claude-opus-5': { in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 },
-  'claude-sonnet-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 },
-  'claude-haiku-5-5': { in: 1, out: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-sonnet-5-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 },
+  'claude-sonnet-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 }, // (chats saved on Sonnet 5)
+  'claude-haiku-5-5': { in: 0.1, out: 0.5, cacheWrite: 0.125, cacheRead: 0.01 }, // (prompts up to 100K tokens; $0.50 / $2.50 beyond)
   'claude-haiku-4-5': { in: 1, out: 5, cacheWrite: 1.25, cacheRead: 0.1 }, // (an older chat's saved model)
   'xai:grok-4': { in: 3, out: 15 },
   'gemini:gemini-2.5-pro': { in: 1.25, out: 10 },

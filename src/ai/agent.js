@@ -58,15 +58,16 @@ const TAB_BUSY = 'That tab is in use by a task running in another chat. Open a n
 
 // Models the user can pick. Opus 5.5 defaults to medium effort, so ask for high explicitly. Haiku 4.5 (a saved
 // choice from before Haiku 5.5) predates adaptive thinking and the dynamic-filtering web search; it is not offered any more
-// and runs as Haiku 5.5 (LEGACY_MODELS).
+// and runs as Haiku 5.5; Sonnet 5 (before Sonnet 5.5, same price) runs as Sonnet 5.5 (LEGACY_MODELS).
 const MODELS = {
   'claude-opus-5': { label: 'Opus 5', detail: 'Best balance for browsing tasks.', fallbacks: true },
   'claude-opus-5-5': { label: 'Opus 5.5', detail: 'Default. Newest Opus, and cheaper than Opus 5.', fallbacks: true, effort: 'high' },
   'claude-fable-5-1': { label: 'Fable 5.1', detail: 'Most capable. Slowest and most expensive.', fallbacks: true },
-  'claude-sonnet-5': { label: 'Sonnet 5', detail: 'Faster and cheaper.' },
+  'claude-sonnet-5-5': { label: 'Sonnet 5.5', detail: 'Faster and cheaper. Newest Sonnet.' },
   'claude-haiku-5-5': { label: 'Haiku 5.5', detail: 'Fast and cheap, and now capable: most chat, page questions and browsing.' },
 };
-const LEGACY_MODELS = { 'claude-haiku-4-5': 'claude-haiku-5-5' };
+const LEGACY_MODELS = { 'claude-haiku-4-5': 'claude-haiku-5-5', 'claude-sonnet-5': 'claude-sonnet-5-5' };
+const LEGACY_LABELS = { 'claude-haiku-4-5': 'Haiku 4.5', 'claude-sonnet-5': 'Sonnet 5' }; // (an older reply keeps the name of the model that wrote it)
 const DEFAULT_MODEL = 'claude-opus-5-5'; // the newest Opus
 
 // ADHD-friendly answer shape (from the i-have-adhd skill), adapted to a browser sidebar.
@@ -505,7 +506,7 @@ function authorName(id) {
   if (id.startsWith('grokbuild:')) return 'Grok Build';
   if (id.startsWith('antigravity:')) return 'Antigravity';
   if (id.startsWith('codex:')) return 'Codex';
-  return MODELS[id]?.label || id.replace(/^[^:/]+[:/]/, '');
+  return MODELS[id]?.label || LEGACY_LABELS[id] || id.replace(/^[^:/]+[:/]/, '');
 }
 
 // The chat's token and cost totals live in its settings, so they're saved with the chat and move
