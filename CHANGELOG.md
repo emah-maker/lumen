@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **An outside agent (Claude Code over MCP) no longer fills your window with its steps.** Lines like "Claude Code: Running a script on the page" (one per call) were added to the sidebar chat of the window you were using, along with a "connected" notice and the "driven by" pill, even though the agent works in a window of its own. Its steps now go only to that window, where the pill shows the latest one; your window gets nothing but an approval card when one is needed (which still opens nothing). Where step lines still appear, the same step repeated in a row is one line with a count.
+
 ## 0.5.19 (2026-10-08)
 
 - **Research: a red "Retracted" label now needs Crossref to confirm it.** OpenAlex's retraction flag has false positives (it marked the Lancet 2020 dementia commission report, which is not retracted), so OpenAlex or PubMed alone now shows an amber "Retraction flag (unconfirmed)" chip (tooltip: check the publisher's page); "Retracted (Crossref)" in red appears only when Crossref's Retraction Watch data (or a "RETRACTED:" title) says so. Crossref expressions of concern and corrections get their own softer chips, and the AI is told to confirm on the publisher's page and not to call an unconfirmed flag a retraction.
