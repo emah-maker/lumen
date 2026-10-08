@@ -62,7 +62,7 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
   const urls = [...Array.from({ length: COUNT }, (_, i) => `${base}/${i}`), ...real];
   const titles = urls.map((u, i) => (i < COUNT ? `Wake ${i}` : `Real ${i - COUNT}`));
   const session = { urls, titles, favicons: urls.map(() => null), active: 0, groupIds: urls.map(() => null), pinned: urls.map(() => false) };
-  const settings = { session, ...(flag('freeze-first') ? { tabSleepFreezeFirstMinutes: 10 } : {}), ...(args.includes('--preload') ? { tabPreload: value('preload', 2) } : { tabPreload: 0 }) };
+  const settings = { session, tabSleepFreePercent: 5, tabSleepKeepRecent: 0, ...(flag('freeze-first') ? { tabSleepFreezeFirstMinutes: 10 } : {}), ...(args.includes('--preload') ? { tabPreload: value('preload', 2) } : { tabPreload: 0 }) };
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify(settings));
   const launchApp = () => electron.launch({ args: [path.join(__dirname, '..')], timeout: 60000, env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
   let app = await launchApp();
@@ -116,8 +116,8 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
       if (flag('verbose')) console.error('snapshots before restart', JSON.stringify(await app.evaluate((_m, base) => Array.from({ length: 24 }, (_, i) => [i, global.__wake?.hasSnapshot(`${base}/${i}`)]).filter((x) => x[1]).map((x) => x[0]), base)));
       await app.close(); await sleep(1500);
       app = await launchApp(); ui = await app.firstWindow(); await boot();
-      for (let i = 0; i < RUNS; i++) { const n = 2 + i; await wake('restored (picture from last run)', n, urlRe(n)); await click(0); await sleep(300); }
-      for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored (picture) + hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
+      for (let i = 0; i < RUNS; i++) { const n = 2 + i; await wake('restored (second launch)', n, urlRe(n)); await click(0); await sleep(300); }
+      for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored (second launch) + hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
     }
     for (let i = 0; i < real.length; i++) {
       const name = `Real ${i}`;
