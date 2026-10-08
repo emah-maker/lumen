@@ -77,5 +77,5 @@ module.exports = async function clockStyleUnits(check) {
   check('clock styles: the page loads the module before newtab.js', scripts.indexOf('../features/clock-styles.js') >= 0 && scripts.indexOf('../features/clock-styles.js') < scripts.indexOf('newtab.js'), JSON.stringify(scripts));
   const js = read('src/renderer/newtab.js');
   check('clock: the time is built from text nodes, never HTML', /replaceChildren\(span\('clock-h'/.test(js) && !/clock[^\n]*innerHTML/.test(js), '');
-  check('clock: seconds wake the page every second only when shown', /seconds \? 1000 : 10000/.test(js), '');
+  check('clock: seconds wake the page every second only when shown, a minute otherwise', /seconds \? 1000 : 60e3/.test(js), '');
 };

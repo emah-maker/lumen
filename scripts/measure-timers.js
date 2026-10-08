@@ -32,13 +32,14 @@ fs.writeFileSync(preload, `
 const { contextBridge } = require('electron');
 if (location.protocol === 'file:' && /[/]newtab[.]html$/.test(location.pathname)) {
   contextBridge.executeInMainWorld({ func: () => {
-    const c = (window.__timerStats = { fired: 0, created: 0 });
+    const c = (window.__timerStats = { fired: 0, created: 0, by: {} });
     for (const name of ['setTimeout', 'setInterval']) {
       const orig = window[name];
       window[name] = function (fn, ms, ...rest) {
         c.created++;
         if (typeof fn !== 'function') return orig.call(this, fn, ms, ...rest);
-        return orig.call(this, function () { c.fired++; return fn.apply(this, arguments); }, ms, ...rest);
+        const where = String(new Error().stack.split(String.fromCharCode(10))[2] || '').split(String.fromCharCode(47)).pop().trim() + ' ' + name + ' ' + ms;
+        return orig.call(this, function () { c.fired++; c.by[where] = (c.by[where] || 0) + 1; return fn.apply(this, arguments); }, ms, ...rest);
       };
     }
   } });
@@ -104,7 +105,7 @@ async function run(scenario) {
       global.__ejs.paused = true;
       for (const wc of webContents.getAllWebContents()) {
         if (wc.isDestroyed() || !/newtab\.html/.test(wc.getURL())) continue;
-        const r = await wc.executeJavaScript('({ hidden: document.hidden, timers: window.__timerStats ? { ...window.__timerStats } : null, card: Boolean(document.querySelector(".w-card")), playing: document.querySelector(".sp-elapsed")?.textContent || null, clockText: document.querySelector(".wc-time")?.textContent || null })').catch(() => null);
+        const r = await wc.executeJavaScript('({ hidden: document.hidden, timers: window.__timerStats ? { ...window.__timerStats, by: { ...window.__timerStats.by } } : null, card: Boolean(document.querySelector(".w-card")), playing: document.querySelector(".sp-elapsed")?.textContent || null, clockText: document.querySelector(".wc-time")?.textContent || null })').catch(() => null);
         pages.push({ id: wc.id, ...r });
       }
       global.__ejs.paused = false;
@@ -121,7 +122,7 @@ async function run(scenario) {
     const pagesOut = b.pages.map((pb) => {
       const pa = a.pages.find((x) => x.id === pb.id);
       const d = pa?.timers && pb.timers ? pb.timers.fired - pa.timers.fired : null;
-      return { id: pb.id, hidden: pb.hidden, card: pb.card, timerWakeups: d, timerWakeupsPerSec: d === null ? null : Number((d / secs).toFixed(3)), timersCreated: pb.timers?.created, playingText: pb.playing, clockText: pb.clockText };
+      return { id: pb.id, hidden: pb.hidden, card: pb.card, timerWakeups: d, timerWakeupsPerSec: d === null ? null : Number((d / secs).toFixed(3)), timersCreated: pb.timers?.created, firedBy: pb.timers ? Object.fromEntries(Object.entries(pb.timers.by).map(([k, v]) => [k, v - ((pa?.timers?.by || {})[k] || 0)]).filter(([, v]) => v > 0)) : null, playingText: pb.playing, clockText: pb.clockText };
     });
     const flat = cpu.slice(1);
     const sum = (f) => flat.reduce((t, s) => t + s.filter(f).reduce((u, m) => u + m.cpu, 0), 0) / Math.max(1, flat.length);

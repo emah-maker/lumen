@@ -144,14 +144,17 @@ function tickClock() {
 const clockRange = document.createRange();
 let lastClockW = 0;
 document.fonts?.ready?.then(() => window.newtabSize?.fitNow?.()); // a clock font that loads late may be wider
-// Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
+// Minutes only: wake as each minute turns. With seconds: just after each second turns. A hidden page (a background tab, the spare) has no
+// timer at all: the clock is drawn and the timer started again when the page is shown.
 let clockTimer = 0;
 function scheduleClock() {
   clearTimeout(clockTimer);
-  const every = currentLook.clockStyle?.seconds ? 1000 : 10000;
-  clockTimer = setTimeout(() => { if (!document.hidden) tickClock(); scheduleClock(); }, every - (Date.now() % every) + 15);
+  clockTimer = 0;
+  if (document.hidden || document.getElementById('clock-card')?.hidden) return; // (nothing on screen shows the time: no timer)
+  const every = currentLook.clockStyle?.seconds ? 1000 : 60e3;
+  clockTimer = setTimeout(() => { tickClock(); scheduleClock(); }, every - (Date.now() % every) + 15);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tickClock(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(clockTimer); clockTimer = 0; } else { tickClock(); scheduleClock(); } });
 
 // A stable hue per site for monogram tiles.
 function hueOf(text) {
