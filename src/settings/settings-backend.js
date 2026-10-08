@@ -109,6 +109,9 @@ const DEFAULTS = {
   tabSleepMaxAwake: 0, // [tabs] most background tabs kept awake; the least recently used sleep (0: no limit)
   tabSleepKeepPinned: false, // [tabs] pinned tabs never sleep
   tabSleepNever: [], // [tabs] sites whose tabs never sleep
+  tabSleepFreezeFirstMinutes: 0, // [tabs] an idle tab that would unload is frozen first for this many minutes (instant to wake); 0: unload at once
+  tabPreload: 2, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
+  tabSnapshots: true, // [tabs] show a picture of a sleeping tab's page while it wakes (kept on disk, cleared with history)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
@@ -224,6 +227,8 @@ function validate(key, value) {
     case 'tabSleepLumenGb': return pick(Number(value), TS.LUMEN_GB_CHOICES, null);
     case 'tabSleepMaxAwake': return pick(Number(value), TS.MAX_AWAKE_CHOICES, null);
     case 'tabSleepNever': return TS.cleanHosts(value);
+    case 'tabSleepFreezeFirstMinutes': return pick(Number(value), require('../features/tab-wake').FREEZE_FIRST_CHOICES, null);
+    case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
@@ -662,7 +667,9 @@ function create(deps) {
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
-      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepNever': deps.onTabSleepChange?.(key); break;
+      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': deps.onTabSleepChange?.(key); break;
+      case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'tabSnapshots': if (prefs().tabSnapshots === false) deps.clearTabSnapshots?.(); break;
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
@@ -700,7 +707,7 @@ function create(deps) {
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
-      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxMinutes: TS.MAX_MINUTES }, // [tabs] Settings > Tabs > Memory's pickers
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxMinutes: TS.MAX_MINUTES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
       clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,
@@ -725,6 +732,7 @@ function create(deps) {
       let removed = 0;
       for (const [url, entry] of map) if ((entry.last || 0) >= since) { map.delete(url); removed++; }
       deps.saveHistory();
+      deps.clearTabSnapshots?.(); // the pictures of tabs show pages as they were: gone with the history
       done.history = removed;
     }
     if (cookies && !recent) {
@@ -751,6 +759,7 @@ function create(deps) {
     if (cache) {
       // Electron has no time range for the HTTP cache: it is cleared for all time.
       await ses().clearCache();
+      deps.clearTabSnapshots?.(); // (the saved pictures of pages live in the cache folder)
       done.cache = true;
     }
     if (downloads) done.downloads = clearDownloads(since);
