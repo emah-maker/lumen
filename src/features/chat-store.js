@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { plainScripts } = require('../renderer/markdown.js'); // <sub>/<sup> as clean text in exports
 
 const TITLE_CHARS = 60;
 const ID_RE = /^[a-f0-9]{16}$/;
@@ -210,7 +211,7 @@ function toMarkdown({ title, created, model, usageLine }, items, { pictureFile =
     lines.push(item.role === 'user' ? '## You' : '## Assistant', '');
     if (item.role === 'assistant' && item.steps) lines.push(`_Used ${item.steps} browser action${item.steps === 1 ? '' : 's'}_`, '');
     if (item.images?.length) lines.push(`_${item.images.length} image${item.images.length === 1 ? '' : 's'} attached (not included)_`, '');
-    if (item.text) lines.push(item.text, '');
+    if (item.text) lines.push(item.role === 'assistant' ? plainScripts(item.text) : item.text, '');
     for (const picture of item.generated || []) {
       const file = pictureFile ? pictureFile(picture) : null;
       const alt = String(picture.alt || 'Generated picture').replace(/[[\]\n]/g, ' ').slice(0, 200);

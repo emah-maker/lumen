@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Subscripts and superscripts in AI replies now render.** A reply with `σ<sub>x</sub>` used to show the raw tags; now `<sub>` and `<sup>` (and `H~2~O`, `x^2^`) draw as real subscripts and superscripts in the sidebar chat, the chat page and /btw. Only those four bare tags are allowed (no attributes, properly paired); anything else stays escaped, and code is untouched. Copying a reply, exporting a chat and notifications give plain text such as `σ_x` instead of tags.
+
 ## 0.5.20 (2026-10-08)
 
 - **The Spotify card's Library and Up next tabs work again in "Play as Lumen".** Spotify changed its web player: the library list no longer has links and the queue is now a side panel instead of a page, so Lumen found nothing and the tabs stayed on "Loading…". Lumen now reads the library from the page's new rows (Liked Songs is not listed) and opens the Queue panel to read what is next, and "play from the queue" presses that row's own play button. If a tab still can't be read it now says "Couldn't read your library." with a Try again button instead of loading forever. Shuffle stays hidden when the page shows no shuffle button.
