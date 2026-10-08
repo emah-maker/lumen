@@ -3575,7 +3575,7 @@ function labelReply(bubble, modelId, auto = null) {
     : group === 'Claude' ? `Claude ${option.textContent}`
     : !group || /^Your .* account$/.test(group) ? option.textContent
     : `${group} · ${option.textContent}`;
-  // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 4.5"), and why in its tooltip.
+  // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 5.5"), and why in its tooltip.
   const span = Object.assign(document.createElement('span'), { className: 'reply-model', textContent: auto ? t('models.auto.reply', { name }) : name });
   if (auto?.reason) { span.title = auto.reason; span.dataset.auto = '1'; }
   bubble.append(span);

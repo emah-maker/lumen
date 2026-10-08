@@ -913,7 +913,7 @@ function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) 
     badges: signedIn === false ? ['sign in'] : [],
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run claude, then type /login'
-      : m.id === 'default' ? 'Lumen picks Haiku, Sonnet or Opus for each message (Settings → AI: Pick the Claude Code model for me), else the model set in Claude Code' : '', // the heading says Claude Code; the name says which model
+      : m.id === 'default' ? 'Lumen picks Haiku (most messages), Sonnet or Opus for each message (Settings → AI: Pick the Claude Code model for me), else the model set in Claude Code' : '', // the heading says Claude Code; the name says which model
     group: 'Your Claude account',
     signedIn,
     accountDetail,
