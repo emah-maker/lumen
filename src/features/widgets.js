@@ -1227,7 +1227,7 @@ async function completedToday(x) {
 const apiConnected = (c, x) => Boolean(x.secret() && SV.effectiveClientId(c.clientId));
 async function statusSearch(c, action, x, cached) {
   if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
-  if (!apiConnected(c, x)) return false;
+  if (!apiConnected(c, x)) { if (action.do === 'esearch') SAC.clearSearch(x.ui(c.id)); return false; } // (not connected: the page searches, and no older Web API rows are left over it)
   const ui = x.ui(c.id);
   const sctx = { ui, now: x.now, image: x.image, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchImage };
   if (action.do === 'esearch') {
