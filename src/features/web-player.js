@@ -138,6 +138,10 @@ function createWebPlayer(deps, spec) {
   const testOrigin = () => { try { return deps.testUrl?.() ? new URL(deps.testUrl()).origin : ''; } catch { return ''; } };
   const allowed = (url) => isAllowedUrl(url, spec.hosts, testOrigin());
   const status = () => ({ state, drm });
+  // The push channel: onState(cb) -> unsubscribe. cb({ type: 'status', state, drm }) when the view's load state or Widevine answer changes, and
+  // cb({ type: 'message', message }) for each state message the page's bridge sends (main forwards them with emitState), at once, never batched.
+  const listeners = new Set();
+  const emit = (event) => { for (const cb of [...listeners]) { try { cb(event); } catch { /* a listener's error is its own */ } } };
   function setStatus(next, nextDrm = drm) {
     if (next === state && nextDrm === drm) return;
     state = next;
@@ -147,6 +151,7 @@ function createWebPlayer(deps, spec) {
     retryTimer = failedAt ? setTimeout(retry, RETRY_MS) : null;
     retryTimer?.unref?.();
     try { deps.onStatus?.(); } catch { /* the card keeps what it shows */ }
+    emit({ type: 'status', ...status() });
   }
 
   // Can this Lumen play protected audio? the player needs Widevine; the component installs in the
@@ -371,6 +376,8 @@ function createWebPlayer(deps, spec) {
   return {
     sync,
     status,
+    onState(cb) { if (typeof cb !== 'function') return () => {}; listeners.add(cb); return () => listeners.delete(cb); },
+    emitState: (message) => emit({ type: 'message', message }),
     reload() { if (alive()) load(); else sync(); },
     destroy: () => { pinned = false; destroy(); },
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,

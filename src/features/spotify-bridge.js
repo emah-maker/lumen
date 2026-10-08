@@ -789,12 +789,13 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   document.addEventListener(IN, function (e) { var c; try { c = JSON.parse(e.detail); } catch (x) { return; } run(c); });
   out({ t: 'ready' });
   // Not polled every second: the page's own changes (its player bar, the play button's label, the media element's events) ask for a read, at most
-  // one per 400 ms, and tick() sends only what changed. A quiet page (paused, hidden) costs one read every 5 s, which tick() sends anyway as the
+  // one per 150 ms, and tick() sends only what changed. A quiet page (paused, hidden) costs one read every 5 s, which tick() sends anyway as the
   // card's heartbeat (where the playhead is).
   var soonTimer = null, lastTick = 0;
   function soon(delay) {
     if (soonTimer) return;
-    soonTimer = setTimeout(function () { soonTimer = null; lastTick = Date.now(); tick(false); }, Math.max(typeof delay === 'number' ? delay : 0, 400 - (Date.now() - lastTick)));
+    // (at once when it has been quiet for 150 ms, else as soon as 150 ms have passed: a change is never held back for long)
+    soonTimer = setTimeout(function () { soonTimer = null; lastTick = Date.now(); tick(false); }, Math.max(typeof delay === 'number' ? delay : 0, 150 - (Date.now() - lastTick)));
   }
   try { new MutationObserver(function () { soon(0); }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'aria-checked', 'aria-pressed', 'aria-disabled', 'data-testid', 'disabled', 'href', 'src'] }); } catch (e) { /* no observer: the heartbeat below still reads */ }
   ['play', 'pause', 'playing', 'ended', 'durationchange', 'loadedmetadata', 'volumechange'].forEach(function (ev) { document.addEventListener(ev, function () { soon(0); }, true); });

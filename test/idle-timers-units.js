@@ -166,6 +166,14 @@ function webPlayerChecks() {
     wc.emit('did-fail-load', {}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://open.spotify.com/', true);
     const retry = timeouts.filter((t) => t.ms === 20e3);
     check('web player: a failed load arms one retry timer (20 s), not a poll', retry.length === 1 && intervals.length === 0, JSON.stringify(timeouts.map((t) => t.ms)));
+    const got = [];
+    const off = wp.onState((e) => got.push(e));
+    wp.emitState('{"t":"state"}');
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://open.spotify.com/' });
+    wc.emit('did-finish-load');
+    check('web player: onState pushes bridge messages and status changes at once, and unsubscribes', got[0]?.type === 'message' && got[0].message === '{"t":"state"}' && got.some((e) => e.type === 'status' && e.state === 'ready'), JSON.stringify(got));
+    off(); const n2 = got.length; wp.emitState('x');
+    check('web player: …after unsubscribing nothing arrives', got.length === n2, '');
     wp.destroy();
   } finally { global.setInterval = real.setInterval; global.setTimeout = real.setTimeout; }
 }
