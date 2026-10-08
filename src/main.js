@@ -7024,6 +7024,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
