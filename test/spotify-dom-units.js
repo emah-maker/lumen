@@ -129,6 +129,7 @@ function page({ tree = TREES.home, route = () => {}, md = null, typing = 80, typ
   vm.createContext(ctx);
   vm.runInContext(typeFirst ? SPB.BRIDGE_SOURCE.replace('var TYPE_FIRST = false;', 'var TYPE_FIRST = true;') : SPB.BRIDGE_SOURCE, ctx);
   const advance = (ms) => {
+    notify(); // (a test changes the stand-in page's elements directly: the real page's MutationObserver would have been told)
     const end = clock + ms;
     for (;;) {
       const due = timers.filter((t) => !t.dead && t.at <= end).sort((a, b) => a.at - b.at || a.id - b.id)[0];

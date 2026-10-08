@@ -7526,12 +7526,12 @@ const engineSender = (event) => {
     if (!wc || event.sender !== wc || event.senderFrame !== wc.mainFrame) continue;
     let origin = '';
     try { origin = TEST && stand() ? new URL(stand()).origin : ''; } catch { /* no stand-in */ }
-    return isPage(event.senderFrame.url, origin) ? { engine, bridge } : null;
+    return isPage(event.senderFrame.url, origin) ? { engine, bridge, web } : null;
   }
   return null;
 };
 ipcMain.on('musicengine:bridge-source', (event) => { event.returnValue = engineSender(event)?.bridge.BRIDGE_SOURCE || ''; });
-ipcMain.on('musicengine:msg', (event, raw) => { engineSender(event)?.engine.onMessage(raw); });
+ipcMain.on('musicengine:msg', (event, raw) => { const from = engineSender(event); if (!from) return; from.engine.onMessage(raw); from.web.emitState(raw); }); // (the engine first; then anyone listening on the player's onState)
 app.on('before-quit', () => { spotifyEngine.destroy(); spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------

@@ -94,6 +94,7 @@
       for (const id of members) next.set(id, g);
     }
     groups = next;
+    queueMicrotask(() => window.stackTicker?.poke());
     for (const sid of [...runs.keys()]) if (!uniqueGroups().some((g) => g.sid === sid)) runs.delete(sid);
     const shownIds = [];
     for (const w of list) {
@@ -659,8 +660,15 @@
       if (plan.run && plan.wait === 0) go(g, ST.neighbour(g.members, g.top, 1), 1);
     }
   }
-  setInterval(tick, 1000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) for (const r of runs.values()) r.last = Date.now(); }); // a stack waits its turn again after the page was away
+  // One timer per visible page, and only while a stack that turns by itself exists (features/visible-ticker.js): none on a hidden page, the resident
+  // spare, or a page with no stacks. Re-armed after every layout (stacks come and go with it).
+  const rotator = window.VisibleTicker.createTicker({ period: 1000, needed: () => groups.size > 0 && uniqueGroups().some((g) => g.rotate || g.smart), run: tick });
+  window.stackTicker = rotator; // (tests: whether a timer is armed)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { rotator.stop(); return; }
+    for (const r of runs.values()) r.last = Date.now(); // a stack waits its turn again after the page was away
+    rotator.poke();
+  });
 
   // ---- after every layout: hidden members sit where their shown card is; Edit layout's badges ----
   function afterLayout() {

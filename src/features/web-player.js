@@ -23,7 +23,6 @@
 const MIN_LAYOUT_WIDTH = 400; // CSS px: below this the page is zoomed out so the site gets a compact layout, not a cramped one
 const MIN_ZOOM = 0.5;
 const MIN_SIDE = 60; // px: a card slot smaller than this (or mostly scrolled away) isn't worth a live view
-const POLL_MS = 200;
 const RETRY_MS = 20e3; // a load that failed (offline, a site outage) is tried again after this, while the card is on screen
 const DRM_RETRY_MS = 5e3; // the Widevine component installs in the background on a first run: ask again until it is there
 const DRM_MAX_TRIES = 30;
@@ -79,6 +78,21 @@ const probeScript = (cardClass) => `(() => {
   return { x: r.left, y: r.top, w: r.width, h: r.height };
 })()`;
 
+// The new-tab page tells main where the slots are (renderer/newtab-web-slot.js): a console message on the page, which needs no preload or channel
+// (a plain web page has none), is only read from the visible new-tab page, and only moves a view over it. The message is the prefix and
+// a JSON object { <cardClass>: { x, y, w, h } | null }, sent when a slot moves or changes size (and when the page is edited or a dialog opens).
+const SLOT_PREFIX = 'lumen-slot-rect ';
+// -> the rect for this card class ({ x, y, w, h } or null for "no usable slot"), or undefined when the message is not one of those.
+function parseSlotMessage(message, cardClass) {
+  if (typeof message !== 'string' || !message.startsWith(SLOT_PREFIX) || message.length > 2000) return undefined;
+  let all;
+  try { all = JSON.parse(message.slice(SLOT_PREFIX.length)); } catch { return undefined; }
+  if (!all || typeof all !== 'object' || Array.isArray(all) || !(cardClass in all)) return undefined;
+  const r = all[cardClass];
+  if (r === null) return null;
+  return r && typeof r === 'object' ? { x: r.x, y: r.y, w: r.w, h: r.h } : undefined;
+}
+
 // What the page reported -> where to put the view, in window coordinates: the slot cut to the page's
 // visible area (`bounds`: the page view's { x, y, width, height } in the window), whole pixels. null when
 // nothing usable is visible (hide the view).
@@ -103,8 +117,9 @@ function viewBounds(probe, bounds) {
 function createWebPlayer(deps, spec) {
   let view = null;
   let host = null;
-  let timer = null;
   let probing = false;
+  let retryTimer = null;
+  const watched = new WeakSet(); // the new-tab pages whose slot messages are being read
   let signedIn = null; // null: not known yet
   let cookiesHooked = false;
   const PROBE = probeScript(spec.cardClass);
@@ -123,12 +138,20 @@ function createWebPlayer(deps, spec) {
   const testOrigin = () => { try { return deps.testUrl?.() ? new URL(deps.testUrl()).origin : ''; } catch { return ''; } };
   const allowed = (url) => isAllowedUrl(url, spec.hosts, testOrigin());
   const status = () => ({ state, drm });
+  // The push channel: onState(cb) -> unsubscribe. cb({ type: 'status', state, drm }) when the view's load state or Widevine answer changes, and
+  // cb({ type: 'message', message }) for each state message the page's bridge sends (main forwards them with emitState), at once, never batched.
+  const listeners = new Set();
+  const emit = (event) => { for (const cb of [...listeners]) { try { cb(event); } catch { /* a listener's error is its own */ } } };
   function setStatus(next, nextDrm = drm) {
     if (next === state && nextDrm === drm) return;
     state = next;
     drm = nextDrm;
     failedAt = next === 'offline' || next === 'failed' ? Date.now() : 0;
+    clearTimeout(retryTimer);
+    retryTimer = failedAt ? setTimeout(retry, RETRY_MS) : null;
+    retryTimer?.unref?.();
     try { deps.onStatus?.(); } catch { /* the card keeps what it shows */ }
+    emit({ type: 'status', ...status() });
   }
 
   // Can this Lumen play protected audio? the player needs Widevine; the component installs in the
@@ -143,6 +166,15 @@ function createWebPlayer(deps, spec) {
       setStatus(state, 'missing');
       if (++drmTries < DRM_MAX_TRIES) drmTimer = setTimeout(checkDrm, DRM_RETRY_MS);
     }, () => { /* the page went away mid-check: the next load asks again */ });
+  }
+
+  // A load that failed is tried again after RETRY_MS while the card is on screen (one timer, only while the load is in a failed state).
+  function retry() {
+    retryTimer = null;
+    if (!alive() || (state !== 'offline' && state !== 'failed')) return;
+    if (deps.hasWidget() && deps.activeNewTab()) { load(); return; }
+    retryTimer = setTimeout(retry, RETRY_MS); // not on screen: look again later
+    retryTimer.unref?.();
   }
 
   // Load (or load again) the site into the view.
@@ -242,6 +274,8 @@ function createWebPlayer(deps, spec) {
     generation++;
     emulating = false;
     clearTimeout(drmTimer);
+    clearTimeout(retryTimer);
+    retryTimer = null;
     state = 'loading';
     drm = 'unknown';
     failedAt = 0;
@@ -312,16 +346,29 @@ function createWebPlayer(deps, spec) {
     }, () => { probing = false; });
   }
 
-  function stop() { clearInterval(timer); timer = null; }
+  // The page pushed where the slot is. Only the visible new-tab page is believed; anything else is ignored.
+  function pushed(nt, rect) {
+    if (pinned || !deps.hasWidget() || nt.isDestroyed() || deps.activeNewTab() !== nt) return;
+    place(viewBounds(rect, deps.getBounds()));
+  }
+  function watch(nt) {
+    if (watched.has(nt)) return;
+    watched.add(nt);
+    nt.on('console-message', (event, level, message) => {
+      const rect = parseSlotMessage(typeof event?.message === 'string' ? event.message : message, spec.cardClass); // (Electron passes either form)
+      if (rect !== undefined) pushed(nt, rect);
+    });
+  }
 
-  // Called whenever the layout changes (a tab switch, the sidebar) and by the poll below.
+  // Called whenever the layout changes (a tab switch, the sidebar, a card was added or removed). Nothing polls: between these the page
+  // pushes the slot's place itself (above), and this asks once for it, because a tab that was switched back to has told main nothing new.
   function sync() {
     if (pinned) return;
-    if (!deps.hasWidget()) { stop(); if (deps.keepAlive?.()) hide(); else destroy(); return; }
+    if (!deps.hasWidget()) { if (deps.keepAlive?.()) hide(); else destroy(); return; }
     hookCookies();
     const nt = deps.activeNewTab();
-    if (!nt || nt.isDestroyed()) { stop(); hide(); return; }
-    if (!timer) timer = setInterval(sync, POLL_MS); // the card moves when the page scrolls or the grid changes
+    if (!nt || nt.isDestroyed()) { hide(); return; }
+    watch(nt);
     if (alive() && (state === 'offline' || state === 'failed') && Date.now() - failedAt > RETRY_MS) load();
     probe(nt);
   }
@@ -329,8 +376,10 @@ function createWebPlayer(deps, spec) {
   return {
     sync,
     status,
+    onState(cb) { if (typeof cb !== 'function') return () => {}; listeners.add(cb); return () => listeners.delete(cb); },
+    emitState: (message) => emit({ type: 'message', message }),
     reload() { if (alive()) load(); else sync(); },
-    destroy: () => { stop(); pinned = false; destroy(); },
+    destroy: () => { pinned = false; destroy(); },
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,
     isSignedIn: () => signedIn,
     ensure, showIn, release,
@@ -340,4 +389,4 @@ function createWebPlayer(deps, spec) {
   };
 }
 
-module.exports = { MIN_LAYOUT_WIDTH, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };
+module.exports = { MIN_LAYOUT_WIDTH, SLOT_PREFIX, parseSlotMessage, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };
