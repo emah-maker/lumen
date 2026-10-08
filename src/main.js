@@ -1589,12 +1589,15 @@ function realUrl(wc) {
   return url;
 }
 
+const saveGates = require('./features/save-gates');
+// (every bookmark change is a settings write, which bumps settingsGen)
+const bookmarkUrlSetMemo = saveGates.memoByGeneration(() => settingsGen, () => new Set(bookmarks().map((b) => b.url)));
+function bookmarkUrlSet() { readSettings(); return bookmarkUrlSetMemo(); } // (readSettings loads the cache first)
 function tabState() {
   const active = activeTab();
   const history = active?.webContents.navigationHistory;
-  // Hoisted: bookmarks() re-reads settings.json and rebuilds an array; sendTabs() fires on nearly
-  // every tab/nav event, so doing this once here instead of per-tab inside map avoids O(tabs) reloads.
-  const bookmarked = new Set(bookmarks().map((b) => b.url));
+  // Hoisted (and remembered until a settings write): sendTabs() fires on nearly every tab/nav event.
+  const bookmarked = bookmarkUrlSet();
   const defaultZoomPercent = Math.round((settingsBackend.prefs().defaultZoom || 1) * 100);
   return {
     groups: tabGroups.state(),
@@ -1665,7 +1668,9 @@ function tabState() {
 }
 
 let sessionTimer = null;
+const sessionGate = saveGates.sessionWriteGate(); // an identical session is not written again
 let sessionDirtySince = 0; // when the first unsaved tab change came
+let tabsQuiet = false; // set while sendTabs runs for events that change nothing the session keeps (a background tab's title, loading flags)
 let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 // Tab moves made as one (several tabs going to another window) send each window's strip one update at the
 // end, instead of one per step, so the strips never show the halfway states.
@@ -1687,7 +1692,9 @@ function sendTabs() {
   ui()?.send('tabs', tabState());
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
-  // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose title ticks).
+  // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose navigation keeps changing).
+  // A background tab's title tick or a loading flag changes nothing worth a write (quitting saves the latest titles).
+  if (tabsQuiet) return;
   clearTimeout(sessionTimer);
   if (!sessionDirtySince) sessionDirtySince = Date.now();
   sessionTimer = setTimeout(() => { sessionDirtySince = 0; if (win && !win.isDestroyed()) saveSession({ background: true }); }, Math.max(0, Math.min(3000, sessionDirtySince + 15000 - Date.now())));
@@ -1695,13 +1702,17 @@ function sendTabs() {
 
 // A page's own busy events (loading, title, favicon, in-page navigations) arrive in bursts: they send the strip
 // one state per turn of the event loop, per window. Moves, opens and closes still send at once (sendTabs).
-const tabsSoon = new Set();
-function sendTabsSoon() {
+// `quiet`: the event changes nothing the saved session holds, so the burst doesn't arm a session save (unless a
+// non-quiet event joins the same burst).
+const tabsSoon = saveGates.quietBursts(16, (rec, quiet) => { // (16 ms: one frame, a load's events arrive in separate turns)
+  if (!rcAlive(rec)) return;
+  tabsQuiet = quiet;
+  try { withWindow(rec, sendTabs); } finally { tabsQuiet = false; }
+});
+function sendTabsSoon(quiet = false) {
   const rec = curRec;
   if (!rec) { sendTabs(); return; }
-  if (tabsSoon.has(rec)) return;
-  tabsSoon.add(rec);
-  setTimeout(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); }, 16); // (one frame: a load's events arrive in separate turns)
+  tabsSoon(rec, quiet);
 }
 
 function activeTab() {
@@ -2203,7 +2214,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
   for (const event of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate', 'did-navigate-in-page']) {
-    wc.on(event, sendTabsSoon);
+    // (loading flags and a background tab's title are not in the saved session: no save is armed for them)
+    wc.on(event, () => sendTabsSoon(event === 'did-start-loading' || event === 'did-stop-loading' || (event === 'page-title-updated' && tab.id !== activeId)));
   }
   wc.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); if (!(input.control || input.meta || input.alt)) userTookOver(tab); } // (a shortcut such as Ctrl+Tab, Ctrl+W or Ctrl+L is not typing in the page) // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
@@ -4391,7 +4403,7 @@ function refreshTabMarks() {
   const key = [...winRecs].filter(rcAlive).map((rec) => tabsOf(rec).map((x) => `${x.id}:${tabChatMark(x.id) || ''}`).join(',')).join('|');
   if (key === tabMarksKey) return;
   tabMarksKey = key;
-  for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, sendTabsSoon);
+  for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, () => sendTabsSoon());
 }
 // A chat shown in tabs of two windows: the other window's sidebar hears the run too (its turn, then its events).
 // `except`: the views that already got it.
@@ -4783,7 +4795,10 @@ function saveSession({ excluding = null, background = false } = {}) {
   const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r) && !r.mergedAway && !r.agent); // [agent window] an agent's window is never restored. (a window merged into another is closing: its tabs are saved there)
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
-  const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
+  const session = { ...first, ...(more.length ? { more } : {}) };
+  const current = readSettings();
+  if (!sessionGate.shouldWrite(current.session, session, background)) return; // unchanged since the last write (background saves only)
+  const next = { ...current, session };
   if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
 }
 
