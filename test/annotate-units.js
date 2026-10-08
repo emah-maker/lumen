@@ -45,6 +45,29 @@ check('normalize: nothing to do is an error; clear alone is fine', /Give marks t
   check('math: dpr 1.5 capture (ratio 1000/1500): screenshot px -> view px', Math.abs(annotate.shotToCss(300, { ratio: 1000 / 1500, zoom: 1 }) - 200) < 1e-9);
   check('math: page zoom 1.25 divides (view px -> CSS px)', Math.abs(annotate.shotToCss(300, { ratio: 1, zoom: 1.25 }) - 240) < 1e-9);
   check('math: a downscaled screenshot (1280 px of a 1920 view): ratio 1.5', Math.abs(annotate.shotToCss(400, { ratio: 1.5, zoom: 1 }) - 600) < 1e-9);
+  // Screenshot px -> CSS px for every device pixel ratio, page zoom, downscale and scroll. A tab whose window is 1000 x 700 DIPs at
+  // zoom z shows (1000 x 700) CSS px at innerWidth = 1000 / z; the capture is 1000 * dpr px wide and is downscaled to <= 1280 (or 1024).
+  {
+    let bad = '';
+    for (const dpr of [1, 1.25, 1.5, 2]) for (const zoom of [1, 1.25, 0.8]) for (const maxW of [1024, 1280, 5000]) for (const scrollY of [0, 640]) {
+      const dipW = 1000, dipH = 700, cssW = dipW / zoom, cssH = dipH / zoom;
+      let w = Math.round(dipW * dpr), h = Math.round(dipH * dpr);
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      const scale = annotate.shotScaleOf({ innerWidth: cssW, innerHeight: cssH, scrollX: 0, scrollY }, { width: w, height: h }, zoom);
+      // The element sits at CSS (300, 200) size 90 x 40 in the viewport; where it is in the screenshot:
+      const px = { x: 300 * w / cssW, y: 200 * h / cssH, w: 90 * w / cssW, h: 40 * h / cssH };
+      const mark = annotate.normalize({ marks: [{ type: 'box', ...px }] }, { ...scale, now: { x: 0, y: scrollY } }).marks[0].at.box;
+      const near = (a, b) => Math.abs(a - b) < 1e-6;
+      if (!(near(mark.x, 300) && near(mark.y, 200) && near(mark.w, 90) && near(mark.h, 40))) bad += ` dpr${dpr}/z${zoom}/w${maxW}/s${scrollY}:${J(mark)}`;
+      // The page scrolled 120 px after the screenshot: the same spot is 120 px higher in the viewport now.
+      const later = annotate.normalize({ marks: [{ type: 'box', ...px }] }, { ...scale, now: { x: 0, y: scrollY + 120 } }).marks[0].at.box;
+      if (!near(later.y, 80) || !near(later.x, 300)) bad += ` scroll dpr${dpr}/z${zoom}:${J(later)}`;
+    }
+    check('math: right at DPR 1/1.25/1.5/2, page zoom 0.8/1/1.25, downscaled captures and scrolled pages', !bad, bad);
+    // The zoom changing after the screenshot used to skew every mark (ratio had the old zoom in it, the live zoom divided again).
+    const s = annotate.shotScaleOf({ innerWidth: 800, innerHeight: 560, scrollX: 0, scrollY: 0 }, { width: 1000, height: 700 }, 1.25);
+    check('math: independent of the zoom at call time', Math.abs(annotate.normalize({ marks: [{ type: 'box', x: 500, y: 350 }] }, { ...s, zoom: 2 }).marks[0].at.box.x - 400) < 1e-9);
+  }
   const m = annotate.normalize({ marks: [{ type: 'box', x: 300, y: 150, w: 90, h: 60 }, { type: 'step', x: 10, y: 20 }] }, { ratio: 2 / 3, zoom: 0.5 }).marks;
   check('math: x, y, w, h of a mark all go through the same mapping; a point has no size', J(m[0].at.box) === J({ x: 400, y: 200, w: 120, h: 80 }) && m[1].at.box.w === 0 && m[1].at.box.h === 0, J(m[0].at));
   check('math: coordinates without a screenshot are refused (take one first); element targets are not', /need a screenshot of this tab first/.test(throws(() => annotate.normalize({ marks: [{ type: 'box', x: 1, y: 2 }] }, null))) && annotate.normalize({ marks: [{ type: 'box', target: '3' }] }, null).marks.length === 1);
@@ -231,7 +254,14 @@ withTimers((timers) => {
   check('navigation: the same page keeps its drawing', r.board.alive === true);
   env.win.location.href = 'https://a.test/other';
   tick();
-  check('navigation: a single-page navigation clears it (a full navigation drops the page world with it)', r.board.alive === false);
+  check('persist: a single-page route change does not clear it (a full navigation drops the page world with it)', r.board.alive === true);
+  for (let i = 0; i < 20; i++) tick();
+  check('persist: it stays through many layout ticks and no timer ends it', r.board.alive === true && !timers.some((t) => !t.interval));
+  env.document.documentElement.children.length = 0; r.host.isConnected = false; r.host.parentNode = null; // the page's own script removed it
+  tick();
+  check('persist: the host is put back when the page removes it', r.board.alive === true && env.document.documentElement.children.includes(r.host));
+  env.handlers.keydown[0]({ key: 'Escape' });
+  check('persist: only Esc ends it', r.board.alive === false);
 });
 
 withTimers((timers) => {

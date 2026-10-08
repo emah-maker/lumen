@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI's drawings land where it points and stay until you press Esc.** Marks placed by screenshot position are now converted with the screenshot's own scale (page width over image width, per axis) and the scroll position it was taken at, so a changed page zoom, a different display scaling (125%, 150%, 200%) or a page scrolled since the screenshot no longer shifts them. A drawing also no longer disappears when the page changes its address without reloading (single-page sites) or when the page's own script removes the overlay: only Esc, "Clear drawings" or a real navigation ends it.
+
 ## 0.5.19 (2026-10-08)
 
 - **Research: a red "Retracted" label now needs Crossref to confirm it.** OpenAlex's retraction flag has false positives (it marked the Lancet 2020 dementia commission report, which is not retracted), so OpenAlex or PubMed alone now shows an amber "Retraction flag (unconfirmed)" chip (tooltip: check the publisher's page); "Retracted (Crossref)" in red appears only when Crossref's Retraction Watch data (or a "RETRACTED:" title) says so. Crossref expressions of concern and corrections get their own softer chips, and the AI is told to confirm on the publisher's page and not to call an unconfirmed flag a retraction.

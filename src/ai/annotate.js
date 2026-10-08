@@ -80,6 +80,19 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-COOR
 // Screenshot pixels -> page CSS px, the way click_at maps them: ratio is (view width / screenshot width), zoom the tab's zoom.
 const shotToCss = (v, { ratio = 1, zoom = 1 } = {}) => (v * ratio) / (zoom || 1);
 
+// The scale of a screenshot, taken when it is taken: CSS px per screenshot px on each axis (innerWidth / image width, so neither
+// devicePixelRatio, page zoom nor a downscale can drift it later), and the scroll at that moment (the picture is of that scroll
+// position). `ratio` / `zoom` stay for click_at. view: { innerWidth, innerHeight, scrollX, scrollY } of the page, size: the image's px.
+function shotScaleOf(view, size, zoom = 1) {
+  const iw = Number(view?.innerWidth) || 0, ih = Number(view?.innerHeight) || 0;
+  if (!iw || !ih || !size?.width || !size?.height) return { ratio: 1, zoom };
+  return { ratio: (iw * zoom) / size.width, zoom, css: { x: iw / size.width, y: ih / size.height }, scroll: { x: Number(view.scrollX) || 0, y: Number(view.scrollY) || 0 } };
+}
+// A length (w, h) of the screenshot in CSS px.
+const shotLen = (v, scale, axis) => (scale && scale.css ? v * scale.css[axis] : shotToCss(v, scale));
+// A position of the screenshot in CSS px of the viewport NOW: the page may have scrolled since (scale.now = the scroll at the call).
+const shotPos = (v, scale, axis) => shotLen(v, scale, axis) - (scale && scale.css && scale.scroll && scale.now ? scale.now[axis] - scale.scroll[axis] : 0);
+
 // The anchor a mark or an arrow's `to` names: an element / text, or a box in viewport CSS px (w, h may be 0: a point).
 // -> { ref } | { text } | { box: { x, y, w, h } } | null
 function anchorOf(o, scale, where) {
@@ -89,7 +102,7 @@ function anchorOf(o, scale, where) {
   if (x === null || y === null) return null;
   if (!scale) throw new Error(`${where}: x,y need a screenshot of this tab first (they are pixels of it), or use target.`);
   const w = num(o.w), h = num(o.h);
-  return { box: { x: shotToCss(x, scale), y: shotToCss(y, scale), w: w && w > 0 ? shotToCss(w, scale) : 0, h: h && h > 0 ? shotToCss(h, scale) : 0 } };
+  return { box: { x: shotPos(x, scale, 'x'), y: shotPos(y, scale, 'y'), w: w && w > 0 ? shotLen(w, scale, 'x') : 0, h: h && h > 0 ? shotLen(h, scale, 'y') : 0 } };
 }
 
 // Checks and normalises a call. scale: { ratio, zoom } of the latest screenshot (null: none taken).
@@ -380,9 +393,10 @@ function overlayMain(spec, env) {
       on(win, 'resize', schedule, false);
       on(win, 'keydown', (e) => { if (e && e.key === 'Escape') destroy(); }, true); // (the page still gets its Esc)
       pill.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); destroy(); });
-      const href = win.location && win.location.href;
-      state.timers.push(setInterval(() => { // layout shifts, inner scrollers, a PDF zoom; and a page that moved on (single-page navigation)
-        if (win.location && win.location.href !== href) { destroy(); return; }
+      // The drawing stays until Esc / "Clear drawings" / a full navigation (which drops this page world with it). A single-page route
+      // change or a script that tidies the DOM must not end it: the host is put back if the page took it out.
+      state.timers.push(setInterval(() => { // layout shifts, inner scrollers, a PDF zoom
+        if (host && host.isConnected === false) { try { (doc.documentElement || doc.body).appendChild(host); } catch { /* no root yet */ } }
         layout();
       }, spec.fast ? 60 : 250));
       if (typeof win.ResizeObserver === 'function') { try { state.observer = new win.ResizeObserver(schedule); state.observer.observe(doc.documentElement); } catch { state.observer = null; } }
@@ -729,4 +743,4 @@ function resultText({ drawn, added, missing, dropped, where, seconds, steps }) {
   return parts.join(' ');
 }
 
-module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, resultText };
+module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, shotScaleOf, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, resultText };
