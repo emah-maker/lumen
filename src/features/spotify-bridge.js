@@ -474,7 +474,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     } catch (e) { return false; }
   }
   // On a search page of its own (/search or /search/<term>, not the songs-only list below it): the page's search box is there to type into.
-  function onSearchRoot() { return /^\/search(\/[^\/]+)?$/.test(pathOf(location.pathname)); }
+  function onSearchRoot() { return /^\/search(\/[^/]+)?$/.test(pathOf(location.pathname)); }
   // Search: when the page is already on a search page its own box is typed into and the page opens the results by itself (no new route);
   // otherwise /search/<term> is opened. The first rows that show for THIS term are sent at once (partial: more may follow), and the whole list
   // once it stands still. A newer search stops this one at its next look (searchSeq), so an older term's rows are never sent.

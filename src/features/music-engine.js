@@ -24,7 +24,7 @@ const SIGNIN_SIZE = { width: 560, height: 780 };
 const RESPOND_MS = 3500; // a button pressed and nothing changed this long after: the player did not respond
 const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
 const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
-const WARM_MS = 10 * 60e3; // the card's search is open (or its box was focused): the hidden page is not unloaded for being idle this long after the last sign of it
+const WARM_MS = 30 * 60e3; // the card's search is open (or its box was focused, or a search asked): the hidden page is not unloaded for being idle until this long after
 const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
@@ -171,9 +171,9 @@ function createMusicEngine(deps) {
     timer = null;
   }
   function unloadIfIdle() {
-    if (!player.webContents() || playing() || signInWin || now() < warmUntil) return;
+    if (!player.webContents() || playing() || signInWin) return;
     const idle = now() - lastActivity;
-    if (idle > UNLOAD_MS || (deps.hasCard && !deps.hasCard() && idle > NO_CARD_UNLOAD_MS)) unload();
+    if ((idle > UNLOAD_MS && now() >= warmUntil) || (deps.hasCard && !deps.hasCard() && idle > NO_CARD_UNLOAD_MS)) unload();
   }
 
   // ---- what the page tells us ----

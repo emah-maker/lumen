@@ -172,6 +172,19 @@ module.exports = async function appleMusicBridgeUnits(check) {
   await flush();
   check('apple bridge (page): a storefront that is not two letters falls back to "us" in the path', h.calls.find((c) => c[0] === 'api')[1] === '/v1/catalog/us/search', JSON.stringify(h.calls));
   h.kit.storefrontId = 'us';
+  // two searches in a row: the answer of the older one (arriving last) is dropped; each is one catalog call
+  h.out.length = 0; h.calls.length = 0;
+  const later = [];
+  h.kit.apiAnswer = () => new Promise((resolve) => { later.push(resolve); });
+  h.send({ cmd: 'search', term: 'old query', rid: 21 });
+  h.send({ cmd: 'search', term: 'new query', rid: 22 });
+  const rows = (name) => ({ data: { results: { songs: { data: [{ id: '5', type: 'songs', attributes: { name, artistName: 'A' } }] } } } });
+  later[1](rows('new'));
+  await flush(); await flush();
+  later[0](rows('old'));
+  await flush(); await flush();
+  const answers = h.out.filter((x) => x.t === 'list');
+  check('apple bridge (page): one catalog call per search, and the answer of an older search that arrives after a newer one is dropped (only the newer request is answered)', h.calls.filter((c) => c[0] === 'api').length === 2 && answers.length === 1 && answers[0].rid === 22 && answers[0].items[0].title === 'new', JSON.stringify([h.calls.length, answers.map((a) => a.rid)]));
   h.out.length = 0;
   h.kit.apiAnswer = () => Promise.reject({ status: 403 });
   h.send({ cmd: 'list', kind: 'recent', rid: 11 });

@@ -43,6 +43,7 @@ async function withThumbs(items, ctx) {
 const bare = (items) => items.map((it) => { const row = { ...it }; delete row.images; delete row.thumbAsked; return row; });
 
 // ---- search ----
+const searchRows = (items) => bare(items).map((r) => ({ ...r, thumb: r.thumb || '' })); // (every row has a picture field: empty until the card asks for it)
 // ONE request (GET /search for songs, albums, artists and playlists together). The rows come back at once without pictures: the card asks for the
 // pictures of the rows it has on screen (loadThumbs), so a long list costs no more than the rows that are looked at. A search that was asked before a
 // newer one finished is dropped (ui.searchSeq), so an older term never replaces the newer one's rows. `ctx.searchCall` (the user's own search budget,
@@ -67,7 +68,7 @@ async function loadThumbs(ui, ids, ctx) {
 function directResults(ui) {
   const s = ui && ui.search;
   if (!s || !s.api) return null;
-  return { results: bare(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: false, moreLoading: false };
+  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: false, moreLoading: false };
 }
 
 async function loadTab(call, name, ctx, playback) {
@@ -251,7 +252,7 @@ async function extras(call, ctx, playback) {
     playlists: lib ? lib.playlists : [],
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
-    results: ui.search ? bare(ui.search.items) : [],
+    results: ui.search ? searchRows(ui.search.items) : [],
     searchOk: ui.search ? ui.search.ok !== false : true,
     searchWhy: ui.search && ui.search.ok === false ? 'page' : '',
     query: ui.search ? ui.search.term : '',

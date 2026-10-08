@@ -40,7 +40,6 @@ const artOk = (v) => (typeof v === 'string' && v.length < 200000 && /^data:image
 const KINDS = ['song', 'album', 'playlist', 'station', 'artist'];
 const SEARCH_GROUPS = [['song', 'Songs', 'am-songs'], ['album', 'Albums', 'am-albums'], ['artist', 'Artists', 'am-artists'], ['playlist', 'Playlists', 'am-playlists']];
 const MS = globalThis.MusicSearch; // features/music-search-core.js: the pause before a search is asked (200 ms), the shortest term (2), the cache of the last queries
-const SEARCH_DEBOUNCE_MS = MS.DEBOUNCE_MS;
 const RECENT_MAX = 5;
 const ASK_AGAIN_MS = 4000; // a tab's data is asked again no sooner than this
 const STALE_MS = 5 * 60e3; // ...and, unless the user picks the tab again, only this long after it was asked
