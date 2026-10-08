@@ -197,11 +197,11 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   await app.evaluate(() => global.__modelsChanged());
   await sleep(200);
   check('a list refresh keeps Auto', (await ui.inputValue('#model')) === 'auto', await ui.inputValue('#model'));
-  await ui.selectOption('#model', 'claude-sonnet-5');
+  await ui.selectOption('#model', 'claude-sonnet-5-5');
   await sleep(300);
   u = await send(HEAVY);
-  check('a model picked by hand is used exactly as picked (Auto steps aside)', u.length === 1 && u[0] === 'anthropic:claude-sonnet-5', JSON.stringify(u));
-  check('the pick is saved', (await settings()).model === 'claude-sonnet-5', (await settings()).model);
+  check('a model picked by hand is used exactly as picked (Auto steps aside)', u.length === 1 && u[0] === 'anthropic:claude-sonnet-5-5', JSON.stringify(u));
+  check('the pick is saved', (await settings()).model === 'claude-sonnet-5-5', (await settings()).model);
   await ui.selectOption('#model', 'auto');
   await sleep(300);
   check('Auto can be picked again and is saved', (await settings()).model === 'auto', (await settings()).model);

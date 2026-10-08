@@ -745,6 +745,7 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant .math-block:last-child { margin-bottom: 0; }
 .msg.assistant .math-inline { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: baseline; baseline-source: first; /* (after vertical-align: it is a shorthand that resets baseline-source; without it a scrolling box sits on its bottom edge, raised above the text) */ padding-block: 2px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .math-block math { font-size: 1.18em; }
+.msg.assistant sub, .msg.assistant sup { font-size: 0.75em; line-height: 0; }
 .msg.assistant code.math-src { background: none; padding: 0; font-style: italic; color: var(--text); }
 .msg.assistant pre.math-src { background: none; box-shadow: none; text-align: center; font: italic 13px ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
 .msg.assistant .table-wrap { overflow-x: auto; margin: 0 0 8px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }

@@ -1560,7 +1560,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
   button.onclick = async () => {
     try {
       const html = window.renderMarkdown(source);
-      const text = source.trim(); // the markdown as written (lists, code, formulas as their LaTeX), as ChatGPT and Claude copy it
+      const text = (window.markdownPlainScripts ? window.markdownPlainScripts(source) : source).trim(); // the markdown as written (lists, code, formulas as their LaTeX), as ChatGPT and Claude copy it
       if (window.ClipboardItem) {
         await navigator.clipboard.write([new ClipboardItem({
           'text/plain': new Blob([text], { type: 'text/plain' }),
