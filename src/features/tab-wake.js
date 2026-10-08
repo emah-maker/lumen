@@ -3,15 +3,36 @@
 // background after startup (and when to stop), and whether a tab that goes to sleep is frozen first. All pure.
 'use strict';
 
-const HOVER_MS = 150; // a pointer resting on a tab this long means to open it
+const HOVER_MS = 100; // a pointer resting on a tab this long means to open it
 const PRELOAD_CHOICES = [0, 1, 2, 3, 5]; // Settings > Tabs > Memory: "Preload tabs after startup"
 const PRELOAD_DEFAULT = 1;
-const FREEZE_FIRST_CHOICES = [0, 10, 30, 60]; // minutes a tab that goes to sleep stays frozen (instant to wake) before it unloads; 0: unload at once, as before
+const FREEZE_FIRST_CHOICES = [0, 10, 30, 60]; // minutes a tab that goes to sleep stays frozen (instant to wake) before it unloads; 0: unload at once
+const FREEZE_FIRST_DEFAULT = 10;
 const PRELOAD_IDLE_CPU = 25; // % of one core the whole app may use for the machine to count as idle
 const PRELOAD_GAP_MS = 1500; // between one preload finishing and the next starting
 
 const cleanPreload = (v) => (PRELOAD_CHOICES.includes(Number(v)) ? Number(v) : PRELOAD_DEFAULT);
-const cleanFreezeFirst = (v) => (FREEZE_FIRST_CHOICES.includes(Number(v)) ? Number(v) : 0);
+const cleanFreezeFirst = (v) => (v != null && v !== '' && FREEZE_FIRST_CHOICES.includes(Number(v)) ? Number(v) : FREEZE_FIRST_DEFAULT);
+
+// ---- addresses never woken ahead of a click --------------------------------------------------------------------
+// Sign-in, payment and account pages (and addresses carrying credentials or a token) are not requested until the user
+// asks: no request they did not make. -> a reason string, or null for an ordinary address.
+const SENSITIVE_LABEL = /^(login|log-in|signin|sign-in|sso|auth|oauth|accounts?|myaccount|id|idp|secure|pay|payments?|checkout|billing|bank|banking|wallet|netbanking|ebanking)$/;
+const SENSITIVE_HOSTS = ['paypal.com', 'venmo.com', 'stripe.com', 'chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citi.com', 'capitalone.com', 'americanexpress.com', 'schwab.com', 'fidelity.com', 'vanguard.com', 'coinbase.com', 'binance.com', 'wise.com', 'revolut.com', 'login.microsoftonline.com', 'accounts.google.com'];
+const SENSITIVE_PATH = /(^|\/)(log-?in|sign-?(in|on|up)|sso|oauth2?|authori[sz]e|checkout|payments?|billing|password|reset-password|2fa|mfa|verify|wallet|banking|account|my-account)(\/|$|\.|\?)/i;
+const SENSITIVE_QUERY = /(^|[?&])(token|access_token|id_token|code|password|passwd|pwd|secret|session|sid|otp|auth|key)=/i;
+function sensitiveAddress(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { return 'address'; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'internal';
+  if (u.username || u.password) return 'credentials';
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  if (SENSITIVE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return 'sensitive-host';
+  if (host.split('.').slice(0, -2).some((label) => SENSITIVE_LABEL.test(label))) return 'sensitive-host'; // login.example.com, secure.bank.example
+  if (SENSITIVE_PATH.test(u.pathname)) return 'sensitive-path';
+  if (SENSITIVE_QUERY.test(u.search) || SENSITIVE_QUERY.test(u.hash.replace(/^#/, '?'))) return 'token';
+  return null;
+}
 
 // ---- hover intent ------------------------------------------------------------------------------------------
 // enter(id): the pointer reached a tab; after `delayMs` still there, onIntent(id, 'hover') fires once.
@@ -112,4 +133,4 @@ function dueToUnload({ frozen = [], now = Date.now(), freezeFirstMin = 0, low = 
   return frozen.filter((t) => t.first && (low || freezeFirstMin <= 0 || now - (t.frozenAt || 0) >= freezeFirstMin * 60e3)).map((t) => t.id);
 }
 
-module.exports = { HOVER_MS, PRELOAD_CHOICES, PRELOAD_DEFAULT, FREEZE_FIRST_CHOICES, PRELOAD_IDLE_CPU, PRELOAD_GAP_MS, cleanPreload, cleanFreezeFirst, createHoverIntent, wakeable, pickPreloads, preloadGate, hoverGate, sleepHow, dueToUnload };
+module.exports = { HOVER_MS, PRELOAD_CHOICES, PRELOAD_DEFAULT, FREEZE_FIRST_CHOICES, FREEZE_FIRST_DEFAULT, sensitiveAddress, PRELOAD_IDLE_CPU, PRELOAD_GAP_MS, cleanPreload, cleanFreezeFirst, createHoverIntent, wakeable, pickPreloads, preloadGate, hoverGate, sleepHow, dueToUnload };

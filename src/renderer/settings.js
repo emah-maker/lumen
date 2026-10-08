@@ -2604,6 +2604,10 @@ function tabSleepRows() {
     C.maxAwake.map((n) => [n, n ? String(n) : tr('settings.sleep.noLimit', 'No limit')]), { number: true });
   applicable.push([cap, (m) => m !== 'off']);
 
+  const recent = select('tabSleepKeepRecent', tr('settings.sleep.keepRecent', 'Always keep the most recent tabs awake'), tr('settings.sleep.keepRecentDesc', 'The tabs you used last are the ones you go back to, so the idle timer leaves them alone (low memory and the cap above can still put them to sleep).'),
+    C.keepRecent.map((n) => [n, n ? String(n) : tr('settings.sleep.keepRecent.off', 'None')]), { number: true });
+  applicable.push([recent, (m) => m !== 'off']);
+
   const pinned = toggle('tabSleepKeepPinned', tr('settings.sleep.keepPinned', 'Never put pinned tabs to sleep'), '');
   applicable.push([pinned, (m) => m !== 'off']);
 
@@ -2626,10 +2630,9 @@ function tabSleepRows() {
   applicable.push([freezeFirst, (m) => m !== 'off']);
   const preload = select('tabPreload', tr('settings.sleep.preload', 'Preload tabs after startup'), tr('settings.sleep.preloadDesc', 'Once the first page has loaded and the computer is idle, Lumen loads the tabs next to it, one at a time, so they are ready when you click. Stops when memory is low.'),
     C.preload.map((n) => [n, n ? String(n) : tr('settings.sleep.preload.off', 'Off')]), { number: true });
-  const snapshots = toggle('tabSnapshots', tr('settings.sleep.snapshots', 'Show a preview while a sleeping tab wakes'), tr('settings.sleep.snapshotsDesc', 'Keeps a small picture of each page (never of private windows or sign-in and payment pages, and cleared with your history) on this computer.'));
 
   refresh();
-  return [mode, after, how, pct, gb, cap, freezeFirst, pinned, never, preload, snapshots];
+  return [mode, after, how, pct, gb, cap, recent, freezeFirst, pinned, never, preload];
 }
 
 function buildSystem(card) {
