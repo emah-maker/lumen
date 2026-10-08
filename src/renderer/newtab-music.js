@@ -162,15 +162,38 @@ function build(w, card, o) {
   like.type = 'button';
   like.innerHTML = ICONS.heart;
   like.hidden = true;
-  like.addEventListener('click', () => act('like'));
+  like.addEventListener('click', () => { setOpt('liked', !(view.d && view.d.liked === true)); act('like'); });
   wrap.append(info, like);
 
+  // What was just pressed is shown at once, before the player has answered (view.opt: field -> { value, until }); the player's own state has the last
+  // word: it replaces the guess when it agrees, or when OPT_MS have passed without it (a command the player did not do rolls back by itself).
+  view.opt = {};
+  const OPT_MS = 1800;
+  function setOpt(field, value) {
+    view.opt[field] = { value, until: Date.now() + OPT_MS, t0: Date.now() };
+    update(view.w);
+    const t = setTimeout(() => { view.timers.delete(t); if (root.isConnected) update(view.w); }, OPT_MS + 60);
+    view.timers.add(t);
+  }
+  function applyOpt(raw) {
+    const now = Date.now();
+    let out = raw;
+    for (const [k, e] of Object.entries(view.opt)) {
+      let same = false;
+      if (k === 'seek') same = Number.isFinite(raw.progressMs) && raw.at >= e.t0 && Math.abs(raw.progressMs - (e.value + (raw.state === 'playing' ? raw.at - e.t0 : 0))) < 3500;
+      else same = raw[k] === e.value;
+      if (now > e.until || same) { delete view.opt[k]; continue; }
+      if (out === raw) out = { ...raw };
+      if (k === 'seek') { out.progressMs = e.value; out.at = e.t0; } else out[k] = e.value;
+    }
+    return out;
+  }
   // The buttons: previous (medium and up), play / pause, next.
   const controls = el('div', 'sp-controls');
   const mkBtn = (cls, svg, label, onclick) => { const b = el('button', cls); b.type = 'button'; b.innerHTML = svg; b.setAttribute('aria-label', label); b.title = label; b.addEventListener('click', onclick); return b; };
   const prev = mkBtn('sp-btn mc-prev', ICONS.prev, 'Previous track', () => act('previous'));
   let playAct = 'play';
-  const playBtn = mkBtn('sp-btn main', ICONS.play, 'Play', () => act(playAct));
+  const playBtn = mkBtn('sp-btn main', ICONS.play, 'Play', () => { const what = playAct; if (stateOf() !== 'idle') setOpt('state', what === 'pause' ? 'paused' : 'playing'); act(what); });
   const next = mkBtn('sp-btn mc-next', ICONS.next, 'Next track', () => act('next'));
   controls.append(prev, playBtn, next);
 
@@ -182,7 +205,8 @@ function build(w, card, o) {
   const elapsed = el('span', 'sp-elapsed');
   const total = el('span', 'sp-total');
   progress.append(elapsed, bar, total);
-  const seekTo = (ms) => { const p = view.prog; if (p && p.duration) act('seek', { arg: String(Math.round(Math.max(0, Math.min(p.duration, ms)) / 1000)) }); };
+  const seekSend = MS.createLatest((sec) => act('seek', { arg: String(sec) }), 50); // (held arrow keys: the last place, not every step)
+  const seekTo = (ms) => { const p = view.prog; if (p && p.duration) { const at = Math.max(0, Math.min(p.duration, ms)); setOpt('seek', Math.round(at / 1000) * 1000); seekSend.push(Math.round(at / 1000)); } };
   bar.addEventListener('click', (e) => { const r = bar.getBoundingClientRect(); const p = view.prog; if (p && p.seek && r.width > 0) seekTo(((e.clientX - r.left) / r.width) * p.duration); });
   bar.addEventListener('keydown', (e) => {
     if (!view.prog || !view.prog.seek || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
@@ -193,8 +217,8 @@ function build(w, card, o) {
 
   // The switches (medium and up): shuffle, repeat, volume.
   const extra = el('div', 'mc-extra');
-  const shuffle = mkBtn('mc-btn mc-shuffle', ICONS.shuffle, 'Shuffle', () => act('shuffle'));
-  const repeat = mkBtn('mc-btn mc-repeat', ICONS.repeat, 'Repeat', () => act('repeat'));
+  const shuffle = mkBtn('mc-btn mc-shuffle', ICONS.shuffle, 'Shuffle', () => { setOpt('shuffle', !(view.d && view.d.shuffle === true)); act('shuffle'); });
+  const repeat = mkBtn('mc-btn mc-repeat', ICONS.repeat, 'Repeat', () => { const r = view.d && (view.d.repeat === 'all' || view.d.repeat === 'one') ? view.d.repeat : 'off'; setOpt('repeat', { off: 'all', all: 'one', one: 'off' }[r]); act('repeat'); });
   const vol = el('div', 'mc-vol');
   const volIcon = el('span', 'mc-vol-icon');
   volIcon.innerHTML = ICONS.volume;
@@ -207,8 +231,9 @@ function build(w, card, o) {
   let dragging = false;
   volume.addEventListener('pointerdown', () => { dragging = true; });
   const paintVolume = () => { volume.style.setProperty('--v', `${volume.value}%`); volume.title = `${volume.value}%`; };
-  volume.addEventListener('input', paintVolume);
-  volume.addEventListener('change', () => { dragging = false; act('volume', { arg: String(Math.round(Number(volume.value))) }); });
+  const volumeSend = MS.createLatest((v) => act('volume', { arg: String(v) }), 50); // (a drag is heard as it goes, every 50 ms at most, and ends exactly where it stopped)
+  volume.addEventListener('input', () => { paintVolume(); volumeSend.push(Math.round(Number(volume.value))); });
+  volume.addEventListener('change', () => { dragging = false; volumeSend.push(Math.round(Number(volume.value))); volumeSend.flush(); });
   volume.addEventListener('blur', () => { dragging = false; });
   vol.append(volIcon, volume);
   extra.append(shuffle, repeat, vol);
@@ -455,7 +480,7 @@ function build(w, card, o) {
   let adTimer = null;
   function update(nextW) {
     view.w = nextW;
-    const d = nextW.data && typeof nextW.data === 'object' ? nextW.data : {};
+    const d = applyOpt(nextW.data && typeof nextW.data === 'object' ? nextW.data : {});
     view.d = d;
     const state = stateOf();
     const isIdle = state === 'idle';

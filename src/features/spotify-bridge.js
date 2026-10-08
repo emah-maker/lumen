@@ -811,6 +811,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
         case 'playLater': if (KIND_PATH[c.kind] && typeof c.id === 'string') queueAdd(c.kind, c.id); break;
       }
     } catch (e) { out({ t: 'error', message: String((e && e.message) || e) }); }
+    setTimeout(function () { tick(true); }, 80); // (a button's effect is on the page within a frame or two: the card hears at once, and again once the page has settled)
     setTimeout(function () { tick(true); }, 400);
   }
   document.addEventListener(IN, function (e) { var c; try { c = JSON.parse(e.detail); } catch (x) { return; } run(c); });

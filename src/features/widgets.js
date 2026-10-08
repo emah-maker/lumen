@@ -149,7 +149,7 @@ async function engineAct(am, name, action, x, cached) {
     cached.state = button === 'play' ? 'playing' : 'paused';
   }
   delete cached.notice;
-  return { delay: 600 };
+  return { delay: 200 }; // (the engine's own state is local and arrives within ~100 ms of the press: looked at again soon, not after most of a second)
 }
 
 // Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
@@ -510,7 +510,7 @@ const CONNECTORS = {
   spotify: {
     label: 'Spotify',
     ttl: (d) => (d && d.mode === 'status' ? 4e3 : 20e3),
-    minRefresh: (d) => (d && d.mode === 'status' ? 300 : 4e3), // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s; the engine card is local, so quicker
+    minRefresh: (d) => (d && d.mode === 'status' ? 100 : 4e3), // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s; the engine card is local, so quicker
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
@@ -566,7 +566,7 @@ const CONNECTORS = {
         if (direct) return direct;
         return engineAct(x.spotifyEngine, 'Spotify', action, x, cached);
       }
-      const callIt = (m, p, b) => spotifyCall(x, c, m, p, b);
+      const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
       const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
@@ -988,7 +988,7 @@ const CONNECTORS = {
   applemusic: {
     label: 'Apple Music',
     ttl: (d) => (d && d.mode === 'web' ? 365 * 24 * 3600e3 : 4e3),
-    minRefresh: 300, // the engine tells main when something changes (deps.appleMusic.onChange), which asks for a fresh look at once
+    minRefresh: 100, // the engine tells main when something changes (deps.appleMusic.onChange), which asks for a fresh look at once
     clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors) }),
     async resolve(input) {
       const cfg = AMV.cleanConfig(input);
@@ -2600,7 +2600,7 @@ function createWidgets(deps) {
     for (const w of list()) {
       if (!((w.type === 'applemusic' && w.mode !== 'web') || (w.type === 'spotify' && w.mode === 'status'))) continue;
       // A change that comes right after another look is not dropped: it is looked at again a moment later.
-      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 350); }, () => {});
+      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 110); }, () => {});
     }
   }
 

@@ -95,6 +95,21 @@ function createScheduler({ send, shown, cache, scope = '', setTimeout: st = setT
   };
 }
 
+// fn(value) at most once per `ms`: the first value of a burst goes at once, then only the last one of the rest (a volume drag, held arrow keys on the
+// seek bar): the player is told where the drag ended, not every step of it.
+function createLatest(fn, ms = 50, { setTimeout: st = setTimeout, clearTimeout: ct = clearTimeout, now = Date.now } = {}) {
+  let timer = null;
+  let has = false;
+  let last;
+  let sentAt = -1e12;
+  const go = () => { timer = null; if (!has) return; has = false; sentAt = now(); fn(last); };
+  return {
+    push(v) { last = v; has = true; if (timer !== null) return; const wait = ms - (now() - sentAt); if (wait <= 0) go(); else timer = st(go, wait); },
+    flush() { if (timer !== null) { ct(timer); timer = null; } go(); }, // (the drag ended: the last value now)
+    cancel() { if (timer !== null) { ct(timer); timer = null; } has = false; },
+  };
+}
+
 function thumbsToAsk(rows, asked, max = THUMB_BATCH) {
   const out = [];
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -104,7 +119,7 @@ function thumbsToAsk(rows, asked, max = THUMB_BATCH) {
   return out;
 }
 
-const api = { DEBOUNCE_MS, MIN_CHARS, MAX_QUERIES, TTL_MS, THUMB_BATCH, norm, createCache, createScheduler, thumbsToAsk };
+const api = { DEBOUNCE_MS, MIN_CHARS, MAX_QUERIES, TTL_MS, THUMB_BATCH, norm, createCache, createScheduler, createLatest, thumbsToAsk };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.MusicSearch = api;
 })();
