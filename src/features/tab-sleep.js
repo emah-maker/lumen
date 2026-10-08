@@ -36,7 +36,7 @@ const LUMEN_GB_CHOICES = [0, 1, 2, 3, 4, 6, 8]; // 0: no limit on Lumen's own us
 const MAX_AWAKE_CHOICES = [0, 2, 3, 4, 5, 6, 8, 10, 15, 20]; // 0: no limit (Performance mode may still set one)
 const MAX_MINUTES = 7 * 24 * 60;
 const MEMORY_IDLE_MS = 2 * 60 * 1000; // under memory pressure a tab idle this long may sleep
-const DEFAULTS = { tabSleepMode: 'both', tabSleepMinutes: 20, tabSleepHow: 'unload', tabSleepFreePercent: 10, tabSleepLumenGb: 0, tabSleepMaxAwake: 0, tabSleepKeepPinned: false, tabSleepNever: [] };
+const DEFAULTS = { tabSleepMode: 'both', tabSleepMinutes: 20, tabSleepHow: 'unload', tabSleepFreePercent: 10, tabSleepLumenGb: 0, tabSleepMaxAwake: 0, tabSleepKeepPinned: false, tabSleepNever: [], tabSleepFreezeFirstMinutes: 0 };
 
 const cleanMinutes = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 && n <= MAX_MINUTES ? n : null; };
 // A site as typed (an address or a bare host) -> its host without "www.", or '' when it isn't one.
@@ -61,6 +61,7 @@ function normalize(raw = {}) {
     maxAwake: num(r.tabSleepMaxAwake, MAX_AWAKE_CHOICES, DEFAULTS.tabSleepMaxAwake),
     keepPinned: r.tabSleepKeepPinned === true,
     never: cleanHosts(r.tabSleepNever) || [],
+    freezeFirst: require('./tab-wake').cleanFreezeFirst(r.tabSleepFreezeFirstMinutes), // minutes a tab is frozen (instant to wake) before it unloads; 0: unload at once
   };
 }
 

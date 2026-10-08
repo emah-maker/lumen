@@ -2621,8 +2621,15 @@ function tabSleepRows() {
     h('div', { class: 'controls' }, input, h('button', { text: tr('settings.sleep.neverAddButton', 'Add site'), onclick: add })));
   applicable.push([never, (m) => m !== 'off']);
 
+  const freezeFirst = select('tabSleepFreezeFirstMinutes', tr('settings.sleep.freezeFirst', 'Keep recently idle tabs frozen first'), tr('settings.sleep.freezeFirstDesc', 'An idle tab that would unload is first frozen in memory for this long, so coming back to it is instant; then it unloads. Costs memory meanwhile.'),
+    C.freezeFirst.map((n) => [n, n ? tr('settings.sleep.minutesN', '{n} minutes', { n }) : tr('settings.sleep.freezeFirst.off', 'Off (unload at once)')]), { number: true });
+  applicable.push([freezeFirst, (m) => m !== 'off']);
+  const preload = select('tabPreload', tr('settings.sleep.preload', 'Preload tabs after startup'), tr('settings.sleep.preloadDesc', 'Once the first page has loaded and the computer is idle, Lumen loads the tabs next to it, one at a time, so they are ready when you click. Stops when memory is low.'),
+    C.preload.map((n) => [n, n ? String(n) : tr('settings.sleep.preload.off', 'Off')]), { number: true });
+  const snapshots = toggle('tabSnapshots', tr('settings.sleep.snapshots', 'Show a preview while a sleeping tab wakes'), tr('settings.sleep.snapshotsDesc', 'Keeps a small picture of each page (never of private windows or sign-in and payment pages, and cleared with your history) on this computer.'));
+
   refresh();
-  return [mode, after, how, pct, gb, cap, pinned, never];
+  return [mode, after, how, pct, gb, cap, freezeFirst, pinned, never, preload, snapshots];
 }
 
 function buildSystem(card) {

@@ -1143,6 +1143,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 @keyframes snapshot-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .page-snapshot.fade-in { animation: none; } }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
+/* A waking tab's last picture (main.js showCover): fills the page area, top-left aligned, until the real page paints. */
+.wake-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 0 0; pointer-events: none; user-select: none; background: #fff; }
 
 /* The AI button shows the selected model's company mark. */
 #toggle-sidebar .mark { transition: transform var(--t-snappy) var(--spring-bouncy), opacity 120ms ease-out; }
