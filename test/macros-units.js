@@ -425,8 +425,7 @@ const make = (steps, extra = {}) => macros.normalizeMacro({ name: 'Test', steps,
     check('tool: its input is checked like any other tool\'s', agentMod.validateInput('run_macro', { name: 'x', variables: { a: 'b' } }) === null && /string/.test(agentMod.validateInput('run_macro', { name: 5 }) || '') && /object/.test(agentMod.validateInput('run_macro', { variables: 'x' }) || '') && agentMod.validateInput('run_macro', { list: true }) === null);
     const manners = require('../src/features/ai-manners');
     check('tool: hands-off mode refuses it like any tool that acts on a page', manners.isActionTool('run_macro'));
-    const listed = JSON.stringify(agentMod.EXTERNAL_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema }))).length;
-    check('budget: the whole tool list as the MCP server shows it stays under the acceptance budget with run_macro in it', listed < 9300, String(listed));
+    check('budget: run_macro adds under 300 characters to the tool list every engine pays for on each message (the totals are held by test/units.js and test/acceptance/chat-prompt-budget.js)', JSON.stringify({ name: tool.name, description: tool.description, inputSchema: tool.input_schema }).length < 300, JSON.stringify(tool).length);
   }
 
   // ---------- the pieces main.js and the pages depend on ----------
