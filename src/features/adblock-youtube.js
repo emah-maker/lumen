@@ -1,4 +1,4 @@
-/* global document */
+/* global document, MutationObserver */
 // YouTube extras for the ad blocker (features/adblock.js), on top of the lists' own YouTube rules.
 //
 // The lists do the real work: their scriptlets cut adPlacements/playerAds/adSlots out of the player responses
@@ -97,9 +97,13 @@ function youtubeFallback() {
       if (soon !== null) return;
       soon = setTimeout(() => { soon = null; tick(); }, Math.max(0, 250 - (Date.now() - lastRun)));
     };
-    new MutationObserver(later).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    const start = () => {
+      new MutationObserver(later).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+      tick();
+    };
     document.addEventListener('yt-navigate-finish', later, true);
-    tick();
+    // (run at document start, when there may be no <html> yet)
+    if (document.documentElement) start(); else document.addEventListener('DOMContentLoaded', start, { once: true });
   } catch { /* no timers yet: the page is not a normal one */ }
 }
 

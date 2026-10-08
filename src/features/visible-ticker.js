@@ -13,6 +13,7 @@
 //     visible()  default: !document.hidden
 //     align      land on multiples of `period` of the wall clock (default true)
 //   -> { poke(), onVisibility(), stop(), active() }
+/* global document */
 (function () {
 'use strict';
 
