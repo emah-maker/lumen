@@ -132,6 +132,9 @@ const DEFAULTS = {
   grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
   antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
+  pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
+  featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
+  aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
@@ -255,6 +258,7 @@ function validate(key, value) {
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
     case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
+    case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -577,6 +581,7 @@ function create(deps) {
 
   // Every ordinary tab: default zoom, HTTPS-only.
   function attachTab(wc) {
+    pinchZoom(wc);
     wc.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) upgrade(wc, details.url);
     });
@@ -587,8 +592,15 @@ function create(deps) {
       // The upgraded load committed (maybe after an https redirect elsewhere on the site): done.
       if (upgraded.has(wc.id) && /^https:/i.test(url)) upgraded.delete(wc.id);
       applyDefaultZoom(wc);
+      pinchZoom(wc);
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
+  }
+  // A trackpad pinch (and a touch screen's) magnifies the page in place as in Chrome, without reflowing it; Electron turns this
+  // visual zoom off by default. Set again after each navigation: a new renderer process starts with Electron's 1..1 limits.
+  function pinchZoom(wc) {
+    const max = prefs().pinchZoom === false ? 1 : 3;
+    wc.setVisualZoomLevelLimits(1, max).catch(() => {}); // (a page going away mid-call)
   }
   // `level`: the zoom level the page is being set to, remembered for its host (features/site-zoom.js).
   function noteUserZoom(wc, level) {
@@ -659,6 +671,7 @@ function create(deps) {
     switch (key) {
       case 'theme': applyTheme(); reloadGoogleTabs(); break;
       case 'defaultZoom': for (const wc of deps.tabContents()) applyDefaultZoom(wc); break;
+      case 'pinchZoom': for (const wc of deps.tabContents()) pinchZoom(wc); break;
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
       case 'languages': for (const target of [ses(), ...mirrored]) applyAcceptLanguage(target); break;
       case 'proxy': return applyProxy();
@@ -689,6 +702,7 @@ function create(deps) {
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
+    if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
@@ -869,7 +883,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();

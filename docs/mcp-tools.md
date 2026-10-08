@@ -249,12 +249,41 @@ Move the mouse over an element by its id from read_page, e.g. to open a hover me
 
 ### `upload_file`
 
-Put a file into a page's file upload: `element_id` is the file input, its label or button, or a drop zone (from `read_page` or `find`). `files` are refs of files the user attached to the chat (listed in the message as `<attached_files>`); leave it out and the user is asked to choose a file with the OS picker. The AI never names a path: only refs and the user's own pick are accepted. It does not submit the form. See [Uploading files for you](uploading-files.md).
+Put a file into a page's file upload: `element_id` is the file input, its label or button, or a drop zone (from `read_page` or `find`). `files` are refs of files the user attached to the chat (listed in the message as `<attached_files>`). `paths` are files on this computer (`~/Desktop/photo.png`, an absolute path or a `file://` address), accepted only while Settings > AI > "Let the AI use files on this computer" is on; Lumen's own profile, credentials folders (`~/.ssh`, `~/.aws`, keychains, ...) and `.env`/key files are always refused. Leave both out and the user is asked to choose a file with the OS picker. The first upload to a site in a chat shows a card naming the files (unless Auto-allow or Bypass is on). It does not submit the form. See [Uploading files for you](uploading-files.md).
 
 | Parameter | Type | Required |
 |---|---|---|
 | `element_id` | integer | yes |
 | `files` | array of strings (refs) |  |
+| `paths` | array of strings (local paths) |  |
+
+### `drag`
+
+A mouse drag from an element (`from_id`) or a point of the last screenshot (`from_x`, `from_y`) to another (`to_id`, or `to_x`, `to_y`), sent through the tab's DevTools session so it works in a background tab too. If the page starts an HTML5 drag-and-drop, the drop (with its data) is delivered at the target; otherwise the pointer moves there with the button held (sliders, sortable lists, canvases). An acting tool: it asks like `click`.
+
+| Parameter | Type | Required |
+|---|---|---|
+| `from_id` / `from_x`, `from_y` | integer / numbers | one of them |
+| `to_id` / `to_x`, `to_y` | integer / numbers | one of them |
+
+### `list_files`
+
+List a folder on this computer, newest first, with sizes and dates (folders end in `/`, hidden files left out). `folder`: `desktop` (default), `downloads`, `documents`, `pictures`, `movies`, `music`, `home`, or a path. `match`: a glob (`*.png`) or words. Needs Settings > AI > "Let the AI use files on this computer"; credentials folders and Lumen's profile are never listed, and links are judged by where they point.
+
+| Parameter | Type | Required |
+|---|---|---|
+| `folder` | string |  |
+| `match` | string |  |
+| `limit` | integer (1–200, default 50) |  |
+
+### `clipboard`
+
+`action: "write"` puts `text` on the system clipboard. `action: "read"` returns the clipboard's text (marked as untrusted content, cut at 20,000 characters) and needs the same setting as `list_files`.
+
+| Parameter | Type | Required |
+|---|---|---|
+| `action` | `read`, `write` | yes |
+| `text` | string |  |
 
 ### `go_forward`
 
