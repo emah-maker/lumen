@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld('assistant', {
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
+  annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab
   closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners] { runId } | { chatId }: close the tabs the AI opened
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- Lumen's PDF viewer (features/pdf-viewer.js): pdf.js from vendor/pdfjs. Served by the lumen-pdf: scheme under its own strict CSP (a response header). -->
+  <meta name="referrer" content="no-referrer" />
+  <meta name="color-scheme" content="light dark" />
+  <title>PDF</title>
+  <link rel="stylesheet" href="/tokens.css" />
+  <link rel="stylesheet" href="/vendor/web/pdf_viewer.css" />
+  <link rel="stylesheet" href="/viewer.css" />
+</head>
+<body>
+  <header id="bar">
+    <span id="name" title=""></span>
+    <span class="group">
+      <button id="prev" type="button" title="Previous page" aria-label="Previous page">&#8963;</button>
+      <button id="next" type="button" title="Next page" aria-label="Next page">&#8964;</button>
+      <input id="pageNumber" type="text" inputmode="numeric" autocomplete="off" value="1" aria-label="Page number" size="3" />
+      <span id="pageCount" aria-live="polite">/ 1</span>
+    </span>
+    <span class="group">
+      <button id="zoomOut" type="button" title="Zoom out (Ctrl+-)" aria-label="Zoom out">&minus;</button>
+      <select id="zoom" aria-label="Zoom">
+        <option value="page-width">Fit width</option>
+        <option value="page-fit">Fit page</option>
+        <option value="auto">Automatic</option>
+        <option value="0.5">50%</option>
+        <option value="0.75">75%</option>
+        <option value="1">100%</option>
+        <option value="1.25">125%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+        <option value="3">300%</option>
+        <option value="4">400%</option>
+        <option id="zoomCustom" value="custom" hidden>100%</option>
+      </select>
+      <button id="zoomIn" type="button" title="Zoom in (Ctrl+=)" aria-label="Zoom in">+</button>
+    </span>
+    <span class="group">
+      <button id="findButton" type="button" title="Find in PDF (Ctrl+F)" aria-label="Find in PDF">Find</button>
+      <button id="print" type="button" title="Print (Ctrl+P)" aria-label="Print">Print</button>
+      <a id="download" class="button" href="#" download title="Save a copy" aria-label="Save a copy">Save</a>
+    </span>
+  </header>
+  <div id="findBar" hidden>
+    <input id="findInput" type="search" autocomplete="off" spellcheck="false" placeholder="Find in PDF" aria-label="Find in PDF" />
+    <button id="findPrev" type="button" title="Previous match (Shift+Enter)" aria-label="Previous match">&#8963;</button>
+    <button id="findNext" type="button" title="Next match (Enter)" aria-label="Next match">&#8964;</button>
+    <label class="check"><input id="findCase" type="checkbox" /> Match case</label>
+    <span id="findCount" aria-live="polite"></span>
+    <button id="findClose" type="button" title="Close (Esc)" aria-label="Close find">&times;</button>
+  </div>
+  <div id="stage">
+  <div id="viewerContainer" tabindex="0">
+    <div id="viewer" class="pdfViewer"></div>
+  </div>
+  <div id="message" role="status" hidden></div>
+  <form id="password" hidden>
+    <p id="passwordText">This PDF is password protected.</p>
+    <input id="passwordInput" type="password" autocomplete="off" aria-label="PDF password" />
+    <button type="submit" class="primary">Open</button>
+  </form>
+  </div>
+  <script type="module" src="/viewer.js"></script>
+</body>
+</html>

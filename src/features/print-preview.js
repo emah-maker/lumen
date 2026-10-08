@@ -32,7 +32,7 @@ function createPrintPreview(deps) {
   const send = (channel, payload) => { if (sheet && !sheet.overlay.webContents.isDestroyed()) sheet.overlay.webContents.send(channel, payload); };
 
   async function pdfBytesOf(wc) {
-    const url = wc.getURL();
+    const url = deps.pdfUrlOf?.(wc.getURL()) || wc.getURL();
     if (/^file:/i.test(url)) return fs.promises.readFile(fileURLToPath(url));
     const res = await wc.session.fetch(url, { cache: 'force-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

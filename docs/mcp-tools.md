@@ -380,6 +380,16 @@ Make a picture, or edit the chat's latest one with `edit: true`; it is shown in 
 | `prompt` | string | yes | What to draw. Style and size go in the words. |
 | `edit` | boolean |  | Edit the latest picture in this chat (OpenAI, Gemini, OpenRouter and Grok Build can; Grok's API can't). |
 
+### `annotate`
+
+Draw on the page the user is looking at to explain it, like a teacher marking a screenshot: `box`, `circle`, `arrow`, `highlight`, `label`, `step` (numbered badges: number your written steps to match), `spotlight` (dims everything else) and `underline`. Marks follow an element (an id from `read_page` / `find`, or `text:…` for text on the page) through scroll, resize and zoom; marks given as `x`, `y`, `w`, `h` of the latest `screenshot` are anchored to the page where they were drawn. In Lumen's PDF viewer they stay on their PDF page. The drawing is a click-through overlay the page cannot read, with a "Clear drawings" button and Esc; it changes nothing on the page, so it needs no approval, but a site where the user turned AI off refuses it. Where an overlay can't go (Chrome's own PDF viewer), the marks are drawn on a screenshot, which is returned (and shown in Lumen's chat). Up to 20 marks per call, 30 on the page.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `marks` | object[] | yes (unless `clear`) | `{ type, target?, x?, y?, w?, h?, to?: { target } or { x, y }, text?, color? }`; `color` is one of red, orange, yellow, green, blue, purple, pink, black, white; `text` is a short label (80 characters). |
+| `clear` | boolean |  | Remove the drawings first (alone: just remove them). |
+| `duration` | string |  | `until_dismissed` (default) or a number of seconds. |
+
 ### `analyze_posts`
 
 Find which posts beat their own account's normal. Pure local math: it makes no request and needs no tab, so it works before an agent has a window. Give it rows you already collected (up to 200); it returns each account's median baseline, then the outliers by lift (`×3.4`) labelled `huge` (5x or more), `strong` (2 to 5x) or `mild` (1.5 to 2x). The baseline is per account, and per account and format when that format has 5 or more rows. An account with fewer than 10 rows is marked low confidence, and rows with no usable number are listed under "Not enough data" rather than guessed.

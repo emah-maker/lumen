@@ -18,6 +18,7 @@ const { t } = require('./i18n');
 const lists = require('./adblock-lists');
 const youtube = require('./adblock-youtube');
 const googleAuth = require('../browser/google-auth-identity');
+const pdfViewer = require('./pdf-viewer');
 
 // Must be registered before the app is ready, and Electron keeps only the last call's list:
 // electron-chrome-extensions registers crx (it loads earlier in main.js), so it is repeated here.
@@ -26,6 +27,7 @@ if (electron.protocol?.registerSchemesAsPrivileged && !electron.app.isReady()) {
   electron.protocol.registerSchemesAsPrivileged([
     { scheme: 'crx', privileges: { bypassCSP: true } },
     { scheme: STUB, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true } },
+    { scheme: pdfViewer.SCHEME, privileges: pdfViewer.PRIVILEGES }, // Lumen's PDF viewer (features/pdf-viewer.js)
   ]);
 }
 
