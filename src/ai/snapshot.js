@@ -397,6 +397,7 @@ const ACTING = ['batch'];
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
 const pageReading = require('./page-reading'); // mode "outline"
 const frames = require('./frames');
+const annotate = require('./annotate'); // shotScaleOf: what a screenshot's pixels are in page px
 
 // read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
 // match what click / type_text resolve), without the page's full innerText and the element list it
@@ -549,8 +550,8 @@ async function screenshot(agent, wc, input, h) {
   if (input.region) {
     agent.screenshotScale = null; // a crop can't be mapped back for click_at
   } else {
-    const viewWidth = (await h.runScript(wc, 'innerWidth')) * wc.getZoomFactor();
-    agent.screenshotScale = { wc, ratio: viewWidth / size.width };
+    const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+    agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
   }
   return [
     { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.toJPEG(quality).toString('base64') } },

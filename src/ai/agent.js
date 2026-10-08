@@ -2851,7 +2851,13 @@ ${prompt}` : prompt), historyImages: [] };
   async annotateTool(input) {
     const wc = this.requireTab();
     const scope = taskScope.getStore();
-    const shot = this.screenshotScale && this.screenshotScale.wc === wc ? { ratio: this.screenshotScale.ratio, zoom: wc.getZoomFactor() } : null;
+    let shot = null;
+    if (this.screenshotScale && this.screenshotScale.wc === wc) {
+      const { wc: _wc, ...taken } = this.screenshotScale;
+      let now = null; // the page may have scrolled since the screenshot
+      try { now = await runScript(wc, '({ x: scrollX, y: scrollY })', 2000); } catch { /* no delta */ }
+      shot = { ...taken, zoom: taken.zoom || wc.getZoomFactor(), now };
+    }
     const spec = annotate.normalize(input, shot);
     const viewer = pdfViewer.isViewerUrl(wc.getURL()); // Lumen's PDF viewer
     const chromePdf = !viewer && Boolean(pdfZoom.viewerFrame(wc)); // Chrome's: out of reach of any script
@@ -4740,8 +4746,8 @@ ${same}
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
         // click_at maps screenshot pixels back to view pixels with this ratio.
-        const viewWidth = (await runScript(wc, 'innerWidth')) * wc.getZoomFactor();
-        this.screenshotScale = { wc, ratio: viewWidth / size.width };
+        const view = await runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+        this.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
         return [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.toJPEG(75).toString('base64') } },
           { type: 'text', text: `Screenshot of ${wc.getURL()}, ${size.width}x${size.height} px. Use these coordinates with click_at.` },
