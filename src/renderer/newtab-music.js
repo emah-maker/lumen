@@ -31,6 +31,8 @@ const ICONS = {
   repeat: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="mc-stroke" d="M3 7.6V7a2.5 2.5 0 0 1 2.5-2.5H13M11 2.5l2 2-2 2M13 8.4V9a2.5 2.5 0 0 1-2.5 2.5H3M5 9.5l-2 2 2 2"/></svg>',
   repeatOne: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="mc-stroke" d="M3 7.6V7a2.5 2.5 0 0 1 2.5-2.5H13M11 2.5l2 2-2 2M13 8.4V9a2.5 2.5 0 0 1-2.5 2.5H3M5 9.5l-2 2 2 2"/><path d="M7.2 6.9h1.1v3.3" class="mc-stroke"/></svg>',
   volume: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2h2.3L8 3.4v9.2L4.8 9.8H2.5z"/><path class="mc-stroke" d="M10.4 6a3 3 0 0 1 0 4M12 4.2a5.4 5.4 0 0 1 0 7.6"/></svg>',
+  volumeLow: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2h2.3L8 3.4v9.2L4.8 9.8H2.5z"/><path class="mc-stroke" d="M10.6 6.2a2.6 2.6 0 0 1 0 3.6"/></svg>',
+  volumeMute: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2h2.3L8 3.4v9.2L4.8 9.8H2.5z"/><path class="mc-stroke" d="M10.6 6.2l3.2 3.6M13.8 6.2l-3.2 3.6"/></svg>',
   search: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3.2"/><path d="m7.5 7.5 3 3"/></svg>',
 };
 
@@ -220,8 +222,16 @@ function build(w, card, o) {
   const shuffle = mkBtn('mc-btn mc-shuffle', ICONS.shuffle, 'Shuffle', () => { setOpt('shuffle', !(view.d && view.d.shuffle === true)); act('shuffle'); });
   const repeat = mkBtn('mc-btn mc-repeat', ICONS.repeat, 'Repeat', () => { const r = view.d && (view.d.repeat === 'all' || view.d.repeat === 'one') ? view.d.repeat : 'off'; setOpt('repeat', { off: 'all', all: 'one', one: 'off' }[r]); act('repeat'); });
   const vol = el('div', 'mc-vol');
-  const volIcon = el('span', 'mc-vol-icon');
-  volIcon.innerHTML = ICONS.volume;
+  let beforeMute = 50; // the level to come back to when the speaker button un-mutes
+  const volIcon = mkBtn('mc-btn mc-vol-icon', ICONS.volume, 'Mute', () => {
+    const now = Math.round(Number(volume.value));
+    const to = now > 0 ? 0 : Math.max(5, beforeMute);
+    if (now > 0) beforeMute = now;
+    volume.value = String(to);
+    paintVolume();
+    volumeSend.push(to);
+    volumeSend.flush();
+  });
   const volume = el('input', 'mc-vol-range');
   volume.type = 'range';
   volume.min = '0';
@@ -230,7 +240,23 @@ function build(w, card, o) {
   volume.setAttribute('aria-label', 'Volume');
   let dragging = false;
   volume.addEventListener('pointerdown', () => { dragging = true; });
-  const paintVolume = () => { volume.style.setProperty('--v', `${volume.value}%`); volume.title = `${volume.value}%`; };
+  const paintVolume = () => {
+    const v = Math.round(Number(volume.value)) || 0;
+    volume.style.setProperty('--v', `${v}%`);
+    volume.title = `${v}%`;
+    volume.setAttribute('aria-valuetext', `${v}%`);
+    if (v > 0) beforeMute = v;
+    const icon = v === 0 ? 'volumeMute' : v < 50 ? 'volumeLow' : 'volume';
+    if (volIcon.dataset.icon !== icon) {
+      volIcon.dataset.icon = icon;
+      if (icon === 'volumeMute') volIcon.innerHTML = ICONS.volumeMute;
+      else if (icon === 'volumeLow') volIcon.innerHTML = ICONS.volumeLow;
+      else volIcon.innerHTML = ICONS.volume;
+    }
+    const label = v === 0 ? 'Unmute' : 'Mute';
+    volIcon.setAttribute('aria-label', label);
+    volIcon.title = label;
+  };
   const volumeSend = MS.createLatest((v) => act('volume', { arg: String(v) }), 50); // (a drag is heard as it goes, every 50 ms at most, and ends exactly where it stopped)
   volume.addEventListener('input', () => { paintVolume(); volumeSend.push(Math.round(Number(volume.value))); });
   volume.addEventListener('change', () => { dragging = false; volumeSend.push(Math.round(Number(volume.value))); volumeSend.flush(); });
@@ -319,7 +345,7 @@ function build(w, card, o) {
     box.append(p);
     if (button) { const b = el('button', 'w-btn', button); b.type = 'button'; b.addEventListener('click', onClick); box.append(b); }
   }
-  const retry = (name) => () => { ui.asked[name] = 0; act('etab', { arg: name }); };
+  const retry = (name) => () => { ui.asked[name] = name === 'library' ? Date.now() : 0; act('etab', { arg: name }); if (name === 'library') drawLibrary(); }; // (the library shows "Loading…" again while it is read)
   function listRow(item, { onClick, label, current = false, index = null, acts = null, withThumbs = true }) {
     const r = el('div', `mc-row${current ? ' current' : ''}`);
     const b = el('button', 'mc-row-main');
@@ -356,10 +382,12 @@ function build(w, card, o) {
   }
   function drawLibrary() {
     const d = view.d;
-    const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists);
+    const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs);
     const out = d.signedIn === false;
-    const state = out ? 'out' : d.needsScopes === true && !recent.length && !lists.length ? 'scope' : recent.length || lists.length ? 'rows' : (Date.now() - (ui.asked.library || 0) < LOADING_MS ? 'loading' : 'empty');
-    fill(tab.library.p, sig([state, recent.map((i) => i.id), lists.map((i) => i.id), d.needsScopes === true]), (box) => {
+    const failed = d.libraryOk === false; // (the engine's page could not be read: said, never "Loading…" or an empty list)
+    const state = out ? 'out' : d.needsScopes === true && !recent.length && !lists.length && !liked.length ? 'scope' : recent.length || lists.length || liked.length ? 'rows' : (Date.now() - (ui.asked.library || 0) < LOADING_MS ? 'loading' : failed ? 'err' : 'empty');
+    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), d.needsScopes === true, d.libraryWhy]), (box) => {
+      if (state === 'err') { note(box, d.libraryWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found.` : 'Couldn’t read your library.', { button: 'Try again', onClick: retry('library') }); return; }
       if (state === 'out') { note(box, `Sign in to ${o.name} to see your library.`); if (o.signIn) { const b = el('button', 'w-btn primary am-signin', o.signIn); b.type = 'button'; b.addEventListener('click', () => act('esignin')); box.append(b); } return; }
       if (state === 'loading') { note(box, 'Loading your library…'); return; }
       if (state === 'scope') { reconnectNote(box); return; }
@@ -372,6 +400,7 @@ function build(w, card, o) {
         box.append(g);
       };
       group('Recently played', recent);
+      group('Liked Songs', liked);
       group(o.engine === 'spotify-lumen' ? 'Your library' : 'Your playlists', lists);
       if (d.needsScopes === true) reconnectNote(box);
     });
@@ -414,7 +443,7 @@ function build(w, card, o) {
     fill(tab.tracks.p, sig([state, items.map((i) => i.id), t.current, t.title]), (box) => {
       if (state === 'loading') { note(box, 'Loading the track list…'); return; }
       if (state === 'err') { note(box, t.why === 'scope' ? 'Reconnect Spotify in Settings to allow this.' : 'Couldn’t read the track list.', t.why === 'scope' ? {} : { button: 'Try again', onClick: retry('tracks') }); return; }
-      if (!items.length) { note(box, 'No album or playlist is playing from.'); return; }
+      if (!items.length) { note(box, t.artist ? 'Nothing to list for an artist.' : 'No album or playlist is playing from.'); return; }
       if (text(t.title, 120)) box.append(el('div', 'am-heading mc-ctx', text(t.title, 120)));
       items.forEach((it, i) => box.append(listRow(it, { index: i, current: i === t.current, label: `Play from ${text(it.title, 60)}`, onClick: () => act('playfrom', { arg: String(i), with: it.id }) })));
     });
@@ -544,7 +573,6 @@ function build(w, card, o) {
     vol.hidden = !cap('volume') || !Number.isFinite(d.volume);
     if (Number.isFinite(d.volume) && !dragging && document.activeElement !== volume) volume.value = String(Math.round(Math.max(0, Math.min(1, d.volume)) * 100));
     paintVolume();
-    volume.setAttribute('aria-valuetext', `${volume.value}%`);
     // progress
     const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
     progress.hidden = isIdle || !duration;
@@ -708,7 +736,8 @@ function searchController(view, { id, o, act, ui, cap }) {
   // When a search is asked: after a short pause in typing, from two letters, at once on Enter; a term whose rows are cached is shown, not asked.
   const sched = MS.createScheduler({ scope: id, cache, send: (term) => act('esearch', { arg: term.slice(0, 80) }), shown: () => ctl.draw() });
   const asked = (ui.thumbAsked ||= { term: '', ids: new Set() }); // pictures asked for (per term: main keeps them for a while)
-  let moreAsked = ''; // the query "more songs" was asked for (once each)
+  let moreAsked = ''; // the query and list length "more songs" was asked for (once each: a longer list may ask for the next page)
+  const moreKey = (d) => `${d.query}|${Array.isArray(d.results) ? d.results.length : 0}`;
   function pane(kind, parts) {
     const p = { kind, ...parts, options: () => [...parts.list.querySelectorAll('.am-opt')] };
     p.setActive = (n) => {
@@ -813,7 +842,7 @@ function searchController(view, { id, o, act, ui, cap }) {
     }
     if (answered && d.searchOk === false) { const fail = line(searchFailText(o, d)); if (typeof d.searchDetail === 'string' && d.searchDetail) fail.title = text(d.searchDetail, 120); } else if (!results.length) line('No results.');
     for (const [kind, heading, cls] of SEARCH_GROUPS) {
-      const items = results.filter((i) => i.kind === kind).slice(0, 10);
+      const items = results.filter((i) => i.kind === kind).slice(0, kind === 'song' ? 30 : 10);
       if (!items.length) continue;
       const group = el('div', `am-group ${cls}`);
       group.append(el('div', 'am-heading', heading));
@@ -822,7 +851,7 @@ function searchController(view, { id, o, act, ui, cap }) {
         const more = el('button', 'am-more', d.moreLoading ? 'Loading more…' : 'More songs');
         more.type = 'button';
         more.disabled = d.moreLoading === true;
-        more.addEventListener('click', () => { moreAsked = d.query; act('emore'); });
+        more.addEventListener('click', () => { moreAsked = moreKey(d); act('emore'); });
         group.append(more);
       }
       list.append(group);
@@ -855,8 +884,8 @@ function searchController(view, { id, o, act, ui, cap }) {
   function nearEnd(p) {
     const d = view.d || {};
     const l = p.list;
-    if (d.moreSongs !== true || d.moreLoading === true || moreAsked === d.query || d.query !== ui.term.trim()) return;
-    if (l.scrollHeight > l.clientHeight && l.scrollTop + l.clientHeight >= l.scrollHeight - 48) { moreAsked = d.query; act('emore'); }
+    if (d.moreSongs !== true || d.moreLoading === true || moreAsked === moreKey(d) || d.query !== ui.term.trim()) return;
+    if (l.scrollHeight > l.clientHeight && l.scrollTop + l.clientHeight >= l.scrollHeight - 48) { moreAsked = moreKey(d); act('emore'); }
   }
   function syncInputs() { for (const p of panes) if (p.input.value !== ui.term) p.input.value = ui.term; }
   const ctl = {

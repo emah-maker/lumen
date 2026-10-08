@@ -98,13 +98,16 @@ function fakeSpotify(world) {
     const m = entry.method;
     if (p === '/me/player' && m === 'GET') return world.idle ? reply(204) : reply(200, { is_playing: true, progress_ms: 30000, shuffle_state: world.shuffle ?? true, repeat_state: world.repeat || 'off', currently_playing_type: 'track', device: { id: 'dev1', name: 'Kitchen', volume_percent: 60, supports_volume: world.noVolume !== true, is_active: true }, context: world.context === undefined ? { uri: 'spotify:album:ALB1' } : world.context, item: world.track });
     if (p === '/me/player' && m === 'PUT') { world.transferred = JSON.parse(entry.body); return reply(204); }
-    if (p === '/me/tracks/contains') return world.scope403 ? reply(403, { error: { status: 403, message: 'Insufficient client scope' } }) : reply(200, [world.liked === true]);
-    if (p === '/me/tracks' && (m === 'PUT' || m === 'DELETE')) { if (world.scope403) return reply(403, { error: { status: 403, message: 'Insufficient client scope' } }); world.liked = m === 'PUT'; return reply(200); }
+    if (p === '/me/library/contains') return world.scope403 ? reply(403, { error: { status: 403, message: 'Insufficient client scope' } }) : reply(200, [world.liked === true]);
+    if (p === '/me/library' && (m === 'PUT' || m === 'DELETE')) { if (world.scope403) return reply(403, { error: { status: 403, message: 'Insufficient client scope' } }); world.liked = m === 'PUT'; return reply(200); }
     if (p === '/me/player/queue' && m === 'GET') return reply(200, { currently_playing: world.track, queue: [track('Q1', 'Glass Harbor'), track('Q2', 'Paper Moons', 'The Quiet Hours'), track('Q3', 'Slow Burn'), { id: 'bad id!', type: 'track', name: 'Evil' }, { id: 'EP1', type: 'episode', name: 'A podcast' }] });
     if (p === '/me/player/queue' && m === 'POST') return world.noDevice ? reply(404, { error: { status: 404, reason: 'NO_ACTIVE_DEVICE' } }) : reply(204);
     if (p === '/me/playlists') return world.scope403 ? reply(403, { error: { status: 403, message: 'Insufficient client scope' } }) : reply(200, { items: [{ id: 'PL1', type: 'playlist', name: 'Late night drive', owner: { display_name: 'You' }, images: [{ url: 'https://i.scdn.co/image/pl', width: 300 }] }, { id: 'PL2', type: 'playlist', name: 'Focus', owner: { display_name: 'You' }, images: [] }] });
     if (p === '/me/player/recently-played') return world.scope403 ? reply(403, { error: { status: 403, message: 'Insufficient client scope' } }) : reply(200, { items: [{ track: track('R1', 'Afterglow') }, { track: track('R2', 'Low Tide') }, { track: track('R1', 'Afterglow') }] });
     if (p === '/me/player/devices') return reply(200, { devices: [{ id: 'dev1', name: 'Kitchen', type: 'Speaker', is_active: true }, { id: 'dev2', name: 'Work laptop', type: 'Computer', is_active: false }, { id: 'dev3', name: 'TV', type: 'TV', is_restricted: true }] });
+    if (p === '/me/tracks') return world.scope403 ? reply(403, { error: { status: 403, message: 'Insufficient client scope' } }) : reply(200, { items: [{ added_at: 'x', track: track('LK1', 'Saved One') }, { added_at: 'y', track: track('LK2', 'Saved Two') }, { track: null }] });
+    if (p === '/search' && u.searchParams.get('type') === 'track') { const off = Number(u.searchParams.get('offset') || 0); return reply(200, { tracks: { items: off >= 30 ? [] : Array.from({ length: 10 }, (_, i) => track(`M${off + i}`, `More ${off + i}`)) } }); }
+    if (p === '/search' && world.manySongs) return reply(200, { tracks: { items: Array.from({ length: 10 }, (_, i) => track(`M${i}`, `Song ${i}`)) }, albums: { items: [] }, artists: { items: [] }, playlists: { items: [] } });
     if (p === '/search') return reply(200, { tracks: { items: [track('S1', 'Night Shift'), track('S2', 'Nightcall', 'Kavinsky')] }, albums: { items: [{ id: 'AL1', name: 'Quiet Hours', artists: [{ name: 'Ann' }], release_date: '2024-05-01', images: [{ url: 'https://i.scdn.co/image/al', width: 300 }] }] }, artists: { items: [{ id: 'AR1', name: 'Ann', images: [] }] }, playlists: { items: [{ id: 'PL9', name: 'Night drive', owner: { display_name: 'Spotify' }, images: [] }, null] } });
     if (p === '/albums/ALB1') return reply(200, { name: 'Quiet Hours', images: [{ url: 'https://i.scdn.co/image/al', width: 300 }], tracks: { items: [track('TRK1', 'Night Shift'), track('T2', 'Glass Harbor'), track('T3', 'Paper Moons')] } });
     if (p === '/playlists/PLX1') return reply(200, { name: 'Road trip', items: { items: [{ item: track('P1', 'One') }, { item: track('P2', 'Two') }] } });
@@ -133,9 +136,9 @@ async function apiChecks(check) {
   let d = await look();
 
   check('api card: a look at the player carries the switches: shuffle, repeat (context is "all"), volume of the active device, what it is playing from', d.shuffle === true && d.repeat === 'off' && d.volume === 0.6 && d.context && d.context.kind === 'album' && d.context.id === 'ALB1' && d.itemId === 'TRK1' && d.deviceId === 'dev1', JSON.stringify({ s: d.shuffle, r: d.repeat, v: d.volume, c: d.context, i: d.itemId }));
-  check('api card: …the heart is asked once for the song (contains), and the card says what the API card can do: no lyrics, devices to pick', d.liked === false && since(0).filter((l) => l.includes('/me/tracks/contains')).length === 1 && d.can.like === true && d.can.shuffle && d.can.repeat && d.can.volume && d.can.lyrics === false && d.can.devices === 'pick' && d.can.playLater === true && d.can.playNext === false && d.needsScopes === false, JSON.stringify(d.can));
+  check('api card: …the heart is asked once for the song (contains), and the card says what the API card can do: no lyrics, devices to pick', d.liked === false && since(0).filter((l) => l.includes('/me/library/contains?uris=spotify%3Atrack%3ATRK1')).length === 1 && d.can.like === true && d.can.shuffle && d.can.repeat && d.can.volume && d.can.lyrics === false && d.can.devices === 'pick' && d.can.playLater === true && d.can.playNext === false && d.needsScopes === false, JSON.stringify(d.can));
   await look();
-  check('api card: the heart is not asked again while the song is the same', since(0).filter((l) => l.includes('/me/tracks/contains')).length === 1, since(0).join('\n'));
+  check('api card: the heart is not asked again while the song is the same', since(0).filter((l) => l.includes('/me/library/contains?uris=spotify%3Atrack%3ATRK1')).length === 1, since(0).join('\n'));
   world.repeat = 'context'; world.shuffle = false;
   d = await look();
   check('api card: repeat_state context reads as "all", track as "one"; shuffle off', d.repeat === 'all' && d.shuffle === false && (world.repeat = 'track', (await look()).repeat === 'one'), '');
@@ -167,10 +170,10 @@ async function apiChecks(check) {
 
   n = api.log.length;
   await w.act({ id, do: 'like' });
-  check('api act: the heart saves the song (PUT /me/tracks) and says so; pressed again it removes it (DELETE)', JSON.stringify(since(n)) === '["PUT /v1/me/tracks?ids=TRK1"]' && data().liked === true && world.liked === true, JSON.stringify(since(n)));
+  check('api act: the heart saves the song (PUT /me/library) and says so; pressed again it removes it (DELETE)', JSON.stringify(since(n)) === '["PUT /v1/me/library?uris=spotify%3Atrack%3ATRK1"]' && data().liked === true && world.liked === true, JSON.stringify(since(n)));
   n = api.log.length;
   await w.act({ id, do: 'like' });
-  check('api act: …the second press removes it', JSON.stringify(since(n)) === '["DELETE /v1/me/tracks?ids=TRK1"]' && data().liked === false && world.liked === false, JSON.stringify(since(n)));
+  check('api act: …the second press removes it', JSON.stringify(since(n)) === '["DELETE /v1/me/library?uris=spotify%3Atrack%3ATRK1"]' && data().liked === false && world.liked === false, JSON.stringify(since(n)));
 
   // tabs: asked, kept, merged into the card
   n = api.log.length;
@@ -181,6 +184,7 @@ async function apiChecks(check) {
   await w.act({ id, do: 'etab', arg: 'library' });
   d = await look();
   check('api tabs: Library carries recent plays (each song once) and the playlists', d.recent.length === 2 && d.recent[0].title === 'Afterglow' && d.playlists.length === 2 && d.playlists[0].title === 'Late night drive' && d.playlists[0].kind === 'playlist' && !('images' in d.recent[0]) && !('thumb' in d.recent[0]), JSON.stringify([d.recent, d.playlists]).slice(0, 300));
+  check('api tabs: Library also carries Liked Songs (GET /me/tracks, a null track dropped), newest first', d.likedSongs.length === 2 && d.likedSongs[0].title === 'Saved One' && d.likedSongs[0].kind === 'song' && !('images' in d.likedSongs[0]) && since(0).some((l) => l.startsWith('GET /v1/me/tracks?limit=20')), JSON.stringify(d.likedSongs));
   await w.act({ id, do: 'etab', arg: 'devices' });
   d = await look();
   check('api tabs: Devices lists the account\'s devices, the playing one marked, restricted ones left out', JSON.stringify(d.devices.map((x) => [x.id, x.active])) === '[["dev1",true],["dev2",false]]' && d.devicesOk === true, JSON.stringify(d.devices));
@@ -210,6 +214,21 @@ async function apiChecks(check) {
   d = await look();
   check('api act: search asks the API (songs, albums, artists, playlists) and the card carries grouped results; a null in a list is dropped', /GET \/v1\/search\?q=night&type=track,album,artist,playlist&limit=10&market=from_token/.test(since(n)[0]) && d.query === 'night' && d.results.map((r) => r.kind).join() === 'song,song,album,artist,playlist' && d.searchOk === true && d.results[2].sub === 'Ann · 2024', JSON.stringify(d.results.map((r) => [r.kind, r.title, r.sub])));
   n = api.log.length;
+  world.manySongs = true;
+  await w.act({ id, do: 'esearch', text: 'songs' });
+  d = await look();
+  check('api act: a search with ten songs offers "more songs"', d.moreSongs === true && d.results.filter((r) => r.kind === 'song').length === 10, JSON.stringify([d.moreSongs, d.results.length]));
+  n = api.log.length;
+  await w.act({ id, do: 'emore' });
+  d = await look();
+  check('api act: more songs asks the next page by offset (songs only, 10 a request) and merges new songs under the old, without repeats', since(n).filter((l) => /\/search\?q=songs&type=track&limit=10&offset=10&market=from_token/.test(l)).length === 1 && d.results.filter((r) => r.kind === 'song').length === 20 && d.results[10].id === 'M10' && new Set(d.results.map((r) => r.id)).size === d.results.length && d.moreSongs === true, JSON.stringify([since(n), d.results.length]));
+  await w.act({ id, do: 'emore' });
+  d = await look();
+  check('api act: …and stops at thirty songs', d.results.filter((r) => r.kind === 'song').length === 30 && d.moreSongs === false, JSON.stringify([d.results.length, d.moreSongs]));
+  n = api.log.length;
+  await w.act({ id, do: 'emore' });
+  check('api act: …asking again asks nothing', since(n).length === 0, JSON.stringify(since(n)));
+  world.manySongs = false;
   await w.act({ id, do: 'esearch', text: '' });
   d = await look();
   check('api act: an empty search clears the results (nothing is asked)', since(n).filter((l) => l.includes('/search')).length === 0 && d.results.length === 0 && d.query === '', JSON.stringify(since(n)));
@@ -255,7 +274,7 @@ async function apiChecks(check) {
   check('api scopes: pressing the heart anyway answers with the reconnect message (not a bare 403)', /Reconnect Spotify/.test(data().notice || ''), data().notice);
   await w.act({ id, do: 'etab', arg: 'library', force: true });
   d = await look();
-  check('api scopes: the library with no scope is empty and the card offers to reconnect', d.recent.length === 0 && d.playlists.length === 0 && d.needsScopes === true, JSON.stringify([d.recent, d.playlists]));
+  check('api scopes: the library with no scope is empty and the card offers to reconnect', d.recent.length === 0 && d.playlists.length === 0 && d.likedSongs.length === 0 && d.needsScopes === true, JSON.stringify([d.recent, d.playlists]));
   check('api scopes: the sign-in asks for the playback scopes and the library ones, and nothing broader (no streaming, no private profile)', SV.SCOPES.split(' ').length === 7 && ['user-read-playback-state', 'user-modify-playback-state', 'playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify'].every((s) => SV.SCOPES.split(' ').includes(s)) && !/streaming|user-read-private|user-read-email|user-top-read/.test(SV.SCOPES), SV.SCOPES);
   check('api scopes: scopeError recognises only a 403 about scope', SV.scopeError(403, JSON.stringify({ error: { status: 403, message: 'Insufficient client scope' } })) && !SV.scopeError(403, JSON.stringify({ error: { reason: 'PREMIUM_REQUIRED', message: 'Player command failed: Premium required' } })) && !SV.scopeError(404, 'scope') && !SV.scopeError(401, 'Insufficient client scope'), '');
   world.scope403 = false;
@@ -270,7 +289,7 @@ async function apiChecks(check) {
 
   // the pure helpers
   check('api helpers: lists are cut down: ids checked, text bounded, pictures from Spotify\'s own hosts only, the smallest sharp one first', (() => { const it = SV.listItem({ id: 'ABC123', type: 'track', name: `${'x'.repeat(300)}`, artists: [{ name: 'A' }, { name: 'B' }], duration_ms: 1000, album: { images: [{ url: 'https://evil.example/a.jpg', width: 64 }, { url: 'https://i.scdn.co/big', width: 640 }, { url: 'https://i.scdn.co/small', width: 64 }] } }); return it.title.length === 120 && it.sub === 'A, B' && it.ms === 1000 && it.images.join() === 'https://i.scdn.co/small,https://i.scdn.co/big' && SV.listItem({ id: '../x', type: 'track', name: 'n' }) === null && SV.listItem({ id: 'ok', type: 'track', name: '' }) === null && SV.listItem({ id: 'ok', type: 'show', name: 'n' }) === null && SV.listItem(null) === null; })(), '');
-  check('api helpers: the context of an artist is its top songs; junk answers are empty, never a throw', SV.normalizeContext('artist', JSON.stringify({ tracks: [{ id: 'A1', type: 'track', name: 'Hit' }] })).items.length === 1 && ['', 'null', '[]', '{"a":', '5'].every((t) => SV.normalizeQueue(t).length === 0 && SV.normalizeDevices(t).length === 0 && SV.normalizeSearch(t).length === 0 && SV.normalizeContext('album', t).items.length === 0 && SV.parseSaved(t) === null), '');
+  check('api helpers: an artist has no track list (Spotify removed top-tracks in Feb 2026, no request is made); junk answers are empty, never a throw', SV.PLAYER.context('artist', 'AR1') === null && SV.normalizeContext('artist', JSON.stringify({ tracks: [{ id: 'A1', type: 'track', name: 'Hit' }] })).items.length === 0 && SV.PLAYER.saved('T1')[1] === '/me/library/contains?uris=spotify%3Atrack%3AT1' && SV.PLAYER.save('T1', true)[0] === 'PUT' && SV.PLAYER.save('T1', false)[1] === '/me/library?uris=spotify%3Atrack%3AT1' && ['', 'null', '[]', '{"a":', '5'].every((t) => SV.normalizeQueue(t).length === 0 && SV.normalizeDevices(t).length === 0 && SV.normalizeSearch(t).length === 0 && SV.normalizeContext('album', t).items.length === 0 && SV.parseSaved(t) === null), '');
   check('api helpers: every button\'s address is built from fixed paths and checked values (a term is escaped, a percent clamped)', SV.PLAYER.search('a&b=c d')[1] === '/search?q=a%26b%3Dc%20d&type=track,album,artist,playlist&limit=10&market=from_token' && SV.PLAYER.volume(250)[1].endsWith('=100') && SV.PLAYER.volume(-3)[1].endsWith('=0') && SV.PLAYER.repeat('bogus')[1].endsWith('=off') && SV.PLAYER.seek(-5)[1].endsWith('=0'), '');
   void SAC;
   void updates;

@@ -32,25 +32,27 @@ const MAX_ITEMS = 40;
 // Every selector the script uses, by what it is for; the first that matches wins. Change them here when Spotify changes its page.
 // Rules: data-testid first, then aria-label / role / href patterns, never class names (they are hashed). Keep each string to the simple
 // subset test/spotify-dom-units.js can run against saved pages: tag, [attr], [attr="v"], [attr^=], [attr$=], [attr*=], descendant
-// spaces and commas. Checked against open.spotify.com (desktop layout, signed out) on 2026-10-07; "assumed" marks what only a
-// signed-in page shows (the now-playing widget) and was not seen.
+// spaces and commas. Checked against open.spotify.com (desktop layout, signed out) on 2026-10-07 and signed in on 2026-10-08 (the playbar, the
+// now-playing widget, the left library, the Queue side panel); "assumed" marks what neither page showed.
 const SELECTORS = {
   // -- the playbar (the same signed in or out; seen) --
   playPause: ['[data-testid="control-button-playpause"]', 'footer button[aria-label="Play"], footer button[aria-label="Pause"]', '[data-testid="player-controls"] button[aria-label="Play"], [data-testid="player-controls"] button[aria-label="Pause"]'],
   next: ['[data-testid="control-button-skip-forward"]', 'footer button[aria-label="Next"]', '[data-testid="player-controls"] button[aria-label="Next"]'],
   previous: ['[data-testid="control-button-skip-back"]', 'footer button[aria-label="Previous"]', '[data-testid="player-controls"] button[aria-label="Previous"]'],
-  // Shuffle: seen signed out as a button with no test id and the label "Enable shuffle" (on: "Disable shuffle"). Repeat: seen, with aria-checked
-  // ("false" off, "mixed" repeat all, "true" repeat one when signed in). Volume: seen, a range input in the volume bar, next to a mute button.
-  shuffle: ['[data-testid="control-button-shuffle"]', '[data-testid="general-controls"] button[aria-label$="shuffle"]', '[data-testid="player-controls"] button[aria-label$="shuffle"]'],
+  // Shuffle: seen signed out as a button with no test id and the label "Enable shuffle" (on: "Disable shuffle"); signed in 2026-10-08 there was
+  // NO control-button-shuffle (the label is not known: the fallbacks below match any "...shuffle" label in the playbar; when none matches the
+  // card hides shuffle). Repeat: seen, with aria-checked ("false" off, "mixed" repeat all, "true" repeat one when signed in). Volume: seen, a
+  // range input in the volume bar (volume-bar), next to a mute button (volume-bar-toggle-mute-button).
+  shuffle: ['[data-testid="control-button-shuffle"]', '[data-testid="general-controls"] button[aria-label$="shuffle"]', '[data-testid="player-controls"] button[aria-label$="shuffle"]', '[data-testid="general-controls"] button[aria-label*="huffle"]', 'footer button[aria-label*="huffle"]'],
   repeat: ['[data-testid="control-button-repeat"]', '[data-testid="player-controls"] button[aria-label$="repeat"]'],
   volume: ['[data-testid="volume-bar"] input[type="range"]'],
-  // ASSUMED (only a signed-in page has a now-playing widget): its save / like button, checked when the song is saved.
+  // Seen signed in 2026-10-08: the now-playing widget's button with the label "Add to Liked Songs" (the other labels are assumed).
   like: ['[data-testid="now-playing-widget"] button[aria-label="Add to Liked Songs"]', '[data-testid="now-playing-widget"] button[aria-label="Remove from Liked Songs"]', '[data-testid="now-playing-widget"] button[aria-label="Save to Your Library"]', '[data-testid="now-playing-widget"] button[aria-label="Remove from Your Library"]', '[data-testid="now-playing-widget"] [data-testid="add-button"]'],
   progressInput: ['[data-testid="playback-progressbar"] input[type="range"]', '[data-testid="playback-progressbar"] input'],
   position: ['[data-testid="playback-position"]'],
   duration: ['[data-testid="playback-duration"]'],
   nowPlayingBar: ['[data-testid="now-playing-bar"]', 'aside[aria-label="Now playing bar"]'],
-  // -- what is playing here or on another device (assumed: the widget only exists while something is loaded) --
+  // -- what is playing here or on another device (seen signed in 2026-10-08, while something is loaded) --
   nowPlaying: ['[data-testid="now-playing-widget"]'],
   title: ['[data-testid="context-item-link"]', '[data-testid="now-playing-widget"] a[href*="/track/"]', '[data-testid="now-playing-widget"] a[href*="/episode/"]'],
   artist: ['[data-testid="context-item-info-artist"]', '[data-testid="context-item-info-show"]', '[data-testid="now-playing-widget"] a[href*="/artist/"]'],
@@ -74,19 +76,33 @@ const SELECTORS = {
   // a bare play-button of the main area: that is a card of some other item.
   entityPlay: ['[data-testid="action-bar-row"] [data-testid="play-button"]', '[data-testid="topbar-content"] [data-testid="play-button"]'],
   // The item pages (seen, signed out): the title, the action bar's three-dots button, a track page's album link and lyrics box (signed out the
-  // box holds only a "Sign in to see lyrics" gate). ASSUMED: the album or playlist the player is playing from, linked in the now-playing widget;
-  // a context menu's items and the left library's links (a signed-in page).
+  // box holds only a "Sign in to see lyrics" gate). The album the player is playing from is the
+  // now-playing widget's /album/ link (seen signed in 2026-10-08). ASSUMED (never seen): a context menu's items.
   entityTitle: ['[data-testid="entityTitle"]'],
   moreButton: ['[data-testid="action-bar-row"] [data-testid="more-button"]'],
   trackAlbumLink: ['[data-testid="entity-header"] a[href^="/album/"]'],
   lyricsBox: ['[data-testid="lyrics-container"]'],
   lyricsGate: ['[data-testid="static-activation-trigger"]'],
+  // (seen signed in 2026-10-08: data-testid="context-link" is gone; the widget's album link is there)
   contextLink: ['[data-testid="context-link"]', '[data-testid="now-playing-widget"] a[href^="/album/"]', '[data-testid="now-playing-widget"] a[href^="/playlist/"]'],
   menuItem: ['[role="menuitem"]', '[role="menu"] button', '[role="menu"] li'],
-  libraryLink: ['[aria-label="Your Library"] a[href^="/playlist/"]', '[aria-label="Your Library"] a[href^="/album/"]', '[aria-label="Your Library"] a[href^="/artist/"]', '[data-testid="rootlist"] a[href^="/playlist/"]'],
+  // The left library (seen signed in 2026-10-08): no links any more. A virtualised list of listRow groups whose title and subtitle <p> carry the
+  // item's uri in their ids: listrow-title-spotify:<kind>:<id> (kind playlist, album, artist; the first row is spotify:collection:tracks, Liked Songs).
+  libraryTitle: ['[aria-label="Your Library"] p[id^="listrow-title-spotify:"]'],
+  librarySubtitle: ['[aria-label="Your Library"] p[id^="listrow-subtitle-spotify:"]'],
+  listRow: ['[data-encore-id="listRow"]'],
+  // The queue (seen signed in 2026-10-08): the /queue route is gone. A side panel, opened by the playbar's queue button (aria-pressed toggles), with
+  // "Now playing" and "Next from: ..." / "Next in queue" headings and li[role="row"] rows (a hashed listrow id, no track id, a play-button each).
+  queueButton: ['[data-testid="control-button-queue"]'],
+  queuePanel: ['aside[aria-label="Queue"]'],
+  queueRow: ['aside[aria-label="Queue"] li[role="row"]'],
+  rowTitle: ['p[data-encore-id="listRowTitle"]', 'p[id^="listrow-title-"]'],
+  rowSubtitle: ['p[data-encore-id="listRowSubtitle"]', 'p[id^="listrow-subtitle-"]'],
+  rowImage: ['img[data-testid="entity-image"]', 'img'],
+  rowPlayButton: ['button[data-testid="play-button"]', 'button[aria-label^="Play "]'],
 };
 // Words the page shows for states with no element of their own (lower case, matched in the page's main text).
-const TEXT = { noResults: ['no results found'], emptyQueue: ['your queue is empty', 'queue is empty'] };
+const TEXT = { noResults: ['no results found'], emptyQueue: ['your queue is empty', 'queue is empty'], nextHeading: '^next (from|in queue)' };
 // What the script needs to see to say "the player is there".
 const REQUIRED = ['playPause'];
 const NO_PLAYER = 'Spotify’s player controls weren’t found. Is the web player signed in?';
@@ -231,7 +247,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   var OUT = 'lumen-engine-out', IN = 'lumen-engine-in';
   var KIND_PATH = { song: 'track', album: 'album', playlist: 'playlist', artist: 'artist' };
   var ID = /^[A-Za-z0-9._-]{1,64}$/;
-  var SEARCH_MS = 10000, STABLE_MS = 700, MORE_MS = 6000, PLAY_MS = 8000;
+  var SEARCH_MS = 10000, STABLE_MS = 700, MORE_MS = 6000, PLAY_MS = 8000, LIBRARY_MS = 3000; // (the library: before the card's "Loading…" window of 3.5 s ends, it has an answer, rows or a failure)
   // Typing into the page's own box is slower than opening the route (measured on open.spotify.com: the page waits a moment of its own before it
   // routes a typed term, about 0.27 s more); it stays as the way in when the route does not move the page, and a switch for a page that changes.
   var TYPE_FIRST = false;
@@ -642,22 +658,85 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     return items;
   }
   function failList(kind, rid, why, detail) { out({ t: 'list', kind: kind, rid: rid, ok: false, why: why, detail: detail || diag(), items: [] }); }
-  // The queue: the page's queue route lists the playing song first, then what is next.
+  // The queue (seen signed in 2026-10-08: no /queue route any more). It is a side panel of the player, opened by the playbar's queue button; its
+  // rows (li[role="row"]) follow a "Next from: ..." or "Next in queue" heading, after the "Now playing" one. The rows carry no track id: the
+  // hashed listrow id in the title's id stands in as the row's id (stable while the queue stands still). The panel is opened only when it is
+  // not open already (the button toggles), and left open.
+  function queueRowEls() {
+    var panel = q('queuePanel');
+    if (!panel) return { rows: [], raw: 0 };
+    var head = new RegExp(TEXT.nextHeading, 'i'), all = panel.querySelectorAll('*'), rows = [], seenHead = false, raw = [];
+    for (var i = 0; i < all.length; i++) {
+      var n = all[i];
+      if (n.localName === 'li') { if (n.getAttribute('role') === 'row') { raw.push(n); if (seenHead) rows.push(n); } continue; }
+      if (!seenHead && n.children.length < 4 && !n.closest('li') && !n.querySelector('li') && text(n).length < 120 && head.test(text(n))) seenHead = true;
+    }
+    return { rows: seenHead ? rows : raw.slice(1), raw: raw.length };
+  }
+  function queueItem(row, i) {
+    var t = q('rowTitle', row);
+    var title = text(t);
+    if (!title) return null;
+    var id = String((t && t.getAttribute('id')) || '').replace(/^listrow-title-/, '');
+    if (!ID.test(id)) id = 'row' + i;
+    var artists = qa('artistHref', row).map(text).filter(Boolean);
+    var sub = artists.length ? artists.join(', ') : text(q('rowSubtitle', row)).replace(/^explicit\s*/i, '');
+    var img = q('rowImage', row);
+    return { id: id, kind: 'song', title: title, sub: sub, album: '', ms: 0, art: img ? img.src : '' };
+  }
+  function queueEntries() {
+    var found = queueRowEls(), list = [];
+    found.rows.slice(0, 60).forEach(function (row, i) { var it = queueItem(row, i); if (it) list.push({ row: row, item: it }); });
+    return { entries: list, raw: found.raw };
+  }
+  // One look at the queue panel: opens it when it is not open (the button once per 1.5 s; a button already pressed is given a moment, the panel may
+  // be on its way), and returns the entries once they have stood still (the same rows 300 ms apart), else null. st keeps the look's own state.
+  function queueLook(st, poke) {
+    var now = Date.now();
+    if (!q('queuePanel')) {
+      var b = q('queueButton');
+      var pressed = b && b.getAttribute('aria-pressed') === 'true';
+      if (b && now - st.clicked > 1500 && !(pressed && now - st.start < 1200)) { st.clicked = now; if (!b.disabled) b.click(); }
+      st.panelAt = 0;
+      return null;
+    }
+    if (!st.panelAt) st.panelAt = now;
+    var got = queueEntries();
+    st.raw = got.raw;
+    if (!got.entries.length) return null;
+    var sig = sigOf(got.entries.map(function (e) { return e.item; }));
+    if (sig !== st.sig) { st.sig = sig; st.at = now; poke(320); return null; }
+    if (now - st.at < 300) { poke(320 - (now - st.at)); return null; }
+    return got.entries;
+  }
   function readQueue(rid) {
     if (!q('playPause')) { failList('queue', rid, q('loginButton') ? 'signedOut' : 'noPlayer'); return; }
-    var t0 = Date.now(), st = arriving('/queue');
-    nav('/queue');
+    if (!q('queueButton') && !q('queuePanel')) { failList('queue', rid, q('loginButton') ? 'signedOut' : 'page', 'no queue button'); return; }
+    var st = { sig: '', at: 0, clicked: 0, start: Date.now(), panelAt: 0, raw: 0 };
     startTask(function () {
       return watch(function (poke) {
-        if (!onPath('/queue')) return null;
-        var items = stableRows(st, poke, '/queue');
-        if (items && items.length) return { items: items.slice(1, 60) };
-        var m = q('main'), t = m ? text(m).toLowerCase() : '';
-        if (!rowsOf().length && Date.now() - t0 > 3000 && TEXT.emptyQueue.some(function (w) { return t.indexOf(w) >= 0; })) return { items: [] };
+        var entries = queueLook(st, poke);
+        if (entries) return { items: entries.map(function (e) { return e.item; }) };
+        if (st.panelAt && Date.now() - st.panelAt > 2500 && st.raw <= 1) return { items: [] }; // (the panel is open with only the playing song in it)
         return null;
       }, MORE_MS + 2000, function (found) {
         if (!found) { failList('queue', rid, whyNot()); return; }
         out({ t: 'list', kind: 'queue', rid: rid, ok: true, items: found.items });
+      });
+    });
+  }
+  // Play the n-th row after the playing one: the row's own play button, when the row is still the song the card showed (id: its listrow id).
+  function playQueueRow(n, id) {
+    var st = { sig: '', at: 0, clicked: 0, start: Date.now(), panelAt: 0, raw: 0 };
+    startTask(function () {
+      return watch(function (poke) {
+        var entries = queueLook(st, poke);
+        return entries && entries.length > n ? entries[n] : null;
+      }, PLAY_MS, function (found) {
+        if (found && id && found.item.id !== id) { out({ t: 'error', message: 'The list changed. Look again.' }); return; }
+        var b = found ? q('rowPlayButton', found.row) : null;
+        if (b && !b.disabled) { b.click(); return; }
+        out({ t: 'error', message: q('playPause') ? 'Spotify didn’t show that song to play.' : NO_PLAYER });
       });
     });
   }
@@ -745,21 +824,44 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       });
     });
   }
-  // The library as the left bar lists it (already on the page: nothing to open), in the page's own order (recents first).
+  // The library as the left bar lists it (already on the page: nothing to open), in the page's own order (recents first). Seen signed in
+  // 2026-10-08: rows without links; the item's uri is in the title's id (listrow-title-spotify:playlist:<id>). Liked Songs
+  // (spotify:collection:tracks) is not a playlist, album or artist page the card can play, so it is left out. The list is virtualised: the rows
+  // the page has drawn are the ones listed. A page that has drawn none yet is waited for; one that never does is an error, not an empty list.
+  var cancelLibrary = null;
+  function libraryItems() {
+    var subs = {}, items = [], seen = {}, rowSel = (SEL.listRow || []).join(', ');
+    qa('librarySubtitle').forEach(function (p) { subs[String(p.getAttribute('id') || '').replace(/^listrow-subtitle-/, '')] = text(p); });
+    qa('libraryTitle').forEach(function (p) {
+      var uri = String(p.getAttribute('id') || '').replace(/^listrow-title-/, '');
+      var m = /^spotify:(playlist|album|artist):([A-Za-z0-9._-]{1,64})$/.exec(uri);
+      var title = text(p);
+      if (!m || !title || seen[uri] || items.length >= 40) return;
+      seen[uri] = true;
+      var row = rowSel ? p.closest(rowSel) : null;
+      var img = row ? row.querySelector('img') : null;
+      var sub = String(subs[uri] || '').replace(/^(playlist|album|artist|single|ep|compilation)\s*[•·]\s*/i, '').replace(/^(playlist|album|artist|single|ep|compilation)$/i, '');
+      items.push({ id: m[2], kind: m[1], title: title, sub: sub, album: '', ms: 0, art: img ? img.src : '' });
+    });
+    return items;
+  }
   function readLibrary(kind, rid) {
     if (kind === 'recent') { out({ t: 'list', kind: 'recent', rid: rid, ok: true, items: [] }); return; }
-    var items = [], seen = {};
-    qa('libraryLink').forEach(function (a) {
-      var href = String(a.getAttribute('href') || '');
-      var m = /^\/(playlist|album|artist)\/([A-Za-z0-9._-]{1,64})/.exec(href);
-      if (!m || seen[href] || items.length >= 40) return;
-      var img = a.querySelector('img');
-      var title = text(a) || (img && img.alt) || a.getAttribute('aria-label') || '';
-      if (!title) return;
-      seen[href] = true;
-      items.push({ id: m[2], kind: m[1], title: title, sub: '', album: '', ms: 0, art: img ? img.src : '' });
+    if (cancelLibrary) { cancelLibrary(); cancelLibrary = null; }
+    var sig = '', at = 0;
+    cancelLibrary = watch(function (poke) {
+      if (signedOutNow() === true) return { items: [], signedOut: true };
+      var items = libraryItems();
+      if (!items.length) return null;
+      var s = sigOf(items);
+      if (s !== sig) { sig = s; at = Date.now(); poke(320); return null; }
+      if (Date.now() - at < 300) { poke(320 - (Date.now() - at)); return null; }
+      return { items: items, signedOut: false };
+    }, LIBRARY_MS, function (found) {
+      cancelLibrary = null;
+      if (!found) { failList('playlists', rid, whyNot(), 'no library rows (' + qa('listRow').length + ' list rows on the page)'); return; }
+      out({ t: 'list', kind: 'playlists', rid: rid, ok: true, signedOut: found.signedOut, items: found.items });
     });
-    out({ t: 'list', kind: 'playlists', rid: rid, ok: true, signedOut: Boolean(q('loginButton')), items: items });
   }
   // Add to queue: the item's own page, its three-dots menu, the "Add to queue" entry.
   function queueAdd(kind, id) {
@@ -810,7 +912,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
           break;
         }
         case 'lyrics': readLyrics(Number(c.rid) || 0); break;
-        case 'playQueue': if (typeof c.index === 'number' && c.index >= 0) playRow('/queue', c.index, true, typeof c.id === 'string' ? c.id : ''); break;
+        case 'playQueue': if (typeof c.index === 'number' && c.index >= 0) playQueueRow(c.index, typeof c.id === 'string' ? c.id : ''); break;
         case 'playFrom': if (typeof c.index === 'number' && c.index >= 0 && lastTracksPath) playRow(lastTracksPath, c.index, false, typeof c.id === 'string' ? c.id : ''); break;
         case 'playLater': if (KIND_PATH[c.kind] && typeof c.id === 'string') queueAdd(c.kind, c.id); break;
       }
