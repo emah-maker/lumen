@@ -719,6 +719,90 @@
     @container card (min-width: 190px) and (min-height: 100px) { .sp-controls { display: flex; } }
     @container card (min-width: 260px) and (min-height: 130px) { .sp-art { display: block; } .sp-album, .sp-progress { display: flex; } .sp-album { display: block; } }
     @container card (max-height: 129px) { .sp-progress { display: none; } }
+    /* The music card does more as it gets bigger (renderer/newtab-music.js; the thresholds are features/music-card-features.js TIER_MIN, which a test compares):
+         small   art, title and artist, play / pause, next, a thin progress bar
+         medium  (300 x 200) + previous, times on the seek bar, the heart, shuffle, repeat, volume
+         large   (380 x 300) + tabs: Search, Up next, Library, Devices (beside the player from 520 px wide, else below it)
+         xl      (600 x 400) + the album or playlist playing, and lyrics
+       A control the engine can't do is `hidden` (never a broken button). */
+    .mc-card [hidden] { display: none !important; }
+    .mc { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+    .mc-main { display: flex; flex-direction: column; justify-content: safe center; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+    .mc-card .sp-wrap { flex: 0 0 auto; }
+    .mc-card.sp-card-idle .mc-main { justify-content: flex-start; }
+    .mc-side { display: none; min-width: 0; min-height: 0; }
+    .mc-notes:empty { display: none; }
+    .mc-note { margin: 6px 0; }
+    .mc-stroke { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-btn { appearance: none; display: grid; place-items: center; flex: none; width: 28px; height: 28px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: default; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
+    .mc-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+    .mc-btn:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .mc-btn svg { width: 15px; height: 15px; }
+    .mc-btn.on { color: var(--accent); }
+    .mc-like.on svg path { fill: currentColor; }
+    .mc .mc-prev, .mc .mc-like, .mc .mc-extra, .mc .sp-elapsed, .mc .sp-total { display: none; }
+    .mc-like { align-self: center; }
+    .mc-extra { align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
+    .mc-vol { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 60px; max-width: 150px; margin-left: 6px; color: var(--muted); }
+    .mc-vol-icon { display: grid; flex: none; }
+    .mc-vol-icon svg { width: 14px; height: 14px; fill: currentColor; }
+    .mc-vol-icon .mc-stroke { fill: none; }
+    .mc-vol-range { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; cursor: default; }
+    .mc-vol-range::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--field) var(--v, 50%)); }
+    .mc-vol-range::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--text); }
+    .mc-vol-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+    .mc-tabs { display: flex; gap: 2px; flex: none; margin-bottom: 6px; overflow-x: auto; scrollbar-width: none; }
+    .mc-tab { appearance: none; flex: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
+    .mc-tab:hover { color: var(--text); }
+    .mc-tab[aria-selected="true"] { background: var(--field); color: var(--text); font-weight: 600; }
+    .mc-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .mc-panels { position: relative; display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+    .mc-panel { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+    .mc-panel .w-note { margin: 4px 2px 6px; }
+    .mc-panel .w-btn { padding: 3px 10px; font-size: 12px; }
+    .mc-searchbox { position: sticky; top: 0; z-index: 1; padding-bottom: 6px; background: var(--card); }
+    .mc-search-input { box-sizing: border-box; width: 100%; height: 26px; font: inherit; font-size: 12.5px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--field); color: var(--text); }
+    .mc-search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .mc-row { position: relative; display: flex; align-items: center; }
+    .mc-row-main { appearance: none; display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; width: 100%; margin: 0; padding: 4px 6px; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: default; }
+    .mc-row-main:hover:not(:disabled) { background: var(--hover); }
+    .mc-row-main:disabled { opacity: 1; cursor: default; }
+    .mc-row-main:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .mc-row.current .am-title { color: var(--accent); font-weight: 600; }
+    .mc-idx { flex: none; width: 20px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+    .mc-row.current .mc-idx { color: var(--accent); }
+    .mc-dot { flex: none; width: 8px; height: 8px; margin: 0 4px; border-radius: 50%; background: var(--field); box-shadow: inset 0 0 0 1px var(--border); }
+    .mc-row.current .mc-dot { background: var(--accent); box-shadow: none; }
+    .mc-ctx { margin: 2px 6px 4px; }
+    .mc-lyrics { padding: 2px 6px 10px; }
+    .mc-line { margin: 0 0 7px; font-size: 13px; line-height: 1.4; }
+    @container card (min-width: 300px) and (min-height: 200px) { .mc .mc-prev { display: grid; } .mc .mc-like { display: grid; } .mc .mc-extra { display: flex; } .mc .sp-elapsed, .mc .sp-total { display: inline; } }
+    @container card (min-width: 380px) and (min-height: 300px) {
+      .mc-card .w-foot { display: none; }
+      .mc-main { flex: 0 0 auto; justify-content: flex-start; }
+      .mc-side { display: flex; flex-direction: column; flex: 1 1 0; margin-top: 8px; }
+      .mc-card .am-idle { display: none; }
+      .mc-card .am-searchbtn { display: none; }
+      .mc-card.am-search-open .w-head h2, .mc-card.am-search-open .w-head .mk-badge { display: revert; }
+      .mc-card .am-searchfield { display: none; }
+    }
+    @container card (min-width: 380px) and (max-width: 519px) and (min-height: 300px) { /* tabs below the player: the player gets compact so the lists have room */
+      .mc-card .sp-art { width: 48px; height: 48px; }
+      .mc-card .sp-album { display: none; }
+      .mc-card .sp-controls { margin-top: 2px; }
+      .mc-card .sp-progress { margin-top: 2px; }
+      .mc-card .mc-extra { margin-top: 0; }
+    }
+    @container card (min-width: 520px) and (min-height: 300px) {
+      .mc { flex-direction: row; gap: 20px; }
+      .mc-main { flex: 0 0 252px; }
+      .mc-side { flex: 1 1 0; margin-top: 0; }
+    }
+    @container card (min-width: 600px) and (min-height: 400px) {
+      .mc-main { flex-basis: 280px; }
+      .mc-card .sp-art { width: 88px; height: 88px; }
+      .mc-card .sp-title { font-size: 15px; }
+    }
     /* Todoist: a count and the next task on a small card, the list (with what the settings switch on) on a bigger one. */
     .sl-summary { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 0; flex: 1 1 auto; }
     .sl-counts { display: flex; gap: 18px; }
@@ -1064,11 +1148,13 @@
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
   <script src="../features/widget-card-key.js"></script>
+  <script src="../features/music-card-features.js"></script>
   <script src="../features/clock-styles.js"></script>
   <script src="newtab-system.js"></script>
   <script src="../features/worldclock-view.js"></script>
   <script src="../features/tradingview-fit.js"></script>
   <script src="newtab-widgets.js"></script>
+  <script src="newtab-music.js"></script>
   <script src="newtab-setup.js"></script>
   <script src="newtab-widgets-grid.js"></script>
   <script src="newtab-stacks.js"></script>

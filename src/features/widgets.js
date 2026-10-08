@@ -58,6 +58,7 @@ const ST = require('./widget-stacks'); // several same-size widgets in one place
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = lazy(() => require('./spotify-view'));
 const SW = lazy(() => require('./spotify-web'));
+const SAC = lazy(() => require('./spotify-api-card')); // the Spotify card's bigger sizes in API mode (queue, library, devices, hearts, ...)
 const AMV = lazy(() => require('./apple-music-view'));
 const AMB = lazy(() => require('./apple-music-bridge'));
 const GV = lazy(() => require('./gmail-view'));
@@ -109,6 +110,26 @@ async function engineAct(am, name, action, x, cached) {
   if (action.do === 'playnext' || action.do === 'playlater') {
     if (!(action.do === 'playnext' ? am.playNext : am.playLater)(action.kind, action.item)) throw new Error('That can’t be queued here.');
     return { notice: action.do === 'playnext' ? 'Playing next.' : 'Added to the queue.', local: true };
+  }
+  if (action.do === 'like' || action.do === 'shuffle') { // arg 1 | 0, or none to flip it
+    if (!am.command(action.do, action.arg === '1' ? true : action.arg === '0' ? false : undefined)) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'repeat') {
+    if (!am.command('repeat', action.arg || undefined)) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'volume') {
+    if (!am.command('volume', Number(action.arg))) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'etab') { // the card opened a tab: its data is asked for
+    if (!am.command('tab', action.arg)) throw new Error(`${name} can’t show that here.`);
+    return { local: true };
+  }
+  if (action.do === 'playfrom' || action.do === 'playqueue') { // a row of the album or playlist playing, or of the queue
+    if (!am.command(action.do === 'playfrom' ? 'playFrom' : 'playQueue', { index: Number(action.arg), id: action.item || undefined })) throw new Error(`${name} can’t play that row.`);
+    return { delay: 1500 };
   }
   if (action.do === 'seek') {
     if (!am.seek(action.sec)) return false;
@@ -524,7 +545,9 @@ const CONNECTORS = {
       const { images, ...data } = SV.normalizePlayback(body, x.now());
       let art = '';
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
-      return { ...data, art };
+      // The bigger sizes (the heart, the queue, the library, devices, the album playing): features/spotify-api-card.js. A failure there never costs the card its now-playing.
+      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.image }, data).catch(() => ({}));
+      return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
     present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : d),
@@ -532,6 +555,13 @@ const CONNECTORS = {
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
       if (c.mode === 'status') return x.spotifyEngine ? engineAct(x.spotifyEngine, 'Spotify', action, x, cached) : false;
+      const callIt = (m, p, b) => spotifyCall(x, c, m, p, b);
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image };
+      const bigger = await SAC.act(callIt, action, sctx);
+      if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
+        Object.assign(cached, await SAC.extras(callIt, sctx, cached).catch(() => ({})));
+        return bigger;
+      }
       const req = SV.actionRequest(action.do);
       if (!req) return false;
       let res = await spotifyCall(x, c, req.method, req.path);
@@ -1391,6 +1421,7 @@ function createWidgets(deps) {
   const recent = []; // times of recent network requests (the rate limit)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
+  const uiState = new Map(); // widget id -> what the card keeps between looks (features/spotify-api-card.js)
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
@@ -1532,6 +1563,7 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -2010,7 +2042,7 @@ function createWidgets(deps) {
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
         Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
-        for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        for (const w of list()) if (w.type === 'spotify') { cache.delete(w.id); uiState.delete(w.id); } // (a new sign-in agrees to every scope again: nothing is "missing" any more)
         await spotifyName(x, clientId); // "Connected as …" in Settings
         deps.onUpdate?.();
         return true;
@@ -2032,7 +2064,7 @@ function createWidgets(deps) {
   function spotifyDisconnect() {
     deps.setSecret('spotify', null);
     spotifyTokens.delete('spotify');
-    for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+    for (const w of list()) if (w.type === 'spotify') { cache.delete(w.id); uiState.delete(w.id); }
     deps.onUpdate?.();
     return true;
   }
@@ -2215,7 +2247,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|eshow|elists)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2248,6 +2280,35 @@ function createWidgets(deps) {
       if (!AMB.KINDS.includes(action.kind) || !AMB.ID_RE.test(action.item || '')) return { invalid: true };
     }
     if (action.do === 'esearch') action.text = AMB.clip(params.get('arg') || '', 80); // may be empty: clears the search
+    // The music card's other buttons (renderer/newtab-music.js): every argument is checked here, whichever engine gets it.
+    if (action.do === 'like' || action.do === 'shuffle') {
+      action.arg = params.get('arg');
+      if (action.arg !== null && !['0', '1'].includes(action.arg)) return { invalid: true };
+      if (action.arg === null) delete action.arg;
+    }
+    if (action.do === 'repeat') {
+      action.arg = params.get('arg');
+      if (action.arg !== null && !['off', 'all', 'one'].includes(action.arg)) return { invalid: true };
+      if (action.arg === null) delete action.arg;
+    }
+    if (action.do === 'volume') {
+      action.arg = params.get('arg');
+      if (!/^\d{1,3}$/.test(action.arg || '') || Number(action.arg) > 100) return { invalid: true };
+    }
+    if (action.do === 'etab') {
+      action.arg = params.get('arg');
+      if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
+    }
+    if (action.do === 'playfrom' || action.do === 'playqueue') { // a row's place in the list the card showed (arg), and which song it was (with), so a list that moved on is not played from
+      action.arg = params.get('arg');
+      action.item = params.get('with');
+      if (!/^\d{1,3}$/.test(action.arg || '') || (action.item !== null && !AMB.ID_RE.test(action.item))) return { invalid: true };
+      if (action.item === null) delete action.item;
+    }
+    if (action.do === 'transfer') {
+      action.arg = params.get('arg');
+      if (!SV.DEVICE_ID_RE.test(action.arg || '')) return { invalid: true };
+    }
     if (action.do === 'note') action.text = (params.get('text') || '').slice(0, LW.MAX_NOTE); // may be empty: the note was cleared
     if (action.do === 'tvinterval') {
       action.arg = params.get('arg');

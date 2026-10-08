@@ -49,7 +49,7 @@ async function engineChecks(check) {
   // ---- ready: sent at once ----
   const n = sent().length;
   e.onMessage(state());
-  check('engine: ready, next / previous / pause / seek go straight to the page', (await e.control('next')) && (await e.control('previous')) && e.seek(40) && sent().length === n + 3 && sent().at(-1).cmd === 'seek' && sent().at(-1).sec === 40, JSON.stringify(sent().slice(n)));
+  check('engine: ready, next / previous / pause / seek go straight to the page', (await e.control('next')) && (await e.control('previous')) && e.seek(40) && sent().slice(n).filter((c) => c.cmd !== 'list').length === 3 && sent().at(-1).cmd === 'seek' && sent().at(-1).sec === 40, JSON.stringify(sent().slice(n)));
 
   // ---- a new document in the view (reload, sign-in round trip): the old bridge is gone ----
   player.reload();

@@ -11,8 +11,12 @@
 const MAX_MESSAGE = 200000;
 const KINDS = ['song', 'album', 'playlist', 'station', 'artist']; // what playItem takes (an artist plays its top songs)
 const QUEUE_KINDS = ['song', 'album', 'playlist']; // what playNext and playLater take
-const CAPS = { search: true, lists: true, seek: true, queue: true }; // what this service's card can offer
-const LISTS = ['recent', 'playlists'];
+// What this service's card can offer (features/music-card-features.js has the same table by name). Lyrics are Apple's own API, for subscribers only.
+const CAPS = { search: true, lists: true, seek: true, queue: true, playNext: true, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: false };
+const LISTS = ['recent', 'playlists']; // the library lists, asked on a schedule
+const PAGE_LISTS = ['queue', 'tracks']; // asked when the card's tab is open: what is next, and the whole queue (the album or playlist playing)
+const REPEAT_MODES = ['off', 'all', 'one'];
+const MAX_TRACKS = 100;
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const STOREFRONT_RE = /^[a-z]{2}$/;
 const ART_HOST_RE = /^[a-z0-9-]+\.mzstatic\.com$/;
@@ -75,18 +79,30 @@ function parseMessage(raw) {
       title: clip(i.title, 200), artist: clip(i.artist, 120), album: clip(i.album, 120),
       art: artUrl(i.art, 160), ms: Math.round(num(i.ms, 0, 48 * 3600e3)),
     } : null;
+    const has = m.has && typeof m.has === 'object' ? m.has : {};
     return {
       t: 'state', auth: m.auth === true, state: Math.round(num(m.state, 0, 20)),
       pos: num(m.pos, 0, 48 * 3600), dur: num(m.dur, 0, 48 * 3600), item,
       store: typeof m.store === 'string' && STOREFRONT_RE.test(m.store) ? m.store : '',
+      shuffle: m.shuffle === true ? true : m.shuffle === false ? false : null,
+      repeat: REPEAT_MODES.includes(m.repeat) ? m.repeat : null,
+      volume: typeof m.volume === 'number' && Number.isFinite(m.volume) ? Math.round(Math.max(0, Math.min(1, m.volume)) * 100) / 100 : null,
+      liked: m.liked === true ? true : m.liked === false ? false : null, // (null: not known, or not a song that can be rated)
+      has: { like: has.like === true, shuffle: has.shuffle !== false, repeat: has.repeat !== false, volume: has.volume !== false },
     };
   }
   if (m.t === 'list') {
-    if (!LISTS.includes(m.kind) && m.kind !== 'search') return null;
+    if (!LISTS.includes(m.kind) && !PAGE_LISTS.includes(m.kind) && m.kind !== 'search') return null;
+    const max = m.kind === 'tracks' ? MAX_TRACKS : MAX_ITEMS;
     return {
       t: 'list', kind: m.kind, rid: Math.round(num(m.rid, 0, 1e9)), ok: m.ok === true, signedOut: m.signedOut === true,
-      items: (Array.isArray(m.items) ? m.items : []).slice(0, MAX_ITEMS).map(cleanItem).filter(Boolean),
+      why: m.ok === true ? '' : 'page', detail: '', title: clip(m.title, 120), current: Number.isInteger(m.current) && m.current >= 0 && m.current < max ? m.current : -1,
+      items: (Array.isArray(m.items) ? m.items : []).slice(0, max).map(cleanItem).filter(Boolean),
     };
+  }
+  if (m.t === 'lyrics') { // the song's words, a line each; `why`: why there are none
+    const ok = m.ok === true;
+    return { t: 'lyrics', rid: Math.round(num(m.rid, 0, 1e9)), ok, why: ok ? '' : (['signedOut', 'none', 'page'].includes(m.why) ? m.why : 'page'), lines: ok ? (Array.isArray(m.lines) ? m.lines : []).slice(0, 250).map((l) => clip(l, 200)).filter(Boolean) : [] };
   }
   return null;
 }
@@ -109,8 +125,23 @@ function cleanCommand(c) {
       return JSON.stringify({ cmd: c.cmd, kind: c.kind, id: c.id });
     }
     case 'list': {
-      if (!LISTS.includes(c.kind)) return null;
+      if (!LISTS.includes(c.kind) && !PAGE_LISTS.includes(c.kind)) return null;
       return JSON.stringify({ cmd: 'list', kind: c.kind, rid: Math.round(num(c.rid, 0, 1e9)) });
+    }
+    case 'like': case 'shuffle': {
+      if (typeof c.on !== 'boolean') return null;
+      return JSON.stringify({ cmd: c.cmd, on: c.on });
+    }
+    case 'repeat': return REPEAT_MODES.includes(c.mode) ? JSON.stringify({ cmd: 'repeat', mode: c.mode }) : null;
+    case 'volume': {
+      if (typeof c.level !== 'number' || !Number.isFinite(c.level) || c.level < 0 || c.level > 1) return null;
+      return JSON.stringify({ cmd: 'volume', level: Math.round(c.level * 100) / 100 });
+    }
+    case 'lyrics': return JSON.stringify({ cmd: 'lyrics', rid: Math.round(num(c.rid, 0, 1e9)) });
+    case 'playQueue': case 'playFrom': {
+      if (!Number.isInteger(c.index) || c.index < 0 || c.index >= (c.cmd === 'playQueue' ? 100 : MAX_TRACKS)) return null;
+      if (c.id !== undefined && (typeof c.id !== 'string' || !ID_RE.test(c.id))) return null; // (the song the card showed there: the page checks it is still there)
+      return JSON.stringify(c.id === undefined ? { cmd: c.cmd, index: c.index } : { cmd: c.cmd, index: c.index, id: c.id });
     }
     case 'search': {
       const term = clip(c.term, 80);
@@ -126,7 +157,7 @@ function cleanCommand(c) {
 function toCard(m, now, art = '') {
   const kind = playbackKind(m.state);
   if (kind === 'seeking') return null;
-  const base = { mode: 'status', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: now, source: 'engine', kind: 'none', reason: '', art: '' };
+  const base = { mode: 'status', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: now, source: 'engine', kind: 'none', reason: '', art: '', liked: m.liked, shuffle: m.shuffle, repeat: m.repeat, volume: m.volume };
   if (!m.item || kind === 'idle') return { ...base, state: 'idle' };
   const durationMs = m.dur > 0 ? Math.round(m.dur * 1000) : m.item.ms;
   const progress = Math.round(m.pos * 1000);
@@ -141,7 +172,7 @@ function toCard(m, now, art = '') {
 // at three fixed paths (the storefront is checked to be two letters; the search term travels as a parameter, not in the path).
 const BRIDGE_SOURCE = `(function () {
   var OUT = 'lumen-engine-out', IN = 'lumen-engine-in';
-  var KINDS = ${JSON.stringify(KINDS)}, QUEUE = ${JSON.stringify(QUEUE_KINDS)}, LISTS = ${JSON.stringify(LISTS)};
+  var KINDS = ${JSON.stringify(KINDS)}, QUEUE = ${JSON.stringify(QUEUE_KINDS)}, LISTS = ${JSON.stringify(LISTS)}, PAGE_LISTS = ${JSON.stringify(PAGE_LISTS)};
   var ID = /^[A-Za-z0-9._-]{1,64}$/, STORE = /^[a-z]{2}$/;
   var mk = null, lastProgress = 0;
   function out(o) { try { document.dispatchEvent(new CustomEvent(OUT, { detail: JSON.stringify(o) })); } catch (e) {} }
@@ -151,9 +182,37 @@ const BRIDGE_SOURCE = `(function () {
     if (!i) return null;
     return { id: String(i.id || ''), type: String(i.type || ''), title: String(i.title || ''), artist: String(i.artistName || ''), album: String(i.albumName || ''), art: String(i.artworkURL || (i.artwork && i.artwork.url) || ''), ms: num(i.playbackDuration) };
   }
+  // Songs can be loved (a rating of 1): the catalog's or the library's. liked.id is the song the answer belongs to, liked.value: true | false | null (not known yet).
+  var liked = { id: '', value: null };
+  function songType(i) {
+    var t = String((i && i.type) || '');
+    return t === 'song' || t === 'songs' ? 'songs' : t === 'library-songs' ? 'library-songs' : '';
+  }
+  function ratable() { var i = mk && mk.nowPlayingItem; return Boolean(i && mk.isAuthorized && songType(i) && ID.test(String(i.id || ''))); }
+  function refreshLiked() {
+    if (!ratable()) { liked = { id: '', value: null }; return; }
+    var i = mk.nowPlayingItem, id = String(i.id);
+    if (liked.id === id) return;
+    liked = { id: id, value: null };
+    mk.api.music('/v1/me/ratings/' + songType(i) + '/' + id).then(function (r) {
+      var d = r && r.data && r.data.data && r.data.data[0];
+      if (liked.id === id) { liked.value = Boolean(d && d.attributes && d.attributes.value === 1); snapshot(); }
+    }, function () { if (liked.id === id) { liked.value = false; snapshot(); } }); // (no rating yet answers 404: not loved)
+  }
   function snapshot() {
     if (!mk) return;
-    out({ t: 'state', auth: Boolean(mk.isAuthorized), state: num(mk.playbackState), pos: num(mk.currentPlaybackTime), dur: num(mk.currentPlaybackDuration), item: item(), store: String(mk.storefrontId || '') });
+    refreshLiked();
+    out({ t: 'state', auth: Boolean(mk.isAuthorized), state: num(mk.playbackState), pos: num(mk.currentPlaybackTime), dur: num(mk.currentPlaybackDuration), item: item(), store: String(mk.storefrontId || ''),
+      shuffle: mk.shuffleMode === 1, repeat: mk.repeatMode === 1 ? 'one' : mk.repeatMode === 2 ? 'all' : 'off', volume: typeof mk.volume === 'number' ? mk.volume : null,
+      liked: ratable() ? liked.value : null, has: { like: ratable(), shuffle: true, repeat: true, volume: typeof mk.volume === 'number' } });
+  }
+  function setLike(on) {
+    if (!ratable()) return;
+    var i = mk.nowPlayingItem, id = String(i.id), path = '/v1/me/ratings/' + songType(i) + '/' + id;
+    var call = on ? mk.api.music(path, {}, { fetchOptions: { method: 'PUT', body: JSON.stringify({ type: 'rating', attributes: { value: 1 } }) } }) : mk.api.music(path, {}, { fetchOptions: { method: 'DELETE' } });
+    liked = { id: id, value: on };
+    snapshot();
+    call.catch(function (e) { liked = { id: '', value: null }; fail(e); refreshLiked(); });
   }
   function fail(e) { out({ t: 'error', message: String((e && (e.message || e.errorCode)) || e || 'error') }); }
   function map(data) {
@@ -169,6 +228,57 @@ const BRIDGE_SOURCE = `(function () {
     }, function (e) {
       out({ t: 'list', kind: kind, rid: rid, ok: false, signedOut: !mk.isAuthorized || (e && (e.status === 403 || e.status === 401)), items: [] });
     });
+  }
+  // The player's queue: [{ id, type, title, sub, ms, art }] from a position; an id the card cannot use becomes q + the position so that none is dropped.
+  function queueItems(from) {
+    var all = (mk.queue && mk.queue.items) || [], res = [];
+    for (var n = from; n < all.length && res.length < ${MAX_TRACKS}; n++) {
+      var m = all[n] || {}, id = String(m.id || '');
+      res.push({ id: ID.test(id) ? id : 'q' + n, type: 'songs', title: String(m.title || 'Untitled'), sub: String(m.artistName || ''), ms: num(m.playbackDuration), art: String(m.artworkURL || (m.artwork && m.artwork.url) || '') });
+    }
+    return res;
+  }
+  function position() { return typeof mk.nowPlayingItemIndex === 'number' && mk.nowPlayingItemIndex >= 0 ? mk.nowPlayingItemIndex : -1; }
+  function pageList(kind, rid) {
+    var pos = position();
+    if (kind === 'queue') { out({ t: 'list', kind: 'queue', rid: rid, ok: true, items: queueItems(pos + 1) }); return; }
+    var items = queueItems(0), album = items.length && mk.nowPlayingItem ? String(mk.nowPlayingItem.albumName || '') : '';
+    out({ t: 'list', kind: 'tracks', rid: rid, ok: true, title: album, current: pos < items.length ? pos : -1, items: items });
+  }
+  // A queue position the card pointed at (index in what it listed, the song's id): only when that song is still there.
+  function playAt(abs, id) {
+    var all = (mk.queue && mk.queue.items) || [], m = all[abs];
+    if (!m || (id && String(m.id || '') !== id && 'q' + abs !== id)) { fail(new Error('The queue changed. Look again.')); return; }
+    mk.changeToMediaAtIndex(abs).then(function () { return mk.play(); }).catch(fail);
+  }
+  // Lyrics (Apple's API, subscribers): TTML text, one line per <p>. Plain text out; tags and entities removed without a pattern.
+  function ttmlLines(ttml) {
+    var lines = [], at = 0, text = String(ttml || '');
+    while (lines.length < 250) {
+      var open = text.indexOf('<p', at);
+      if (open < 0) break;
+      var tagEnd = text.indexOf('>', open), close = text.indexOf('</p>', tagEnd);
+      if (tagEnd < 0 || close < 0) break;
+      var raw = text.slice(tagEnd + 1, close), plain = '', inTag = false;
+      for (var k = 0; k < raw.length; k++) { var ch = raw.charAt(k); if (ch === '<') inTag = true; else if (ch === '>') inTag = false; else if (!inTag) plain += ch; }
+      plain = plain.split('&amp;').join('&').split('&lt;').join('<').split('&gt;').join('>').split('&quot;').join('"').split('&apos;').join(String.fromCharCode(39)).split('&#39;').join(String.fromCharCode(39));
+      if (plain.trim()) lines.push(plain.trim());
+      at = close + 4;
+    }
+    return lines;
+  }
+  function lyrics(rid) {
+    var i = mk.nowPlayingItem;
+    if (!i) { out({ t: 'lyrics', rid: rid, ok: false, why: 'none', lines: [] }); return; }
+    if (!mk.isAuthorized) { out({ t: 'lyrics', rid: rid, ok: false, why: 'signedOut', lines: [] }); return; }
+    var pp = (i.attributes && i.attributes.playParams) || {}, id = String(pp.catalogId || pp.id || i.id || '');
+    var store = String(mk.storefrontId || 'us');
+    if (!STORE.test(store)) store = 'us';
+    if (!ID.test(id)) { out({ t: 'lyrics', rid: rid, ok: false, why: 'none', lines: [] }); return; }
+    mk.api.music('/v1/catalog/' + store + '/songs/' + id + '/lyrics').then(function (r) {
+      var d = r && r.data && r.data.data && r.data.data[0], lines = ttmlLines(d && d.attributes && d.attributes.ttml);
+      out({ t: 'lyrics', rid: rid, ok: lines.length > 0, why: lines.length ? '' : 'none', lines: lines });
+    }, function (e) { out({ t: 'lyrics', rid: rid, ok: false, why: e && (e.status === 401 || e.status === 403) ? 'signedOut' : 'none', lines: [] }); });
   }
   function playArtist(id) {
     var store = String(mk.storefrontId || 'us');
@@ -210,14 +320,21 @@ const BRIDGE_SOURCE = `(function () {
           (c.cmd === 'playNext' ? mk.playNext(qq) : mk.playLater(qq)).catch(fail);
           break;
         }
-        case 'list': if (LISTS.indexOf(c.kind) >= 0) list(c.kind, num(c.rid)); break;
+        case 'list': if (LISTS.indexOf(c.kind) >= 0) list(c.kind, num(c.rid)); else if (PAGE_LISTS.indexOf(c.kind) >= 0) pageList(c.kind, num(c.rid)); break;
+        case 'like': if (typeof c.on === 'boolean') setLike(c.on); break;
+        case 'shuffle': if (typeof c.on === 'boolean') { mk.shuffleMode = c.on ? 1 : 0; snapshot(); } break;
+        case 'repeat': if (c.mode === 'off' || c.mode === 'all' || c.mode === 'one') { mk.repeatMode = c.mode === 'one' ? 1 : c.mode === 'all' ? 2 : 0; snapshot(); } break;
+        case 'volume': if (typeof c.level === 'number' && c.level >= 0 && c.level <= 1) { mk.volume = c.level; snapshot(); } break;
+        case 'lyrics': lyrics(num(c.rid)); break;
+        case 'playQueue': if (typeof c.index === 'number' && c.index >= 0) playAt(position() + 1 + c.index, typeof c.id === 'string' ? c.id : ''); break;
+        case 'playFrom': if (typeof c.index === 'number' && c.index >= 0) playAt(c.index, typeof c.id === 'string' ? c.id : ''); break;
         case 'search': if (typeof c.term === 'string' && c.term) search(c.term.slice(0, 80), num(c.rid)); break;
       }
     } catch (e) { fail(e); }
   }
   function hook(m) {
     mk = m;
-    ['nowPlayingItemDidChange', 'playbackStateDidChange', 'playbackDurationDidChange', 'authorizationStatusDidChange', 'storefrontIdDidChange'].forEach(function (ev) { try { m.addEventListener(ev, snapshot); } catch (e) {} });
+    ['nowPlayingItemDidChange', 'playbackStateDidChange', 'playbackDurationDidChange', 'authorizationStatusDidChange', 'storefrontIdDidChange', 'shuffleModeDidChange', 'repeatModeDidChange', 'volumeDidChange'].forEach(function (ev) { try { m.addEventListener(ev, snapshot); } catch (e) {} });
     try { m.addEventListener('playbackProgressDidChange', function () { var t = Date.now(); if (t - lastProgress > 4000) { lastProgress = t; snapshot(); } }); } catch (e) {}
     try { m.addEventListener('mediaPlaybackError', fail); } catch (e) {}
     out({ t: 'ready' });
@@ -234,4 +351,4 @@ const BRIDGE_SOURCE = `(function () {
   }, 500);
 })();`;
 
-module.exports = { MAX_MESSAGE, KINDS, QUEUE_KINDS, CAPS, LISTS, ID_RE, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };
+module.exports = { MAX_MESSAGE, KINDS, QUEUE_KINDS, CAPS, LISTS, PAGE_LISTS, REPEAT_MODES, MAX_TRACKS, ID_RE, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };
