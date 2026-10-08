@@ -399,6 +399,21 @@ Find which posts beat their own account's normal. Pure local math: it makes no r
 | `posts` | object[] | yes | `{ url, account?, format?, views?, likes?, replies?, reposts?, comments?, shares?, date? }` |
 | `metric` | `views`, `engagement`, `auto` |  | `views` for video, `engagement` (likes + replies + reposts + comments + shares) for text; `auto` (default) uses views when most rows have them. |
 
+### `find_sources`
+
+Search scholarly databases at once: OpenAlex, Crossref, Semantic Scholar, arXiv and PubMed (free, no key; nothing about the user is sent, only the query). Results are merged and deduped by DOI or title, ranked by how many databases agree, and each has authors, year, venue, DOI, an open-access PDF link (OpenAlex's best open-access location, or the preprint / PubMed Central copy), a citation count where the database has one, an abstract snippet and a `[type, year, citations, retraction]` label. A retracted work reads `RETRACTED per <database>`. A database that is rate limited, slow or offline is named in the answer and the others still answer; with all of them offline the answer says so. Repeated identical searches within ten minutes come from memory. `related` with `doi` follows one paper: `cited_by` lists who cites it (most cited first), `references` what it cites. In the sidebar chat the results are numbered `S1`, `S2`, ... for `research_board`. Read-only; in a chat that has read page content the search asks first, like `web_search`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `query` | string | yes (unless `related`) | Keywords; arXiv terms are ANDed. |
+| `from_year`, `to_year` | integer |  | Publication years, inclusive. |
+| `open_access` | boolean |  | Only works with a free full text. |
+| `limit` | integer |  | 1 to 20, default 8. |
+| `related` | `cited_by`, `references` |  | Snowball from one paper. |
+| `doi` | string |  | The paper for `related`. |
+
+The sidebar chat also has `research_board` (not listed to MCP clients: it is the chat's own source list, saved with the chat): `add` (ids from `find_sources`, or `url` / `title` / `authors` / `year` / `venue` of a page it read; `url: "current"` captures the tab's own metadata), `quote` (pin an exact quote; it is checked against the page or PDF text the AI read in that chat and marked verified or not found, with the heading or page and a link to the passage), `star`, `remove` (never a source the user added), `list` and `cite` (`apa`, `mla`, `chicago`, `ieee`, `bibtex`, `ris`).
+
 ### `run_macro`
 
 Run one of the user's saved macros (Settings → Macros: [docs/macros.md](macros.md)) by name. `list: true`, or no name, returns the names with their descriptions, the variables they ask for and any site they are limited to. The macro's steps run as the same tools listed here (`click`, `type_text`, `navigate`, `press_key`, `wait_for`, `scroll`, `switch_tab`, `open_tab`, `close_tab`), so every approval the AI's own steps need still applies: the first click or typing on a new site asks, and a step that clicks a submit, buy, send, post or delete control, or presses Enter to submit, asks again with a card naming the step. A macro that has an "Ask AI" step or uses `{{clipboard}}` is not run by an agent at all. Hands-off mode, a site where the user turned AI off and a tab kept off-limits refuse it like any acting tool. A failed step is an error naming the step and the reason.

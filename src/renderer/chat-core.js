@@ -1151,6 +1151,8 @@ const TOOL_LABELS = {
   get_network: () => t('tool.get_network'),
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
+  find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
@@ -1208,6 +1210,7 @@ function flushStreaming(el) {
 // `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
 function decorateCode(root, { colour = false } = {}) {
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
+  window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });

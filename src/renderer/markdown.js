@@ -356,7 +356,8 @@
       if (s[i] === '[') {
         const close = s.indexOf('](', i);
         const label = close > i ? s.slice(i + 1, close) : '';
-        if (label && !label.includes('[') && !label.includes(']')) {
+        // [[3]](url) is a numbered citation: the label keeps its brackets (/research answers); any other nested bracket is not a link
+        if (label && (/^\[\d{1,3}\]$/.test(label) || (!label.includes('[') && !label.includes(']')))) {
           const url = scanUrl(s, close + 2, true);
           if (url && s[close + 2 + url.length] === ')') {
             flush();
