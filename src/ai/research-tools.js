@@ -104,7 +104,7 @@ async function findSources(input, { chat = null, signal, fetchImpl, limiter, sle
 const num = (id) => Number(String(id).replace(/^\[|\]$/g, '').replace(/^[a-z]/i, ''));
 const line = (s) => {
   const who = s.authors.slice(0, 2).map((a) => a.literal || a.family).join(', ') + (s.authors.length > 2 ? ' et al.' : '');
-  return `[${s.n}] ${s.title}${who ? ` — ${who}` : ''}${s.year ? ` (${s.year})` : ''} ${quality.shortLabel(s)}${s.retracted ? ' WARNING: this work is retracted, do not rely on it.' : ''}`;
+  return `[${s.n}] ${s.title}${who ? ` — ${who}` : ''}${s.year ? ` (${s.year})` : ''} ${quality.shortLabel(s)}${s.retracted ? ' WARNING: this work is retracted, do not rely on it.' : s.retractionFlag?.length ? ' NOTE: unconfirmed retraction flag (Crossref does not confirm); check the publisher\'s page.' : ''}`;
 };
 
 // Runs one research_board call. deps: { chat, board (the chat's board), changed(board), capture(): raw page facts | null (the task's tab),

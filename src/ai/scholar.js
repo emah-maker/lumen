@@ -89,7 +89,7 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 // A work: { title, authors[{family,given}|{literal}], year, month, day, venue, doi, url, pdfUrl, citations, abstract, type, volume,
 // issue, pages, publisher, retracted, retractionNotice, ids: {...}, from: [api] }. Missing fields are '' / null / [], never invented.
 
-const base = (api) => ({ title: '', authors: [], year: null, month: null, day: null, venue: '', doi: '', url: '', pdfUrl: '', oaUrl: '', retractedBy: [], citations: null, abstract: '', type: '', volume: '', issue: '', pages: '', publisher: '', retracted: false, retractionNotice: false, ids: {}, from: [api] });
+const base = (api) => ({ title: '', authors: [], year: null, month: null, day: null, venue: '', doi: '', url: '', pdfUrl: '', oaUrl: '', retractedBy: [], retractionFlag: [], concern: false, corrected: false, citations: null, abstract: '', type: '', volume: '', issue: '', pages: '', publisher: '', retracted: false, retractionNotice: false, ids: {}, from: [api] });
 
 function invertedIndexText(index) {
   if (!index || typeof index !== 'object') return '';
@@ -123,8 +123,8 @@ function parseOpenAlex(json) {
     w.volume = clean(r.biblio?.volume);
     w.issue = clean(r.biblio?.issue);
     w.pages = r.biblio?.first_page ? (r.biblio.last_page && r.biblio.last_page !== r.biblio.first_page ? `${r.biblio.first_page}-${r.biblio.last_page}` : String(r.biblio.first_page)) : '';
-    w.retracted = r.is_retracted === true;
-    if (w.retracted) w.retractedBy = ['OpenAlex'];
+    // OpenAlex's is_retracted has false positives (e.g. the Lancet 2020 dementia report): only a flag until Crossref confirms.
+    if (r.is_retracted === true) w.retractionFlag = ['OpenAlex'];
     w.ids.openalex = clean(r.id).replace('https://openalex.org/', '');
     return w;
   }).filter((w) => w.title);
@@ -136,6 +136,28 @@ function crDate(item) {
   return Array.isArray(parts) ? { year: num(parts[0]), month: num(parts[1]), day: num(parts[2]) } : { year: null, month: null, day: null };
 }
 const RETRACT_TYPES = new Set(['retraction', 'withdrawal', 'removal']);
+const CONCERN_TYPES = new Set(['expression_of_concern', 'partial_retraction']);
+const CORRECTION_TYPES = new Set(['correction', 'corrigendum', 'erratum', 'addendum', 'clarification']);
+const updType = (u) => String(u?.type || '').toLowerCase().replace(/[\s-]+/g, '_');
+// Crossref records post-publication notices as updated-by (on the original: [{ DOI: notice, type, source: 'publisher' | 'retraction-watch' }])
+// and update-to (on the notice: [{ DOI: original, type }]). A retraction is CONFIRMED when Retraction Watch's data (source
+// 'retraction-watch') says so, or the record's own title is marked "RETRACTED:". A retraction that only the publisher's own
+// deposit asserts is not: Elsevier's 2023 notice 10.1016/s2468-2667(23)00083-x lists the unretracted Lancet dementia report
+// as retracted, so that stays an unconfirmed flag. Expression of concern and corrections are separate, softer notices.
+function crossrefNotices(r, title) {
+  const by = (Array.isArray(r['updated-by']) ? r['updated-by'] : []).filter((u) => u && typeof u === 'object');
+  const retr = by.filter((u) => RETRACT_TYPES.has(updType(u)));
+  const confirmed = retr.some((u) => /retraction.?watch/i.test(String(u.source || ''))) || /^\s*retracted\b[:\s]/i.test(crTitle(r.title));
+  const toNotice = (Array.isArray(r['update-to']) ? r['update-to'] : []).some((u) => RETRACT_TYPES.has(updType(u))) || /^\s*(retraction|withdrawal)( notice| note)?\b[:\s]/i.test(title);
+  return {
+    retracted: confirmed,
+    retractedBy: confirmed ? ['Crossref'] : [],
+    retractionFlag: !confirmed && retr.length ? ['Crossref (publisher notice only)'] : [],
+    retractionNotice: !confirmed && toNotice,
+    concern: by.some((u) => CONCERN_TYPES.has(updType(u))),
+    corrected: by.some((u) => CORRECTION_TYPES.has(updType(u))),
+  };
+}
 function parseCrossref(json) {
   const rows = Array.isArray(json?.message?.items) ? json.message.items : Array.isArray(json?.message) ? json.message : json?.message?.DOI ? [json.message] : [];
   return rows.map((r) => {
@@ -156,9 +178,7 @@ function parseCrossref(json) {
     w.issue = clean(r.issue);
     w.pages = clean(r.page || r['article-number']).replace(/--?/g, '-');
     w.publisher = clean(r.publisher);
-    w.retracted = (r['updated-by'] || []).some((u) => RETRACT_TYPES.has(String(u.type).toLowerCase())) || /^\s*retracted\b[:\s]/i.test(crTitle(r.title));
-    if (w.retracted) w.retractedBy = ['Crossref'];
-    w.retractionNotice = !w.retracted && ((r['update-to'] || []).some((u) => RETRACT_TYPES.has(String(u.type).toLowerCase())) || /^\s*(retraction|withdrawal)( notice| note)?\b[:\s]/i.test(w.title));
+    Object.assign(w, crossrefNotices(r, w.title));
     return w;
   }).filter((w) => w.title);
 }
@@ -234,9 +254,8 @@ function parsePubmed(searchJson, summaryJson) {
     w.pdfUrl = pmc ? `https://pmc.ncbi.nlm.nih.gov/articles/${pmc}/pdf/` : '';
     w.type = 'journal-article';
     w.citations = null; // PubMed has no counts (pmcrefcount is PMC-only citing articles, a different number)
-    w.retracted = (r.pubtype || []).some((t) => /^retracted publication$/i.test(t));
-    if (w.retracted) w.retractedBy = ['PubMed'];
-    w.retractionNotice = !w.retracted && (r.pubtype || []).some((t) => /^retraction of publication$/i.test(t));
+    if ((r.pubtype || []).some((t) => /^retracted publication$/i.test(t))) w.retractionFlag = ['PubMed'];
+    w.retractionNotice = !w.retractionFlag.length && (r.pubtype || []).some((t) => /^retraction of publication$/i.test(t));
     w.ids.pmid = String(r.uid);
     return w;
   }).filter((w) => w.title);
@@ -259,6 +278,9 @@ function mergeInto(into, w) {
   into.retracted = into.retracted || w.retracted;
   into.retractedBy = [...new Set([...(into.retractedBy || []), ...(w.retractedBy || [])])];
   into.retractionNotice = into.retractionNotice || w.retractionNotice;
+  into.retractionFlag = [...new Set([...(into.retractionFlag || []), ...(w.retractionFlag || [])])];
+  into.concern = into.concern || w.concern;
+  into.corrected = into.corrected || w.corrected;
   Object.assign(into.ids, w.ids);
   for (const f of w.from) if (!into.from.includes(f)) into.from.push(f);
   // A DOI that is the preprint's own (arXiv) does not make a journal article of it, but a journal type from any API wins over "preprint".
@@ -293,6 +315,7 @@ function mergeWorks(lists) {
 
 function finish(w) {
   const out = { ...w, abstract: w.abstract ? (w.abstract.length > ABSTRACT_CHARS ? `${w.abstract.slice(0, ABSTRACT_CHARS - 1).trimEnd()}…` : w.abstract) : '' };
+  if (out.retracted) out.retractionFlag = []; // confirmed: the unconfirmed flags are moot
   if (!out.url && out.doi) out.url = `https://doi.org/${out.doi}`;
   out.kind = quality.kindOf(out);
   return out;
@@ -414,6 +437,23 @@ const SEARCHERS = {
   },
 };
 
+// An OpenAlex / PubMed retraction flag on a work Crossref did not return: ask Crossref about that DOI directly, so a real
+// retraction (Retraction Watch) is still confirmed and a false flag stays amber. At most 3 lookups, own budget, failures ignored.
+async function confirmFlags(works, net) {
+  const todo = works.filter((w) => w.doi && !w.retracted && w.retractionFlag?.length && !w.from.includes('crossref')).slice(0, 3);
+  const lookNet = { ...net, budget: { crossref: 3 } };
+  await Promise.all(todo.map(async (w) => {
+    try {
+      const [c] = parseCrossref(await request('crossref', `https://api.crossref.org/works/${enc(w.doi)}`, lookNet));
+      if (!c) return;
+      const flags = w.retractionFlag;
+      mergeInto(w, c);
+      w.retractionFlag = w.retracted ? [] : [...new Set([...flags, ...c.retractionFlag])];
+      w.retractionNotice = w.retractionNotice && !w.retracted;
+    } catch { /* Crossref unreachable or unknown DOI: the flag stays unconfirmed */ }
+  }));
+}
+
 const cache = new Map();
 const cacheGet = (key, now) => { const hit = cache.get(key); if (hit && now - hit.at < CACHE_MS) return hit.value; cache.delete(key); return null; };
 const cachePut = (key, value, now) => { cache.set(key, { at: now, value }); if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value); };
@@ -442,6 +482,7 @@ async function find(input = {}, deps = {}) {
   const failed = Object.keys(errors);
   const offline = failed.length === apis.length && apis.length > 0 && failed.every((a) => /offline|no network/.test(errors[a]));
   const merged = postFilter(mergeWorks(lists.map((l) => postFilter(l, { from, to, oaOnly: false }))), { from, to, oaOnly });
+  await confirmFlags(merged.slice(0, limit), net);
   const out = { results: merged.slice(0, limit), errors, searched: apis, offline, total: merged.length };
   if (!failed.length) cachePut(key, out, now); // a partial answer is not remembered: ask again soon, the API may be back
   return out;
@@ -507,7 +548,9 @@ function describe(results, ids, { errors = {}, offline = false, related: rel, to
   });
   const problems = Object.entries(errors).map(([api, why]) => `${API_LABEL[api] || api}: ${why}`);
   const notes = [];
-  if (results.some((w) => w.retracted)) notes.push('RETRACTED flags come from OpenAlex, Crossref or PubMed (the database named in the label of the paper in the board); confirm on the publisher\'s page before telling the user, and never rely on a retracted paper.');
+  if (results.some((w) => w.retracted)) notes.push('RETRACTED means Crossref confirms the retraction (Retraction Watch data); still confirm on the publisher\'s page before telling the user, and never rely on a retracted paper.');
+  if (results.some((w) => !w.retracted && w.retractionFlag?.length)) notes.push('"RETRACTION FLAG, UNCONFIRMED" means only OpenAlex or PubMed says retracted and Crossref does not confirm; these flags are often false. Do not call the paper retracted: tell the user it is flagged but unconfirmed and to check the publisher\'s page.');
+  if (results.some((w) => w.concern || w.corrected)) notes.push('Crossref lists an expression of concern or a correction on some papers (see the label): mention it, and note it is not a retraction.');
   if (offline) notes.push('No scholarly database could be reached (offline?). Say so; do not make up papers.');
   else if (problems.length) notes.push(`Not available this time: ${problems.join('; ')}.`);
   if (!results.length && !offline) notes.push('No matches. Try fewer or different keywords, or drop the year filter.');

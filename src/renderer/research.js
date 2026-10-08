@@ -37,7 +37,13 @@
     const text = T(key, { n: c.n ?? '' });
     return text === key ? c.text : text;
   };
-  const chips = (list) => h('div', { className: 'rs-chips' }, ...(list || []).map((c) => h('span', { className: `rs-chip ${c.tone || 'info'}`, textContent: chipText(c), title: chipText(c) })));
+  const chipTip = (c) => {
+    if (!c.tipId) return chipText(c);
+    const key = `research.chip.${c.tipId}`;
+    const text = T(key, { n: c.n ?? '' });
+    return text === key ? c.tip || chipText(c) : text;
+  };
+  const chips = (list) => h('div', { className: 'rs-chips' }, ...(list || []).map((c) => h('span', { className: `rs-chip ${c.tone || 'info'}`, textContent: chipText(c), title: chipTip(c) })));
   const names = (authors) => {
     const list = (authors || []).map((a) => a.literal || [a.given, a.family].filter(Boolean).join(' ')).filter(Boolean);
     return list.length > 3 ? `${list.slice(0, 3).join(', ')} ${T('research.etal')}` : list.join(', ');

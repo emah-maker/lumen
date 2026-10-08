@@ -72,6 +72,8 @@ function cleanSource(input, { by = 'ai', now = Date.now() } = {}) {
     citations: Number.isInteger(s.citations) && s.citations >= 0 ? s.citations : null,
     retracted: s.retracted === true, retractionNotice: s.retractionNotice === true,
     retractedBy: (Array.isArray(s.retractedBy) ? s.retractedBy : []).filter((x) => ['OpenAlex', 'Crossref', 'PubMed'].includes(x)),
+    retractionFlag: (Array.isArray(s.retractionFlag) ? s.retractionFlag : []).filter((x) => ['OpenAlex', 'PubMed', 'Crossref (publisher notice only)'].includes(x)),
+    concern: s.concern === true, corrected: s.corrected === true,
     accessed: /^\d{4}-\d{2}-\d{2}$/.test(String(s.accessed || '')) ? s.accessed : '',
     type: line(s.type, 40), workType: line(s.workType, 40), venueType: line(s.venueType, 40),
   };
@@ -128,6 +130,9 @@ function addSource(board, input, { by = 'ai', now = Date.now() } = {}) {
     }
     dup.retracted = dup.retracted || s.retracted;
     dup.retractionNotice = dup.retractionNotice || s.retractionNotice;
+    dup.retractionFlag = [...new Set([...(dup.retractionFlag || []), ...(s.retractionFlag || [])])];
+    dup.concern = dup.concern || s.concern;
+    dup.corrected = dup.corrected || s.corrected;
     if (s.citations !== null && (dup.citations === null || s.citations > dup.citations)) dup.citations = s.citations;
     return { source: dup, added: false };
   }
