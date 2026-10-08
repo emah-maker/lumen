@@ -120,11 +120,11 @@ function normalize(input, scale = null) {
   return out;
 }
 
-// Which way a call is drawn: 'pdf' (the PDF viewer's frame), 'overlay' (the page), or 'screenshot' (marks on a picture of
-// the tab). `failed`: the overlay was tried and could not be put in the page.
-function choosePath({ pdf = false, failed = false } = {}) {
-  if (failed) return 'screenshot';
-  return pdf ? 'pdf' : 'overlay';
+// Which way a call is drawn: 'overlay' (over the page; Lumen's PDF viewer is a page too), or 'screenshot' (marks on a picture of
+// the tab: Chrome's own PDF viewer, which no script can reach, or a page the overlay could not be put in). `failed`: the overlay
+// was tried and could not be put in the page.
+function choosePath({ chromePdf = false, failed = false } = {}) {
+  return failed || chromePdf ? 'screenshot' : 'overlay';
 }
 
 // ---------- the overlay ----------
@@ -309,7 +309,7 @@ function overlayMain(spec, env) {
   // anchor -> { rects(): [] | null, tok?, frozen: anchor }
   const resolve = (a) => {
     if (!a) return null;
-    if (a.tok) { const t = a.tok; return { rects: () => { const r = space.locate(t); return r ? [r] : null; }, frozen: a }; }
+    if (a.tok) { const t = a.tok; return { rects: () => { const r = space.locate(t); return r ? [r] : null; }, frozen: a, scroll: space.reveal ? () => space.reveal(t) : undefined }; }
     if (a.box) { const tok = space.capture(a.box); return { rects: () => { const r = space.locate(tok); return r ? [r] : null; }, frozen: { tok: { ...tok } } }; }
     if (a.ref) { const rects = () => refRects(a.ref); if (!rects()) return null; return { rects, frozen: a, scroll: () => { const e = win.__claudeEls[a.ref - 1].el; if (e.scrollIntoView) e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } }; }
     if (a.text) { const hit = findText(a.text); if (!hit) return null; return { rects: hit.rects, frozen: a, scroll: () => { if (hit.node.scrollIntoView) hit.node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } }; }
@@ -424,7 +424,7 @@ function overlayMain(spec, env) {
     const c = colorOf(m.color, m.type);
     const rnd = makeRng(state.seed * 131 + index * 977 + m.type.length);
     state.seed++;
-    const delay = Math.min(index, 8) * 140;
+    const delay = Math.min(index, 5) * 110;
     const parts = [];
     const add = (tag, attrs, layer) => { const e = el(tag, attrs, layer || board.markLayer); parts.push(e); return e; };
     // A hand-drawn stroke: a halo underneath (so it reads on any background) and the colour on top.
@@ -619,47 +619,40 @@ function overlayMain(spec, env) {
 }
 
 // ---------- the PDF viewer's space ----------
-// Runs inside the PDF viewer's frame (pdf-zoom.js viewerFrame), where the viewer's viewport is. A box of the screen is kept as
-// page number + position on that page (in the page's own units, before zoom), so a mark follows scroll and zoom. null when the
-// viewer's viewport is out of reach.
-function pdfSpace(win, doc) {
-  const deep = (root, tag) => {
-    for (const e of root.querySelectorAll('*')) {
-      if (e.tagName === tag) return e;
-      if (e.shadowRoot) { const hit = deep(e.shadowRoot, tag); if (hit) return hit; }
-    }
-    return null;
-  };
-  const viewer = doc.querySelector('pdf-viewer') || deep(doc, 'PDF-VIEWER');
-  const vp = viewer && (viewer.viewport_ || viewer.viewport);
-  if (!vp || !vp.position || !Array.isArray(vp.pageDimensions_) || !vp.pageDimensions_.length) return null;
-  const zoom = () => (typeof vp.getZoom === 'function' ? vp.getZoom() : vp.zoom) || 1;
+// Lumen's PDF viewer (features/pdf-viewer.js) is an ordinary page: each PDF page is an element (#viewer .page[data-page-number]),
+// so a box of the screen is kept as a page number and fractions of that page's box. A mark then follows scroll and zoom (the
+// page element changes size and place; the fractions do not). Text and element targets work as on any page (the text layer).
+function viewerSpace(win, doc) {
+  const pageEl = (n) => doc.querySelector(`#viewer .page[data-page-number="${Number(n)}"]`);
   return {
     capture(b) {
-      const z = zoom(), pos = vp.position, dims = vp.pageDimensions_;
-      const cx = (b.x + b.w / 2 + pos.x) / z, cy = (b.y + b.h / 2 + pos.y) / z;
-      let page = 0;
-      for (let i = 0; i < dims.length; i++) if (dims[i].y <= cy) page = i;
-      const d = dims[page];
-      return { page, x: (b.x + pos.x) / z - d.x, y: (b.y + pos.y) / z - d.y, w: b.w / z, h: b.h / z };
+      const cy = b.y + b.h / 2;
+      let best = null, bestGap = Infinity;
+      for (const el of doc.querySelectorAll('#viewer .page')) {
+        const r = el.getBoundingClientRect();
+        const gap = cy < r.top ? r.top - cy : cy > r.bottom ? cy - r.bottom : 0;
+        if (gap < bestGap) { bestGap = gap; best = el; }
+      }
+      if (!best) return { page: 0, fx: 0, fy: 0, fw: 0, fh: 0 };
+      const r = best.getBoundingClientRect();
+      return { page: Number(best.dataset.pageNumber), fx: (b.x - r.left) / r.width, fy: (b.y - r.top) / r.height, fw: b.w / r.width, fh: b.h / r.height };
     },
-    locate(tok) {
-      const d = vp.pageDimensions_[tok.page];
-      if (!d) return null;
-      const z = zoom(), pos = vp.position;
-      return { x: (d.x + tok.x) * z - pos.x, y: (d.y + tok.y) * z - pos.y, w: tok.w * z, h: tok.h * z };
+    locate(t) {
+      const el = pageEl(t.page);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + t.fx * r.width, y: r.top + t.fy * r.height, w: t.fw * r.width, h: t.fh * r.height };
     },
+    reveal(t) { const el = pageEl(t.page); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' }); },
   };
 }
 
-// Source text to run in the page (Claude's isolated world) or, with `pdf`, in the PDF viewer's frame. The answer is plain JSON.
-function overlayScript(spec, { pdf = false } = {}) {
-  const full = { ...spec, maxTotal: MAX_TOTAL, ...(pdf ? { fast: true } : {}) };
+// Source text to run in the page (Claude's isolated world). With `viewer` (Lumen's PDF viewer) marks keep to PDF pages. The answer is plain JSON.
+function overlayScript(spec, { viewer = false } = {}) {
+  const full = { ...spec, maxTotal: MAX_TOTAL, ...(viewer ? { fast: true } : {}) };
   return `(() => {
-    const pdfSpace = ${pdfSpace.toString()};
-    const space = ${pdf ? 'pdfSpace(window, document)' : 'null'};
-    if (${pdf} && !space) return { ok: false, error: 'viewer' };
-    const r = (${overlayMain.toString()})(${JSON.stringify(full)}, { document, window, space: space || undefined });
+    const viewerSpace = ${viewerSpace.toString()};
+    const r = (${overlayMain.toString()})(${JSON.stringify(full)}, { document, window, space: ${viewer ? 'viewerSpace(window, document)' : 'undefined'} });
     return { ok: r.ok, drawn: r.drawn, missing: r.missing, frozen: r.frozen, cleared: Boolean(r.cleared) };
   })()`;
 }
@@ -730,4 +723,4 @@ function resultText({ drawn, added, missing, dropped, where, seconds, steps }) {
   return parts.join(' ');
 }
 
-module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, normalize, choosePath, overlayMain, pdfSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, resultText };
+module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, resultText };
