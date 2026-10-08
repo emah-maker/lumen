@@ -1,0 +1,389 @@
+{
+ "meta": {
+  "count": 79088,
+  "db_response_time_ms": 95,
+  "page": 1,
+  "per_page": 3,
+  "groups_count": null,
+  "cost_usd": 0.001
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W4409361801",
+   "doi": "https://doi.org/10.21649/akemu.v30i4.5799",
+   "title": "Sleep Deprivation, Memory Complaints, and Aggression among Medical Students",
+   "publication_year": 2024,
+   "publication_date": "2024-12-31",
+   "authorships": [
+    {
+     "author_position": "first",
+     "author": {
+      "id": "https://openalex.org/A5043146443",
+      "display_name": "Najia Zülfiqar"
+     },
+     "raw_author_name": "Najia Zulfiqar"
+    },
+    {
+     "author_position": "middle",
+     "author": {
+      "id": "https://openalex.org/A5060229529",
+      "display_name": "Alveera Habib"
+     },
+     "raw_author_name": "Alveera Habib"
+    },
+    {
+     "author_position": "last",
+     "author": {
+      "id": null,
+      "display_name": "Hifza Akram"
+     },
+     "raw_author_name": "Hifza Akram"
+    }
+   ],
+   "primary_location": {
+    "id": "doi:10.21649/akemu.v30i4.5799",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.21649/akemu.v30i4.5799",
+    "pdf_url": "https://annalskemu.org/journal/index.php/annals/article/download/5799/3361",
+    "source": {
+     "id": "https://openalex.org/S2737983511",
+     "display_name": "Annals of King Edward Medical University",
+     "type": "journal",
+     "issn_l": "2079-0694",
+     "host_organization_name": "King Edward Medical University"
+    },
+    "license": "cc-by",
+    "license_id": "https://openalex.org/licenses/cc-by",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Annals of King Edward Medical University",
+    "raw_type": "journal-article"
+   },
+   "best_oa_location": {
+    "id": "doi:10.21649/akemu.v30i4.5799",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.21649/akemu.v30i4.5799",
+    "pdf_url": "https://annalskemu.org/journal/index.php/annals/article/download/5799/3361",
+    "license": "cc-by",
+    "license_id": "https://openalex.org/licenses/cc-by",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Annals of King Edward Medical University",
+    "raw_type": "journal-article"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "diamond",
+    "oa_url": "https://annalskemu.org/journal/index.php/annals/article/download/5799/3361",
+    "any_repository_has_fulltext": true
+   },
+   "cited_by_count": 1,
+   "is_retracted": false,
+   "abstract_inverted_index": {
+    "Background:": [
+     0
+    ],
+    "Medical": [
+     1
+    ],
+    "education": [
+     2
+    ],
+    "is": [
+     3,
+     23
+    ],
+    "a": [
+     4
+    ],
+    "stressful": [
+     5
+    ],
+    "academic": [
+     6
+    ],
+    "journey": [
+     7
+    ],
+    "that": [
+     8
+    ],
+    "harms": [
+     9
+    ],
+    "its": [
+     10
+    ],
+    "seekers'": [
+     11
+    ],
+    "cognitive": [
+     12
+    ],
+    "and": [
+     13,
+     36
+    ],
+    "behavioral": [
+     14
+    ],
+    "functioning.": [
+     15
+    ],
+    "Where": [
+     16
+    ],
+    "one": [
+     17
+    ],
+    "whole": [
+     18
+    ],
+    "night": [
+     19
+    ],
+    "of": [
+     20,
+     32
+    ],
+    "sleep": [
+     21,
+     27
+    ],
+    "satiation": [
+     22
+    ],
+    "crucial": [
+     24
+    ],
+    "for": [
+     25
+    ],
+    "health,": [
+     26
+    ],
+    "deprivation": [
+     28
+    ],
+    "can": [
+     29
+    ],
+    "impair": [
+     30
+    ],
+    "memory": [
+     31
+    ],
+    "the": [
+     33
+    ],
+    "learned": [
+     34
+    ],
+    "material": [
+     35
+    ],
+    "emotional": [
+     37
+    ],
+    "regulation.": [
+     38
+    ],
+    "Objective:": [
+     39
+    ]
+   },
+   "type": "article",
+   "biblio": {
+    "volume": "30",
+    "issue": "4",
+    "first_page": "423",
+    "last_page": "428"
+   }
+  },
+  {
+   "id": "https://openalex.org/W7213967646",
+   "doi": "https://doi.org/10.54254/2753-8818/2026.hz37188",
+   "title": "Sleep Deprivation, Memory Consolidation, and Cognitive Function: A Neuroscience Analysis",
+   "publication_year": 2026,
+   "publication_date": "2026-09-22",
+   "authorships": [
+    {
+     "author_position": "first",
+     "author": {
+      "id": "https://openalex.org/A5144660253",
+      "display_name": "蔡安庭"
+     },
+     "raw_author_name": "Anting Cai"
+    }
+   ],
+   "primary_location": {
+    "id": "doi:10.54254/2753-8818/2026.hz37188",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.54254/2753-8818/2026.hz37188",
+    "pdf_url": "https://tns.ewapub.com/article/view/37188.pdf",
+    "source": {
+     "id": "https://openalex.org/S4387283303",
+     "display_name": "Theoretical and Natural Science",
+     "type": "journal",
+     "issn_l": "2753-8818",
+     "host_organization_name": null
+    },
+    "license": "cc-by",
+    "license_id": "https://openalex.org/licenses/cc-by",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Theoretical and Natural Science",
+    "raw_type": "journal-article"
+   },
+   "best_oa_location": {
+    "id": "doi:10.54254/2753-8818/2026.hz37188",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.54254/2753-8818/2026.hz37188",
+    "pdf_url": "https://tns.ewapub.com/article/view/37188.pdf",
+    "license": "cc-by",
+    "license_id": "https://openalex.org/licenses/cc-by",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Theoretical and Natural Science",
+    "raw_type": "journal-article"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "hybrid",
+    "oa_url": "https://tns.ewapub.com/article/view/37188.pdf",
+    "any_repository_has_fulltext": false
+   },
+   "cited_by_count": 0,
+   "is_retracted": false,
+   "abstract_inverted_index": {
+    "Although": [
+     0
+    ],
+    "the": [
+     1
+    ],
+    "negative": [
+     2
+    ],
+    "effects": [
+     3
+    ],
+    "of": [
+     4,
+     18
+    ],
+    "sleep": [
+     5
+    ],
+    "deprivation": [
+     6
+    ],
+    "on": [
+     7
+    ],
+    "learning,": [
+     8
+    ],
+    "memory": [
+     9,
+     34
+    ],
+    "and": [
+     10
+    ],
+    "executive": [
+     11
+    ],
+    "function": [
+     12
+    ],
+    "are": [
+     13,
+     26
+    ],
+    "well-known,": [
+     14
+    ],
+    "an": [
+     15
+    ],
+    "increasing": [
+     16
+    ],
+    "number": [
+     17
+    ],
+    "studies": [
+     19
+    ],
+    "have": [
+     20
+    ],
+    "put": [
+     21
+    ],
+    "forward": [
+     22
+    ],
+    "that": [
+     23
+    ],
+    "these": [
+     24
+    ],
+    "impairments": [
+     25
+    ],
+    "mainly": [
+     27
+    ],
+    "due": [
+     28
+    ],
+    "to": [
+     29
+    ],
+    "a": [
+     30
+    ],
+    "disturbance": [
+     31
+    ],
+    "in": [
+     32
+    ],
+    "sleep-dependent": [
+     33
+    ],
+    "consolidation": [
+     35
+    ],
+    "rather": [
+     36
+    ],
+    "than": [
+     37
+    ],
+    "fatigue": [
+     38
+    ],
+    "alone.": [
+     39
+    ]
+   },
+   "type": "article",
+   "biblio": {
+    "volume": "190",
+    "issue": "1",
+    "first_page": "114",
+    "last_page": "121"
+   }
+  }
+ ],
+ "group_by": []
+}

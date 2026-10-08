@@ -1941,6 +1941,76 @@ p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
 .task-pages { margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
 .task-pages a { color: var(--accent); text-decoration: none; }
 .task-pages a:hover, .task-pages a:focus-visible { text-decoration: underline; }
+/* ---- research.css */
+/* The sidebar's Research board and the Sources list in an answer (renderer/research.js). Built on the chat list panel (chats.css) and
+   the theme variables, so light and dark follow the rest of the UI. */
+
+#research-btn { position: relative; }
+#research-btn.active { color: var(--accent); background: var(--accent-soft); }
+.research-badge {
+  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.research-panel { z-index: var(--z-panel-over); }
+
+.rs-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 12px 8px 20px; }
+.rs-style { height: 28px; max-width: 150px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12px; padding: 0 6px; }
+.rs-bar .btn { font-size: 12px; }
+.rs-bar .btn:disabled { opacity: 0.5; }
+
+.rs-list { display: flex; flex-direction: column; gap: 2px; }
+.rs-card { padding: 6px 8px 8px; border-radius: var(--radius); }
+.rs-card:hover, .rs-card:focus-within { background: color-mix(in srgb, var(--accent) 5%, var(--hover)); }
+.rs-card.retracted, .rs-src.retracted { box-shadow: inset 2px 0 0 var(--danger); }
+.rs-top { display: flex; align-items: flex-start; gap: 4px; }
+.rs-n { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 4px; min-width: 22px; }
+.rs-title { flex: 1; min-width: 0; padding: 2px 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; line-height: 1.3; text-align: left; cursor: default; overflow-wrap: anywhere; }
+button.rs-title:hover { color: var(--accent); text-decoration: underline; }
+.rs-toggle { flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: default; }
+.rs-toggle:hover { background: var(--hover); }
+.rs-star { width: 24px; height: 24px; flex: none; }
+.rs-star svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.rs-star.on { color: #d99a00; }
+.rs-star.on svg { fill: currentColor; }
+.rs-meta { margin: 0 0 3px 28px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.rs-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 0 28px; }
+.rs-chip {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; line-height: 16px; font-weight: 500; white-space: nowrap;
+  background: var(--field); color: var(--muted);
+}
+.rs-chip.good { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.rs-chip.warn { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+.rs-chip.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); font-weight: 600; }
+.rs-abstract { margin: 6px 0 0 28px; font-size: 11.5px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.rs-ref { margin: 6px 0 0 28px; font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; user-select: text; }
+.rs-by { margin: 2px 0 0 28px; font-size: 10.5px; color: var(--faint); overflow-wrap: anywhere; }
+.rs-note { display: block; width: calc(100% - 28px); margin: 6px 0 0 28px; padding: 6px 8px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; resize: vertical; box-sizing: border-box; }
+.rs-quotes { list-style: none; margin: 6px 0 0 28px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rs-quote blockquote { margin: 0; padding: 2px 0 2px 8px; border-left: 2px solid var(--hairline); font-size: 12px; font-style: italic; overflow-wrap: anywhere; user-select: text; }
+.rs-quote-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 0 10px; font-size: 10.5px; color: var(--muted); }
+.rs-x { width: 20px; height: 20px; }
+.rs-x svg { width: 10px; height: 10px; }
+.rs-link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; font-size: 10.5px; cursor: default; }
+.rs-link:hover { text-decoration: underline; }
+.rs-pin { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0 28px; }
+.rs-pin-text { flex: 1 1 120px; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }
+.rs-pin-page { width: 56px; height: 26px; padding: 0 6px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }
+.rs-pin .btn, .rs-actions .btn { height: 26px; font-size: 11.5px; padding: 0 9px; }
+.rs-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0 28px; }
+.rs-actions .btn.danger { color: var(--danger); }
+
+/* The Sources list in an answer */
+.rs-sources { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rs-src { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: var(--radius); background: var(--field); }
+.rs-src.missing { color: var(--muted); font-size: 12px; }
+.rs-src-body { flex: 1; min-width: 0; }
+.rs-src .rs-meta, .rs-src .rs-chips { margin-left: 0; }
+.rs-src .rs-n { padding-top: 2px; }
+.rs-src .rs-title { padding: 0; font-size: 12.5px; }
+.rs-src .rs-chip { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.rs-src .rs-chip.good { background: color-mix(in srgb, var(--success) 15%, transparent); }
+.rs-src .rs-chip.warn { background: color-mix(in srgb, var(--warning) 15%, transparent); }
+.rs-src .rs-chip.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); }
 /* ---- routines.css */
 /* Routines (renderer/routines.js): the Tasks panel's tabs, the Routines list, the editor's schedule
    fields, a routine's run history and "Save as routine" on a reply. Builds on tasks.css. */

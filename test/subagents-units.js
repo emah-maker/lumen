@@ -72,7 +72,7 @@ const text = (t) => ({ type: 'text', text: t });
       : reply([text(`saw ${messages[2].content.filter((b) => b.is_error).length} refusals`)]));
     const r = await S.runHelper({ n: 1, task: 't', turn, exec: async (name) => { ran.push(name); return 'page'; }, tools: [] });
     check('read-only: click, type_text, open_tab and run_script are refused inside a helper and never run; reading still does', J(ran) === '["read_urls"]' && r.text === 'saw 4 refusals', J([ran, r]));
-    check('read-only: the tool set is reading and search only', J([...S.HELPER_TOOLS].sort()) === '["analyze_posts","read_urls","web_search"]');
+    check('read-only: the tool set is reading and search only', J([...S.HELPER_TOOLS].sort()) === '["analyze_posts","find_sources","read_urls","web_search"]');
   }
 
   // ---- one failure does not kill the others
@@ -209,7 +209,7 @@ const text = (t) => ({ type: 'text', text: t });
     const chat = chatOf();
     const on = requestFor(chat.settings, chat);
     const off = requestFor(chat.settings, chat, undefined, { delegate: false });
-    check('tool: offered by default, with the whole tool list still under budget', on.tools.some((t) => t.name === 'delegate') && JSON.stringify(on.tools).length < 13700, String(JSON.stringify(on.tools).length));
+    check('tool: offered by default, with the whole tool list still under budget', on.tools.some((t) => t.name === 'delegate') && JSON.stringify(on.tools).length < 15000, String(JSON.stringify(on.tools).length));
     check('setting off: the tool is not in the request', !off.tools.some((t) => t.name === 'delegate') && off.tools.length === on.tools.length - 1);
     check('tool: a short definition', JSON.stringify(on.tools.find((t) => t.name === 'delegate')).length < 700, String(JSON.stringify(on.tools.find((t) => t.name === 'delegate')).length));
     check('tool: input is checked like any other tool\'s', validateInput('delegate', { tasks: [{ task: 'x' }] }) === null && validateInput('delegate', {}) !== null && validateInput('delegate', { tasks: [{}] }) !== null && validateInput('delegate', { tasks: 'x' }) !== null);
@@ -232,7 +232,7 @@ const text = (t) => ({ type: 'text', text: t });
   {
     const lg = src('src/ai/loop-guard.js');
     const ag = src('src/ai/agent.js');
-    check('lists: delegate is a parallel, static read; tab-free; leaves the tab snapshots alone', /STATIC_READS = new Set\(\['delegate'/.test(lg) && /PARALLEL_READS = new Set\(\['delegate'/.test(lg) && /TAB_FREE_TOOLS = new Set\(\['delegate'/.test(ag) && /READ_ONLY = new Set\(\['delegate'/.test(src('src/ai/snapshot.js')));
+    check('lists: delegate is a parallel, static read; tab-free; leaves the tab snapshots alone', /STATIC_READS = new Set\(\['find_sources', 'delegate'/.test(lg) && /PARALLEL_READS = new Set\(\['find_sources', 'delegate'/.test(lg) && /TAB_FREE_TOOLS = new Set\(\['find_sources', 'research_board', 'delegate'/.test(ag) && /READ_ONLY = new Set\(\['find_sources', 'delegate'/.test(src('src/ai/snapshot.js')));
     check('lists: delegate itself is not a READING tool (the helpers\' own reads taint the chat)', !/const READING_TOOLS = new Set\([^)]*delegate/.test(ag));
     const en = JSON.parse(src('src/locales/en.json'));
     const keys = ['sidebar.helpers', 'sidebar.helpers.on', 'sidebar.helpers.off', 'tool.delegate', 'tool.helper', 'tool.helper.reading', 'tool.helper.searching', 'settings.ai.subagents', 'settings.ai.subagentsDesc', 'settings.ai.subagentModel', 'settings.ai.subagentModel.auto', 'settings.ai.subagentModel.same'];

@@ -1,0 +1,79 @@
+{
+ "total": 50358,
+ "offset": 0,
+ "next": 3,
+ "data": [
+  {
+   "paperId": "38afaae222402b7cb9b66d87669d4fb1c3cf398f",
+   "externalIds": {
+    "DOI": "10.21649/akemu.v30i4.5799",
+    "CorpusId": 277769969
+   },
+   "title": "Sleep Deprivation, Memory Complaints, and Aggression among Medical Students",
+   "venue": "Annals of King Edward Medical University",
+   "year": 2024,
+   "citationCount": 0,
+   "openAccessPdf": {
+    "url": "https://annalskemu.org/journal/index.php/annals/article/download/5799/3361",
+    "status": "GOLD",
+    "license": "CCBY",
+    "disclaimer": "Notice: Paper or abstract available at https://api.unpaywall.org/v2/10.21649/akemu.v30i4.5799?email=<INSERT_YOUR_EMAIL> or https://doi.org/10.21649/akemu.v30i4.5799, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+   },
+   "publicationTypes": [
+    "JournalArticle",
+    "Review"
+   ],
+   "publicationDate": "2024-12-31",
+   "journal": {
+    "name": "Annals of King Edward Medical University"
+   },
+   "authors": [
+    {
+     "authorId": "116483192",
+     "name": "Najia Zulfiqar"
+    },
+    {
+     "authorId": "2203887238",
+     "name": "Alveera Habib"
+    },
+    {
+     "authorId": "2180682506",
+     "name": "Hifza Akram"
+    }
+   ],
+   "abstract": "Background: Medical education is a stressful academic journey that harms its seekers' cognitive and behavioral functioning. Where one whole night of sleep satiation is crucial for health, sleep deprivation can impair memory of the learned material and emotional regulation.\nObjective: This study examined the link of sleep deprivation with memory complaints and aggression among medical students.\nMet"
+  },
+  {
+   "paperId": "69a0e074b4215bd75f4ac8730261749825f3001c",
+   "externalIds": {
+    "DOI": "10.54254/2753-8818/2026.hz37188",
+    "CorpusId": 292311148
+   },
+   "title": "Sleep Deprivation, Memory Consolidation, and Cognitive Function: A Neuroscience Analysis",
+   "venue": "Theoretical and Natural Science",
+   "year": 2026,
+   "citationCount": 0,
+   "openAccessPdf": {
+    "url": "https://tns.ewapub.com/article/view/37188.pdf",
+    "status": "HYBRID",
+    "license": "CCBY",
+    "disclaimer": "Notice: Paper or abstract available at https://api.unpaywall.org/v2/10.54254/2753-8818/2026.hz37188?email=<INSERT_YOUR_EMAIL> or https://doi.org/10.54254/2753-8818/2026.hz37188, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+   },
+   "publicationTypes": [
+    "JournalArticle",
+    "Review"
+   ],
+   "publicationDate": "2026-09-22",
+   "journal": {
+    "name": "Theoretical and Natural Science"
+   },
+   "authors": [
+    {
+     "authorId": "2503276121",
+     "name": "An-Ting Cai"
+    }
+   ],
+   "abstract": "Although the negative effects of sleep deprivation on learning, memory and executive function are well-known, an increasing number of studies have put forward that these impairments are mainly due to a disturbance in sleep-dependent memory consolidation rather than fatigue alone. This paper investigates the connection between sleep and memory and cognition, examines how the brain processes informa"
+  }
+ ]
+}

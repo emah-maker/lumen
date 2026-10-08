@@ -1,0 +1,78 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/H5gGIwSgYbzhCa3b1t7y7oKGVnk</id>
+  <title>arXiv Query: search_query=all:sleep OR all:deprivation OR all:memory&amp;id_list=&amp;start=0&amp;max_results=2</title>
+  <updated>2026-10-08T03:39:24Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=all:sleep+OR+(all:deprivation+OR+all:memory)&amp;start=0&amp;max_results=2&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <opensearch:totalResults>77704</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2506.21828v2</id>
+    <title>Fetal Sleep: A Cross-Species Review of Physiology, Measurement, and Classification</title>
+    <updated>2026-01-16T03:09:09Z</updated>
+    <link href="https://arxiv.org/abs/2506.21828v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2506.21828v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Study Objectives: Fetal sleep is a vital yet underexplored aspect of prenatal neurodevelopment. Its cyclic organization reflects the maturation of central neural circuits, and disturbances in these patterns may offer some of the earliest detectable signs of neurological compromise. This is the first review to integrate more than seven decades of research into a unified, cross-species synthesis of fetal sleep. We examine: (i) Physiology and Ontogeny-comparing human fetuses with animal models; and (ii) Methodological Evolution-transitioning from invasive neurophysiology to non-invasive monitoring and deep learning frameworks.
+  Methods: A structured narrative synthesis was guided by a systematic literature search across four databases (PubMed, Scopus, IEEE Xplore, and Google Scholar). From 2,925 identified records, 171 studies involving fetal sleep-related physiology, sleep-state classification, or signal-based monitoring were included in this review.
+  Results: Across the 171 studies, fetal sleep states become clearly observable as the brain matures. In fetal sheep and baboons, organized cycling between active and quiet sleep emerges at approximately 80%-90% gestation. In humans, this differentiation occurs later, around 95% gestation, with full maturation reached near term. Despite extensive animal research, no unified, clinically validated framework exists for defining fetal sleep states, limiting translation into routine obstetric practice.
+  Conclusions: By integrating evidence across species, methodologies, and clinical contexts, this review provides the scientific foundation for developing objective, multimodal, and non-invasive fetal sleep monitoring technologies-tools that may ultimately support earlier detection of neurological compromise and guide timely prenatal intervention.</summary>
+    <category term="q-bio.NC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SP" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-06-27T00:15:57Z</published>
+    <arxiv:comment>Accepted for publication in Sleep. 56 pages, 3 figures, 7 tables</arxiv:comment>
+    <arxiv:primary_category term="q-bio.NC"/>
+    <arxiv:journal_ref>Sleep, 2026, zsag003</arxiv:journal_ref>
+    <author>
+      <name>Weitao Tang</name>
+    </author>
+    <author>
+      <name>Johann Vargas-Calixto</name>
+    </author>
+    <author>
+      <name>Nasim Katebi</name>
+    </author>
+    <author>
+      <name>Robert Galinsky</name>
+    </author>
+    <author>
+      <name>Gari D. Clifford</name>
+    </author>
+    <author>
+      <name>Faezeh Marzbanrad</name>
+    </author>
+    <arxiv:doi>10.1093/sleep/zsag003</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1093/sleep/zsag003" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1809.09846v2</id>
+    <title>Co-sleep: Designing a workplace-based wellness program for sleep deprivation</title>
+    <updated>2020-03-16T21:40:24Z</updated>
+    <link href="https://arxiv.org/abs/1809.09846v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1809.09846v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Sleep deprivation is a public health issue. Awareness of sleep deprivation has not been widely investigated in workplace-based wellness programmes. This study adopted a three-stage design process with nine participants from a local manufacturing company to help raise awareness of sleep deprivation. The common causes of sleep deprivation were identified through the deployment of technology probes and participant interviews. The study contributes smart Internet of things(IoT) workplace-based design concepts for activity tracking that may aid sleep and explore ways of sharing personal sleep data within the workplace. Through the use of co-design methods, the study also highlights prominent privacy concerns relating to use of personal data from different stakeholders' perspectives, including the unexpected use of sleep data by organisations for fatigue risk management and the evaluation of employee performance. The Actigrahy and sleep diary data can be accessed online through https://github.com/famousgrouse/pervasivehealth/</summary>
+    <category term="cs.HC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-09-26T08:32:58Z</published>
+    <arxiv:comment>11 pages, 3 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.HC"/>
+    <author>
+      <name>Bing Zhai</name>
+    </author>
+    <author>
+      <name>Stuart Nicholson</name>
+    </author>
+    <author>
+      <name>Kyle Montague</name>
+    </author>
+    <author>
+      <name>Yu Guan</name>
+    </author>
+    <author>
+      <name>Patrick Olivier</name>
+    </author>
+    <author>
+      <name>Jason Ellis</name>
+    </author>
+  </entry>
+</feed>
