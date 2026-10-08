@@ -109,6 +109,10 @@ These are set from the sidebar rather than the settings page:
 | Bypass permissions | `bypassPermissions` | off | Every approval card is answered Allow for you (a PDF, a signed-in account, an upload of a file you attached, an MCP tool, Grok Build's terminal commands, new sites, leaving with what it read), for the sidebar AI on every model and for connected agents, and each one shows as a step ("Allowed automatically: …"). Chosen from the bolt menu in the sidebar head or Settings → AI → **Asking before it acts** (**Ask** / **Auto-allow actions** / **Bypass permissions**); the three levels are one choice. Sites with AI off, tabs kept off and hands-off mode still apply, uploads still use only files you attached or picked, and the **Choose file…** card still waits for you. Background tasks never bypass. |
 | Using: *page* | `pageContext` | on | Sends the current page to the sidebar AI with each message. |
 
+### Macros
+
+Settings → Macros (`lumen://settings/macros`): saved step lists you run from the ⋯ menu, a keyboard shortcut, `/macro name` in the sidebar, or the AI's `run_macro` tool. Record one, describe one, or add steps by hand; a macro never stores a password or card number. Kept in `macros.json` in the profile folder. See [Macros](macros.md).
+
 ## Appearance
 
 | Setting | Key | Default | What it does |

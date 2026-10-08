@@ -1998,3 +1998,36 @@ p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
 .msg.assistant .reply-routine svg { width: 13px; height: 13px; }
 .msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
+/* ---- macros.css */
+/* Macros in the main window (renderer/macros.js): the progress toast in the tab strip's row, and the form that asks
+   for a macro's {{variables}} above the composer. Kept apart from styles.css so restyles there merge cleanly. */
+
+.macro-toast {
+  flex: none; max-width: min(460px, 46vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
+  border-radius: 8px; background: var(--surface-raised); color: var(--text); font-size: 12px; white-space: nowrap;
+  border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0, 0, 0, calc(var(--shadow-k) * 0.4));
+}
+.macro-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.macro-toast.running::before, .macro-toast.recording::before {
+  content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: macro-pulse 1.2s ease-in-out infinite;
+}
+.macro-toast.recording::before { background: var(--danger, #d92d20); }
+.macro-toast.paused { border-color: var(--accent); }
+.macro-toast.failed { border-color: var(--danger, #d92d20); }
+.macro-toast button { flex: none; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.macro-toast button:hover { background: var(--hover); }
+.macro-toast button:focus-visible { outline: 2px solid var(--accent); }
+@keyframes macro-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .macro-toast.running::before, .macro-toast.recording::before { animation: none; } }
+
+.macro-ask { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; margin: 0 0 6px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; background: var(--accent-soft); color: var(--text); }
+.macro-ask-head { font-weight: 600; }
+.macro-ask-note { color: var(--muted); }
+.macro-ask-field { display: flex; flex-direction: column; gap: 2px; }
+.macro-ask-field span { color: var(--muted); font-size: 11.5px; }
+.macro-ask-field input { font: inherit; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); }
+.macro-ask-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.macro-ask-row { display: flex; gap: 8px; justify-content: flex-end; }
+.macro-ask-row button { font: inherit; padding: 4px 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); cursor: pointer; }
+.macro-ask-row .macro-ask-run { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.macro-ask-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
