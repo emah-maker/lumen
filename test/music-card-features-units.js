@@ -208,7 +208,7 @@ async function apiChecks(check) {
   n = api.log.length;
   await w.act({ id, do: 'esearch', text: 'night' });
   d = await look();
-  check('api act: search asks the API (songs, albums, artists, playlists) and the card carries grouped results; a null in a list is dropped', /GET \/v1\/search\?q=night&type=track,album,artist,playlist&limit=8/.test(since(n)[0]) && d.query === 'night' && d.results.map((r) => r.kind).join() === 'song,song,album,artist,playlist' && d.searchOk === true && d.results[2].sub === 'Ann · 2024', JSON.stringify(d.results.map((r) => [r.kind, r.title, r.sub])));
+  check('api act: search asks the API (songs, albums, artists, playlists) and the card carries grouped results; a null in a list is dropped', /GET \/v1\/search\?q=night&type=track,album,artist,playlist&limit=10&market=from_token/.test(since(n)[0]) && d.query === 'night' && d.results.map((r) => r.kind).join() === 'song,song,album,artist,playlist' && d.searchOk === true && d.results[2].sub === 'Ann · 2024', JSON.stringify(d.results.map((r) => [r.kind, r.title, r.sub])));
   n = api.log.length;
   await w.act({ id, do: 'esearch', text: '' });
   d = await look();
@@ -271,7 +271,7 @@ async function apiChecks(check) {
   // the pure helpers
   check('api helpers: lists are cut down: ids checked, text bounded, pictures from Spotify\'s own hosts only, the smallest sharp one first', (() => { const it = SV.listItem({ id: 'ABC123', type: 'track', name: `${'x'.repeat(300)}`, artists: [{ name: 'A' }, { name: 'B' }], duration_ms: 1000, album: { images: [{ url: 'https://evil.example/a.jpg', width: 64 }, { url: 'https://i.scdn.co/big', width: 640 }, { url: 'https://i.scdn.co/small', width: 64 }] } }); return it.title.length === 120 && it.sub === 'A, B' && it.ms === 1000 && it.images.join() === 'https://i.scdn.co/small,https://i.scdn.co/big' && SV.listItem({ id: '../x', type: 'track', name: 'n' }) === null && SV.listItem({ id: 'ok', type: 'track', name: '' }) === null && SV.listItem({ id: 'ok', type: 'show', name: 'n' }) === null && SV.listItem(null) === null; })(), '');
   check('api helpers: the context of an artist is its top songs; junk answers are empty, never a throw', SV.normalizeContext('artist', JSON.stringify({ tracks: [{ id: 'A1', type: 'track', name: 'Hit' }] })).items.length === 1 && ['', 'null', '[]', '{"a":', '5'].every((t) => SV.normalizeQueue(t).length === 0 && SV.normalizeDevices(t).length === 0 && SV.normalizeSearch(t).length === 0 && SV.normalizeContext('album', t).items.length === 0 && SV.parseSaved(t) === null), '');
-  check('api helpers: every button\'s address is built from fixed paths and checked values (a term is escaped, a percent clamped)', SV.PLAYER.search('a&b=c d')[1] === '/search?q=a%26b%3Dc%20d&type=track,album,artist,playlist&limit=8' && SV.PLAYER.volume(250)[1].endsWith('=100') && SV.PLAYER.volume(-3)[1].endsWith('=0') && SV.PLAYER.repeat('bogus')[1].endsWith('=off') && SV.PLAYER.seek(-5)[1].endsWith('=0'), '');
+  check('api helpers: every button\'s address is built from fixed paths and checked values (a term is escaped, a percent clamped)', SV.PLAYER.search('a&b=c d')[1] === '/search?q=a%26b%3Dc%20d&type=track,album,artist,playlist&limit=10&market=from_token' && SV.PLAYER.volume(250)[1].endsWith('=100') && SV.PLAYER.volume(-3)[1].endsWith('=0') && SV.PLAYER.repeat('bogus')[1].endsWith('=off') && SV.PLAYER.seek(-5)[1].endsWith('=0'), '');
   void SAC;
   void updates;
 }

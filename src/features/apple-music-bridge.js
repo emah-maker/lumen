@@ -289,14 +289,18 @@ const BRIDGE_SOURCE = `(function () {
       return mk.setQueue({ songs: ids }).then(function () { return mk.play(); });
     }).catch(fail);
   }
+  var searchSeq = 0;
+  // One call for songs, albums, artists and playlists together. A newer search makes the answer of an older one in flight be dropped.
   function search(term, rid) {
     var store = String(mk.storefrontId || 'us');
     if (!STORE.test(store)) store = 'us';
+    var seq = ++searchSeq;
     mk.api.music('/v1/catalog/' + store + '/search', { term: term, types: 'songs,albums,artists,playlists', limit: 8 }).then(function (r) {
+      if (seq !== searchSeq) return;
       var res = (r && r.data && r.data.results) || {};
       var items = [].concat(map(res.songs && res.songs.data), map(res.albums && res.albums.data), map(res.artists && res.artists.data), map(res.playlists && res.playlists.data));
       out({ t: 'list', kind: 'search', rid: rid, ok: true, items: items });
-    }, function () { out({ t: 'list', kind: 'search', rid: rid, ok: false, items: [] }); });
+    }, function () { if (seq === searchSeq) out({ t: 'list', kind: 'search', rid: rid, ok: false, items: [] }); });
   }
   function run(c) {
     if (!mk || !c) return;
