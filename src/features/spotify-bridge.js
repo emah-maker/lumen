@@ -341,6 +341,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     var key = [s.state, s.item && s.item.title, s.item && s.item.artist, s.device, s.player, s.signedOut, Math.round(s.dur), s.shuffle, s.repeat, s.liked, s.volume === null ? '' : Math.round(s.volume * 100), s.has.like, s.has.shuffle, s.has.repeat, s.has.volume].join('|');
     var now = Date.now();
     if (force || key !== last || now - lastSent > 5000) { last = key; lastSent = now; out(s); }
+    if (loginSince && s.signedOut === null && typeof soon === 'function') soon(1000); // the Log in button is believed after 2 s: look again then, whatever the page does
   }
   // A button of the page's own player. Not found is said out loud (the card tells the user), not swallowed.
   function click(name) {
@@ -791,12 +792,12 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   // one per 400 ms, and tick() sends only what changed. A quiet page (paused, hidden) costs one read every 5 s, which tick() sends anyway as the
   // card's heartbeat (where the playhead is).
   var soonTimer = null, lastTick = 0;
-  function soon() {
+  function soon(delay) {
     if (soonTimer) return;
-    soonTimer = setTimeout(function () { soonTimer = null; lastTick = Date.now(); tick(false); }, Math.max(0, 400 - (Date.now() - lastTick)));
+    soonTimer = setTimeout(function () { soonTimer = null; lastTick = Date.now(); tick(false); }, Math.max(typeof delay === 'number' ? delay : 0, 400 - (Date.now() - lastTick)));
   }
-  try { new MutationObserver(soon).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'aria-checked', 'aria-pressed', 'aria-disabled', 'data-testid', 'disabled', 'href', 'src'] }); } catch (e) { /* no observer: the heartbeat below still reads */ }
-  ['play', 'pause', 'playing', 'ended', 'durationchange', 'loadedmetadata', 'volumechange'].forEach(function (ev) { document.addEventListener(ev, soon, true); });
+  try { new MutationObserver(function () { soon(0); }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'aria-checked', 'aria-pressed', 'aria-disabled', 'data-testid', 'disabled', 'href', 'src'] }); } catch (e) { /* no observer: the heartbeat below still reads */ }
+  ['play', 'pause', 'playing', 'ended', 'durationchange', 'loadedmetadata', 'volumechange'].forEach(function (ev) { document.addEventListener(ev, function () { soon(0); }, true); });
   function beat() { tick(false); setTimeout(beat, 5100); }
   setTimeout(beat, 5100);
   tick(true);
