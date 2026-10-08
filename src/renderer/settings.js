@@ -1127,7 +1127,7 @@ async function buildWidgets(card) {
       inputs.showDone = tog('widget-showdone', 'Tasks completed today', t.showDone, 'Keep them on the card, crossed out.');
       inputs.overdueRed = tog('widget-overdue', 'Overdue in red', t.overdueRed !== false);
       inputs.showCount = tog('widget-showcount', 'Task count in the title', t.showCount);
-      inputs.quick = segment('widget-quick', 'Add-task box', [['off', 'Off'], ['top', 'Top'], ['bottom', 'Bottom']], t.quick || 'off');
+      inputs.quick = segment('widget-quick', 'Add-task box', [['off', 'Button'], ['top', 'Top'], ['bottom', 'Bottom']], t.quick || 'top');
       inputs.quickProject = sel('widget-quickproject', 'New tasks go to', [['', 'Inbox (Todoist’s default)'], ...(t.quickProjectId ? [[t.quickProjectId, 'The chosen project']] : [])], t.quickProjectId || '');
       const tokenRow = helpLink(setting('API token', inputs.token, ws.secrets.todoist ? 'Connected: a token is saved. Paste a new one only to replace it.' : 'Not connected yet. Paste your personal API token.'), 'todoist', 'Where do I find it?');
       fields.replaceChildren(
@@ -1135,7 +1135,7 @@ async function buildWidgets(card) {
         section('Tasks', [setting('Show', inputs.source), daysRow, projectRow, labelRow, queryRow, setting('Tasks shown', inputs.max), setting('Sort by', inputs.sort), setting('Group by', inputs.group)]),
         section('Each task shows', Object.values(inputs.fields)),
         section('Also', [inputs.showDone, inputs.overdueRed, inputs.showCount, setting('Spacing', inputs.density)]),
-        advanced([setting('Add-task box', inputs.quick, 'A box on the card to add tasks, typed like Todoist’s quick add: “Pay rent tomorrow 9am”.'), setting('New tasks go to', inputs.quickProject, 'Press Load projects above to pick a project.')]));
+        advanced([setting('Add-task box', inputs.quick, 'Add tasks from the card, typed like Todoist’s quick add: “Pay rent tomorrow 9am”. Top and Bottom keep the box open; Button shows a “+ Add task” row that opens it.'), setting('New tasks go to', inputs.quickProject, 'Press Load projects above to pick a project.')]));
     }
     // ---- spotify: the user's own Client ID, then Connect (OAuth PKCE in a tab; the token stays in the browser) ----
     function spotifyFields(same) {

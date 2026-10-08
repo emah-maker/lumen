@@ -199,13 +199,25 @@ function httpsUrl(value, { allowWebcal = false } = {}) {
     return u.href;
   } catch { return null; }
 }
-const CAL_TIMEOUT = 8e3; // one calendar's answer; a slow one must not hold up the others
+const CAL_TIMEOUT = 12e3; // one calendar's answer; a slow one must not hold up the others (a DNS hiccup alone can take a few seconds)
+// Why a request never got an answer, from what the network stack said (Chromium's net::ERR_*, Node's codes, an abort for the timeout).
+// Anything that is not a plain refusal (a bad certificate, a blocked address) is taken for passing network trouble (offline, DNS,
+// a reset, a timeout) and asked again in a moment; a refusal says so instead of blaming the internet connection.
+const REFUSED_NET = /ERR_(CERT_|SSL_VERSION|BLOCKED|UNSAFE|DISALLOWED|INVALID_URL|UNKNOWN_URL_SCHEME|TOO_MANY_REDIRECTS|FILE_)/i;
+function netError(err) {
+  const bits = [err?.code, err?.cause?.code, err?.cause?.message, err?.message].filter((v) => typeof v === 'string' && v).join(' ');
+  if (err?.name === 'AbortError') return Object.assign(new Error('The server took too long to answer.'), { transient: true, why: 'timeout' });
+  if (REFUSED_NET.test(bits)) return Object.assign(new Error('Couldn’t connect securely. The address was refused.'), { transient: false, why: bits.slice(0, 80) });
+  return Object.assign(new Error('Couldn’t connect. Check your internet connection.'), { transient: true, why: bits.slice(0, 80) });
+}
+const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
 // One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
 // last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
 async function calendarOf(x, s, { fresh = false } = {}) {
   const key = `ics:${s.url}`;
   const load = async () => {
     const cal = ics.eventsBetween(await x.text(s.url, { max: 5e6, timeout: CAL_TIMEOUT }), { from: x.now(), days: 14, limit: 60 });
+    cal.fetchedAt = x.now(); // when this answer was read: a card that falls back to it says how old it is
     x.keep(key, cal);
     return cal;
   };
@@ -384,17 +396,22 @@ const CONNECTORS = {
         let cal;
         let error = '';
         let stale = false;
+        let transient = false;
         try {
           cal = await calendarOf(x, s);
         } catch (err) {
           error = String(err?.message || err).slice(0, 160);
+          transient = err?.transient === true;
           cal = x.kept(`ics:${s.url}`); // the last good answer: shown, with a warning, rather than nothing
           stale = Boolean(cal);
         }
         const color = s.color || (multi ? cal?.color || CS.defaultColor(slot) : '');
-        return { id: s.id, name: CS.labelOf(s, cal?.name, k), color, ok: !error, error, stale, cal, events: cal ? cal.events : [] };
+        return { id: s.id, name: CS.labelOf(s, cal?.name, k), color, ok: !error, error, stale, transient, cal, events: cal ? cal.events : [] };
       }));
-      if (parts.every((p) => !p.cal)) throw new Error(multi ? `${parts[0].name}: ${parts[0].error}` : parts[0].error);
+      if (parts.every((p) => !p.cal)) {
+        const bad = parts.find((p) => p.error) || parts[0];
+        throw Object.assign(new Error(multi ? `${bad.name}: ${bad.error}` : bad.error), { transient: parts.some((p) => p.transient) });
+      }
       const { events } = CS.merge(parts.map((p) => ({ id: p.id, events: p.events })), { limit: multi ? 24 : 12, now });
       const colorOf = Object.fromEntries(parts.map((p) => [p.id, p.color]));
       const shaped = events.map(({ title, location, url, color, allDay, date, start, end, cal, also }) => ({
@@ -405,9 +422,14 @@ const CONNECTORS = {
       return {
         events: shaped, multi,
         name: multi ? '' : single?.name || '', color: multi ? '' : parts[0].color || single?.color || '',
-        cals: parts.map((p) => ({ id: p.id, name: p.name, color: p.color, ok: p.ok, ...(p.error ? { error: p.error } : {}), ...(p.stale ? { stale: true } : {}) })),
+        cals: parts.map((p) => ({ id: p.id, name: p.name, color: p.color, ok: p.ok, ...(p.error ? { error: p.error } : {}), ...(p.stale ? { stale: true } : {}), ...(p.transient ? { retry: true } : {}) })),
+        // Every calendar is showing an older answer: when that answer was read (the card says "Updated 40 min ago" and why), so it can't pass for a fresh one.
+        // (With some calendars fine, the card is current and each failed one is flagged in cals.)
+        ...(parts.every((p) => p.stale) ? { staleSince: Math.min(...parts.map((p) => p.cal.fetchedAt || now)) } : {}),
       };
     },
+    // After a good fetch: is part of the answer an old one that a passing failure caused? Then ask again in a moment.
+    retryWanted: (data) => Boolean(data?.cals?.some((k) => !k.ok && k.retry)),
   },
 
   // Headlines from an RSS 2.0 or Atom feed (features/feed.js reads it safely): a preset (FEED.PRESETS) or
@@ -467,19 +489,21 @@ const CONNECTORS = {
       const done = c.todo.showDone ? await completedToday(x).catch(() => []) : [];
       const project = c.todo.source === 'project' && c.todo.projectId ? `https://app.todoist.com/app/project/${c.todo.projectId}` : null;
       return {
-        ...TV.shape(tasks, c.todo, today), done,
+        ...TV.shape(tasks, c.todo, today, { expand: true }), done,
         open: project || 'https://app.todoist.com/app/today',
         density: c.todo.density, overdueRed: c.todo.overdueRed, showCount: c.todo.showCount, quick: c.todo.quick,
       };
     },
-    // Page actions: complete (the caller then keeps an undo for a few seconds), undo (reopen it), add (quick add).
+    // Page actions: complete (the caller then keeps an undo for a few seconds), undo (reopen it), add (quick add), reschedule (a
+    // task's day, from the card's small menu).
     async act(c, action, x, cached) {
       const find = (id) => cached.groups?.flatMap((g) => g.tasks).find((t) => t.id === id);
       const auth = { Authorization: `Bearer ${x.secret()}` };
+      const api = x.endpoint('todoist');
       if (action.do === 'complete') {
         const task = find(action.task); // only a task the card is showing can be completed from it
         if (!task) return false;
-        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: auth });
+        await x.request(`${api}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: auth });
         for (const g of cached.groups) g.tasks = g.tasks.filter((t) => t.id !== action.task);
         cached.groups = cached.groups.filter((g) => g.tasks.length);
         cached.total = Math.max(0, cached.total - 1);
@@ -487,17 +511,43 @@ const CONNECTORS = {
         return { undo: { id: action.task, title: task.title } };
       }
       if (action.do === 'undo') {
-        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/reopen`, { method: 'POST', headers: auth });
+        await x.request(`${api}/tasks/${encodeURIComponent(action.task)}/reopen`, { method: 'POST', headers: auth });
         return { undone: true };
       }
+      if (action.do === 'reschedule') {
+        const task = find(action.task);
+        if (!task || task.recurring) return false; // (a new day would end a repeating task's repeat)
+        const words = { today: 'today', tomorrow: 'tomorrow', nextweek: 'next monday', none: 'no date' }[action.arg];
+        if (!words) return false;
+        await x.postJson(`${api}/tasks/${encodeURIComponent(action.task)}`, { due_string: words });
+        return { delay: 0 };
+      }
       if (action.do === 'add') {
-        if (c.todo.quick === 'off' || !action.text) return false;
-        const made = await x.postJson(`${x.endpoint('todoist')}/tasks/quick`, { text: action.text });
-        // Quick add reads the due date out of the words; the project (its name can have spaces) is set after.
-        if (c.todo.quickProjectId && made && typeof made === 'object' && String(made.project_id) !== c.todo.quickProjectId && /^[\w-]{1,40}$/.test(String(made.id))) {
-          await x.postJson(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(String(made.id))}/move`, { project_id: c.todo.quickProjectId }).catch(() => {});
+        if (!action.text) return false;
+        const made = await x.postJson(`${api}/tasks/quick`, { text: action.text });
+        const id = made && typeof made === 'object' && /^[\w-]{1,40}$/.test(String(made.id)) ? String(made.id) : '';
+        // Quick add reads the due date and project out of the words. A card of one project gets the task there (the project's name can have spaces, so it is moved after).
+        const into = c.todo.quickProjectId || (c.todo.source === 'project' ? c.todo.projectId : '');
+        if (id && into && String(made.project_id) !== into) {
+          await x.postJson(`${api}/tasks/${id}/move`, { project_id: into }).catch(() => {});
         }
-        return { added: true };
+        // On Today a task without a day would vanish at the next look: it is for today unless the words said otherwise.
+        if (id && TV.dueTodayFor(c.todo) && !made.due) {
+          const set = await x.postJson(`${api}/tasks/${id}`, { due_string: 'today' }).catch(() => null);
+          if (set && typeof set === 'object') Object.assign(made, set);
+        }
+        // Shown at once, before the list is read again (which puts it in its place).
+        if (id && cached.groups && (made.due || !TV.needsDay(c.todo))) {
+          const today = TV.ymd(new Date());
+          const fresh = TV.normalizeTask(made, await x.projects().catch(() => new Map()), today);
+          if (fresh && !cached.groups.some((g) => g.tasks.some((t) => t.id === fresh.id))) {
+            if (!cached.groups.length) cached.groups = [{ label: '', more: 0, tasks: [] }];
+            cached.groups[0].tasks.push(TV.present(fresh, c.todo));
+            cached.total = (cached.total || 0) + 1;
+            cached.shown = (cached.shown || 0) + 1;
+          }
+        }
+        return { added: true, delay: 600 };
       }
       return false;
     },
@@ -1511,7 +1561,7 @@ function createWidgets(deps) {
   // ---- network helpers handed to connectors (x) ----
   function spend(budget) {
     const t = now();
-    if (t < backoffUntil) throw new Error('The service asked Lumen to slow down. It will try again shortly.');
+    if (t < backoffUntil) throw Object.assign(new Error('The service asked Lumen to slow down. It will try again shortly.'), { waitMs: backoffUntil - t }); // (one 429 pauses every card: they wait it out together instead of retrying)
     const bucket = budget === 'search' ? recentSearch : recent;
     const win = budget === 'search' ? SEARCH_RATE.window : RATE.window;
     while (bucket.length && t - bucket[0] > win) bucket.shift();
@@ -1528,7 +1578,7 @@ function createWidgets(deps) {
       res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
     } catch (err) {
       clearTimeout(timer);
-      throw new Error(err.name === 'AbortError' ? 'The server took too long to answer.' : 'Couldn’t connect. Check your internet connection.');
+      throw netError(err);
     }
     try {
       if (res.url && !/^https:\/\//.test(res.url)) throw new Error('The address redirected away from https.');
@@ -1584,7 +1634,7 @@ function createWidgets(deps) {
     if (res.status === 401 || res.status === 403) return new Error('The token was refused. Check it in Settings.');
     if (res.status === 404) return new Error('Nothing was found at that address.');
     if (res.status === 429) return new Error('The service is busy. Lumen will try again shortly.');
-    return new Error(`The server answered ${res.status}.`);
+    return Object.assign(new Error(`The server answered ${res.status}.`), res.status >= 500 || res.status === 408 ? { transient: true } : {}); // a busy or restarting server passes
   };
   const spotifyTokenFor = (name) => { if (!name) return {}; if (!spotifyTokens.has(name)) spotifyTokens.set(name, {}); return spotifyTokens.get(name); };
   function helpers(secretName, secretOverride) {
@@ -1736,20 +1786,55 @@ function createWidgets(deps) {
   }
 
   // ---- fetching ----
-  function refresh(w, { force = false } = {}) {
+  // A passing failure (offline, DNS, a reset, a timeout, a 5xx) is asked again after RETRY_STEPS, with the old answer still on the card.
+  const setTimer = deps.setTimer || ((fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; });
+  const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
+  function scheduleRetry(w, entry) {
+    if (entry.timer) { clearTimer(entry.timer); entry.timer = null; }
+    if (!(entry.tries < RETRY_STEPS.length)) return;
+    const delay = RETRY_STEPS[entry.tries++];
+    entry.timer = setTimer(() => {
+      entry.timer = null;
+      const cur = list().find((x) => x.id === w.id);
+      if (!cur || cache.get(w.id) !== entry || entry.key !== keyOf(cur)) return; // the card was edited or removed meanwhile
+      refresh(cur, { retry: true }).catch(() => {});
+    }, delay);
+  }
+  // The machine came back (it woke, the network returned, the new-tab page was shown again): every card that is showing an
+  // error or an older answer asks again now, and gets its three quick retries back.
+  function retryNow() {
+    const jobs = [];
+    for (const w of list()) {
+      const entry = cache.get(w.id);
+      if (!entry || entry.key !== keyOf(w) || entry.pending || !(entry.error || entry.retrying)) continue;
+      if (entry.timer) { clearTimer(entry.timer); entry.timer = null; }
+      entry.tries = 0;
+      jobs.push(refresh(w, { retry: true }).catch(() => false));
+    }
+    return Promise.all(jobs).then((r) => r.some(Boolean));
+  }
+  function refresh(w, { force = false, retry = false } = {}) {
     const c = connector(w);
     let entry = cache.get(w.id);
-    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
+    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, tries: 0, undo: entry?.undo }; cache.set(w.id, entry); }
     if (entry.pending) return entry.pending;
     if (entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
-    const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
+    const fresh = !retry && entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < (typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH)))) return Promise.resolve(false);
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
-      .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
+      .then((data) => {
+        entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
+        entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
+        if (entry.retrying) scheduleRetry(w, entry); else { entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } }
+      }, (err) => {
+        entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0;
+        entry.retrying = false;
+        if (err?.transient === true && !entry.retryAt) scheduleRetry(w, entry);
+      })
       .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
     return entry.pending;
   }
@@ -1769,7 +1854,7 @@ function createWidgets(deps) {
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -2308,8 +2393,16 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
-    if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer|retry|reschedule|tdsource)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
+    if (action.do === 'reschedule') { // a task's new day, from the card's small menu
+      action.arg = params.get('arg');
+      if (!['today', 'tomorrow', 'nextweek', 'none'].includes(action.arg)) return { invalid: true };
+    }
+    if (action.do === 'tdsource') { // the card header's Today / Upcoming / Inbox switch
+      action.arg = params.get('arg');
+      if (!TV.VIEWS.includes(action.arg)) return { invalid: true };
+    }
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
       if (!action.text) return { invalid: true };
@@ -2523,10 +2616,22 @@ function createWidgets(deps) {
     if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
     if (action.do === 'setup') return setupFromPage(action);
+    if (action.do === 'retry') return retryNow(); // the page was shown again, or the machine came back online
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
     if (action.do === 'refresh') return refresh(w, { force: true });
+    if (action.do === 'tdsource') { // the Todoist card's Today / Upcoming / Inbox switch: the card keeps showing the old list until the new one arrives
+      const todo = w.type === 'todoist' ? TV.applyView(w.todo, action.arg) : null;
+      if (!todo || TV.viewOf(w.todo) === null) return false;
+      const was = cache.get(w.id);
+      save(list().map((x) => (x.id === w.id ? { ...x, todo } : x)));
+      const next = list().find((x) => x.id === w.id);
+      if (was?.data) cache.set(w.id, { key: keyOf(next), data: was.data, error: null, at: 0, okAt: was.okAt, undo: null });
+      deps.onUpdate?.();
+      refresh(next).catch(() => {});
+      return true;
+    }
     if (action.do === 'place') return place(w.id, action.to);
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
     if (action.do === 'layout') return layout(action.items, action.dock);
@@ -2571,6 +2676,7 @@ function createWidgets(deps) {
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
       entry.data = { ...entry.data, notice: entry.error };
+      if (err?.transient === true) { entry.tries = 0; scheduleRetry(w, entry); } // a passing failure: the list is read again in a moment, which also clears the note
       deps.onUpdate?.();
       return false;
     }
@@ -2625,7 +2731,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

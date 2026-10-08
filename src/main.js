@@ -5978,6 +5978,14 @@ function wireSchedulerPower() {
   pm.on('unlock-screen', () => scheduler.resume('locked'));
   pm.on('suspend', () => scheduler.pause('suspended'));
   pm.on('resume', () => { scheduler.resume('suspended'); scheduler.resume('locked'); });
+  // Waking from sleep: the network takes a few seconds to come back, then every card that failed meanwhile asks again.
+  const widgetsBack = () => setTimeout(() => {
+    // After sleep or a network change Chromium may hold dead sockets and a stale DNS cache; drop both so the retry makes fresh ones.
+    try { const ses = require('electron').session.defaultSession; ses.closeAllConnections?.().catch?.(() => {}); ses.clearHostResolverCache?.().catch?.(() => {}); } catch { /* best effort */ }
+    widgets.retryNow().catch(() => {});
+  }, 4000).unref?.();
+  pm.on('resume', widgetsBack);
+  pm.on('unlock-screen', widgetsBack);
 }
 
 function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = false } = {}) {
