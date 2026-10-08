@@ -123,7 +123,7 @@ const strip = (n, extra = () => ({})) => Array.from({ length: n }, (_, i) => tab
 }
 
 // ---- settings values ----
-check('preload default is 2', W.cleanPreload(undefined) === 2 && W.cleanPreload('x') === 2 && W.cleanPreload(7) === 2);
+check('preload default is 1', W.cleanPreload(undefined) === 1 && W.cleanPreload('x') === 1 && W.cleanPreload(7) === 1);
 check('preload choices', [0, 1, 2, 3, 5].every((n) => W.cleanPreload(n) === n));
 check('freeze-first default is off', W.cleanFreezeFirst(undefined) === 0 && W.cleanFreezeFirst(11) === 0 && W.cleanFreezeFirst(30) === 30);
 

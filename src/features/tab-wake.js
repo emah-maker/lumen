@@ -5,7 +5,7 @@
 
 const HOVER_MS = 150; // a pointer resting on a tab this long means to open it
 const PRELOAD_CHOICES = [0, 1, 2, 3, 5]; // Settings > Tabs > Memory: "Preload tabs after startup"
-const PRELOAD_DEFAULT = 2;
+const PRELOAD_DEFAULT = 1;
 const FREEZE_FIRST_CHOICES = [0, 10, 30, 60]; // minutes a tab that goes to sleep stays frozen (instant to wake) before it unloads; 0: unload at once, as before
 const PRELOAD_IDLE_CPU = 25; // % of one core the whole app may use for the machine to count as idle
 const PRELOAD_GAP_MS = 1500; // between one preload finishing and the next starting
