@@ -96,6 +96,20 @@ function coreChecks(check) {
   c4.put('s', 'e1', null); c4.put('s', '   ', []);
   check('search cache: junk is not stored', c4.size() === 3, String(c4.size()));
 
+  // coalescing (a volume drag, held arrow keys)
+  const got = [];
+  const lat = MS.createLatest((v) => got.push(v), 50, { setTimeout: st, clearTimeout: ct, now: () => clock });
+  lat.push(1); lat.push(2); lat.push(3);
+  check('search core: a burst is sent as the first value at once, then only the last one 50 ms on', got.join() === '1', got.join());
+  advance(49);
+  check('search core: ...nothing in between', got.join() === '1', got.join());
+  advance(2);
+  check('search core: ...then the last value of the burst', got.join() === '1,3', got.join());
+  lat.push(4); lat.push(5); lat.flush();
+  check('search core: flush (the drag ended) sends the last value now, once', got.join() === '1,3,5' && (advance(200), got.join() === '1,3,5'), got.join());
+  lat.push(6); lat.push(7); lat.cancel(); advance(200);
+  check('search core: cancel drops what is waiting', got.join() === '1,3,5,6', got.join());
+
   // pictures
   const rows = [{ id: 'a', thumb: 'data:x' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, ...Array.from({ length: 20 }, (_, i) => ({ id: `r${i}` }))];
   const asked = new Set(['c']);
@@ -268,6 +282,17 @@ async function warmChecks(check) {
   e.search('x'); // wake: a new page
   t += 16 * 60e3; tick();
   check('warm: a search asked also keeps the page for the next ones (the user is in the middle of searching)', player.destroyed === 1 && player.wc !== null, String(player.destroyed));
+  // playing: never unloaded for idleness, and the hidden view is not throttled in the background
+  const p3 = { destroyed: 0, wc: null, ensure() { if (!p3.wc) p3.wc = { executeJavaScript: () => Promise.resolve() }; }, webContents: () => p3.wc, status: () => ({ state: 'ready', drm: 'ok' }), isSignedIn: () => true, generation: () => 1, destroy() { p3.destroyed++; p3.wc = null; }, showIn() {}, release() {}, reload() {} };
+  const iv3 = [];
+  const e3 = createEngine({ player: p3, now: () => t, fetchBytes: async () => null, resizeArt: (b) => b, hasCard: () => true, onChange: () => {}, setInterval: (f) => { iv3.push(f); return { unref() {} }; } });
+  await e3.read();
+  e3.onMessage('{"t":"ready"}');
+  e3.onMessage(JSON.stringify({ t: 'state', state: 2, pos: 1, dur: 200, device: '', player: true, item: { title: 'Song', artist: 'A', album: 'B', art: '', ms: 200000 } }));
+  t += 3 * 3600e3; iv3.forEach((f) => f());
+  check('playing: a song that is playing is never unloaded for idleness (three hours with no card read)', p3.destroyed === 0, String(p3.destroyed));
+  const wp = fs.readFileSync(path.join(root, 'features', 'web-player.js'), 'utf8');
+  check('playing: the hidden player view is made with backgroundThrottling off (music is not slowed or stopped while hidden)', /backgroundThrottling: false/.test(wp), '');
   check('warm: the engine offers warm, loadThumbs and searchMore to the widget', typeof e.warm === 'function' && typeof e.loadThumbs === 'function' && typeof e.searchMore === 'function', '');
 }
 

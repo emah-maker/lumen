@@ -232,6 +232,9 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   var KIND_PATH = { song: 'track', album: 'album', playlist: 'playlist', artist: 'artist' };
   var ID = /^[A-Za-z0-9._-]{1,64}$/;
   var SEARCH_MS = 10000, STABLE_MS = 700, MORE_MS = 6000, PLAY_MS = 8000;
+  // Typing into the page's own box is slower than opening the route (measured on open.spotify.com: the page waits a moment of its own before it
+  // routes a typed term, about 0.27 s more); it stays as the way in when the route does not move the page, and a switch for a page that changes.
+  var TYPE_FIRST = false;
   var FIRST_MS = 120, SETTLE_MS = 500, TYPE_MS = 1500; // search: the first rows must stand one render pass, the whole list this long, and a typed term this long to move the page
   var last = '', lastSent = 0, loginSince = 0, searchSeq = 0, cancelSearch = null, lastSearch = null;
   function out(o) { try { document.dispatchEvent(new CustomEvent(OUT, { detail: JSON.stringify(o) })); } catch (e) { /* the page is going away */ } }
@@ -488,7 +491,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     var t0 = Date.now(), stableSig = '', stableAt = 0, firstSig = '', firstAt = 0, sentSig = '', typed = false, navTried = false, boxTried = false;
     lastSearch = null;
     if (!wasThere) {
-      if (onSearchRoot() && typeIntoBox(term)) typed = true; else nav(target);
+      if (TYPE_FIRST && onSearchRoot() && typeIntoBox(term)) typed = true; else nav(target);
     }
     cancelSearch = watch(function (poke) {
       if (seq !== searchSeq) return null;

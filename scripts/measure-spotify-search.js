@@ -2,6 +2,7 @@
 // open.spotify.com, signed out, in a throwaway in-memory session, in a window that is never shown (show: false, no focus, no dialogs).
 // For each query it prints the time from the command being sent to the first list the card would get, and to the last one (the full list).
 //   node scripts/measure-spotify-search.js [--bridge=<path to a spotify-bridge.js>] [--rounds=2] [--json]
+//   --controls measure the playbar's buttons instead: from a command being sent to the first state the card would hear, and to the first state that shows the change
 //   --bridge   measure another version of the script (e.g. one saved from `git show origin/main:src/features/spotify-bridge.js`)
 // Needs network. Starts Electron itself with a hard timeout and closes it; it stops only the process it started.
 'use strict';
@@ -22,6 +23,7 @@ const arg = (n, d) => (args.find((a) => a.startsWith(`--${n}=`)) || '').slice(n.
 const BRIDGE = path.resolve(arg('bridge', path.join(__dirname, '..', 'src', 'features', 'spotify-bridge.js')));
 const ROUNDS = Number(arg('rounds', '2'));
 const AS_JSON = args.includes('--json');
+const CONTROLS = args.includes('--controls');
 const QUERIES = ['daft punk', 'radiohead', 'taylor swift', 'miles davis', 'billie eilish', 'the beatles', 'bad bunny', 'pink floyd'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
@@ -43,6 +45,25 @@ const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length 
     while (Date.now() - t0 < 20000 && !(await js(`window.__out.some((o) => o.d.t === 'state' && o.d.player === true)`))) await sleep(200);
     const ready = await js(`window.__out.some((o) => o.d.t === 'state')`);
     if (!ready) throw new Error('the page never started the bridge');
+    if (CONTROLS) {
+      // each command: [label, command, the state field that shows it]
+      const plan = [['shuffle on', { cmd: 'shuffle', on: true }, 'shuffle'], ['shuffle off', { cmd: 'shuffle', on: false }, 'shuffle'], ['repeat all', { cmd: 'repeat', mode: 'all' }, 'repeat'], ['repeat off', { cmd: 'repeat', mode: 'off' }, 'repeat'], ['volume 0.3', { cmd: 'volume', level: 0.3 }, 'volume'], ['volume 0.8', { cmd: 'volume', level: 0.8 }, 'volume'], ['next', { cmd: 'next' }, null], ['play', { cmd: 'play' }, null]];
+      for (let round = 0; round < ROUNDS; round++) {
+        for (const [label, cmd, field] of plan) {
+          await js(`window.__out = window.__out.filter((o) => o.d.t !== 'state'); window.__before = null; window.__t0 = performance.now(); document.dispatchEvent(new CustomEvent('lumen-engine-in', { detail: ${JSON.stringify(JSON.stringify(cmd))} }));`);
+          await sleep(1800);
+          const states = await js(`window.__out.filter((o) => o.d.t === 'state').map((o) => ({ ms: Math.round(o.at - window.__t0), shuffle: o.d.shuffle, repeat: o.d.repeat, volume: o.d.volume }))`);
+          const firstState = states.length ? states[0].ms : null;
+          const changed = field && states.length ? (states.find((x, i) => i > 0 && x[field] !== states[0][field]) || states.find((x) => x[field] === (cmd.on ?? cmd.mode ?? cmd.level))) : null;
+          results.push({ label, round, firstState, shows: changed ? changed.ms : null, field, states: states.length });
+          if (!AS_JSON) console.log(`${label.padEnd(12)} round ${round}  first state ${String(firstState ?? '-').padStart(5)} ms  shows the change ${String(changed ? changed.ms : '-').padStart(5)} ms  (${states.length} states in 1.8 s)`);
+        }
+      }
+      const fs = results.map((r) => r.firstState).filter((x) => x !== null);
+      console.log(AS_JSON ? JSON.stringify({ results }) : `
+median command -> first state ${median(fs)} ms (${fs.length}/${results.length})`);
+      clearTimeout(hard); win.destroy(); app.exit(0); return;
+    }
     let rid = 100;
     for (let round = 0; round < ROUNDS; round++) {
       for (const term of QUERIES) {

@@ -82,7 +82,7 @@ function makeEl(spec, parent, log) {
 // ---- a page: the real script in a vm, a fake router ----
 // route(path, h): called on pushState; h.after(ms, treeOrFn) swaps the page's content then, h.location is the address.
 // typing: ms the page's own router takes to open /search/<term> after the box is typed into (null: typing does nothing, as a box that is not wired).
-function page({ tree = TREES.home, route = () => {}, md = null, typing = 80 } = {}) {
+function page({ tree = TREES.home, route = () => {}, md = null, typing = 80, typeFirst = false } = {}) {
   const log = { clicked: [], pushed: [], out: [], typedTerms: [] };
   let clock = 1e12;
   let tid = 0;
@@ -127,7 +127,7 @@ function page({ tree = TREES.home, route = () => {}, md = null, typing = 80 } = 
     setTimeout_(() => { ctx.history.pushState({}, '', url); ctx.window.dispatchEvent(new PopStateEvent('popstate')); }, typing);
   };
   vm.createContext(ctx);
-  vm.runInContext(SPB.BRIDGE_SOURCE, ctx);
+  vm.runInContext(typeFirst ? SPB.BRIDGE_SOURCE.replace('var TYPE_FIRST = false;', 'var TYPE_FIRST = true;') : SPB.BRIDGE_SOURCE, ctx);
   const advance = (ms) => {
     const end = clock + ms;
     for (;;) {
@@ -383,6 +383,14 @@ module.exports = async function spotifyDomUnits(check) {
   aq.send({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' });
   check('dom: an artist can not be added to the queue', SPB.cleanCommand({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' }) === null, '');
 
+  // a button's effect is reported within ~80 ms (not 400)
+  const echo = page({ tree: signedIn(TREES.home) });
+  echo.advance(1000);
+  const nStates = echo.states().length;
+  echo.send({ cmd: 'volume', level: 0.5 });
+  echo.advance(90);
+  check('dom: a command is followed by a state within 90 ms (the card hears what the page did at once, and again at 400 ms)', echo.states().length === nStates + 1 && (echo.advance(400), echo.states().length === nStates + 2), JSON.stringify([nStates, echo.states().length]));
+
   // ================= search =================
   const s1 = page({ tree: signedIn(TREES.home), route: searchRoute('daft punk') });
   s1.advance(1000);
@@ -429,8 +437,13 @@ module.exports = async function spotifyDomUnits(check) {
   growing.advance(4000);
   const gl = growing.lists();
   check('dom: rows that arrive in two batches: a partial list with the first batch, then the final list with all of them (same request)', gl.length >= 2 && gl[0].partial === true && !gl.at(-1).partial && titles(gl.at(-1), 'song').length > titles(gl[0], 'song').length && gl.every((l) => l.rid === 31), JSON.stringify(gl.map((l) => [l.partial, titles(l, 'song').length])));
+  const byRoute = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 300 }) });
+  byRoute.location.pathname = '/search/daft%20punk';
+  byRoute.send({ cmd: 'search', term: 'radiohead', rid: 34 });
+  byRoute.advance(1500);
+  check('dom: by default a search on a search page opens the route (measured faster than typing into the box of the page): nothing is typed', byRoute.typedTerms.length === 0 && byRoute.pushed[0] === '/search/radiohead' && byRoute.lists().length >= 1, JSON.stringify([byRoute.typedTerms, byRoute.pushed]));
   // a box that does not open the route by itself (typing wired to nothing): after a moment the route is opened as before
-  const dead = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 300 }), typing: null });
+  const dead = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 300 }), typing: null, typeFirst: true });
   dead.location.pathname = '/search/daft%20punk';
   dead.send({ cmd: 'search', term: 'radiohead', rid: 32 });
   dead.advance(1000);
@@ -438,13 +451,13 @@ module.exports = async function spotifyDomUnits(check) {
   dead.advance(2500);
   check('dom: a typed term that does not move the page is followed by opening the route (after 1.5 s), and the results then come', dead.typedTerms.join() === 'radiohead' && deadBefore === 0 && dead.pushed[0] === '/search/radiohead' && dead.lists().length >= 1 && dead.lists()[0].items.some((i) => i.id.startsWith('Q')), JSON.stringify([dead.typedTerms, deadBefore, dead.pushed, dead.lists().length]));
   // on a songs-only list the box is not typed into (it might keep the filter): the route is opened
-  const onTracks = page({ tree: signedIn(TREES['search-tracks']), route: searchRoute('radiohead', { allMs: 300 }) });
+  const onTracks = page({ tree: signedIn(TREES['search-tracks']), route: searchRoute('radiohead', { allMs: 300 }), typeFirst: true });
   onTracks.location.pathname = '/search/daft%20punk/tracks';
   onTracks.send({ cmd: 'search', term: 'radiohead', rid: 33 });
   onTracks.advance(2500);
   check('dom: from the songs-only list a new search opens /search/<term> itself (typing there could keep the songs-only filter)', onTracks.typedTerms.length === 0 && onTracks.pushed[0] === '/search/radiohead', JSON.stringify([onTracks.typedTerms, onTracks.pushed]));
   // an older query typed into the box and not yet shown never answers once a newer one started
-  const race = page({ tree: signedIn(TREES['search-all']), route: (p, h) => { searchRoute('radiohead', { allMs: 900 })(p, h); searchRoute('miles davis', { allMs: 300 })(p, h); } });
+  const race = page({ tree: signedIn(TREES['search-all']), typeFirst: true, route: (p, h) => { searchRoute('radiohead', { allMs: 900 })(p, h); searchRoute('miles davis', { allMs: 300 })(p, h); } });
   race.location.pathname = '/search/daft%20punk';
   race.send({ cmd: 'search', term: 'radiohead', rid: 40 });
   race.advance(200);
@@ -461,7 +474,7 @@ module.exports = async function spotifyDomUnits(check) {
   check('dom: links in the side bar (the user library) and the playbar are not search results', libPage.lists().length >= 1 && !libPage.lists()[0].items.some((i) => /^(LIBRARY|PLAYBAR)/.test(i.id)), JSON.stringify(libPage.lists()[0] && libPage.lists()[0].items.filter((i) => /^(LIBRARY|PLAYBAR)/.test(i.id))));
 
   // a second search: the previous term's rows are on the page until the router replaces them
-  const s2 = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 1500, tracksMs: 400 }) });
+  const s2 = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 1500, tracksMs: 400 }), typeFirst: true });
   s2.location.pathname = '/search/daft%20punk';
   s2.send({ cmd: 'search', term: 'radiohead', rid: 6 });
   s2.advance(1300);
