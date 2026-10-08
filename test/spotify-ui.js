@@ -214,8 +214,8 @@ async function partApi(fake, base, scratch, shots) {
   }
 
   // keyboard: the controls are real buttons in tab order with a visible focus ring
-  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')]; bs[0].focus(); const ring = getComputedStyle(bs[0]).boxShadow; return { n: bs.length, focusable: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring }; })()`);
-  check('keyboard: Previous, Play/Pause and Next are focusable buttons with a visible focus ring', kb.n === 3 && kb.focusable && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
+  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')].filter((b) => b.offsetParent !== null); bs[0].focus(); const ring = getComputedStyle(bs[0]).boxShadow; return { n: bs.length, focusable: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring }; })()`);
+  check('keyboard: Play/Pause and Next (and Previous, on a medium card or bigger) are focusable buttons with a visible focus ring', kb.n >= 2 && kb.focusable && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
 
   // light and dark: the title and artist stay readable
   const contrast = () => page(`(() => { const rgb = (s) => s.match(/[\\d.]+/g).slice(0, 3).map(Number); const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }; const c = ${card(D)}; let bg = c; let col = null; while (bg && (!col || /rgba\\(.*, 0\\)|transparent/.test(col))) { col = getComputedStyle(bg).backgroundColor; if (/rgba\\(.*, 0\\)|transparent/.test(col)) bg = bg.parentElement; } const bgl = lum(rgb(col)); const ratio = (sel) => { const l = lum(rgb(getComputedStyle(c.querySelector(sel)).color)); return (Math.max(l, bgl) + 0.05) / (Math.min(l, bgl) + 0.05); }; return { title: ratio('.sp-title'), artist: ratio('.sp-artist'), bg: col }; })()`);

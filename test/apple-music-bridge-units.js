@@ -89,7 +89,7 @@ module.exports = async function appleMusicBridgeUnits(check) {
 
   // ---- the page script itself ----
   check('apple bridge: the page script is plain code: no eval, Function, fetch, XHR, innerHTML, document.write, import or WebSocket', !/\b(eval|Function|fetch|XMLHttpRequest|innerHTML|outerHTML|document\.write|import\s*\(|WebSocket|localStorage|sessionStorage|cookie|postMessage)\b/.test(AMB.BRIDGE_SOURCE), '');
-  check('apple bridge: the page script names exactly these Apple API path templates (search, an artist top songs, recent plays, playlists)', (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).sort().join() === "'/v1/catalog/','/v1/catalog/','/v1/me/library/playlists','/v1/me/recent/played'", (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).join());
+  check('apple bridge: the page script names exactly these Apple API path templates (search, an artist top songs, lyrics, ratings (the heart: read, love, unlove), recent plays, playlists)', (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).sort().join() === "'/v1/catalog/','/v1/catalog/','/v1/catalog/','/v1/me/library/playlists','/v1/me/ratings/','/v1/me/ratings/','/v1/me/recent/played'", (AMB.BRIDGE_SOURCE.match(/'\/v1\/[^']*'/g) || []).join());
   check('apple bridge: the page script compiles', (() => { try { new vm.Script(AMB.BRIDGE_SOURCE); return true; } catch { return false; } })(), '');
 
   const h = pageHarness();
