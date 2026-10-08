@@ -69,7 +69,7 @@ function makeEl(spec, parent, log) {
     get textContent() { return el.childNodes.map((c) => (c.nodeType === 3 ? c.text : c.textContent)).join(''); },
     get children() { return el.childNodes.filter((c) => c.nodeType === 1); },
     click() { el.clicks++; log.clicked.push(el); },
-    dispatchEvent(ev) { el.events.push(ev.type); return true; },
+    dispatchEvent(ev) { el.events.push(ev.type); if (log.onEvent) log.onEvent(el, ev); return true; },
     matches(sel) { return matchesParsed(el, parseSelector(sel)); },
     closest(sel) { const p = parseSelector(sel); for (let n = el; n && n.localName; n = n.parentNode) if (matchesParsed(n, p)) return n; return null; },
     querySelectorAll(sel) { const p = parseSelector(sel); const out = []; const walk = (n) => { for (const c of n.children) { if (matchesParsed(c, p)) out.push(c); walk(c); } }; walk(el); return out; },
@@ -81,8 +81,9 @@ function makeEl(spec, parent, log) {
 
 // ---- a page: the real script in a vm, a fake router ----
 // route(path, h): called on pushState; h.after(ms, treeOrFn) swaps the page's content then, h.location is the address.
-function page({ tree = TREES.home, route = () => {}, md = null } = {}) {
-  const log = { clicked: [], pushed: [], out: [] };
+// typing: ms the page's own router takes to open /search/<term> after the box is typed into (null: typing does nothing, as a box that is not wired).
+function page({ tree = TREES.home, route = () => {}, md = null, typing = 80, typeFirst = false } = {}) {
+  const log = { clicked: [], pushed: [], out: [], typedTerms: [] };
   let clock = 1e12;
   let tid = 0;
   const timers = [];
@@ -118,8 +119,15 @@ function page({ tree = TREES.home, route = () => {}, md = null } = {}) {
     clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.dead = true; },
     setInterval: (f, ms) => { timers.push({ id: ++tid, f, at: clock + ms, every: ms }); return tid; },
   };
+  log.onEvent = (el, ev) => { // the page's router answering the search box (typed into by the script: value set, then an input event)
+    if (ev.type !== 'input' || el.getAttribute('data-testid') !== 'search-input') return;
+    log.typedTerms.push(el.__v);
+    if (typing === null) return;
+    const url = `/search/${encodeURIComponent(el.__v)}`;
+    setTimeout_(() => { ctx.history.pushState({}, '', url); ctx.window.dispatchEvent(new PopStateEvent('popstate')); }, typing);
+  };
   vm.createContext(ctx);
-  vm.runInContext(SPB.BRIDGE_SOURCE, ctx);
+  vm.runInContext(typeFirst ? SPB.BRIDGE_SOURCE.replace('var TYPE_FIRST = false;', 'var TYPE_FIRST = true;') : SPB.BRIDGE_SOURCE, ctx);
   const advance = (ms) => {
     notify(); // (a test changes the stand-in page's elements directly: the real page's MutationObserver would have been told)
     const end = clock + ms;
@@ -137,7 +145,7 @@ function page({ tree = TREES.home, route = () => {}, md = null } = {}) {
   const states = () => log.out.filter((x) => x.t === 'state');
   const errors = () => log.out.filter((x) => x.t === 'error');
   const el = (sel) => body.querySelector(sel);
-  return { ...log, log, advance, send, swap, lists, states, errors, el, all: (sel) => body.querySelectorAll(sel), location, typed, last: () => states().at(-1) };
+  return { ...log, log, advance, send, swap, lists, states, errors, el, all: (sel) => body.querySelectorAll(sel), location, typed, last: () => states().at(-1), now: () => clock };
 }
 
 // A saved search page, made to be about another term (new ids), the way a second search shows other results.
@@ -159,6 +167,15 @@ const searchRoute = (term, { allMs = 600, tracksMs = 500 } = {}) => (p, h) => {
   if (p === `/search/${enc}`) h.after(allMs, retarget(TREES['search-all'], term));
   else if (p === `/search/${enc}/tracks`) h.after(tracksMs, retarget(TREES['search-tracks'], term));
 };
+// The saved results page with only its first `n` song rows (a page that is still rendering).
+function firstRows(tree, n) {
+  let seen = 0;
+  const walk = (node) => {
+    if (typeof node === 'string') return node;
+    return { ...node, c: (node.c || []).filter((c) => { if (typeof c !== 'string' && c.a && c.a['data-testid'] === 'tracklist-row') return ++seen <= n; return true; }).map(walk) };
+  };
+  return walk(clone(tree));
+}
 const titles = (list, kind) => list.items.filter((i) => i.kind === kind).map((i) => i.title);
 
 // ---- the engine's fake page (as in test/music-card-units.js) ----
@@ -367,6 +384,14 @@ module.exports = async function spotifyDomUnits(check) {
   aq.send({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' });
   check('dom: an artist can not be added to the queue', SPB.cleanCommand({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' }) === null, '');
 
+  // a button's effect is reported within ~80 ms (not 400)
+  const echo = page({ tree: signedIn(TREES.home) });
+  echo.advance(1000);
+  const nStates = echo.states().length;
+  echo.send({ cmd: 'volume', level: 0.5 });
+  echo.advance(90);
+  check('dom: a command is followed by a state within 90 ms (the card hears what the page did at once, and again at 400 ms)', echo.states().length === nStates + 1 && (echo.advance(400), echo.states().length === nStates + 2), JSON.stringify([nStates, echo.states().length]));
+
   // ================= search =================
   const s1 = page({ tree: signedIn(TREES.home), route: searchRoute('daft punk') });
   s1.advance(1000);
@@ -382,9 +407,64 @@ module.exports = async function spotifyDomUnits(check) {
   check('dom: albums, artists and playlists come from the results area, by their links (not the side bar\'s library, not the playbar)', titles(first, 'album').length >= 3 && titles(first, 'artist').length >= 1 && titles(first, 'playlist').length >= 1 && first.items.every((i) => i.title), JSON.stringify(first.items.map((i) => `${i.kind}:${i.title}`)));
   s1.advance(4000);
   const lists = s1.lists();
-  const better = lists.at(-1);
-  check('dom: then it opens the songs-only list and sends a longer song list under the same request, keeping the albums, artists and playlists', lists.length === 2 && better.rid === 5 && better.ok === true && titles(better, 'song').length > 4 && titles(better, 'song').length <= 8 && titles(better, 'album').length === titles(first, 'album').length && better.items.find((i) => i.title === 'One More Time').album === 'Discovery' && s1.pushed.at(-1) === '/search/daft%20punk/tracks', JSON.stringify([lists.length, titles(better, 'song'), s1.pushed]));
-  check('dom: every item it sends passes the engine\'s check (id, kind, title) and keeps the album of a song', SPB.parseMessage(JSON.stringify(better)).items.length === better.items.length && SPB.parseMessage(JSON.stringify(better)).items[0].album === 'Discovery', '');
+  check('dom: the whole list follows the first rows under the same request, and the songs-only list is NOT opened by itself (one route, not two)', lists.length === 2 && lists[0].partial === true && !lists[1].partial && lists.every((l) => l.rid === 5 && l.ok) && s1.pushed.length === 1 && s1.pushed[0] === '/search/daft%20punk', JSON.stringify([lists.map((l) => [l.partial, l.items.length]), s1.pushed]));
+  s1.send({ cmd: 'searchMore', term: 'daft punk', rid: 5 });
+  s1.advance(4000);
+  const better = s1.lists().at(-1);
+  check('dom: searchMore (the user scrolled or asked) opens the songs-only list and sends a longer song list under the same request, keeping the albums, artists and playlists', s1.lists().length === 3 && better.rid === 5 && better.ok === true && better.more === true && titles(better, 'song').length > 4 && titles(better, 'song').length <= 8 && titles(better, 'album').length === titles(first, 'album').length && better.items.find((i) => i.title === 'One More Time').album === 'Discovery' && s1.pushed.at(-1) === '/search/daft%20punk/tracks', JSON.stringify([s1.lists().length, titles(better, 'song'), s1.pushed]));
+  check('dom: every item it sends passes the engine\'s check (id, kind, title) and keeps the album of a song', SPB.parseMessage(JSON.stringify(better)).items.length === better.items.length && SPB.parseMessage(JSON.stringify(better)).items[0].album === 'Discovery' && SPB.parseMessage(JSON.stringify(better)).more === true && SPB.parseMessage(JSON.stringify(first)).partial === true, '');
+  const stale = page({ tree: signedIn(TREES.home), route: searchRoute('daft punk') });
+  stale.advance(1000);
+  stale.send({ cmd: 'search', term: 'daft punk', rid: 20 });
+  stale.advance(3000);
+  stale.send({ cmd: 'searchMore', term: 'daft punk', rid: 19 });
+  stale.send({ cmd: 'searchMore', term: 'radiohead', rid: 20 });
+  stale.advance(3000);
+  check('dom: searchMore for an older request or another term does nothing (no route change, no list)', stale.pushed.length === 1 && stale.lists().length === 2, JSON.stringify([stale.pushed, stale.lists().length]));
+  check('dom: searchMore is a fixed command with a bounded term', JSON.parse(SPB.cleanCommand({ cmd: 'searchMore', term: `  ${'a'.repeat(200)} `, rid: 4 })).term.length === 80 && SPB.cleanCommand({ cmd: 'searchMore', term: '  ' }) === null && SPB.cleanCommand({ cmd: 'searchMore', term: 5 }) === null, '');
+
+  // streaming: the first rows are sent as soon as they stand one render pass, well before the whole list is settled
+  const stream = page({ tree: signedIn(TREES.home), route: searchRoute('daft punk', { allMs: 400 }) });
+  stream.advance(1000);
+  stream.send({ cmd: 'search', term: 'daft punk', rid: 30 });
+  stream.advance(400 + 250); // the page shows its rows at 400 ms
+  check('dom: partial results: the first rows are sent about one render pass (120 ms) after they show, before the page has stood still', stream.lists().length === 1 && stream.lists()[0].partial === true && stream.lists()[0].items.length > 4, JSON.stringify(stream.lists().map((l) => [l.partial, l.items.length])));
+  stream.advance(600);
+  check('dom: …and the whole list follows half a second after the rows stopped changing (not 0.7 s, and not a second route)', stream.lists().length === 2 && !stream.lists()[1].partial && stream.pushed.length === 1, JSON.stringify(stream.lists().map((l) => [l.partial, l.items.length])));
+  // rows that arrive in two batches: the partial list is what showed first, the final one is what it ended as
+  const growing = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p === '/search/daft%20punk') { h.after(300, firstRows(retarget(TREES['search-all'], 'daft punk'), 2)); h.after(900, retarget(TREES['search-all'], 'daft punk')); } } });
+  growing.advance(1000);
+  growing.send({ cmd: 'search', term: 'daft punk', rid: 31 });
+  growing.advance(4000);
+  const gl = growing.lists();
+  check('dom: rows that arrive in two batches: a partial list with the first batch, then the final list with all of them (same request)', gl.length >= 2 && gl[0].partial === true && !gl.at(-1).partial && titles(gl.at(-1), 'song').length > titles(gl[0], 'song').length && gl.every((l) => l.rid === 31), JSON.stringify(gl.map((l) => [l.partial, titles(l, 'song').length])));
+  const byRoute = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 300 }) });
+  byRoute.location.pathname = '/search/daft%20punk';
+  byRoute.send({ cmd: 'search', term: 'radiohead', rid: 34 });
+  byRoute.advance(1500);
+  check('dom: by default a search on a search page opens the route (measured faster than typing into the box of the page): nothing is typed', byRoute.typedTerms.length === 0 && byRoute.pushed[0] === '/search/radiohead' && byRoute.lists().length >= 1, JSON.stringify([byRoute.typedTerms, byRoute.pushed]));
+  // a box that does not open the route by itself (typing wired to nothing): after a moment the route is opened as before
+  const dead = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 300 }), typing: null, typeFirst: true });
+  dead.location.pathname = '/search/daft%20punk';
+  dead.send({ cmd: 'search', term: 'radiohead', rid: 32 });
+  dead.advance(1000);
+  const deadBefore = dead.pushed.length;
+  dead.advance(2500);
+  check('dom: a typed term that does not move the page is followed by opening the route (after 1.5 s), and the results then come', dead.typedTerms.join() === 'radiohead' && deadBefore === 0 && dead.pushed[0] === '/search/radiohead' && dead.lists().length >= 1 && dead.lists()[0].items.some((i) => i.id.startsWith('Q')), JSON.stringify([dead.typedTerms, deadBefore, dead.pushed, dead.lists().length]));
+  // on a songs-only list the box is not typed into (it might keep the filter): the route is opened
+  const onTracks = page({ tree: signedIn(TREES['search-tracks']), route: searchRoute('radiohead', { allMs: 300 }), typeFirst: true });
+  onTracks.location.pathname = '/search/daft%20punk/tracks';
+  onTracks.send({ cmd: 'search', term: 'radiohead', rid: 33 });
+  onTracks.advance(2500);
+  check('dom: from the songs-only list a new search opens /search/<term> itself (typing there could keep the songs-only filter)', onTracks.typedTerms.length === 0 && onTracks.pushed[0] === '/search/radiohead', JSON.stringify([onTracks.typedTerms, onTracks.pushed]));
+  // an older query typed into the box and not yet shown never answers once a newer one started
+  const race = page({ tree: signedIn(TREES['search-all']), typeFirst: true, route: (p, h) => { searchRoute('radiohead', { allMs: 900 })(p, h); searchRoute('miles davis', { allMs: 300 })(p, h); } });
+  race.location.pathname = '/search/daft%20punk';
+  race.send({ cmd: 'search', term: 'radiohead', rid: 40 });
+  race.advance(200);
+  race.send({ cmd: 'search', term: 'miles davis', rid: 41 });
+  race.advance(5000);
+  check('dom: an older query in flight is cancelled by a newer one: only the newer request is ever answered, with the newer term\'s rows', race.lists().length >= 1 && race.lists().every((l) => l.rid === 41) && race.typedTerms.join() === 'radiohead,miles davis', JSON.stringify([race.lists().map((l) => l.rid), race.typedTerms]));
 
   const lib = signedIn(TREES['search-all']);
   const withLib = { ...lib, c: [{ t: 'nav', a: { 'aria-label': 'Main' }, c: [{ t: 'a', a: { href: '/playlist/LIBRARYPLAYLIST1' }, c: ['My own playlist'] }, { t: 'a', a: { href: '/artist/LIBRARYARTIST0001' }, c: ['A library artist'] }] }, { t: 'footer', c: [{ t: 'a', a: { href: '/artist/PLAYBARARTIST0001' }, c: ['Now playing artist'] }] }, ...lib.c] };
@@ -395,11 +475,12 @@ module.exports = async function spotifyDomUnits(check) {
   check('dom: links in the side bar (the user library) and the playbar are not search results', libPage.lists().length >= 1 && !libPage.lists()[0].items.some((i) => /^(LIBRARY|PLAYBAR)/.test(i.id)), JSON.stringify(libPage.lists()[0] && libPage.lists()[0].items.filter((i) => /^(LIBRARY|PLAYBAR)/.test(i.id))));
 
   // a second search: the previous term's rows are on the page until the router replaces them
-  const s2 = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 1500, tracksMs: 400 }) });
+  const s2 = page({ tree: signedIn(TREES['search-all']), route: searchRoute('radiohead', { allMs: 1500, tracksMs: 400 }), typeFirst: true });
   s2.location.pathname = '/search/daft%20punk';
   s2.send({ cmd: 'search', term: 'radiohead', rid: 6 });
   s2.advance(1300);
-  check('dom: a second search never answers with the first one\'s rows that are still on the page', s2.lists().length === 0 && s2.pushed[0] === '/search/radiohead', JSON.stringify([s2.lists().length, s2.pushed]));
+  check('dom: a second search never answers with the first one\'s rows that are still on the page (partial results included)', s2.lists().length === 0 && s2.pushed[0] === '/search/radiohead', JSON.stringify([s2.lists().length, s2.pushed]));
+  check('dom: on a search page the script types the term into the page\'s own search box (the page opens the route itself); it does not open a route of its own', s2.typedTerms.join() === 'radiohead' && s2.pushed.length === 1, JSON.stringify([s2.typedTerms, s2.pushed]));
   s2.advance(3000);
   check('dom: …it waits for the new results, then answers with those', s2.lists().length >= 1 && s2.lists()[0].ok === true && s2.lists()[0].items.some((i) => i.id.startsWith('Q')) && !s2.lists()[0].items.some((i) => i.kind === 'song' && !i.id.startsWith('Q')), JSON.stringify(s2.lists()[0] && s2.lists()[0].items.slice(0, 3).map((i) => i.id)));
   const same = page({ tree: signedIn(TREES['search-all']), route: searchRoute('daft punk', { tracksMs: 400 }) });

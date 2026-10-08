@@ -286,7 +286,7 @@ function normalizeDevices(text) {
 // GET /search (tracks, albums, artists, playlists) -> the card's results, songs first.
 function normalizeSearch(text) {
   const b = parse(text);
-  const pick = (page, kind) => (Array.isArray(page?.items) ? page.items : []).map((o) => listItem(o, kind)).filter(Boolean).slice(0, 8);
+  const pick = (page, kind) => (Array.isArray(page?.items) ? page.items : []).map((o) => listItem(o, kind)).filter(Boolean).slice(0, SEARCH_LIMIT);
   return [...pick(b?.tracks, 'track'), ...pick(b?.albums, 'album'), ...pick(b?.artists, 'artist'), ...pick(b?.playlists, 'playlist')];
 }
 // The album or playlist playing -> { title, items }: GET /albums/{id} (its tracks come in the answer), GET /playlists/{id} (its items; Spotify names the
@@ -309,12 +309,13 @@ function normalizeContext(kind, text) {
 }
 // Where each list comes from, and what a card button does. All paths are fixed; only checked ids and numbers are put into them.
 const enc = encodeURIComponent;
+const SEARCH_LIMIT = 10; // per kind (the most Spotify's search answers for an app in development mode)
 const PLAYER = {
   queue: () => ['GET', '/me/player/queue'],
   playlists: () => ['GET', '/me/playlists?limit=40'],
   recent: () => ['GET', '/me/player/recently-played?limit=30'],
   devices: () => ['GET', '/me/player/devices'],
-  search: (term) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track,album,artist,playlist&limit=8`],
+  search: (term) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track,album,artist,playlist&limit=${SEARCH_LIMIT}&market=from_token`], // (one request for every kind; from_token: the account's own market, so what is shown plays)
   context: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}`] : kind === 'playlist' ? ['GET', `/playlists/${id}`] : ['GET', `/artists/${id}/top-tracks`]),
   shuffle: (on) => ['PUT', `/me/player/shuffle?state=${on ? 'true' : 'false'}`],
   repeat: (mode) => ['PUT', `/me/player/repeat?state=${mode === 'all' ? 'context' : mode === 'one' ? 'track' : 'off'}`],

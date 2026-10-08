@@ -152,12 +152,35 @@ async function main() {
   await sleep(60);
   check('buttons: the volume slider asks for its value when let go', JSON.stringify(asks()) === JSON.stringify(['volume:35']), JSON.stringify(asks()));
 
+  // ---- what was pressed shows at once; the player's answer has the last word ----
+  await sleep(1900); // (the guesses of the buttons above have rolled back)
+  await render(widget(playing()), [428, 264]);
+  const now1 = await js(`(() => { const c = document.querySelector('.w-card'); const b = c.querySelector('.sp-btn.main'); const sh = c.querySelector('.mc-shuffle'); const lk = c.querySelector('.mc-like'); const before = [b.getAttribute('aria-label'), sh.getAttribute('aria-pressed'), lk.getAttribute('aria-pressed')]; b.click(); sh.click(); lk.click(); return { before, after: [b.getAttribute('aria-label'), sh.getAttribute('aria-pressed'), lk.getAttribute('aria-pressed')] }; })()`);
+  check('optimistic: pause, shuffle and the heart change on the card in the same moment as the press (before main or the player answered)', JSON.stringify(now1.before) === '["Pause","true","false"]' && JSON.stringify(now1.after) === '["Play","false","true"]', JSON.stringify(now1));
+  await render(widget(playing({ state: 'playing', shuffle: true, liked: false })));
+  const held = await js(`(() => { const c = document.querySelector('.w-card'); return [c.querySelector('.sp-btn.main').getAttribute('aria-label'), c.querySelector('.mc-shuffle').getAttribute('aria-pressed')]; })()`);
+  check('optimistic: an old state that arrives before the player has acted does not undo the press', JSON.stringify(held) === '["Play","false"]', JSON.stringify(held));
+  await render(widget(playing({ state: 'paused', shuffle: false, liked: true })));
+  const agreed = await js(`(() => { const c = document.querySelector('.w-card'); return [c.querySelector('.sp-btn.main').getAttribute('aria-label'), c.querySelector('.mc-shuffle').getAttribute('aria-pressed'), c.querySelector('.mc-like').getAttribute('aria-pressed')]; })()`);
+  check('optimistic: when the player\'s state agrees it is simply the state', JSON.stringify(agreed) === '["Play","false","true"]', JSON.stringify(agreed));
+  await js(`document.querySelector('.w-card .mc-shuffle').click()`);
+  const flipped = await js(`document.querySelector('.w-card .mc-shuffle').getAttribute('aria-pressed')`);
+  await sleep(1950);
+  const rolled = await js(`document.querySelector('.w-card .mc-shuffle').getAttribute('aria-pressed')`);
+  check('optimistic: a press the player never did rolls back by itself after about two seconds', flipped === 'true' && rolled === 'false', JSON.stringify([flipped, rolled]));
+  navigations.length = 0;
+  await js(`(() => { const v = document.querySelector('.mc-vol-range'); for (const n of [20, 25, 30, 35, 40, 45, 50]) { v.value = String(n); v.dispatchEvent(new Event('input', { bubbles: true })); } v.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(150);
+  check('coalescing: a volume drag is sent as it goes but not at every step: the first value, then the last (50)', JSON.stringify(asks()) === JSON.stringify(['volume:20', 'volume:50']), JSON.stringify(asks()));
+  await render(widget(playing()), [428, 264]);
+  await sleep(1900);
+
   // ---- keyboard ----
   navigations.length = 0;
   const key = async (k, code) => { await js(`(() => { const c = document.querySelector('.w-card'); c.focus(); c.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, code: ${JSON.stringify(code || k)}, bubbles: true, cancelable: true })); })()`); await sleep(60); };
   await key(' ', 'Space'); await key('ArrowRight'); await key('ArrowLeft'); await key('ArrowUp'); await key('ArrowDown');
   const keys = asks();
-  check('keyboard: Space pauses, Right / Left seek five seconds, Up / Down change the volume by five', keys[0] === 'pause' && /^seek:(7[6-9]|8\d)/.test(keys[1]) && /^seek:6\d/.test(keys[2]) && keys[3] === 'volume:65' && keys[4] === 'volume:55', JSON.stringify(keys));
+  check('keyboard: Space pauses, Right / Left seek five seconds, Up / Down change the volume by five', keys[0] === 'pause' && /^seek:(7[6-9]|8\d)/.test(keys[1]) && /^seek:7\d/.test(keys[2]) && keys[3] === 'volume:65' && keys[4] === 'volume:55', JSON.stringify(keys));
   check('keyboard: the card can be reached with Tab and says which keys it takes', await js(`(() => { const c = document.querySelector('.w-card'); return c.tabIndex === 0 && /Space/.test(c.getAttribute('aria-keyshortcuts') || ''); })()`), '');
   navigations.length = 0;
   await js(`document.body.classList.add('w-editing')`);
@@ -196,9 +219,21 @@ async function main() {
   await shot('spotify-lumen-large-devices');
 
   // ---- the search tab: typing survives updates; results play; add to queue ----
+  navigations.length = 0;
   await js(`document.querySelector('.mc-tab-search').click()`); await sleep(80);
   navigations.length = 0;
-  await js(`(() => { const i = document.querySelector('.mc-search-input'); i.focus(); i.value = 'night'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  const typeIn = (v) => js(`(() => { const i = document.querySelector('.mc-search-input'); i.focus(); i.dispatchEvent(new Event('focus')); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await typeIn('n'); await sleep(320);
+  check('search tab: one letter asks nothing as you type, and the box does not warm again within a minute of the tab doing it', asks().filter((a) => a.startsWith('esearch')).length === 0 && asks().filter((a) => a === 'ewarm').length === 0, JSON.stringify(asks()));
+  await typeIn('ni'); await sleep(120);
+  check('search tab: before the pause is over nothing is asked, and the list shows rows\' outlines (skeleton)', asks().filter((a) => a.startsWith('esearch')).length === 0 && (await js(`document.querySelectorAll('.mc-panel-search .am-skel').length`)) === 5, JSON.stringify(asks()));
+  await sleep(160);
+  check('search tab: ...and the search is asked 200 ms after the last key', asks().includes('esearch:ni'), JSON.stringify(asks()));
+  navigations.length = 0;
+  await typeIn('nightc'); await js(`document.querySelector('.mc-search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`); await sleep(40);
+  check('search tab: Enter asks at once (no pause)', asks().includes('esearch:nightc'), JSON.stringify(asks()));
+  navigations.length = 0;
+  await typeIn('night');
   await sleep(420);
   check('search tab: typing asks main to search after a short pause', asks().includes('esearch:night'), JSON.stringify(asks()));
   const results = [song(21, 'Night Shift', 'Ann Marlowe', 215000), song(22, 'Nightcall', 'Kavinsky', 258000), { id: 'a1', kind: 'album', title: 'Quiet Hours', sub: 'Ann Marlowe 2024', ms: 0, thumb: ART }, { id: 'ar1', kind: 'artist', title: 'Ann Marlowe', sub: '', ms: 0, thumb: ART }, { id: 'pl1', kind: 'playlist', title: 'Night drive', sub: 'Spotify', ms: 0, thumb: ART }];
@@ -206,6 +241,26 @@ async function main() {
   const typed = await js(`document.querySelector('.mc-search-input').value`);
   check('search tab: results appear in the tab, grouped, and the typed text is still there (the card was updated, not built again)', typed === 'night' && (await js(`document.querySelectorAll('.mc-panel-search .am-optrow').length`)) === 5 && (await js(`document.querySelector('.w-card') === window.__card || true`)), typed);
   await shot('spotify-lumen-large-search');
+  // the cache: the same words again are shown at once from the rows kept, without asking; a beginning of a longer query shows its rows dimmed
+  await render(widget(playing({ query: 'other', results: [] })));
+  navigations.length = 0;
+  await typeIn('night'); await sleep(300);
+  check('search cache: typing words searched a minute ago shows their rows at once and asks nothing', (await js(`document.querySelectorAll('.mc-panel-search .am-optrow').length`)) === 5 && asks().filter((a) => a.startsWith('esearch')).length === 0, JSON.stringify(asks()));
+  await typeIn('nigh'); await sleep(40);
+  const dim = await js(`[document.querySelectorAll('.mc-panel-search .am-optrow').length, !!document.querySelector('.mc-panel-search .am-stale') || document.querySelector('.mc-panel-search').classList.contains('am-stale')]`);
+  check('search cache: a beginning of an earlier, longer query shows that query\'s rows dimmed until the answer comes', dim[0] === 5 && dim[1] === true, JSON.stringify(dim));
+  // pictures: asked for the rows on screen, by id
+  const bare2 = [{ id: 'p1', kind: 'song', title: 'One', sub: 'A', ms: 1000, thumb: '' }, { id: 'p2', kind: 'song', title: 'Two', sub: 'A', ms: 1000, thumb: '' }];
+  await render(widget(playing({ query: 'pics', results: bare2 })));
+  navigations.length = 0;
+  await typeIn('pics');
+  await render(widget(playing({ query: 'pics', results: bare2.map((r) => ({ ...r })) })));
+  await sleep(300);
+  check('pictures: rows with no picture on screen are asked for together, by id (ethumb)', asks().some((a) => /^ethumb:p1,p2$/.test(a)), JSON.stringify(asks()));
+  await render(widget(playing({ query: 'pics', results: bare2.map((r) => ({ ...r, thumb: ART })) })));
+  check('pictures: a picture that arrives is drawn lazily (loading=lazy)', (await js(`[...document.querySelectorAll('.mc-panel-search img.am-thumb')].every((i) => i.loading === 'lazy') && document.querySelectorAll('.mc-panel-search img.am-thumb').length`)) === 2, '');
+  await typeIn('night');
+  await render(widget(playing({ query: 'night', results })));
   navigations.length = 0;
   await js(`document.querySelectorAll('.mc-panel-search .am-opt')[1].click()`); await sleep(60);
   check('search tab: a result plays', asks()[0] === 'playitem:s22:song' || /^playitem:/.test(asks()[0] || ''), JSON.stringify(asks()));

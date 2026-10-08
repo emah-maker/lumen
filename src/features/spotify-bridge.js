@@ -21,7 +21,7 @@ const MAX_MESSAGE = 200000;
 const KINDS = ['song', 'album', 'playlist', 'artist']; // what playItem takes
 // What the card may offer from this engine (features/music-card-features.js has the same table by name). `has` in every state message narrows
 // like / shuffle / repeat / volume further: only the controls the page really shows are drawn.
-const CAPS = { search: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: 'browser' };
+const CAPS = { search: true, searchMore: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: 'browser' };
 const LIST_KINDS = ['search', 'queue', 'playlists', 'recent', 'tracks']; // the lists the page can send ('recent': always empty here, Spotify's page has no such list)
 const REPEAT_MODES = ['off', 'all', 'one'];
 const MAX_TRACKS = 100; // a context's songs, an album or a playlist's first rows
@@ -118,7 +118,7 @@ function cleanItem(i) {
 // A page message (the JSON text) -> a checked object of ours, or null. Never throws. The same shapes as Apple's, so one engine serves both:
 //   { t:'ready' } | { t:'error', message }
 //   { t:'state', auth:false, state (2 playing, 3 paused, 0 nothing), pos, dur, item: { id:'', kind:'song', title, artist, album, art, ms } | null, device, player, signedOut (true | false | null) }
-//   { t:'list', kind:'search', rid, ok, why ('signedOut' | 'noPlayer' | 'timeout' | 'page' when not ok), detail, items: [...] }
+//   { t:'list', kind:'search', rid, ok, partial (the first rows of a search: the whole list follows), more (the songs-only list merged in), why ('signedOut' | 'noPlayer' | 'timeout' | 'page' when not ok), detail, items: [...] }
 function parseMessage(raw) {
   if (typeof raw !== 'string' || raw.length > MAX_MESSAGE) return null;
   let m;
@@ -148,7 +148,7 @@ function parseMessage(raw) {
     const max = m.kind === 'tracks' ? MAX_TRACKS : MAX_ITEMS;
     const ok = m.ok === true;
     return {
-      t: 'list', kind: m.kind, rid: Math.round(num(m.rid, 0, 1e9)), ok, signedOut: m.signedOut === true, why: ok ? '' : (SEARCH_WHY.includes(m.why) ? m.why : 'page'), detail: ok ? '' : clip(m.detail, 120),
+      t: 'list', kind: m.kind, rid: Math.round(num(m.rid, 0, 1e9)), ok, partial: m.partial === true, more: m.more === true, signedOut: m.signedOut === true, why: ok ? '' : (SEARCH_WHY.includes(m.why) ? m.why : 'page'), detail: ok ? '' : clip(m.detail, 120),
       title: clip(m.title, 120), current: Number.isInteger(m.current) && m.current >= 0 && m.current < max ? m.current : -1,
       items: (Array.isArray(m.items) ? m.items : []).slice(0, max).map(cleanItem).filter(Boolean),
     };
@@ -182,6 +182,11 @@ function cleanCommand(c) {
       const term = clip(c.term, 80);
       if (!term) return null;
       return JSON.stringify({ cmd: 'search', term, rid: Math.round(num(c.rid, 0, 1e9)) });
+    }
+    case 'searchMore': {
+      const term = clip(c.term, 80);
+      if (!term) return null;
+      return JSON.stringify({ cmd: 'searchMore', term, rid: Math.round(num(c.rid, 0, 1e9)) });
     }
     case 'like': case 'shuffle': {
       if (typeof c.on !== 'boolean') return null;
@@ -227,7 +232,11 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   var KIND_PATH = { song: 'track', album: 'album', playlist: 'playlist', artist: 'artist' };
   var ID = /^[A-Za-z0-9._-]{1,64}$/;
   var SEARCH_MS = 10000, STABLE_MS = 700, MORE_MS = 6000, PLAY_MS = 8000;
-  var last = '', lastSent = 0, loginSince = 0, searchSeq = 0, cancelSearch = null;
+  // Typing into the page's own box is slower than opening the route (measured on open.spotify.com: the page waits a moment of its own before it
+  // routes a typed term, about 0.27 s more); it stays as the way in when the route does not move the page, and a switch for a page that changes.
+  var TYPE_FIRST = false;
+  var FIRST_MS = 120, SETTLE_MS = 500, TYPE_MS = 1500; // search: the first rows must stand one render pass, the whole list this long, and a typed term this long to move the page
+  var last = '', lastSent = 0, loginSince = 0, searchSeq = 0, cancelSearch = null, lastSearch = null;
   function out(o) { try { document.dispatchEvent(new CustomEvent(OUT, { detail: JSON.stringify(o) })); } catch (e) { /* the page is going away */ } }
   function q(name, root) {
     var list = SEL[name] || [];
@@ -468,40 +477,60 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       return true;
     } catch (e) { return false; }
   }
-  // Search: open /search/<term> (songs, albums, artists, playlists), wait until the page's results for THIS term stand still, send them;
-  // then open /search/<term>/tracks for a longer list of songs and send the better list under the same request number.
+  // On a search page of its own (/search or /search/<term>, not the songs-only list below it): the page's search box is there to type into.
+  function onSearchRoot() { return /^\/search(\/[^/]+)?$/.test(pathOf(location.pathname)); }
+  // Search: when the page is already on a search page its own box is typed into and the page opens the results by itself (no new route);
+  // otherwise /search/<term> is opened. The first rows that show for THIS term are sent at once (partial: more may follow), and the whole list
+  // once it stands still. A newer search stops this one at its next look (searchSeq), so an older term's rows are never sent.
+  // The songs-only list (more songs) is a second route and is opened only when asked for (searchMore).
   function search(term, rid) {
     var seq = ++searchSeq;
     if (cancelSearch) cancelSearch();
     var target = '/search/' + encodeURIComponent(term);
     var startSig = sigOf(extract());
     var wasThere = onPath(target);
-    var t0 = Date.now(), stableSig = '', stableAt = 0, boxTried = false;
-    nav(target);
+    var t0 = Date.now(), stableSig = '', stableAt = 0, firstSig = '', firstAt = 0, sentSig = '', typed = false, navTried = false, boxTried = false;
+    lastSearch = null;
+    if (!wasThere) {
+      if (TYPE_FIRST && onSearchRoot() && typeIntoBox(term)) typed = true; else nav(target);
+    }
     cancelSearch = watch(function (poke) {
       if (seq !== searchSeq) return null;
       var age = Date.now() - t0;
       if (!onPath(target)) {
-        if (age > 2500 && !boxTried) { boxTried = true; typeIntoBox(term); }
+        if (typed && age > TYPE_MS && !navTried) { navTried = true; nav(target); } // (the box did not move the page: the route is opened)
+        else if (!typed && age > 2500 && !boxTried) { boxTried = true; typeIntoBox(term); }
         return null;
       }
       var items = extract();
       if (!items.length) return noResults() ? { items: [] } : null;
       var sig = sigOf(items);
-      if (sig !== stableSig) { stableSig = sig; stableAt = Date.now(); poke(STABLE_MS + 20); return null; }
-      if (Date.now() - stableAt < STABLE_MS) { poke(STABLE_MS - (Date.now() - stableAt) + 20); return null; }
       if (sig === startSig && !wasThere) return null; // (what the page showed before: until it shows this search's results, or the wait ends)
+      if (!sentSig) { // the first rows: sent once they have stood one render pass
+        if (sig !== firstSig) { firstSig = sig; firstAt = Date.now(); poke(FIRST_MS + 10); return null; }
+        if (Date.now() - firstAt < FIRST_MS) { poke(FIRST_MS - (Date.now() - firstAt) + 10); return null; }
+        sentSig = sig;
+        out({ t: 'list', kind: 'search', rid: rid, ok: true, partial: true, items: items });
+      }
+      if (sig !== stableSig) { stableSig = sig; stableAt = Date.now(); poke(SETTLE_MS + 20); return null; }
+      if (Date.now() - stableAt < SETTLE_MS) { poke(SETTLE_MS - (Date.now() - stableAt) + 20); return null; }
       return { items: items };
     }, SEARCH_MS, function (found) {
       if (seq !== searchSeq) return;
       if (!found) { out({ t: 'list', kind: 'search', rid: rid, ok: false, why: whyNot(), detail: diag(), items: [] }); return; }
+      lastSearch = { term: term, rid: rid, items: found.items };
       out({ t: 'list', kind: 'search', rid: rid, ok: true, items: found.items });
-      moreSongs(term, rid, found.items, seq);
     });
+  }
+  // More songs for the search just answered: the songs-only list (/search/<term>/tracks), merged under the same request number.
+  function searchMore(term, rid) {
+    if (!lastSearch || lastSearch.rid !== rid || lastSearch.term.toLowerCase() !== term.toLowerCase()) return; // (an older search, or one still running)
+    var seq = ++searchSeq;
+    if (cancelSearch) cancelSearch();
+    moreSongs(term, rid, lastSearch.items, seq);
   }
   function moreSongs(term, rid, items, seq) {
     var have = items.filter(function (i) { return i.kind === 'song'; }).length;
-    if (have >= 8) return;
     var path = '/search/' + encodeURIComponent(term) + '/tracks';
     var low = term.toLowerCase();
     nav(path);
@@ -513,10 +542,11 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       var rows = qa('trackRow', list).slice(0, 8).map(rowItem).filter(function (r) { return r && r.id; });
       return rows.length > have ? rows : null;
     }, MORE_MS, function (rows) {
-      if (!rows || seq !== searchSeq) return;
+      if (seq !== searchSeq) return;
       var seen = {}, merged = [];
-      rows.concat(items).forEach(function (i) { var k = i.kind + ':' + i.id; if (!seen[k]) { seen[k] = true; merged.push(i); } });
-      out({ t: 'list', kind: 'search', rid: rid, ok: true, items: merged });
+      (rows || []).concat(items).forEach(function (i) { var k = i.kind + ':' + i.id; if (!seen[k]) { seen[k] = true; merged.push(i); } });
+      lastSearch = { term: term, rid: rid, items: merged };
+      out({ t: 'list', kind: 'search', rid: rid, ok: true, more: true, items: merged }); // (also when the page had no more: the card stops waiting)
     });
   }
   function pageKey() { var m = q('main'); return m ? text(m).slice(0, 300) : ''; } // (what the page is about: its text differs from one item's page to the next)
@@ -769,6 +799,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
         case 'seek': if (typeof c.sec === 'number' && c.sec >= 0) seek(c.sec); break;
         case 'playItem': if (KIND_PATH[c.kind] && typeof c.id === 'string') playItem(c.kind, c.id); break;
         case 'search': if (typeof c.term === 'string' && c.term) search(c.term.slice(0, 80), Number(c.rid) || 0); break;
+        case 'searchMore': if (typeof c.term === 'string' && c.term) searchMore(c.term.slice(0, 80), Number(c.rid) || 0); break;
         case 'like': if (typeof c.on === 'boolean') setLiked(c.on); break;
         case 'shuffle': if (typeof c.on === 'boolean') setShuffle(c.on); break;
         case 'repeat': if (c.mode === 'off' || c.mode === 'all' || c.mode === 'one') setRepeat(c.mode); break;
@@ -784,6 +815,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
         case 'playLater': if (KIND_PATH[c.kind] && typeof c.id === 'string') queueAdd(c.kind, c.id); break;
       }
     } catch (e) { out({ t: 'error', message: String((e && e.message) || e) }); }
+    setTimeout(function () { tick(true); }, 80); // (a button's effect is on the page within a frame or two: the card hears at once, and again once the page has settled)
     setTimeout(function () { tick(true); }, 400);
   }
   document.addEventListener(IN, function (e) { var c; try { c = JSON.parse(e.detail); } catch (x) { return; } run(c); });
