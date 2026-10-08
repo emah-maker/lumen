@@ -432,7 +432,13 @@ function setupAiAgents(deps) {
     // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
     // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
     const runAgent = engineRun?.agent || agent;
-    const toUi = engineRun ? engineRun.emit : mcpEvent;
+    // [quiet MCP] An outside agent's step lines (tool, tool_update, tool_done) go only to its own window, where the pill
+    // shows the latest one; the user's window gets none of them (no chat rows, no pill, no panel). Only what needs the user
+    // (an approval card, quiet: it opens nothing) goes there. With no window of its own (tests share the user's) they go
+    // to the user's window as before.
+    const STEPS = new Set(['tool', 'tool_update', 'tool_done']);
+    const toAgentWindow = (event) => { try { const wc = agentRec?.win?.webContents; if (wc && !wc.isDestroyed()) wc.send('mcp:event', event); } catch {} };
+    const toUi = engineRun ? engineRun.emit : (event) => (windows && STEPS.has(event.type) ? toAgentWindow(event) : mcpEvent(event));
     const signal = engineRun ? engineRun.signal : session.controller.signal;
     const scope = engineRun && (engineRun.scope || runAgent.engineScope()); // [parallel CLI chats] the run's own scope, carried by its connection
     if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
