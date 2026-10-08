@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="translate.css" /><!-- translate infobar and button -->
   <link rel="stylesheet" href="slash.css" /><!-- the "/" menu and skill tags -->
   <link rel="stylesheet" href="tasks.css" /><!-- background tasks panel -->
+  <link rel="stylesheet" href="research.css" /><!-- research board and the Sources list -->
   <link rel="stylesheet" href="routines.css" /><!-- routines: scheduled tasks -->
   <link rel="stylesheet" href="macros.css" /><!-- macros: progress toast and variable form -->
 </head>
@@ -143,6 +144,10 @@
             <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
             <span class="task-badge" id="tasks-badge" aria-hidden="true" hidden></span>
           </button>
+          <button class="icon-btn" id="research-btn" type="button" title="Research board" aria-label="Research board" aria-haspopup="dialog" aria-expanded="false" aria-controls="research-panel" data-i18n-title="research.button" data-i18n-aria-label="research.button">
+            <svg viewBox="0 0 16 16"><path d="M3.5 2.5h7a2 2 0 0 1 2 2v9h-7a2 2 0 0 1-2-2zM3.5 11.5a2 2 0 0 1 2-2h7M6 5.5h4"/></svg>
+            <span class="task-badge research-badge" id="research-badge" aria-hidden="true" hidden></span>
+          </button>
           <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
             <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
           </button>
@@ -171,6 +176,7 @@
       <div id="chat-usage" class="chat-usage" hidden></div>
       <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" data-i18n-aria-label="sidebar.chats" hidden></div>
       <div id="task-panel" class="chat-list task-panel" role="dialog" aria-label="Background tasks" data-i18n-aria-label="tasks.title" hidden></div>
+      <div id="research-panel" class="chat-list research-panel" role="dialog" aria-label="Research board" data-i18n-aria-label="research.title" hidden></div>
       <div id="task-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="tab-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
@@ -298,6 +304,7 @@
   <script src="app.js"></script>
   <script src="chats.js"></script>
   <script src="tasks.js"></script>
+  <script src="research.js"></script><!-- research board: sources, notes, pinned quotes, citations -->
   <script src="extras.js"></script>
   <script src="chat-extras.js"></script>
   <script src="slash-match.js"></script>

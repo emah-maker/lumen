@@ -172,6 +172,19 @@ contextBridge.exposeInMainWorld('assistant', {
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
+  // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
+  research: {
+    get: () => ipcRenderer.invoke('research:get'),
+    addPage: () => ipcRenderer.invoke('research:add-page'), // "Add this page": metadata of the tab in front
+    update: (n, patch) => ipcRenderer.invoke('research:update', n, patch), // { starred, note, title }
+    remove: (n) => ipcRenderer.invoke('research:remove', n),
+    pin: (n, text, page) => ipcRenderer.invoke('research:pin', n, text, page),
+    pinSelection: (n) => ipcRenderer.invoke('research:pin-selection', n), // the text selected in the tab in front
+    unpin: (n, q) => ipcRenderer.invoke('research:unpin', n, q),
+    cite: (n, style) => ipcRenderer.invoke('research:cite', n, style), // n null: the whole bibliography; copies to the clipboard
+    open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
+    onChanged: on('research:changed'),
+  },
   // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
   sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
   setSidebarOpen: (tabId, open) => ipcRenderer.invoke('sidebar:set', tabId ?? null, Boolean(open)), // [sidebar per tab] the sidebar is open or closed on this tab

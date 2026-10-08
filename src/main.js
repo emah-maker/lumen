@@ -7031,6 +7031,7 @@ const agent = new Agent({
   codexFullAccess: () => readSettings().codexFullAccess === true, // [full access] ai/codex.js FULL_ON
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
+  boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -8085,6 +8086,125 @@ function chatPlaceOf(id) {
   const tabsShown = candidates.map((tid, i) => { const f = tabAnywhere(tid); return { id: tid, title: withWindow(f.rec, () => tabTitle(f.t)) || '', home: i === 0, here: isHere(tid, f.rec) }; });
   return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: isHere(tabId, found.rec), place: tabChatsLib.chatPlace({ tabId, here: isHere(tabId, found.rec) }), tabs: tabsShown };
 }
+// ---------- [research] the Research board panel (ai/research-board.js; the AI's research_board tool edits the same board) ----------
+// The board is the open chat's settings.research: saved, restored and deleted with the chat. Every handler first follows the sender's
+// chat (syncToSender) and only touches that board; nothing here reads a page except "Add this page" / "Pin selection", which the user
+// clicks, and which only read (meta tags, JSON-LD, the selected text). A URL opened from the board must be one the board holds.
+const researchLib = { board: require('./ai/research-board'), citations: require('./ai/citations'), meta: require('./ai/page-meta') };
+function pushResearch() {
+  for (const rec of winRecs) {
+    const w = rec === curRec ? win : rec.win;
+    if (w && !w.isDestroyed()) w.webContents.send('research:changed', null);
+  }
+  chatPageRt?.broadcast('research:changed', null, ui());
+}
+function researchChanged(chat) {
+  if (chat === agent.messages) { pushResearch(); saveChatSoon(); }
+}
+function researchState() {
+  const b = agent.researchBoard(agent.messages) || researchLib.board.emptyBoard();
+  return { chat: chatId, ...researchLib.board.view(b), styles: researchLib.citations.STYLES.concat(researchLib.citations.EXPORTS).map((id) => ({ id, name: researchLib.citations.STYLE_NAMES[id] })) };
+}
+const researchBoardForWrite = () => agent.researchBoard(agent.messages, true);
+const researchSource = (n) => researchLib.board.byNumber(researchBoardForWrite(), n);
+function researchFrontTab() {
+  const tab = tabs.find((x) => x.id === activeId && alive(x));
+  const wc = tab?.view?.webContents;
+  return wc && !wc.isDestroyed() ? wc : null;
+}
+ipcMain.handle('research:get', (event) => { syncToSender(event); return researchState(); });
+ipcMain.handle('research:add-page', async (event) => {
+  syncToSender(event);
+  const wc = researchFrontTab();
+  if (!wc) return { ok: false, reason: 'no-tab' };
+  const url = wc.getURL();
+  const pdf = pdfViewer.pdfUrlOf(url);
+  let raw;
+  try {
+    if (pdf) raw = { url: pdf, title: require('./features/pdf-text').pdfName(pdf), metas: [], jsonld: [], body: '' };
+    else if (/^https?:/i.test(url)) raw = JSON.parse(await Promise.race([wc.executeJavaScript(researchLib.meta.PAGE_SCRIPT), new Promise((_r, reject) => setTimeout(() => reject(new Error('timeout')), 6000))]));
+    else return { ok: false, reason: 'not-web' };
+  } catch { return { ok: false, reason: 'unreadable' }; }
+  const meta = researchLib.meta.fromRaw(raw);
+  try {
+    const { source, added } = researchLib.board.addSource(researchBoardForWrite(), meta, { by: 'user' });
+    saveChatSoon();
+    pushResearch();
+    return { ok: true, n: source.n, added, doi: Boolean(source.doi), metaFound: meta.metaFound };
+  } catch (err) { return { ok: false, reason: 'error', message: err.message }; }
+});
+ipcMain.handle('research:update', (event, n, patch) => {
+  syncToSender(event);
+  const p = patch && typeof patch === 'object' ? patch : {};
+  const ok = Boolean(researchLib.board.updateSource(researchBoardForWrite(), n, { starred: p.starred, note: p.note, title: p.title }, { by: 'user' }));
+  if (ok) { saveChatSoon(); pushResearch(); }
+  return ok;
+});
+ipcMain.handle('research:remove', (event, n) => {
+  syncToSender(event);
+  const ok = researchLib.board.removeSource(researchBoardForWrite(), n, { by: 'user' });
+  if (ok) { saveChatSoon(); pushResearch(); }
+  return ok;
+});
+ipcMain.handle('research:pin', (event, n, text, page) => {
+  syncToSender(event);
+  const s = researchSource(n);
+  if (!s) return { ok: false };
+  try {
+    const link = researchLib.board.fragmentUrl(s.url, text, { page: Number(page) || null });
+    researchLib.board.addQuote(researchBoardForWrite(), n, { text, page: Number(page) || null, url: link, verified: null }, { by: 'user' });
+  } catch (err) { return { ok: false, message: err.message }; }
+  saveChatSoon(); pushResearch();
+  return { ok: true };
+});
+// The text selected in the tab in front, pinned to source n; when that tab is the source's own page the quote is verified by the user's own selection.
+ipcMain.handle('research:pin-selection', async (event, n) => {
+  syncToSender(event);
+  const s = researchSource(n);
+  const wc = researchFrontTab();
+  if (!s || !wc) return { ok: false, reason: 'no-tab' };
+  let text = '';
+  try { text = String(await wc.executeJavaScript('String(getSelection() || "")')).replace(/\s+/g, ' ').trim(); } catch { /* a page that will not answer */ }
+  if (!text) return { ok: false, reason: 'no-selection' };
+  const here = researchLib.board.keysOf({ url: researchLib.meta.cleanUrl(pdfViewer.pdfUrlOf(wc.getURL()) || wc.getURL()), title: '' });
+  const own = researchLib.board.keysOf(s).some((k) => k.startsWith('u:') && here.includes(k));
+  try {
+    researchLib.board.addQuote(researchBoardForWrite(), n, { text, url: researchLib.board.fragmentUrl(s.url, text), verified: own ? true : null }, { by: 'user' });
+  } catch (err) { return { ok: false, reason: 'error', message: err.message }; }
+  saveChatSoon(); pushResearch();
+  return { ok: true, verified: own };
+});
+ipcMain.handle('research:unpin', (event, n, q) => {
+  syncToSender(event);
+  const ok = researchLib.board.removeQuote(researchBoardForWrite(), n, String(q));
+  if (ok) { saveChatSoon(); pushResearch(); }
+  return ok;
+});
+// "Copy citation" (n) / "Copy bibliography" (null): the clipboard gets rich text (italics) and plain text.
+ipcMain.handle('research:cite', (event, n, style) => {
+  syncToSender(event);
+  const b = researchBoardForWrite();
+  const whole = n === null || n === undefined;
+  const chosen = whole ? b.sources : [researchLib.board.byNumber(b, n)].filter(Boolean);
+  const st = researchLib.citations.STYLES.concat(researchLib.citations.EXPORTS).includes(style) ? style : 'apa';
+  if (!chosen.length) return { ok: false, reason: 'empty' };
+  try {
+    const out = whole ? researchLib.citations.bibliography(chosen, st) : { ...researchLib.citations.format(chosen[0], st), count: 1 };
+    if (st === 'bibtex' || st === 'ris') clipboard.writeText(out.text);
+    else clipboard.write({ text: out.text, html: out.html });
+    return { ok: true, count: out.count, style: st };
+  } catch (err) { return { ok: false, reason: 'error', message: err.message }; }
+});
+ipcMain.handle('research:open', (event, url) => {
+  syncToSender(event);
+  const b = agent.researchBoard(agent.messages);
+  const wanted = String(url || '');
+  const known = b?.sources.some((s) => s.url === wanted || s.pdfUrl === wanted || s.oaUrl === wanted || s.quotes.some((q) => q.url === wanted));
+  if (!known || !/^https?:\/\//i.test(wanted)) return false;
+  openTab(wanted);
+  return true;
+});
+
 ipcMain.handle('chats:list', (event) => {
   syncToSender(event);
   return {

@@ -1,0 +1,76 @@
+{
+ "status": "ok",
+ "message-type": "work-list",
+ "message-version": "1.0.0",
+ "message": {
+  "facets": {},
+  "total-results": 855737,
+  "items": [
+   {
+    "publisher": "Oxford University Press (OUP)",
+    "DOI": "10.1093/sleep/33.7.99",
+    "type": "journal-article",
+    "is-referenced-by-count": 0,
+    "title": [
+     "Modafinil Prevents Inhibitory Avoidance Memory Deficit Induced by Sleep Deprivation in Rats"
+    ],
+    "container-title": [
+     "Sleep"
+    ],
+    "link": [
+     {
+      "URL": "http://academic.oup.com/sleep/article-pdf/33/7/990/7395652/sleep-33-7-990.pdf",
+      "content-type": "unspecified",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+     }
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2010,
+       7,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1093/sleep/33.7.99"
+   },
+   {
+    "publisher": "Oxford University Press (OUP)",
+    "DOI": "10.1093/sleep.33.12.1669",
+    "type": "journal-article",
+    "is-referenced-by-count": 1,
+    "title": [
+     "Effects of Sleep Deprivation on Memory in Mice: Role of State-Dependent Learning"
+    ],
+    "container-title": [
+     "Sleep"
+    ],
+    "link": [
+     {
+      "URL": "http://academic.oup.com/sleep/article-pdf/33/12/1669/7303990/sleep-33-12-1669.pdf",
+      "content-type": "unspecified",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+     }
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2010,
+       12,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1093/sleep.33.12.1669"
+   }
+  ],
+  "items-per-page": 3,
+  "query": {
+   "start-index": 0,
+   "search-terms": "sleep deprivation memory"
+  }
+ }
+}

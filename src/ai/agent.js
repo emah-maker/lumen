@@ -32,6 +32,7 @@ const slidesViewer = require('../features/slides-viewer'); // read_pdf also read
 const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
+const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
 const macroPage = require('./macro-page'); // [macros] run_macro: a stored locator -> the element id click / type_text take
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
@@ -439,6 +440,7 @@ snapshot.extendTools(TOOLS);
 // --- end efficiency hook ---
 imageRouter.extendTools(TOOLS); // [image routing]
 annotate.extendTools(TOOLS); // [annotate] draw on the page to explain it
+TOOLS.push({ ...research.FIND_SOURCES_TOOL, eager_input_streaming: true }); // [research] scholarly source search, for every engine
 
 // [subagents] delegate is for the sidebar's API chats only (not listed to MCP clients or the CLI engines, which have their own helpers), and only
 // while Settings > AI > "Let the AI use helpers" is on (requestFor / otherTurn leave it out otherwise).
@@ -452,6 +454,8 @@ const DELEGATE_TOOL = {
   },
   eager_input_streaming: true,
 };
+// [research] research_board is the sidebar chat's own source list (settings.research), so, like delegate, it is not listed to MCP clients or the CLI engines.
+const BOARD_TOOL = { ...research.BOARD_TOOL, eager_input_streaming: true };
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
 // Other providers get a client-side search tool (DuckDuckGo's HTML results, read without cookies).
 const SEARCH_TOOL = {
@@ -477,7 +481,8 @@ function slimTool(tool) {
   return { name: tool.name, description: tool.description, input_schema: { type: 'object', properties, ...(required.length ? { required } : {}) } };
 }
 const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
-const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS, slimTool(DELEGATE_TOOL)];
+const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
+const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 // What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
@@ -821,7 +826,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [])),
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], [BOARD_TOOL])),
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -839,6 +844,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
 const TOOL_SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.input_schema]));
 TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for non-Claude models
 TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
+TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -861,14 +867,22 @@ const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', '
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
-const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search']);
+const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search', 'find_sources']); // find_sources: the query goes to the public scholarly APIs (one card for all of them)
 const SEARCH_HOST = 'html.duckduckgo.com';
+const SCHOLAR_HOST = 'api.openalex.org'; // stands for find_sources' databases on the approval card
+// The card for a search that leaves the browser (web_search, find_sources): the words that will be sent. undefined for other tools.
+function searchCard(name, input, who) {
+  const query = String(input?.query ?? input?.doi ?? '');
+  if (name === 'web_search') return { query, title: `${who} wants to search DuckDuckGo for ${quote(query, 120)}` };
+  if (name === 'find_sources') return { query, title: `${who} wants to search scholarly databases (OpenAlex, Crossref, Semantic Scholar, arXiv, PubMed) for ${quote(query, 120)}` };
+  return undefined;
+}
 // ---- [ai controls] Tools that don't work in the task's tab (they name their tabs or addresses, or
 // none). Every other tool reads or acts on the task's tab, so a tab on a site where the user turned
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -886,6 +900,7 @@ const siteExtractors = require('./site-extractors'); // [site extractors] Reddit
 // URLs are left out: execute() refuses them anyway.
 function destinationHosts(name, input) {
   if (name === 'web_search') return [SEARCH_HOST];
+  if (name === 'find_sources') return [SCHOLAR_HOST];
   const urls = name === 'read_urls' ? (Array.isArray(input?.urls) ? input.urls.slice(0, 6) : []) : [input?.url];
   const hosts = [];
   for (const raw of urls) {
@@ -3080,7 +3095,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS), ...(await this.externalToolDefs(emit))] : [], // [mcp client]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
       noTools,
@@ -3348,6 +3363,44 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/btw]
 
+  // ---- [research] find_sources and research_board (ai/research-tools.js). find_sources only talks to public scholarly APIs (no key,
+  // no cookies, only the AI's query leaves; in a chat that has read a page the query goes through the same OK card as web_search).
+  // The board is the chat's settings.research: saved with the chat, shown in the sidebar's Research board panel (main.js research:*).
+  findSources(input) {
+    const scope = taskScope.getStore();
+    return research.findSources(input, { chat: scope?.chat || null, signal: scope?.gate?.signal, fetchImpl: this.fetchImpl || require('../browser/net-fetch').netFetch() });
+  }
+
+  // The board of `messages` (the open chat by default); an empty chat has no settings yet, so they are started as run() would.
+  researchBoard(messages = this.messages, create = false) {
+    return research.boardOf(messages, create ? { create: () => ({ adhdMode: true, ...this.getOptions(), model: this.getOptions().model || DEFAULT_MODEL }) } : {});
+  }
+
+  async researchBoardTool(input) {
+    const scope = taskScope.getStore();
+    const chat = scope?.chat || null;
+    if (!chat) throw new Error('The research board belongs to a sidebar chat; it is not available here. Keep your own numbered source list instead.');
+    const pageMeta = require('./page-meta');
+    const capture = async () => {
+      const wc = this.requireTab();
+      const url = wc.getURL();
+      const pdf = pdfViewer.pdfUrlOf(url);
+      if (this.browser.aiOff?.(pdf || url)) throw new Error(`The user turned off AI on ${siteOf(pdf || url)}. Don't read that page; ask them to add it with Add this page.`);
+      this.markTainted(scope); // the page's own metadata is page content
+      if (pdf) return { url: pdf, title: pdfText.pdfName(pdf), metas: [], jsonld: [], body: '' };
+      if (!/^https?:/i.test(url)) throw new Error('Only a web page can be added.');
+      return JSON.parse(await runScript(wc, pageMeta.PAGE_SCRIPT, 8000));
+    };
+    return research.boardTool(input, {
+      chat,
+      board: this.researchBoard(chat),
+      capture,
+      hidden: (s) => Boolean(s.url && this.browser.aiOff?.(s.url)),
+      changed: () => { try { this.browser.boardChanged?.(chat); } catch { /* the panel is cosmetic */ } },
+    });
+  }
+  // ---- [/research]
+
   async delegate(input) {
     const scope = taskScope.getStore();
     const gate = scope?.gate;
@@ -3388,9 +3441,9 @@ ${prompt}` : prompt), historyImages: [] };
       const state = helpers.get(helper);
       const hostGate = gate ? { ...gate, who, run: state.run } : null;
       if (hostGate && DESTINATION_TOOLS.has(name) && state.run.tainted) { // a helper that has read a page: each new site or search needs the user's OK, as in the chat
-        const search = name === 'web_search' ? { query: String(args.query ?? ''), title: `${who} wants to search DuckDuckGo for ${quote(String(args.query ?? ''), 120)}` } : undefined;
+        const search = searchCard(name, args, who);
         for (const host of destinationHosts(name, args)) {
-          if (!(await this.askOpen(host, hostGate, search))) throw new Error(search ? 'The user did not allow this search to go to DuckDuckGo.' : `The user did not allow opening ${host}.`);
+          if (!(await this.askOpen(host, hostGate, search))) throw new Error(search ? 'The user did not allow this search to be sent out.' : `The user did not allow opening ${host}.`);
         }
       }
       const run = () => this.execute(name, args);
@@ -3452,6 +3505,8 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
       if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
+      if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
+      if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'run_macro') return input.list === true || !input.name ? 'Listing your macros' : `Running your macro ${quote(String(input.name), 40)}`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
@@ -3520,9 +3575,9 @@ ${prompt}` : prompt), historyImages: [] };
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
     if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
-      const search = name === 'web_search' ? { query: String(input.query ?? ''), title: `${who} wants to search DuckDuckGo for ${quote(String(input.query ?? ''), 120)}` } : undefined;
+      const search = searchCard(name, input, who);
       for (const host of destinationHosts(name, input)) {
-        if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search to DuckDuckGo. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
+        if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search out. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
     // [image routing] The prompt leaves for an image provider: after page content was read, the user sees it first (once per prompt).
@@ -5022,6 +5077,8 @@ ${same}
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
       case 'analyze_posts': return postAnalysis.run(input);
+      case 'find_sources': return this.findSources(input); // [research]
+      case 'research_board': return this.researchBoardTool(input); // [research]
       case 'run_macro': { // [macros]
         if (!this.browser.macros) throw new Error('Macros are not available here.');
         return this.browser.macros.runForAI(input, this);
