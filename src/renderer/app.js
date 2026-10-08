@@ -2759,11 +2759,15 @@ let mcpPillText = null;
 // engine sessions don't count. It holds for a moment after the last call so a run of calls doesn't flicker,
 // and the chat gets one line the first time each agent connects in this window, never one per session.
 const MCP_PILL_HOLD_MS = 1500;
-const mcpAnnounced = new Set();
 const mcpRunning = new Set(); // ids of the MCP tool calls in flight
 let mcpCdpActive = false;
 let mcpWho = '';
 let mcpPillTimer = null;
+// [quiet MCP] An outside agent works in a window of its own (features/agent-windows.js), and its steps are sent only
+// there. In that window they are the pill's text (the latest step, replacing the one before), never rows in a chat; nothing
+// of them reaches the window the user is working in. mcpStepNow is the label shown; mcpLastRow lets a repeat collapse.
+let mcpStepNow = '';
+let mcpLastRow = null;
 
 function mcpPillRefresh() {
   const driving = mcpCdpActive || mcpRunning.size > 0;
@@ -2772,7 +2776,7 @@ function mcpPillRefresh() {
     const text = document.querySelector('#agent-pill span:not(.agent-dot)');
     if (!text) return;
     if (mcpPillText === null) mcpPillText = text.textContent;
-    text.textContent = driving ? t('mcp.driving', { client: mcpWho }) : mcpPillText;
+    text.textContent = driving ? (document.body.classList.contains('agent-window') && mcpStepNow ? mcpStepNow : t('mcp.driving', { client: mcpWho })) : mcpPillText;
   };
   clearTimeout(mcpPillTimer);
   if (driving) showPill();
@@ -2781,12 +2785,24 @@ function mcpPillRefresh() {
 
 function mcpStepRow(event) {
   const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+  if (document.body.classList.contains('agent-window')) { mcpStepNow = `${event.clientName}: ${label}`; return; } // the pill says it; no chat row
   const step = document.createElement('div');
   step.className = 'step running mcp-step';
   step.innerHTML = '<span class="step-detail"></span>';
   step.firstChild.textContent = `${event.clientName}: ${label}`;
   step.title = step.firstChild.textContent;
   mcpSteps.set(event.id, step);
+  // The same step again straight after itself is one line with a count, not a column of copies.
+  const prev = mcpLastRow;
+  if (prev && prev.isConnected && prev.dataset.mcpText === step.title && prev === $('messages').lastElementChild) {
+    prev.dataset.mcpCount = String(Number(prev.dataset.mcpCount || 1) + 1);
+    prev.firstChild.textContent = `${step.title} ×${prev.dataset.mcpCount}`;
+    prev.className = 'step running mcp-step';
+    mcpSteps.set(event.id, prev);
+    return;
+  }
+  step.dataset.mcpText = step.title;
+  mcpLastRow = step;
   append(step);
 }
 
@@ -2795,12 +2811,7 @@ window.assistant.onMcpEvent?.((event) => {
     case 'session': {
       // MCP sessions carry `engine` (null for an outside agent) and only announce; the CDP proxy's don't and drive the pill.
       if (!('engine' in event)) { mcpCdpActive = Boolean(event.active || event.remaining > 0); if (mcpCdpActive) mcpWho = event.clientName; mcpPillRefresh(); }
-      if (event.engine) break; // Lumen's own engine, not an outside agent
-      if (event.active && !mcpAnnounced.has(event.clientName)) {
-        mcpAnnounced.add(event.clientName);
-        append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('mcp.connected', { client: event.clientName }) }));
-      }
-      break;
+      break; // an outside agent connecting says nothing in the user's chat (it has a window of its own; the chip there names it)
     }
     case 'tool':
       mcpStepRow(event);
@@ -2809,10 +2820,12 @@ window.assistant.onMcpEvent?.((event) => {
       mcpPillRefresh();
       break;
     case 'tool_update': { // the specific label of a step already shown (an outside agent's usually came in its 'tool' event)
+      if (document.body.classList.contains('agent-window')) { if (event.label) { mcpStepNow = `${event.clientName}: ${event.label}`; mcpPillRefresh(); } break; }
       const step = mcpSteps.get(event.id);
-      if (!step || !event.label || !step.firstChild) break;
+      if (!step || !event.label || !step.firstChild || step.dataset.mcpCount) break;
       step.firstChild.textContent = `${event.clientName}: ${event.label}`;
       step.title = step.firstChild.textContent;
+      step.dataset.mcpText = step.title;
       break;
     }
     case 'tool_done': {

@@ -108,12 +108,10 @@ const os = require('os');
   const unknown = await request('tools/call', { name: 'format_disk', arguments: {} });
   check('unknown tool is a JSON-RPC error', unknown.error?.code === -32602, JSON.stringify(unknown));
 
-  // The user sees the agent: pill text + step rows in the sidebar.
+  // [quiet MCP] The agent works in a window of its own: its steps and the "driven by" pill stay out of the user's window.
   await ui.waitForTimeout(300);
-  const pill = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent }));
-  check('pill says Lumen is being driven by Claude Code', pill.active && pill.text === 'Lumen is being driven by Claude Code', JSON.stringify(pill));
-  const steps = await ui.$$eval('.mcp-step', (els) => els.map((e) => e.textContent));
-  check('tool calls appear as sidebar steps', steps.some((s) => s.startsWith('Claude Code:')), JSON.stringify(steps));
+  const mine = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), steps: [...document.querySelectorAll('.mcp-step')].map((e) => e.textContent) }));
+  check('the user window shows no pill and no step rows for an outside agent', !mine.active && mine.steps.length === 0, JSON.stringify(mine));
 
   // Approval: with auto-approve off, a click shows the card; denying returns isError.
   // Outside agents act without a card in their own window by default (08ec84a, setting agentsNoAsk); turning it off brings the card back.
