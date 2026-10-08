@@ -100,6 +100,9 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
 const slidesRt = slidesViewer.create();
+const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
+const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
+const pdfHandler = pdfViewer.createHandler({ netFetchFor: (ses) => (url, init) => ses.fetch(url, init) });
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
 const pageTools = require('./features/page-tools').createPageTools({
   t,
@@ -137,7 +140,7 @@ const translate = require('./features/translate').createTranslate({
   popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
   openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
 });
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
@@ -579,7 +582,8 @@ const printPreview = lazy(() => require('./features/print-preview').createPrintP
   paths: { preload: path.join(__dirname, 'preload', 'print-preview-preload.js'), html: path.join(__dirname, 'renderer', 'print-preview.html') },
   restoreFocus: (wc) => { if (wc && !wc.isDestroyed()) wc.focus(); },
   downloadsDir: () => app.getPath('downloads'),
-  isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)), // a PDF tab is previewed and printed as the document it is
+  isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)) || pdfViewer.isViewerUrl(wc.getURL()), // a PDF tab is previewed and printed as the document it is
+  pdfUrlOf: (url) => pdfViewer.pdfUrlOf(url), // (Lumen's own viewer: the PDF behind its address)
 }));
 // Print…: the preview sheet over the window of the tab `wc` (a private window passes its own).
 let printSheetOpen = false;
@@ -847,6 +851,7 @@ ipcMain.on('page-dialog', (event, req) => {
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
 app.whenReady().then(() => {
+  pdfViewer.attachSession(session.defaultSession, pdfHandler);
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
@@ -1079,6 +1084,7 @@ const privateWindows = createPrivateWindows({
   // Do Not Track / Global Privacy Control, languages and Chrome hints.
   prepareSession: (ses) => {
     ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
+    pdfViewer.attachSession(ses, pdfHandler);
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
@@ -1632,7 +1638,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -1788,6 +1794,7 @@ function researchSession() {
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
+  pdfViewer.attachSession(ses, pdfHandler);
   ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
@@ -2179,7 +2186,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       sendTabs();
       return;
     }
-    if (!tab.isolated) recordVisit(url, wc.getTitle()); // research pages stay out of the user's History
+    if (!tab.isolated) recordVisit(pdfViewer.pdfUrlOf(url) || url, wc.getTitle()); // research pages stay out of the user's History (a PDF in Lumen's viewer: its own address)
     tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
@@ -2195,6 +2202,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
   slidesRt.attach(tab); // the slide viewer gets its deck once loaded (features/slides-viewer.js)
+  pdfRt.attach(tab); // a PDF's address goes to Lumen's PDF viewer (features/pdf-viewer.js)
   translate.attach(tab);
   passwordsRt?.attach(tab); // [passwords] offers to save a sign-in; features/passwords.js decides which tabs
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
@@ -2757,7 +2765,7 @@ function listTabs() {
   return tabs.filter((t) => alive(t) || t.sleeping).map((t) => ({
     id: t.id,
     title: t.sleeping ? (t.sleepTitle || 'New Tab') : warmPending.has(t.view.webContents) ? '' : t.view.webContents.getTitle(),
-    url: t.sleeping ? (t.sleepUrl || '') : realUrl(t.view.webContents),
+    url: t.sleeping ? (t.sleepUrl || '') : (pdfViewer.pdfUrlOf(realUrl(t.view.webContents)) || realUrl(t.view.webContents)), // (a PDF in Lumen's viewer: the PDF's own address)
     active: t.id === activeId,
     group: t.groupId ? tabGroups.groups.get(t.groupId)?.name || null : null,
   }));
@@ -2770,6 +2778,8 @@ function resolveInput(text) {
 
 function zoomBy(wc, step) {
   if (!wc) return;
+  // Lumen's PDF viewer: its own zoom (features/pdf-viewer.js); the page around it keeps its size.
+  if (pdfViewer.isViewerUrl(wc.getURL())) { pdfRt.command(wc, step > 0 ? 'zoomIn' : step < 0 ? 'zoomOut' : 'zoomReset'); return; }
   // A PDF tab: the built-in viewer keeps its own scale and ignores page zoom (features/pdf-zoom.js).
   if (pdfZoom.viewerFrame(wc)) {
     pdfZoom.zoomPdf(wc, step).then((took) => { if (!took) zoomPage(wc, step); });
@@ -4045,6 +4055,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
+  else if (mod && key === 'f' && pdfViewer.isViewerUrl(wc?.getURL())) pdfRt.command(wc, 'find'); // the PDF viewer's own find bar searches every page
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
@@ -6686,7 +6697,7 @@ const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
-  aiOff: (url) => aiSites.isOff(url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
+  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
@@ -7932,6 +7943,8 @@ ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approv
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
 // [annotate] "Show again" / "Clear" on a drawing step in the sidebar (ai/annotate.js).
 ipcMain.handle('agent:annotate', (_e, action) => (action === 'show' || action === 'clear' ? agent.annotateAgain(action) : false));
+// The PDF viewer's Print button (its page has no IPC but this one, from permissions-preload.js): the same preview as Ctrl+P.
+ipcMain.on('pdf:print', (e) => { if (e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url)) printTab(e.sender); });
 aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).

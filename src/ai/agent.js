@@ -27,6 +27,7 @@ const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, 
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
+const pdfViewer = require('../features/pdf-viewer'); // a PDF in Lumen's own viewer: the PDF's address is the page's address for every rule below
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
@@ -1461,7 +1462,7 @@ class Agent {
 
   // The tab this task works in: its pinned tab, or the active tab outside a task (or before a task
   // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
-  taskTabUrl() { try { return this.taskTab()?.webContents.getURL() || ''; } catch { return ''; } }
+  taskTabUrl() { try { const u = this.taskTab()?.webContents.getURL() || ''; return pdfViewer.pdfUrlOf(u) || u; } catch { return ''; } }
 
   taskTab() {
     const scope = taskScope.getStore();
@@ -3532,7 +3533,8 @@ ${prompt}` : prompt), historyImages: [] };
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
-      const url = tab?.webContents.getURL() || '';
+      const raw = tab?.webContents.getURL() || '';
+      const url = pdfViewer.pdfUrlOf(raw) || raw;
       try {
         const parsed = new URL(url);
         return parsed.host || `${parsed.protocol.replace(/:$/, '')} pages`;
@@ -4024,11 +4026,11 @@ ${rendered.text}
     const tab = input.tab_id !== undefined ? this.browser.tabById?.(input.tab_id) : this.taskTab();
     if (!tab) throw new Error(input.tab_id !== undefined ? `No tab with id ${input.tab_id}. Call list_tabs.` : this.browser.noTabReason?.() || 'No tab is open.');
     const wc = tab.webContents;
-    const url = wc.getURL();
+    const url = pdfViewer.pdfUrlOf(wc.getURL()) || wc.getURL(); // (Lumen's PDF viewer: the PDF behind its address)
     const deck = slidesViewer.deckUrlOf(url); // a PowerPoint deck in the slide viewer: its file is what is read (and asked about)
     if (deck) return { wc, url: deck, kind: 'pptx' };
     const web = /^(file|https?):/i.test(url);
-    const isPdf = web && (/\.pdf$/i.test(url.split(/[?#]/)[0]) || (await runScript(wc, 'document.contentType', 2000).catch(() => '')) === 'application/pdf');
+    const isPdf = Boolean(pdfViewer.pdfUrlOf(wc.getURL())) || web && (/\.pdf$/i.test(url.split(/[?#]/)[0]) || (await runScript(wc, 'document.contentType', 2000).catch(() => '')) === 'application/pdf');
     if (!isPdf) throw new Error('That tab is not showing a PDF. Use read_page for web pages.');
     return { wc, url };
   }
