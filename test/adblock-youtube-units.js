@@ -76,9 +76,9 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
   check('fallback: not added anywhere else (look-alike hosts included)', no.every((h) => Y.withFallback(base, h) === base), no.filter((h) => Y.withFallback(base, h).length !== 1));
 
   // ---- The fallback script, run against a stand-in page
-  function page({ adShowing, hasSkip = false, duration = 20, wall = false }) {
-    const log = { clicks: [], played: 0, timers: [] };
-    const video = { duration, currentTime: 0, playbackRate: 1, muted: false, paused: wall, ended: false, play() { log.played++; this.paused = false; return Promise.resolve(); } };
+  function page({ adShowing, hasSkip = false, duration = 20, wall = false, muted = false, rate = 1 }) {
+    const log = { clicks: [], played: 0, timers: [], timeouts: [], observers: [], cleared: 0 };
+    const video = { duration, currentTime: 0, playbackRate: rate, muted, paused: wall, ended: false, play() { log.played++; this.paused = false; return Promise.resolve(); } };
     const skipButton = { click() { log.clicks.push('skip'); } };
     const classes = new Set(adShowing ? ['html5-video-player', 'ad-showing'] : ['html5-video-player']);
     const player = {
@@ -88,24 +88,28 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
     const state = { wall };
     const document = {
       body: { style: { removeProperty() {} } },
+      documentElement: {},
+      addEventListener() {},
       getElementById: (id) => (id === 'movie_player' ? player : null),
       querySelector: (sel) => (sel === 'ytd-enforcement-message-view-model' ? (state.wall ? {} : null) : sel === 'video.html5-main-video' ? video : player),
     };
-    const ctx = vm.createContext({ document, setInterval: (fn) => { log.timers.push(fn); return 1; }, isFinite });
+    class FakeObserver { constructor(fn) { log.observers.push(fn); } observe() {} }
+    const ctx = vm.createContext({ document, MutationObserver: FakeObserver, setInterval: (fn) => { log.timers.push(fn); return log.timers.length; }, clearInterval: (id) => { log.timers[id - 1] = null; log.cleared++; }, setTimeout: (fn) => { log.timeouts.push(fn); return log.timeouts.length; }, isFinite });
     vm.runInContext(Y.FALLBACK_SCRIPT, ctx);
-    return { log, video, classes, state, tick: () => log.timers.forEach((f) => f()) };
+    return { log, video, classes, state, tick: () => { log.observers.forEach((f) => f()); log.timeouts.splice(0).forEach((f) => f()); log.timers.forEach((f) => f && f()); }, live: () => log.timers.filter(Boolean).length };
   }
   const idle = page({ adShowing: false });
   idle.tick(); idle.tick();
-  check('fallback script: starts one timer and leaves the page alone when no ad is showing', idle.log.timers.length === 1 && idle.video.playbackRate === 1 && idle.video.muted === false && idle.video.currentTime === 0 && !idle.log.clicks.length, JSON.stringify(idle.video));
+  check('fallback script: watches the page with an observer, starts no timer and leaves the page alone when no ad is showing', idle.log.timers.length === 0 && idle.log.observers.length === 1 && idle.video.playbackRate === 1 && idle.video.muted === false && idle.video.currentTime === 0 && !idle.log.clicks.length, JSON.stringify(idle.video));
   const ad = page({ adShowing: true, hasSkip: true });
   ad.tick();
   check('fallback script: during an ad it presses Skip, mutes, speeds up and runs the ad to its end', ad.log.clicks.includes('skip') && ad.video.muted === true && ad.video.playbackRate === 16 && ad.video.currentTime > 19, JSON.stringify([ad.log.clicks, ad.video]));
+  check('fallback script: the quick 300 ms timer runs only while an ad is showing', ad.live() === 1, ad.live());
   ad.classes.delete('ad-showing');
   ad.video.duration = 600; ad.tick();
+  check('fallback script: and is cleared when the ad is over', ad.live() === 0 && ad.log.cleared === 1, ad.live());
   check('fallback script: when the ad is over, the video\'s own speed and sound are put back and its position is left alone', ad.video.playbackRate === 1 && ad.video.muted === false && ad.video.currentTime < 25, JSON.stringify(ad.video));
-  const loud = page({ adShowing: true });
-  loud.video.muted = true; loud.video.playbackRate = 1.5;
+  const loud = page({ adShowing: true, muted: true, rate: 1.5 });
   loud.tick(); loud.classes.delete('ad-showing'); loud.tick();
   check('fallback script: a video the viewer had muted or sped up stays that way afterwards', loud.video.muted === true && loud.video.playbackRate === 1.5, JSON.stringify(loud.video));
   const loading = page({ adShowing: true, duration: NaN });

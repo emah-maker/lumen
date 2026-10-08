@@ -56,7 +56,11 @@ function youtubeFallback() {
       try { held.video.playbackRate = held.rate; held.video.muted = held.muted; } catch { /* the video went away */ }
       held = null;
     };
+    let adTimer = null; // the quick check, only while an ad is showing
+    let soon = null; // a check asked for by a change of the page, at most one every 250 ms
+    let lastRun = 0;
     const tick = () => {
+      lastRun = Date.now();
       try {
         const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         if (player && player.classList.contains('ad-showing')) {
@@ -72,7 +76,11 @@ function youtubeFallback() {
             // To the last moment of the ad: the player then ends it and goes on to the video.
             if (video.currentTime < video.duration - 0.25) video.currentTime = video.duration - 0.1;
           }
-        } else restore();
+          if (adTimer === null) adTimer = setInterval(tick, 300); // an ad: look often until it is over
+        } else {
+          restore();
+          if (adTimer !== null) { clearInterval(adTimer); adTimer = null; }
+        }
         // The enforcement dialog (hidden by the rules above) pauses the video behind it: play on, once per appearance.
         const wall = document.querySelector('ytd-enforcement-message-view-model');
         if (wall && !wallSeen) {
@@ -83,8 +91,15 @@ function youtubeFallback() {
         } else if (!wall) wallSeen = false;
       } catch { /* the page is in the middle of changing */ }
     };
-    // Quick enough to catch an ad in its first second, cheap when nothing is showing (one lookup).
-    setInterval(tick, 300);
+    // Observer-driven: the player's class (ad-showing) and the dialog appearing are page changes, so a quiet page (or a background tab) costs
+    // nothing. The 300 ms check above runs only while an ad is showing, which is when it has to be quick.
+    const later = () => {
+      if (soon !== null) return;
+      soon = setTimeout(() => { soon = null; tick(); }, Math.max(0, 250 - (Date.now() - lastRun)));
+    };
+    new MutationObserver(later).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    document.addEventListener('yt-navigate-finish', later, true);
+    tick();
   } catch { /* no timers yet: the page is not a normal one */ }
 }
 
