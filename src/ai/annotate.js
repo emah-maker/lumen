@@ -19,13 +19,14 @@ const MAX_MARKS = 20; // per call
 const MAX_TOTAL = 30; // on the page at once (the oldest go)
 const MAX_TEXT = 80;
 const MAX_SECONDS = 600;
-const TYPES = ['box', 'circle', 'arrow', 'highlight', 'label', 'step', 'spotlight', 'underline'];
+const TYPES = ['box', 'circle', 'arrow', 'highlight', 'label', 'step', 'spotlight', 'underline', 'strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path'];
+const MAX_POINTS = 120;
 const COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'black', 'white'];
 const COORD_LIMIT = 20000;
 
 const TOOL = {
   name: 'annotate',
-  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline, target:id or "text:…", x,y,w,h:screenshot px, to:{target|x,y} arrow tip, text, color}]. Screenshot/find first; number steps like your answer. clear:true removes.',
+  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline|strike|bracket|check|cross|redact|callout|path, target:id|text:…, x,y,w,h, to, points, text, color, width/opacity/curve}]. Screenshot/find first; number steps like your answer. clear:true removes.',
   input_schema: {
     type: 'object',
     properties: {
@@ -43,6 +44,10 @@ const TOOL = {
             to: { type: 'object' },
             text: { type: 'string' },
             color: { type: 'string', enum: COLORS },
+            width: { type: 'number' },
+            opacity: { type: 'number' },
+            curve: { type: 'boolean' },
+            points: { type: 'array', items: { type: 'array' } },
           },
           required: ['type'],
         },
@@ -121,14 +126,31 @@ function normalize(input, scale = null) {
     const where = `marks[${i}]`;
     if (!m || typeof m !== 'object' || !TYPES.includes(m.type)) throw new Error(`${where}: type must be one of ${TYPES.join(', ')}.`);
     if (m.color !== undefined && !COLORS.includes(m.color)) throw new Error(`${where}: color must be one of ${COLORS.join(', ')}.`);
-    const at = anchorOf(m, scale, where);
+    let at = anchorOf(m, scale, where);
+    let pts = null;
+    if (m.type === 'path') { // a freehand stroke: its points are kept as fractions of their bounding box, and the box is the anchor
+      const raw = Array.isArray(m.points) ? m.points.slice(0, MAX_POINTS) : [];
+      const xy = raw.map((p) => (Array.isArray(p) ? [num(p[0]), num(p[1])] : [null, null])).filter((p) => p[0] !== null && p[1] !== null);
+      if (xy.length < 2) throw new Error(`${where}: a path needs points: [[x,y], …] (at least 2, screenshot px).`);
+      if (!scale) throw new Error(`${where}: points need a screenshot of this tab first (they are pixels of it).`);
+      const px = xy.map((p) => ({ x: shotPos(p[0], scale, 'x'), y: shotPos(p[1], scale, 'y') }));
+      const x0 = Math.min(...px.map((p) => p.x)), y0 = Math.min(...px.map((p) => p.y));
+      const bw = Math.max(1, Math.max(...px.map((p) => p.x)) - x0), bh = Math.max(1, Math.max(...px.map((p) => p.y)) - y0);
+      pts = px.map((p) => [(p.x - x0) / bw, (p.y - y0) / bh]);
+      at = { box: { x: x0, y: y0, w: bw, h: bh } };
+    }
     const to = m.to === undefined ? null : anchorOf(m.to, scale, `${where}.to`);
     if (m.to !== undefined && !to) throw new Error(`${where}.to needs a target, or x and y.`);
     if (!at && !(m.type === 'arrow' && to)) throw new Error(`${where}: say where: target (element id or "text:…"), or x and y of the screenshot.`);
     if (m.type === 'arrow' && !to && !at) throw new Error(`${where}: an arrow needs a target or x,y, and usually to.`);
     const text = m.text === undefined || m.text === null ? '' : String(m.text).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MAX_TEXT);
     for (const a of [at, to]) { if (a?.ref) out.usesRefs = true; if (a?.text) out.usesText = true; if (a?.box) out.usesBox = true; }
-    out.marks.push({ type: m.type, at, to, text, color: m.color || null });
+    const mark = { type: m.type, at, to, text, color: m.color || null };
+    if (pts) mark.pts = pts;
+    if (typeof m.width === 'number' && Number.isFinite(m.width)) mark.width = Math.max(1, Math.min(12, m.width));
+    if (typeof m.opacity === 'number' && Number.isFinite(m.opacity)) mark.opacity = Math.max(0.1, Math.min(1, m.opacity));
+    if (typeof m.curve === 'boolean') mark.curve = m.curve;
+    out.marks.push(mark);
   });
   return out;
 }
@@ -154,7 +176,7 @@ function overlayMain(spec, env) {
     red: ['#d92d20', '#ff6a5f'], orange: ['#e8590c', '#ff9f43'], yellow: ['#f5c400', '#ffd60a'], green: ['#1a9d4a', '#3ddc84'],
     blue: ['#1a6ef0', '#5aa9ff'], purple: ['#7a3ff2', '#b388ff'], pink: ['#e0399a', '#ff7ac6'], black: ['#111111', '#f2f2f2'], white: ['#ffffff', '#ffffff'],
   };
-  const DEFAULT = { box: 'red', circle: 'red', arrow: 'red', underline: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white' };
+  const DEFAULT = { box: 'red', circle: 'red', arrow: 'red', underline: 'red', strike: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white', bracket: 'blue', check: 'green', cross: 'red', redact: 'black', callout: 'blue', path: 'red' };
   let dark = false;
   try { dark = Boolean(win.matchMedia && win.matchMedia('(prefers-color-scheme: dark)').matches); } catch { dark = false; }
   let still = false;
@@ -255,9 +277,28 @@ function overlayMain(spec, env) {
       const tok = { x: b.x + sx, y: b.y + sy, w: b.w, h: b.h };
       for (const s of scrollers) { tok.x += s.scrollLeft; tok.y += s.scrollTop; }
       Object.defineProperty(tok, 'scrollers', { value: scrollers, enumerable: false });
+      // Anchor to the page content, not the window: the element under the box (the smallest one that holds all of it) and where
+      // the box sits inside it, as fractions of its own box. A resize, a reflow, a zoom or a sidebar then moves the mark with the
+      // content. The document coordinates above stay as the fallback (no stable element, or it was removed).
+      try {
+        let n = doc.elementFromPoint && doc.elementFromPoint(b.x + b.w / 2, b.y + b.h / 2);
+        for (let i = 0; n && i < 14; i++, n = n.parentNode) {
+          if (n.nodeType !== 1 || n === doc.body || n === doc.documentElement || hostNodeOf(n) || typeof n.getBoundingClientRect !== 'function') break;
+          const r = n.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0 && b.x >= r.left - 2 && b.y >= r.top - 2 && b.x + b.w <= r.right + 2 && b.y + b.h <= r.bottom + 2) {
+            Object.defineProperty(tok, 'el', { value: n, enumerable: false });
+            Object.defineProperty(tok, 'rel', { value: { fx: (b.x - r.left) / r.width, fy: (b.y - r.top) / r.height, fw: b.w / r.width, fh: b.h / r.height }, enumerable: false });
+            break;
+          }
+        }
+      } catch { /* no hit test: the document coordinates are used */ }
       return tok;
     },
     locate(tok) {
+      if (tok.el && tok.rel && tok.el.isConnected !== false) {
+        const r = tok.el.getBoundingClientRect();
+        if (r && r.width > 0 && r.height > 0) return { x: r.left + tok.rel.fx * r.width, y: r.top + tok.rel.fy * r.height, w: tok.rel.fw * r.width, h: tok.rel.fh * r.height };
+      }
       let x = tok.x - (win.scrollX || 0), y = tok.y - (win.scrollY || 0);
       for (const s of tok.scrollers || []) { x -= s.scrollLeft; y -= s.scrollTop; }
       return { x, y, w: tok.w, h: tok.h };
@@ -323,7 +364,7 @@ function overlayMain(spec, env) {
   const resolve = (a) => {
     if (!a) return null;
     if (a.tok) { const t = a.tok; return { rects: () => { const r = space.locate(t); return r ? [r] : null; }, frozen: a, scroll: space.reveal ? () => space.reveal(t) : undefined }; }
-    if (a.box) { const tok = space.capture(a.box); return { rects: () => { const r = space.locate(tok); return r ? [r] : null; }, frozen: { tok: { ...tok } } }; }
+    if (a.box) { const tok = space.capture(a.box); if (tok.el && board && board.state && board.state.observer) { try { board.state.observer.observe(tok.el); } catch { /* not observable */ } } return { rects: () => { const r = space.locate(tok); return r ? [r] : null; }, frozen: { tok: { ...tok } } }; }
     if (a.ref) { const rects = () => refRects(a.ref); if (!rects()) return null; return { rects, frozen: a, scroll: () => { const e = win.__claudeEls[a.ref - 1].el; if (e.scrollIntoView) e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } }; }
     if (a.text) { const hit = findText(a.text); if (!hit) return null; return { rects: hit.rects, frozen: a, scroll: () => { if (hit.node.scrollIntoView) hit.node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } }; }
     return null;
@@ -356,10 +397,12 @@ function overlayMain(spec, env) {
       (doc.documentElement || doc.body).appendChild(host);
     }
     const state = { alive: true, views: [], steps: 0, timers: [], seed: 7, spotlight: null };
+    // The SVG always maps 1 unit to 1 CSS px of the window: the view box follows the window size at once (no stretching while
+    // the marks wait for their frame), and every mark is then recomputed from its anchor.
+    const fit = () => { const s = viewSize(); setA(svg, { viewBox: `0 0 ${s.w} ${s.h}` }); return s; };
     const layout = () => {
       if (!state.alive) return;
-      const s = viewSize();
-      setA(svg, { viewBox: `0 0 ${s.w} ${s.h}` });
+      const s = fit();
       if (live && space.clip) { // the part of the window the page's own content fills (a PDF viewer's toolbar stays clear)
         const c = space.clip();
         host.style.clipPath = c ? `inset(${f(c.y)}px ${f(Math.max(0, s.w - c.x - c.w))}px ${f(Math.max(0, s.h - c.y - c.h))}px ${f(c.x)}px)` : 'none';
@@ -384,13 +427,25 @@ function overlayMain(spec, env) {
         if (win.__lumenDraw === board) win.__lumenDraw = null;
       }
     };
-    board = { alive: true, svg, host, dimLayer, markLayer, state, layout, schedule, destroy, viewSize, created: true };
+    board = { alive: true, svg, host, dimLayer, markLayer, state, layout, fit, schedule, destroy, viewSize, created: true };
     Object.defineProperty(board, 'alive', { get: () => state.alive, enumerable: true });
     if (live) {
       state.listeners = [];
       const on = (target, type, fn, cap) => { target.addEventListener(type, fn, cap); state.listeners.push([target, type, fn, cap]); };
       on(win, 'scroll', schedule, true);
-      on(win, 'resize', schedule, false);
+      on(win, 'resize', () => { fit(); schedule(); }, false);
+      if (win.visualViewport) { on(win.visualViewport, 'resize', () => { fit(); schedule(); }, false); on(win.visualViewport, 'scroll', schedule, false); }
+      const watchDpr = () => { // moving to another screen, or browser zoom: the pixel ratio changes
+        if (!state.alive || !win.matchMedia) return;
+        try {
+          const mq = win.matchMedia(`(resolution: ${win.devicePixelRatio || 1}dppx)`);
+          if (!mq || typeof mq.addEventListener !== 'function') return;
+          const h = () => { try { mq.removeEventListener('change', h); } catch { /* gone */ } fit(); schedule(); watchDpr(); };
+          mq.addEventListener('change', h);
+          state.listeners.push([mq, 'change', h]);
+        } catch { /* no media queries */ }
+      };
+      watchDpr();
       on(win, 'keydown', (e) => { if (e && e.key === 'Escape') destroy(); }, true); // (the page still gets its Esc)
       pill.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); destroy(); });
       // The drawing stays until Esc / "Clear drawings" / a full navigation (which drops this page world with it). A single-page route
@@ -399,7 +454,7 @@ function overlayMain(spec, env) {
         if (host && host.isConnected === false) { try { (doc.documentElement || doc.body).appendChild(host); } catch { /* no root yet */ } }
         layout();
       }, spec.fast ? 60 : 250));
-      if (typeof win.ResizeObserver === 'function') { try { state.observer = new win.ResizeObserver(schedule); state.observer.observe(doc.documentElement); } catch { state.observer = null; } }
+      if (typeof win.ResizeObserver === 'function') { try { state.observer = new win.ResizeObserver(() => { fit(); schedule(); }); state.observer.observe(doc.documentElement); if (doc.body) state.observer.observe(doc.body); } catch { state.observer = null; } }
       win.__lumenDraw = board;
     }
   }
@@ -428,7 +483,7 @@ function overlayMain(spec, env) {
     const view = makeView(m, at, to, index);
     if (!view) { missing.push(`marks[${i}] ${m.type}: nothing to draw`); return; }
     state.views.push(view);
-    frozen.push({ type: m.type, at: at ? at.frozen : null, to: to ? to.frozen : null, text: m.text, color: m.color });
+    frozen.push({ type: m.type, at: at ? at.frozen : null, to: to ? to.frozen : null, text: m.text, color: m.color, pts: m.pts, width: m.width, opacity: m.opacity, curve: m.curve });
   });
   if (scrollOnce) { try { scrollOnce(); } catch { /* no scroll */ } }
   // Over the cap: the oldest marks go.
@@ -444,9 +499,10 @@ function overlayMain(spec, env) {
     state.seed++;
     const delay = Math.min(index, 5) * 110;
     const parts = [];
-    const add = (tag, attrs, layer) => { const e = el(tag, attrs, layer || board.markLayer); parts.push(e); return e; };
+    const add = (tag, attrs, layer) => { const e = el(tag, attrs, layer || board.markLayer); if (m.opacity) e.setAttribute('opacity', m.opacity); parts.push(e); return e; };
     // A hand-drawn stroke: a halo underneath (so it reads on any background) and the colour on top.
-    const stroke = (width, extra) => {
+    const stroke = (width0, extra) => {
+      const width = m.width || width0;
       const common = { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', pathLength: 1, 'stroke-dasharray': 1, ...(extra || {}) };
       const halo = add('path', { ...common, stroke: c.halo, 'stroke-opacity': c.haloOpacity, 'stroke-width': width + 4 });
       const main = add('path', { ...common, stroke: c.hex, 'stroke-width': width });
@@ -468,7 +524,7 @@ function overlayMain(spec, env) {
         set(m.type === 'box' ? rectPath(b, 5, r) : ellipsePath(b, r));
       };
       if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
-    } else if (m.type === 'underline') {
+    } else if (m.type === 'underline' || m.type === 'strike') {
       const lines = [];
       const sets = [];
       const make = () => { sets.push(stroke(3)); };
@@ -479,7 +535,7 @@ function overlayMain(spec, env) {
         sets.forEach((s, k) => { if (!use[k]) s(''); });
         use.forEach((r0, k) => {
           const r = sized(r0, 40);
-          const y = r.y + r.h + 2;
+          const y = m.type === 'strike' ? r.y + r.h / 2 : r.y + r.h + 2;
           const n = Math.max(2, Math.round(r.w / 30));
           const rr = makeRng(index * 977 + k);
           const pts = [];
@@ -551,7 +607,7 @@ function overlayMain(spec, env) {
         }
         const dx = tip.x - tail.x, dy = tip.y - tail.y;
         const len = Math.max(1, Math.hypot(dx, dy));
-        const bow = len * 0.12 * (index % 2 ? -1 : 1);
+        const bow = (m.curve === false ? 0 : len * (m.curve === true ? 0.3 : 0.12)) * (index % 2 ? -1 : 1);
         const ctl = { x: (tail.x + tip.x) / 2 - (dy / len) * bow, y: (tail.y + tip.y) / 2 + (dx / len) * bow };
         body(`M${f(tail.x)} ${f(tail.y)}Q${f(ctl.x)} ${f(ctl.y)} ${f(tip.x)} ${f(tip.y)}`);
         const ang = Math.atan2(tip.y - ctl.y, tip.x - ctl.x);
@@ -561,6 +617,85 @@ function overlayMain(spec, env) {
         head(`M${f(p1.x)} ${f(p1.y)}L${f(tip.x)} ${f(tip.y)}L${f(p2.x)} ${f(p2.y)}`);
       };
       if (m.text) addCallout(view, m, at || to, c, delay, add, popIn, rectsOf, true);
+    } else if (m.type === 'path') {
+      if (!m.pts || m.pts.length < 2) return null;
+      const set = stroke(4);
+      view.update = () => {
+        const rs = rectsOf(at);
+        if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
+        parts.forEach((p) => p.setAttribute('visibility', 'visible'));
+        const b = bounds(rs); // the stroke scales with the element it was drawn on
+        set(smooth(m.pts.map((p) => ({ x: b.x + p[0] * b.w, y: b.y + p[1] * b.h }))));
+      };
+    } else if (m.type === 'bracket') {
+      const set = stroke(3.5);
+      view.update = () => {
+        const rs = rectsOf(at);
+        if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
+        parts.forEach((p) => p.setAttribute('visibility', 'visible'));
+        const b = sized(bounds(rs), 24);
+        const tall = b.h >= b.w * 0.8; // a tall target gets a brace on its left, a wide one above it
+        const fixed = (tall ? b.x : b.y) - 4;
+        const u0 = (tall ? b.y : b.x) - 2, u1 = (tall ? b.y + b.h : b.x + b.w) + 2;
+        const um = (u0 + u1) / 2, r = Math.min(9, (u1 - u0) / 4);
+        const pt = (u, v) => (tall ? `${f(fixed + v)} ${f(u)}` : `${f(u)} ${f(fixed + v)}`);
+        set(`M${pt(u0, 0)}Q${pt(u0, -7)} ${pt(u0 + r, -7)}L${pt(um - r, -7)}Q${pt(um, -7)} ${pt(um, -15)}Q${pt(um, -7)} ${pt(um + r, -7)}L${pt(u1 - r, -7)}Q${pt(u1, -7)} ${pt(u1, 0)}`);
+      };
+      if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
+    } else if (m.type === 'check' || m.type === 'cross') {
+      const set = stroke(5);
+      view.update = () => {
+        const rs = rectsOf(at);
+        if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
+        parts.forEach((p) => p.setAttribute('visibility', 'visible'));
+        const b = bounds(rs);
+        const S = b.w || b.h ? clampN(Math.min(b.w, b.h) || Math.max(b.w, b.h), 24, 56) : 32;
+        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        set(m.type === 'check'
+          ? `M${f(cx - 0.34 * S)} ${f(cy + 0.02 * S)}L${f(cx - 0.1 * S)} ${f(cy + 0.28 * S)}L${f(cx + 0.38 * S)} ${f(cy - 0.3 * S)}`
+          : `M${f(cx - 0.3 * S)} ${f(cy - 0.3 * S)}L${f(cx + 0.3 * S)} ${f(cy + 0.3 * S)}M${f(cx + 0.3 * S)} ${f(cy - 0.3 * S)}L${f(cx - 0.3 * S)} ${f(cy + 0.3 * S)}`);
+      };
+      if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
+    } else if (m.type === 'redact') {
+      const e = add('rect', { rx: 3, fill: m.color ? c.hex : '#111111', 'fill-opacity': m.opacity ? 1 : 0.94 });
+      popIn(e);
+      view.update = () => {
+        const rs = rectsOf(at);
+        if (!rs || !rs.length) { e.setAttribute('visibility', 'hidden'); return; }
+        const b = sized(bounds(rs), 28);
+        setA(e, { visibility: 'visible', x: f(b.x - 2), y: f(b.y - 1), width: f(b.w + 4), height: f(b.h + 2) });
+      };
+      if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
+    } else if (m.type === 'callout') {
+      if (!m.text) return null;
+      const lines = wrap(m.text, 26);
+      const width = Math.max(...lines.map((l) => l.length)) * 7.4 + 20;
+      const height = lines.length * 18 + 12;
+      const lead = stroke(2.5);
+      const box = add('rect', { rx: 8, fill: c.hex, stroke: '#ffffff', 'stroke-width': 2 });
+      const text = add('text', { 'font-size': 14, 'font-weight': 600, fill: c.ink, 'font-family': 'system-ui,-apple-system,Segoe UI,sans-serif' });
+      const spans = lines.map((line) => { const t = el('tspan', {}, text); t.textContent = line; return t; });
+      popIn(box); popIn(text);
+      view.update = (s) => {
+        const rs = rectsOf(at);
+        const tr = to ? rectsOf(to) : null;
+        if (!rs || !rs.length || (to && !(tr && tr.length))) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
+        parts.forEach((p) => p.setAttribute('visibility', 'visible'));
+        const b = sized(bounds(rs), 12);
+        const gap = 46;
+        let bx, by = clampN(b.y + b.h / 2 - height / 2, 8, Math.max(8, s.h - height - 8));
+        if (b.x + b.w + gap + width <= s.w - 8) bx = b.x + b.w + gap; // room on the right
+        else if (b.x - gap - width >= 8) bx = b.x - gap - width; // else on the left
+        else { bx = clampN(b.x + b.w / 2 - width / 2, 8, Math.max(8, s.w - width - 8)); by = b.y - height - gap >= 8 ? b.y - height - gap : b.y + b.h + gap; }
+        setA(box, { x: f(bx), y: f(by), width: f(width), height });
+        spans.forEach((t, i) => setA(t, { x: f(bx + 10), y: f(by + 18 + i * 18) }));
+        setA(text, { x: f(bx + 10), y: f(by + 18) });
+        const bc = { x: bx + width / 2, y: by + height / 2 };
+        const tb = to ? sized(bounds(tr), 0) : b;
+        const tip = !tb.w && !tb.h ? { x: tb.x, y: tb.y } : edgeToward(bc, tb, 3);
+        const from = edgeToward(tip, { x: bx, y: by, w: width, h: height }, 0);
+        lead(`M${f(from.x)} ${f(from.y)}L${f(tip.x)} ${f(tip.y)}`);
+      };
     } else if (m.type === 'label') {
       addCallout(view, m, at, c, delay, add, popIn, rectsOf);
       if (!m.text) return null;

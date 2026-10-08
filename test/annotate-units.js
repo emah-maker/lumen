@@ -297,6 +297,212 @@ withTimers(() => {
   if (r.board) r.board.destroy();
 });
 
+// ---------------------------------------------------------------- resize / reflow: marks are anchored to page content
+{
+  const anchored = (rect) => Object.assign(element(rect), { nodeType: 1, tagName: 'DIV', parentNode: null });
+  const hl = (r) => { const a = tags(r.svg, 'rect')[0].attrs; return { x: Number(a.x) + 2, y: Number(a.y) + 1, w: Number(a.width) - 4, h: Number(a.height) - 2, hidden: a.visibility === 'hidden' }; };
+  const near = (a, b, tol = 0.6) => Math.abs(a - b) <= tol;
+  const setup = (rect, extra = {}) => {
+    const el = anchored(rect);
+    const env = liveEnv();
+    env.document.elementFromPoint = () => el;
+    Object.assign(env.win, extra);
+    const observed = [];
+    env.win.ResizeObserver = class { constructor(cb) { this.cb = cb; } observe(e) { observed.push(e); } disconnect() {} };
+    const r = live(env, [{ type: 'highlight', x: 150, y: 220, w: 100, h: 40 }]);
+    return { el, env, r, observed };
+  };
+  withTimers(() => {
+    const { el, env, r, observed } = setup({ x: 100, y: 200, w: 400, h: 100 });
+    check('resize: a box placed from a screenshot is drawn where it was put', near(hl(r).x, 150) && near(hl(r).y, 220) && near(hl(r).w, 100) && near(hl(r).h, 40), J(hl(r)));
+    check('resize: the element under the mark is watched (ResizeObserver) along with the document', observed.includes(el) && observed.includes(env.document.documentElement));
+    el.rect = { x: 50, y: 300, w: 800, h: 200 }; // the page reflowed: wider and lower
+    env.document.documentElement.clientWidth = 1400; env.win.innerWidth = 1400;
+    r.board.layout();
+    check('reflow: the mark moves and scales with the element it sits on (fractions of its box)', near(hl(r).x, 150) && near(hl(r).y, 340) && near(hl(r).w, 200) && near(hl(r).h, 80), J(hl(r)));
+    el.rect = { x: 0, y: 200, w: 200, h: 50 }; // narrower (a sidebar opened)
+    r.board.layout();
+    check('resize: narrower, the mark shrinks with its element', near(hl(r).x, 25) && near(hl(r).w, 50) && near(hl(r).y, 210) && near(hl(r).h, 20), J(hl(r)));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const { env, r } = setup({ x: 100, y: 200, w: 400, h: 100 });
+    env.document.documentElement.clientWidth = 1400; env.document.documentElement.clientHeight = 900;
+    env.handlers.resize[0]();
+    check('canvas: the overlay is re-fitted to the window at once on resize (view box = client size, never stretched)', r.svg.attrs.viewBox === '0 0 1400 900' && r.svg.attrs.width === '100%', J(r.svg.attrs));
+    env.document.documentElement.clientWidth = 640; env.document.documentElement.clientHeight = 480;
+    env.handlers.resize[0]();
+    check('canvas: and again when it shrinks', r.svg.attrs.viewBox === '0 0 640 480');
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const mqs = [];
+    const { env, r, el } = setup({ x: 100, y: 200, w: 400, h: 100 }, { devicePixelRatio: 1, matchMedia: (q) => { const mq = { q, list: [], matches: false, addEventListener(t, fn) { mq.list.push(fn); }, removeEventListener() {} }; mqs.push(mq); return mq; } });
+    check('dpr: the overlay listens for a pixel-ratio change (resolution media query)', mqs.some((m) => /resolution: 1dppx/.test(m.q) && m.list.length === 1), J(mqs.map((m) => m.q)));
+    // DPR 1 -> 1.5 (another screen): the window is 1000 DIPs, so it is 667 CSS px wide; the element is 2/3 as wide now.
+    env.win.devicePixelRatio = 1.5; env.win.innerWidth = 667; env.win.innerHeight = 467;
+    env.document.documentElement.clientWidth = 667; env.document.documentElement.clientHeight = 467;
+    el.rect = { x: 66.7, y: 133.3, w: 266.7, h: 66.7 };
+    mqs.find((m) => /resolution: 1dppx/.test(m.q)).list[0]();
+    check('dpr: 1 -> 1.5 re-fits the view box and the mark follows its element', r.svg.attrs.viewBox === '0 0 667 467' && near(hl(r).x, 100, 1) && near(hl(r).w, 66.7, 1) && near(hl(r).y, 146.6, 1) && mqs.some((m) => /resolution: 1.5dppx/.test(m.q)), `${r.svg.attrs.viewBox} ${J(hl(r))} ${mqs.length}`);
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const vv = {};
+    const env = liveEnv();
+    env.win.visualViewport = { addEventListener: (t, fn) => { (vv[t] ||= []).push(fn); }, removeEventListener: (t, fn) => { vv[t] = (vv[t] || []).filter((f) => f !== fn); } };
+    const r = live(env, [{ type: 'highlight', x: 150, y: 220, w: 100, h: 40 }]);
+    check('visual viewport: resize and scroll of the visual viewport re-lay the marks out (and are removed on clear)', vv.resize.length === 1 && vv.scroll.length === 1);
+    r.board.destroy();
+    check('visual viewport: listeners are removed when cleared', !vv.resize.length && !vv.scroll.length);
+  });
+  withTimers(() => {
+    // page zoom 1 -> 1.25: the element is 1.25x as big in CSS px terms of the viewport
+    const { el, env, r } = setup({ x: 100, y: 200, w: 400, h: 100 });
+    el.rect = { x: 125, y: 250, w: 500, h: 125 };
+    env.win.innerWidth = 800; env.win.innerHeight = 560; env.document.documentElement.clientWidth = 800; env.document.documentElement.clientHeight = 560;
+    env.handlers.resize[0]();
+    check('zoom: the mark scales with the element (x 1.25) and stays on the same content', near(hl(r).x, 187.5) && near(hl(r).w, 125) && near(hl(r).y, 275) && near(hl(r).h, 50), J(hl(r)));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    // scroll + resize together
+    const { el, env, r } = setup({ x: 100, y: 200, w: 400, h: 100 });
+    env.win.scrollY = 120;
+    el.rect = { x: 100, y: 200 - 120, w: 400, h: 100 };
+    r.board.layout();
+    check('scroll: the mark scrolls with the content', near(hl(r).y, 100));
+    el.rect = { x: 100, y: 250 - 120, w: 200, h: 50 }; // the window narrowed while scrolled: the element reflowed to half the size, lower
+    r.board.layout();
+    check('scroll + resize: both at once still land on the content', near(hl(r).x, 125) && near(hl(r).w, 50) && near(hl(r).y, 250 - 120 + 0.2 * 50) && near(hl(r).h, 20), J(hl(r)));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const { el, env, r } = setup({ x: 100, y: 200, w: 400, h: 100 });
+    el.isConnected = false; // the page removed the element
+    env.win.scrollY = 50;
+    r.board.layout();
+    check('removed element: falls back to the document coordinates (and scroll still moves it)', !hl(r).hidden && near(hl(r).x, 150) && near(hl(r).y, 170) && near(hl(r).w, 100), J(hl(r)));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const env = liveEnv(); // nothing to hit-test: document coordinates only, as before
+    env.win.scrollY = 30;
+    const r = live(env, [{ type: 'highlight', x: 150, y: 220, w: 100, h: 40 }]);
+    env.win.scrollY = 80;
+    r.board.layout();
+    check('no anchor element: document coordinates keep it on the page when it scrolls', near(hl(r).y, 170));
+    check('frozen: the remembered token is plain JSON (document coordinates), never the element', J(r.frozen[0].at) === J({ tok: { x: 150, y: 250, w: 100, h: 40 } }), J(r.frozen[0].at));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    const big = Object.assign(element({ x: 0, y: 0, w: 1000, h: 700 }), { nodeType: 1, tagName: 'BODY', parentNode: null });
+    const env = liveEnv();
+    env.document.body = big; env.document.elementFromPoint = () => big;
+    const r = live(env, [{ type: 'highlight', x: 150, y: 220, w: 100, h: 40 }]);
+    big.rect = { x: 0, y: 0, w: 2000, h: 1400 };
+    r.board.layout();
+    check('anchor: the body itself is never the anchor (document coordinates are used, it does not scale)', near(hl(r).w, 100) && near(hl(r).x, 150));
+    r.board.destroy();
+  });
+  withTimers(() => {
+    // the smallest element that holds the whole box: a small inner element that does not hold it is skipped
+    const outer = Object.assign(element({ x: 0, y: 100, w: 600, h: 300 }), { nodeType: 1, tagName: 'DIV', parentNode: null });
+    const inner = Object.assign(element({ x: 160, y: 230, w: 50, h: 10 }), { nodeType: 1, tagName: 'SPAN', parentNode: outer });
+    const env = liveEnv();
+    env.document.elementFromPoint = () => inner;
+    const r = live(env, [{ type: 'highlight', x: 150, y: 220, w: 100, h: 40 }]);
+    outer.rect = { x: 0, y: 200, w: 600, h: 300 };
+    r.board.layout();
+    const y = Number(tags(r.svg, 'rect')[0].attrs.y) + 1;
+    check('anchor: climbs from the element under the centre to the one that holds the whole box', near(y, 320), String(y));
+    r.board.destroy();
+  });
+}
+
+// ---------------------------------------------------------------- the new mark types: geometry and options
+{
+  const near = (a, b, tol = 0.6) => Math.abs(a - b) <= tol;
+  const nums = (d) => d.match(/-?\d+(\.\d+)?/g).map(Number);
+  const xs = (d) => nums(d).filter((_, i) => i % 2 === 0);
+  const ys = (d) => nums(d).filter((_, i) => i % 2 === 1);
+  {
+    const r = draw([{ type: 'strike', ...box }]);
+    const d = pathOf(r);
+    check('strike: a line through the middle of the box, red by default', ys(d).every((y) => y > 222 && y < 238) && Math.min(...xs(d)) < 105 && Math.max(...xs(d)) > 295 && tags(r.svg, 'path')[1].attrs.stroke === '#d92d20', d);
+  }
+  {
+    const tall = draw([{ type: 'bracket', x: 300, y: 100, w: 40, h: 200 }]);
+    const d = pathOf(tall);
+    check('bracket: tall target -> a curly brace on its left, spanning its height, tip pointing away', Math.max(...xs(d)) < 300 && Math.min(...xs(d)) < 285 && Math.min(...ys(d)) <= 100 && Math.max(...ys(d)) >= 300, d);
+    const wide = draw([{ type: 'bracket', x: 100, y: 300, w: 300, h: 40 }]);
+    const e = pathOf(wide);
+    check('bracket: wide target -> a brace above it', Math.max(...ys(e)) < 300 && Math.min(...xs(e)) <= 100 && Math.max(...xs(e)) >= 400, e);
+  }
+  {
+    const r = draw([{ type: 'check', x: 100, y: 100, w: 40, h: 40 }]);
+    const d = pathOf(r);
+    check('check: a tick (down-stroke then a long up-stroke) centred on the target, green', /^M[\d. -]+L[\d. -]+L/.test(d) && (d.match(/M/g) || []).length === 1 && tags(r.svg, 'path')[1].attrs.stroke === '#1a9d4a' && Math.abs((Math.min(...xs(d)) + Math.max(...xs(d))) / 2 - 120) < 8, d);
+    const x = draw([{ type: 'cross', x: 100, y: 100, w: 40, h: 40 }]);
+    const e = pathOf(x);
+    check('cross: two crossing strokes in one path, red', (e.match(/M/g) || []).length === 2 && tags(x.svg, 'path')[1].attrs.stroke === '#d92d20' && Math.abs((Math.min(...ys(e)) + Math.max(...ys(e))) / 2 - 120) < 6, e);
+    const pt = xs(pathOf(draw([{ type: 'check', x: 500, y: 300 }])));
+    check('check/cross: a bare point gets a default size', Math.max(...pt) - Math.min(...pt) > 15);
+  }
+  {
+    const r = draw([{ type: 'redact', ...box }]);
+    const rect = tags(r.svg, 'rect')[0].attrs;
+    check('redact: a near-opaque dark box that covers the target (a little bigger)', rect.fill === '#111111' && Number(rect['fill-opacity']) > 0.9 && Number(rect.x) <= 100 && Number(rect.width) >= 200 && Number(rect.y) <= 200 && Number(rect.height) >= 60, J(rect));
+    check('redact: a colour or opacity can be chosen', tags(draw([{ type: 'redact', ...box, color: 'blue', opacity: 0.5 }]).svg, 'rect')[0].attrs.fill === '#1a6ef0' && tags(draw([{ type: 'redact', ...box, opacity: 0.5 }]).svg, 'rect')[0].attrs.opacity === '0.5');
+  }
+  {
+    const r = draw([{ type: 'callout', ...box, text: 'This sets the limit' }]);
+    const rect = tags(r.svg, 'rect')[0].attrs;
+    const lead = pathOf(r);
+    const [lx, ly, tx, ty] = nums(lead);
+    check('callout: a bubble beside the target with a straight leader line from the bubble to the target edge', tags(r.svg, 'path').length === 2 && Number(rect.x) > 300 && /^M[\d. ]+L[\d. ]+$/.test(lead) && lx >= Number(rect.x) - 1 && tx >= 295 && tx <= 310 && ty >= 195 && ty <= 265 && Number.isFinite(ly), `${J(rect)} ${lead}`);
+    check('callout: text is required', draw([{ type: 'callout', ...box }]).missing.length === 1);
+    const edge = draw([{ type: 'callout', x: 700, y: 200, w: 90, h: 40, text: 'Left side' }]);
+    check('callout: no room on the right -> the bubble goes to the left', Number(tags(edge.svg, 'rect')[0].attrs.x) < 700);
+    const far = draw([{ type: 'callout', ...box, to: { x: 500, y: 100, w: 40, h: 40 }, text: 'See there' }]);
+    const t2 = nums(pathOf(far)).slice(-2);
+    check('callout: with `to` the leader line ends at that target', t2[0] >= 495 && t2[0] <= 545 && t2[1] >= 95 && t2[1] <= 145, J(t2));
+  }
+  {
+    const pts = [[100, 100], [150, 140], [200, 100], [250, 140]];
+    const m = annotate.normalize({ marks: [{ type: 'path', points: pts }] }, { ratio: 1, zoom: 1 }).marks[0];
+    check('path: points become fractions of their bounding box, which is the anchor', J(m.at.box) === J({ x: 100, y: 100, w: 150, h: 40 }) && m.pts.length === 4 && m.pts[0][0] === 0 && m.pts[3][0] === 1 && m.pts[1][1] === 1, J(m));
+    check('path: needs 2+ points and a screenshot; capped at 120 points', /needs points/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1]] }] }, { ratio: 1, zoom: 1 }))) && /screenshot/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1], [2, 2]] }] }, null))) && annotate.normalize({ marks: [{ type: 'path', points: Array.from({ length: 300 }, (_, i) => [i, i % 7]) }] }, { ratio: 1, zoom: 1 }).marks[0].pts.length === 120);
+    const d = pathOf(draw([{ type: 'path', points: pts }]));
+    check('path: a smooth stroke through the points', /^M100 100C/.test(d) && /250 140$/.test(d), d);
+    // anchored to an element: it scales with the element's box
+    const el = Object.assign(element({ x: 90, y: 90, w: 200, h: 100 }), { nodeType: 1, tagName: 'DIV', parentNode: null });
+    const env = liveEnv();
+    env.document.elementFromPoint = () => el;
+    withTimers(() => {
+      const lr = live(env, [{ type: 'path', points: pts }]);
+      el.rect = { x: 90, y: 90, w: 400, h: 200 };
+      lr.board.layout();
+      const dd = pathOf(lr);
+      check('path: scales with the element it was drawn on', near(nums(dd)[0], 90 + (10 / 200) * 400, 1) && Math.max(...xs(dd)) > 300, dd);
+      lr.board.destroy();
+    });
+  }
+  {
+    const w1 = tags(draw([{ type: 'box', ...box, width: 9 }]).svg, 'path');
+    check('options: width sets the stroke (halo stays 4 wider), clamped to 1..12', w1[1].attrs['stroke-width'] === '9' && w1[0].attrs['stroke-width'] === '13' && annotate.normalize({ marks: [{ type: 'box', target: '1', width: 99 }] }).marks[0].width === 12 && annotate.normalize({ marks: [{ type: 'box', target: '1', width: -3 }] }).marks[0].width === 1);
+    check('options: opacity is applied to the mark parts, clamped to .1..1', w1.every((p) => p.attrs.opacity === undefined) && tags(draw([{ type: 'box', ...box, opacity: 0.4 }]).svg, 'path').every((p) => p.attrs.opacity === '0.4') && annotate.normalize({ marks: [{ type: 'box', target: '1', opacity: 7 }] }).marks[0].opacity === 1 && annotate.normalize({ marks: [{ type: 'box', target: '1', opacity: 0 }] }).marks[0].opacity === 0.1);
+    const straight = pathOf(draw([{ type: 'arrow', x: 50, y: 400, to: { x: 300, y: 250 }, curve: false }]));
+    const curved = pathOf(draw([{ type: 'arrow', x: 50, y: 400, to: { x: 300, y: 250 }, curve: true }]));
+    const dflt = pathOf(draw([{ type: 'arrow', x: 50, y: 400, to: { x: 300, y: 250 } }]));
+    const ctl = (d) => nums(d).slice(2, 4);
+    const dist = (p) => Math.hypot(p[0] - 175, p[1] - 325);
+    check('arrow: curve:false is straight (control point on the line), curve:true bows more than the default', dist(ctl(straight)) < 1 && dist(ctl(curved)) > dist(ctl(dflt)), `${straight} | ${curved}`);
+    check('every new type draws and takes the palette', ['strike', 'bracket', 'check', 'cross', 'redact'].every((t) => annotate.COLORS.every((c) => draw([{ type: t, ...box, color: c }]).drawn === 1)));
+    check('schema: a compact tool (one type enum + shared options), the new types are in it, and validation accepts them', ['strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path'].every((t) => annotate.TYPES.includes(t)) && ['width', 'opacity', 'curve', 'points'].every((k) => annotate.TOOL.input_schema.properties.marks.items.properties[k]) && validateInput('annotate', { marks: [{ type: 'path', points: [[1, 2], [3, 4]], width: 3, opacity: 0.5 }, { type: 'arrow', target: '1', curve: false }] }) === null);
+  }
+}
+
 // ---- the PDF viewer's space: page number + fractions of the page's box, so marks follow scroll and zoom
 {
   const pages = [{ n: 1, r: { left: 100, top: 0, width: 600, height: 800 } }, { n: 2, r: { left: 100, top: 820, width: 600, height: 800 } }].map((p) => ({ dataset: { pageNumber: String(p.n) }, r: p.r, getBoundingClientRect() { const r = this.r; return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.left + r.width, bottom: r.top + r.height }; }, scrollIntoView() { this.revealed = true; } }));
