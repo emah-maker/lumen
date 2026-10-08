@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can open and read local PDFs.** Asking it to open a PDF on your computer used to end in "my browser tools only accept http and https pages". `navigate` and `open_tab` now take a Windows path (spaces and OneDrive folders are fine, quotes are ignored) or a `file:///` address ending in `.pdf`, and show it in Lumen's PDF viewer like File > Open; `read_pdf` and `read_page` then work on it. Only existing `.pdf` files are allowed: folders, other file types, network paths (`\\server\share`) and device paths are refused, symlinks and `..` are resolved first, and every other `file://` address stays blocked. It asks once per file per chat ("Allow the AI to open and read <name>?", shown with the file name only); that answer also covers `read_pdf`. Web pages cannot trigger it.
+
 - **The AI's drawings land where it points and stay until you press Esc.** Marks placed by screenshot position are now converted with the screenshot's own scale (page width over image width, per axis) and the scroll position it was taken at, so a changed page zoom, a different display scaling (125%, 150%, 200%) or a page scrolled since the screenshot no longer shifts them. A drawing also no longer disappears when the page changes its address without reloading (single-page sites) or when the page's own script removes the overlay: only Esc, "Clear drawings" or a real navigation ends it.
 
 ## 0.5.19 (2026-10-08)
