@@ -203,7 +203,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -1338,6 +1338,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
+        { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
       ], 'ai', t('menu.aiAndTasks'), 5),
     ],
     [
@@ -4062,6 +4063,7 @@ function handleShortcut(event, input) {
   const mod = shortcutMod(input); // macOS: Cmd, never Control (the text-editing key there; browser/shortcut-mod.js)
   const wc = activeTab()?.webContents;
   let handled = true;
+  if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
@@ -6962,6 +6964,66 @@ const skillsFeature = require('./features/skills').create({
 });
 skillsFeature.register();
 if (TEST) global.__skills = skillsFeature;
+
+// ---------- macros (features/macros-runtime.js): named step sequences; managed in Settings → Macros ----------
+// A run is the AI's own tools (click, type_text, navigate, wait_for, ...) driven from the saved steps. The user's runs (⋯ menu,
+// shortcut, /macro in the sidebar, Settings test run) work in the front web tab; the AI's (run_macro) go through its approval gate.
+const macroTab = (t) => (t && alive(t) ? { id: t.id, webContents: t.view.webContents } : null);
+const macroTargetTab = () => { // the front tab if it is a web page; else the one used last (Settings and the chat page are not pages to run on)
+  const usable = (t) => t && alive(t) && !t.settings && !t.managerPage && !t.isolated;
+  const front = tabs.find((t) => t.id === activeId);
+  if (usable(front)) return macroTab(front);
+  return macroTab(tabs.filter(usable).sort((a, b) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))[0]);
+};
+const macroTabOf = (tab) => tabs.find((t) => t.id === (tab?.id ?? activeId));
+const macroActions = {
+  reader: (_a, tab) => { pageTools.toggleReader(macroTabOf(tab)); return 'Toggled reader mode.'; },
+  mute: (_a, tab) => { const x = macroTabOf(tab); if (x) tabTools.setMuted(x, !tabTools.state(x, alive(x)).muted); return 'Toggled mute.'; },
+  pin: (_a, tab) => { const x = macroTabOf(tab); if (x) pinTab(x.id, !x.pinned); return 'Toggled pin.'; },
+  group_tab: ({ name }, tab) => { const x = macroTabOf(tab); if (x) groupTabsFor(name || 'Macro', [x.id]); return 'Grouped the tab.'; },
+  open_sidebar: ({ text }) => { ui()?.send('macros:sidebar', { text: text || '', send: false }); return 'Opened the sidebar.'; },
+  new_chat: () => { newSidebarChat(); return 'Started a new chat.'; },
+  bookmark: (_a, tab) => { toggleBookmarkFor(macroTabOf(tab)); return 'Toggled the bookmark.'; },
+  zoom_in: (_a, tab) => { zoomBy(tab?.webContents, 0.5); return 'Zoomed in.'; },
+  zoom_out: (_a, tab) => { zoomBy(tab?.webContents, -0.5); return 'Zoomed out.'; },
+  zoom_reset: (_a, tab) => { zoomBy(tab?.webContents, 0); return 'Reset the zoom.'; },
+  reload: (_a, tab) => { tab?.webContents.reload(); return 'Reloaded.'; },
+  back: (_a, tab) => { goBack(tab?.webContents); return 'Went back.'; },
+  forward: (_a, tab) => { tab?.webContents.navigationHistory.goForward(); return 'Went forward.'; },
+  new_tab: () => ({ text: 'Opened a new tab.', pinTab: openTab().id }),
+};
+const macrosFeature = require('./features/macros-runtime').create({
+  ipcMain,
+  dialog: electronDialog,
+  win: () => win,
+  file: path.join(app.getPath('userData'), 'macros.json'),
+  documentsDir: () => app.getPath('documents'),
+  agent,
+  send: (channel, payload) => ui()?.send(channel, payload),
+  broadcast: (channel, payload) => { for (const wc of skillSurfaces()) wc.send(channel, payload); },
+  emitTo: (channel, payload) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send(channel, payload); },
+  target: macroTargetTab,
+  tabById: (id) => macroTab(tabs.find((t) => t.id === id)),
+  tabList: () => tabs.filter((t) => alive(t) && !t.settings && !t.managerPage && !t.isolated).map((t) => ({ id: t.id, url: realUrl(t.view.webContents), title: t.view.webContents.getTitle(), active: t.id === activeId })),
+  openTab: (url) => openTab(url),
+  switchTab: (id) => switchTab(id),
+  tabLoaded: (tab) => new Promise((resolve) => {
+    const wc = tab.webContents;
+    if (wc.isDestroyed() || !wc.isLoading()) { resolve(); return; }
+    const done = () => { clearTimeout(timer); wc.removeListener('did-stop-loading', done); resolve(); };
+    const timer = setTimeout(done, 15000);
+    wc.once('did-stop-loading', done);
+  }),
+  actions: macroActions,
+  clipboardText: async () => String(await clipboard.readText()).slice(0, 50000),
+  readSelection: async (wc) => String(await skillWithin(wc.executeJavaScriptInIsolatedWorld(SKILL_WORLD, [{ code: 'String(getSelection())' }]))),
+  openSettings: (section) => openSettingsPage(section),
+  complete: (args) => (TEST && global.__macrosComplete ? global.__macrosComplete(args) : completeSkillJson(args)),
+  sidebar: (text, opts) => ui()?.send('macros:sidebar', { text, ...opts }),
+});
+macrosFeature.register();
+agent.browser.macros = macrosFeature; // the run_macro tool (ai/agent.js)
+if (TEST) global.__macros = macrosFeature;
 
 // ---------- [settings] lumen://settings ----------
 

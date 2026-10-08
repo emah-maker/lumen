@@ -33,6 +33,7 @@ const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
+const macroPage = require('./macro-page'); // [macros] run_macro: a stored locator -> the element id click / type_text take
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
 const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
 const { captureTab } = require('../features/tab-capture');
@@ -412,6 +413,14 @@ const TOOLS = [
         metric: { type: 'string', enum: ['views', 'engagement', 'auto'] },
       },
       required: ['posts'],
+    },
+  },
+  {
+    name: 'run_macro',
+    description: "Run a saved user macro by name (list:true lists them); variables fills its {{x}}.",
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, variables: { type: 'object' }, list: { type: 'boolean' } },
     },
   },
   {
@@ -3444,6 +3453,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
       if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
+      if (name === 'run_macro') return input.list === true || !input.name ? 'Listing your macros' : `Running your macro ${quote(String(input.name), 40)}`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
@@ -3561,9 +3571,13 @@ ${prompt}` : prompt), historyImages: [] };
   // site is out of reach for every tool, whoever calls it: the sidebar's AI, its Claude Code / Grok
   // Build engines and outside agents (MCP) all come through ensureAllowed and execute, and batch
   // steps through allowStep and execute. Addresses a tool would open there are refused too.
+  // [macros] A macro the user runs themselves (features/macros-runtime.js, scope.userRun) is the user's own action, not the AI's: the
+  // AI-specific limits below (hands-off mode, AI off for a site or a tab) are not applied to it.
+  userRun() { return Boolean(taskScope.getStore()?.userRun); }
+
   aiOffCheck(name, input = {}) {
     const off = this.browser.aiOff;
-    if (!off) return;
+    if (!off || this.userRun()) return;
     const refuse = (url) => {
       throw new Error(`The user turned off AI on ${siteOf(url)}. Don't read or act on that site; ask the user to do it themselves or to turn AI back on for it.`);
     };
@@ -3593,7 +3607,7 @@ ${prompt}` : prompt), historyImages: [] };
   // an acting tool that names a tab (close_tab, group_tabs, ungroup_tabs). The refusal is the same text everywhere.
   offTabCheck(name, input = {}) {
     const off = this.browser.tabOff;
-    if (!off || !manners.isActionTool(name)) return;
+    if (!off || !manners.isActionTool(name) || this.userRun()) return;
     const refuse = () => { throw new Error(manners.offTabRefusal()); };
     const named = name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
@@ -3612,7 +3626,7 @@ ${prompt}` : prompt), historyImages: [] };
   // a tool that clicks, types, scrolls, navigates or runs a script is refused on a tab the AI did not open itself. Reading
   // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
   handsOffCheck(name, input = {}) {
-    if (!manners.isActionTool(name) || !this.browser.handsOff?.()) return;
+    if (!manners.isActionTool(name) || !this.browser.handsOff?.() || this.userRun()) return;
     let ids;
     try {
       if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
@@ -3662,7 +3676,7 @@ ${prompt}` : prompt), historyImages: [] };
   // After a tool: did it take the task's tab onto such a site (a click, a redirect, switch_tab to a
   // tab that moved)? Its result could describe that page, so it is dropped.
   aiOffAfter(name) {
-    if (!this.browser.aiOff || (TAB_FREE_TOOLS.has(name) && name !== 'open_tab' && name !== 'switch_tab')) return;
+    if (!this.browser.aiOff || this.userRun() || (TAB_FREE_TOOLS.has(name) && name !== 'open_tab' && name !== 'switch_tab')) return;
     let url = '';
     try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
     if (this.browser.aiOff(url)) throw new Error(`The tab is now on ${siteOf(url)}, where the user turned off AI. Stop working in this tab; ask the user what to do.`);
@@ -4578,6 +4592,27 @@ ${out.text}${note}
   }
   // ---- [/signed-in sites]
 
+  // ---- [macros] features/macros-runtime.js runs a saved macro through this agent's own tools (execute / allowStep). A step's
+  // element is found again from its stored locator in the registry read_page builds (ai/macro-page.js), so the ids click and
+  // type_text take are the same ones; the CSS fallback may add an element to that registry.
+  async macroResolve(locator) {
+    const wc = this.requireTab();
+    await this.refreshRegistry(wc);
+    const scope = taskScope.getStore();
+    if (scope) scope.idsFresh = true; // (ids just read in this tab, as after read_page)
+    return (await runScript(wc, macroPage.resolveSource(locator), 5000)) || null;
+  }
+
+  // A macro step that submits, buys or sends, run by the AI: the same kind of card as the AI's own actions, once per step
+  // (auto-allow in the sidebar covers it as it covers those). The user's own run never asks.
+  async macroConfirm(label, reason, host) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate) return true;
+    if (this.autoAllows(gate)) return true;
+    return Boolean(await this.askApproval(host || 'this page', gate.emit, gate.signal, { action: 'tool', who: gate.who, title: `${gate.who} wants to run a macro step: ${label}`, args: `This step is ${reason}.` }));
+  }
+  // ---- [/macros]
+
   async executeGuarded(name, input) {
     const scope = taskScope.getStore();
     if (scope) scope.toolCalls = (scope.toolCalls || 0) + 1; // [model fallback] a turn that ran a tool is never started over on another model
@@ -4987,6 +5022,10 @@ ${same}
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
       case 'analyze_posts': return postAnalysis.run(input);
+      case 'run_macro': { // [macros]
+        if (!this.browser.macros) throw new Error('Macros are not available here.');
+        return this.browser.macros.runForAI(input, this);
+      }
       case 'delegate': return this.delegate(input); // [subagents]
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
