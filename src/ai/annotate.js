@@ -347,6 +347,10 @@ function overlayMain(spec, env) {
       if (!state.alive) return;
       const s = viewSize();
       setA(svg, { viewBox: `0 0 ${s.w} ${s.h}` });
+      if (live && space.clip) { // the part of the window the page's own content fills (a PDF viewer's toolbar stays clear)
+        const c = space.clip();
+        host.style.clipPath = c ? `inset(${f(c.y)}px ${f(Math.max(0, s.w - c.x - c.w))}px ${f(Math.max(0, s.h - c.y - c.h))}px ${f(c.x)}px)` : 'none';
+      }
       for (const v of state.views) { try { v.update(s); } catch { /* one bad mark never stops the others */ } }
     };
     let queued = false;
@@ -566,6 +570,7 @@ function overlayMain(spec, env) {
         if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
         parts.forEach((p) => p.setAttribute('visibility', 'visible'));
         const b = bounds(rs);
+        if (b.y + b.h < -20 || b.y > s.h + 20 || b.x + b.w < -20 || b.x > s.w + 20) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; } // scrolled out of view: not pinned to the edge
         const point = !b.w && !b.h;
         const cx = clampN(point ? b.x : b.x - 4, 16, s.w - 16), cy = clampN(point ? b.y : b.y - 4, 16, s.h - 16);
         setA(disc, { cx: f(cx), cy: f(cy) });
@@ -643,6 +648,7 @@ function viewerSpace(win, doc) {
       const r = el.getBoundingClientRect();
       return { x: r.left + t.fx * r.width, y: r.top + t.fy * r.height, w: t.fw * r.width, h: t.fh * r.height };
     },
+    clip() { const c = doc.getElementById('viewerContainer'); if (!c) return null; const r = c.getBoundingClientRect(); return { x: r.left, y: r.top, w: c.clientWidth, h: c.clientHeight }; },
     reveal(t) { const el = pageEl(t.page); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' }); },
   };
 }

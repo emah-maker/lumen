@@ -2808,17 +2808,10 @@ ${prompt}` : prompt), historyImages: [] };
   }
 
   // ---- [annotate] (ai/annotate.js) The annotate tool: marks drawn over the page the user is looking at.
-  // On a web page or the slide viewer: an overlay in Claude's isolated world. On a PDF tab: the same overlay inside the PDF
-  // viewer's frame. Only when that can't be done: the marks drawn onto a screenshot, shown in the chat.
-  async annotateRun(wc, code, pdf, timeoutMs = 5000) {
-    if (pdf) {
-      const frame = pdfZoom.viewerFrame(wc);
-      if (!frame) return null;
-      let timer;
-      try {
-        return await Promise.race([frame.executeJavaScript(code), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The PDF viewer did not respond.')), timeoutMs); })]);
-      } finally { clearTimeout(timer); }
-    }
+  // On a web page, the slide viewer or Lumen's PDF viewer (an ordinary page; marks keep to PDF pages): an overlay in Claude's
+  // isolated world. Only when that can't be done (Chrome's own PDF viewer, or an injection that fails): the marks drawn onto a
+  // screenshot, shown in the chat.
+  async annotateRun(wc, code, timeoutMs = 5000) {
     return runScript(wc, code, timeoutMs);
   }
 
@@ -2836,15 +2829,16 @@ ${prompt}` : prompt), historyImages: [] };
     const scope = taskScope.getStore();
     const shot = this.screenshotScale && this.screenshotScale.wc === wc ? { ratio: this.screenshotScale.ratio, zoom: wc.getZoomFactor() } : null;
     const spec = annotate.normalize(input, shot);
-    const pdf = Boolean(pdfZoom.viewerFrame(wc));
+    const viewer = pdfViewer.isViewerUrl(wc.getURL()); // Lumen's PDF viewer
+    const chromePdf = !viewer && Boolean(pdfZoom.viewerFrame(wc)); // Chrome's: out of reach of any script
     const last = this.lastDrawing && this.lastDrawing.wc === wc ? this.lastDrawing : null;
     if (!spec.marks.length) { // clear:true alone
-      await this.annotateRun(wc, annotate.clearScript(), pdf).catch(() => {});
+      await this.annotateRun(wc, annotate.clearScript()).catch(() => {});
       if (last) last.marks = [];
       return 'Cleared the drawings.';
     }
     if (scope && scope.idsFresh === false && spec.usesRefs) throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use "text:…" or screenshot coordinates.');
-    if (pdf && (spec.usesRefs || spec.usesText)) throw new Error('This is a PDF: it has no element ids or page text to point at. Take a screenshot and place marks with x,y,w,h of it.');
+    if (chromePdf && (spec.usesRefs || spec.usesText)) throw new Error('This PDF is in the Chrome viewer: it has no element ids or page text to point at. Take a screenshot and place marks with x,y,w,h of it.');
     // Elements inside embedded frames can't be followed by the page overlay: they are drawn where they are now.
     for (const m of spec.marks) {
       for (const key of ['at', 'to']) {
@@ -2859,12 +2853,12 @@ ${prompt}` : prompt), historyImages: [] };
     const where = title ? quote(title) : 'the page';
     const steps = spec.marks.some((m) => m.type === 'step');
     let result = null;
-    const path = annotate.choosePath({ pdf });
-    try { result = await this.annotateRun(wc, annotate.overlayScript({ marks: spec.marks, clear: spec.clear, seconds: spec.seconds }, { pdf: path === 'pdf' }), path === 'pdf'); } catch { result = null; }
+    const path = annotate.choosePath({ chromePdf });
+    if (path === 'overlay') { try { result = await this.annotateRun(wc, annotate.overlayScript({ marks: spec.marks, clear: spec.clear, seconds: spec.seconds }, { viewer })); } catch { result = null; } }
     if (result && result.ok) {
       const keep = (spec.clear || !last ? [] : last.marks).concat(result.frozen || []).slice(-annotate.MAX_TOTAL);
-      this.lastDrawing = { wc, pdf: path === 'pdf', marks: keep, url: wc.getURL(), title };
-      return annotate.resultText({ drawn: result.drawn, added: result.frozen.length, missing: result.missing || [], dropped: spec.dropped, where: path === 'pdf' ? `the PDF ${where}` : where, seconds: spec.seconds, steps });
+      this.lastDrawing = { wc, viewer, marks: keep, url: wc.getURL(), title };
+      return annotate.resultText({ drawn: result.drawn, added: result.frozen.length, missing: result.missing || [], dropped: spec.dropped, where: viewer ? `the PDF ${where}` : where, seconds: spec.seconds, steps });
     }
     return this.annotateOnScreenshot(wc, spec, scope, { where, steps });
   }
@@ -2901,7 +2895,7 @@ ${prompt}` : prompt), historyImages: [] };
     this.lastDrawing = null;
     return [
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
-      { type: 'text', text: `${annotate.resultText({ drawn: drawn.drawn, added: drawn.drawn, missing: missing.concat(drawn.missing || []), dropped: spec.dropped, where: `a screenshot of ${where}`, seconds: null, steps })} The page itself could not be drawn on, so the marks are on this screenshot, shown to the user in the chat.` },
+      { type: 'text', text: `${annotate.resultText({ drawn: drawn.drawn, added: drawn.drawn, missing: missing.concat(drawn.missing || []), dropped: spec.dropped, where: `a screenshot of ${where}`, seconds: null, steps })} The page itself could not be drawn on (Chrome PDF viewer, or a page that refused the overlay), so the marks are on this screenshot, shown to the user in the chat.` },
     ];
   }
 
@@ -2910,10 +2904,10 @@ ${prompt}` : prompt), historyImages: [] };
     const d = this.lastDrawing;
     if (!d || d.wc.isDestroyed()) return false;
     try {
-      if (action === 'clear') return Boolean(await this.annotateRun(d.wc, annotate.clearScript(), d.pdf, 3000));
+      if (action === 'clear') return Boolean(await this.annotateRun(d.wc, annotate.clearScript(), 3000));
       if (action !== 'show' || !d.marks.length) return false;
       if (d.wc.getURL() !== d.url) return false; // the page moved on
-      const r = await this.annotateRun(d.wc, annotate.overlayScript({ marks: d.marks, clear: true }, { pdf: d.pdf }), d.pdf);
+      const r = await this.annotateRun(d.wc, annotate.overlayScript({ marks: d.marks, clear: true }, { viewer: d.viewer }));
       return Boolean(r && r.ok);
     } catch { return false; }
   }
