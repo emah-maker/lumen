@@ -6,6 +6,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 - **The Spotify card's Library and Up next tabs work again in "Play as Lumen".** Spotify changed its web player: the library list no longer has links and the queue is now a side panel instead of a page, so Lumen found nothing and the tabs stayed on "Loading…". Lumen now reads the library from the page's new rows (Liked Songs is not listed) and opens the Queue panel to read what is next, and "play from the queue" presses that row's own play button. If a tab still can't be read it now says "Couldn't read your library." with a Try again button instead of loading forever. Shuffle stays hidden when the page shows no shuffle button.
 - **The Spotify card in Web API mode follows Spotify's February 2026 changes.** The heart and saving a song use the new library endpoints, and an artist playing has no track list (Spotify removed it), which the Album tab now says.
+- **The Spotify card in Web API mode gets more of what "Play as Lumen" has.** Your Library tab lists your Liked Songs, and search has "More songs" (up to 30, ten per request, the most Spotify allows). Lyrics stay out of this mode: Spotify's Web API has no lyrics.
 - **A cleaner volume control on the music cards.** A thin rounded track filled in the accent colour, a small round thumb, a speaker button that mutes and unmutes (and shows the level), and a keyboard focus ring; it reads on the plain card, frosted glass and wallpapers, light or dark.
 
 ## 0.5.19 (2026-10-08)
