@@ -1,3 +1,4 @@
+/* global VisibleTicker */
 // [widgets] The new-tab page's widget cards (features/widgets.js fetches their data in the browser;
 // it arrives in the page's hash). Every value from the network is set with textContent, links must
 // be https, and each field is checked before use. Buttons act by loading this page with
@@ -472,6 +473,7 @@ const WIDGET_RENDERERS = {
       if (show.sun !== false) { row.append(sun); row.classList.add('has-sun'); }
       list.append(row);
       clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '', born: Date.now(), seen: false });
+      wakeLive();
     }
     card.body.append(list);
     tickClocks();
@@ -1045,6 +1047,7 @@ const WIDGET_RENDERERS = {
       const ms = target - now;
       const days = Math.floor(Math.abs(ms) / 86400e3);
       const past = ms < 0;
+      paint.coarse = past || ms >= 86400e3; // days only: a minute-apart tick is enough
       if (!past && ms < 86400e3) {
         const h = Math.floor(ms / 3600e3); const m = Math.floor((ms % 3600e3) / 60e3); const sec = Math.floor((ms % 60e3) / 1000);
         big.textContent = `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
@@ -1059,6 +1062,7 @@ const WIDGET_RENDERERS = {
     };
     paint(Date.now());
     liveTicks.set(card.el, paint);
+    wakeLive();
     card.body.append(big, unit, when);
   },
 
@@ -1095,7 +1099,7 @@ const WIDGET_RENDERERS = {
       btns.append(btn(d.pomodoro ? (rest ? 'Start focus' : 'Start break') : 'Again', 'start', true), btn('Reset', 'reset'));
     } else btns.append(btn('Start', 'start', true), ...(d.pomodoro ? [btn(rest ? 'Skip to focus' : 'Skip to break', 'skip')] : []));
     paint(Date.now());
-    if (d.state === 'running') liveTicks.set(card.el, paint);
+    if (d.state === 'running') { liveTicks.set(card.el, paint); wakeLive(); }
     card.body.append(phase, clock, bar, btns);
   },
 
@@ -1567,18 +1571,29 @@ function tickClocks() {
     } catch (err) { console.error('world clock', err); clockRows.delete(row); }
   }
 }
-setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
 // Countdown and Timer cards count seconds here between reads (a card that left the page drops out).
 const liveTicks = new Map(); // card element -> paint(now)
 const noteDrafts = new Map(); // Notes card id -> { text, saved, focus, start, end }: what is typed survives a redraw
-setInterval(() => {
-  if (document.hidden || !liveTicks.size) return;
+function tickLive() {
   const now = Date.now();
   for (const [cardEl, paint] of liveTicks) {
     if (!cardEl.isConnected) { liveTicks.delete(cardEl); continue; }
     try { paint(now); } catch (err) { console.error('widget tick', err); liveTicks.delete(cardEl); }
   }
-}, 1000);
+}
+// One ticker for the clocks and the Countdown/Timer cards (features/visible-ticker.js): it exists only while the page is visible and one of them is on
+// it; a second apart when something shows seconds (a clock with seconds, a Timer, a Countdown inside its last day), a minute apart otherwise.
+// Hidden pages, the resident spare and a page with none of these cards have no timer at all.
+const secondsShown = () => [...clockRows.values()].some((c) => c.opts?.seconds) || [...liveTicks.values()].some((p) => p.coarse !== true);
+const liveTicker = VisibleTicker.createTicker({
+  needed: () => clockRows.size > 0 || liveTicks.size > 0,
+  period: () => (secondsShown() ? 1000 : 60e3),
+  run() { if (clockRows.size) tickClocks(); if (liveTicks.size) tickLive(); },
+});
+window.liveTicker = liveTicker; // (tests: whether a timer is armed)
+document.addEventListener('visibilitychange', () => liveTicker.onVisibility());
+// A row or card that just appeared is drawn at once (it is drawn before it is put on the page: tickClocks keeps it a while); the ticker then lines up.
+const wakeLive = () => { setTimeout(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 0); liveTicker.poke(); };
 // Show as many places as fit whole (at least the first); the rest are hidden, so the list never needs a scrollbar.
 function fitClockRows(body, list) {
   if (!body.isConnected) return;
@@ -1795,8 +1810,10 @@ function tick() {
   const box = document.getElementById('widgets');
   if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
-setInterval(tick, 60e3);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+// (the minute tick: one timer per visible page, none while hidden; a page that comes back catches up at once)
+const refreshTicker = VisibleTicker.createTicker({ period: 60e3, align: false, run: tick });
+refreshTicker.poke();
+document.addEventListener('visibilitychange', () => { if (document.hidden) refreshTicker.stop(); else { tick(); refreshTicker.poke(); } });
 // A framed page (Google Calendar's embed) may focus itself as it loads, and then the search box
 // stops taking typing. Focus that goes into a frame without the pointer on it or a Tab press goes
 // back where it was.
