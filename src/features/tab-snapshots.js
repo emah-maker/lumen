@@ -121,6 +121,8 @@ function createSnapshotStore({ dir, maxBytes = DEFAULT_MAX_BYTES, maxAgeMs = MAX
         return { jpeg, w: m.w || 0, h: m.h || 0, x: m.x || 0, y: m.y || 0, at: m.at || st.mtimeMs };
       } catch { return null; }
     },
+    // The scroll position and size saved with the picture, without reading the picture itself; null when there is none.
+    peek(url) { try { const m = JSON.parse(fs.readFileSync(meta(keyOf(url)), 'utf8')); return fs.existsSync(img(keyOf(url))) ? { w: m.w || 0, h: m.h || 0, x: m.x || 0, y: m.y || 0, at: m.at || 0 } : null; } catch { return null; } },
     has: (url) => { try { fs.statSync(img(keyOf(url))); return true; } catch { return false; } },
     forget(url) { remove(keyOf(url)); },
     clear() { const n = entries(); for (const e of n) remove(e.key); try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* gone */ } made = false; return n.length; },

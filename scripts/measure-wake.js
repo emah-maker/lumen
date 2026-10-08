@@ -64,15 +64,20 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
   const session = { urls, titles, favicons: urls.map(() => null), active: 0, groupIds: urls.map(() => null), pinned: urls.map(() => false) };
   const settings = { session, ...(flag('freeze-first') ? { tabSleepFreezeFirstMinutes: 10 } : {}), ...(args.includes('--preload') ? { tabPreload: value('preload', 2) } : { tabPreload: 0 }) };
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify(settings));
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], timeout: 60000, env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
+  const launchApp = () => electron.launch({ args: [path.join(__dirname, '..')], timeout: 60000, env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
+  let app = await launchApp();
   const out = { label: flag('label') ? args[args.indexOf('--label') + 1] : '', delay: DELAY, kb: KB, runs: {} };
   const record = (name, v) => { const r = (out.runs[name] ||= { visible: [], fcp: [] }); r.visible.push(v.visible); r.fcp.push(v.fcp); };
   try {
-    const ui = await app.firstWindow();
+    let ui = await app.firstWindow();
+    const boot = async () => {
     await ui.waitForSelector('.tab', { timeout: 60000 });
     await sleep(flag('quick') ? 2500 : 5000); // the front page has loaded
-    await app.evaluate(() => { try { global.__warmTabs.enable(true); } catch { /* older build */ } });
+    await app.evaluate(() => { try { global.__warmTabs.enable(true); } catch { /* older build */ } try { global.__wake?.enable(true); } catch { /* older build */ } });
+    if (args.includes('--preload')) { await app.evaluate(() => global.__wake.preload()); out.preloaded = await app.evaluate(() => global.__wake.state().filter((t) => t.preloaded).map((t) => t.id)); }
     await sleep(1500);
+    };
+    await boot();
     const label = (n) => (typeof n === 'number' ? `Wake ${n}` : n);
     const tabEl = (l) => ui.evaluate((l) => { const el = [...document.querySelectorAll('.tab')].find((t) => (t.querySelector('.tab-title')?.textContent || t.textContent).trim() === l); if (!el) return null; el.scrollIntoView({ inline: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, label(n => n) && l);
     const click = (n) => ui.evaluate((l) => [...document.querySelectorAll('.tab')].find((t) => (t.querySelector('.tab-title')?.textContent || t.textContent).trim() === l)?.click(), label(n));
@@ -99,6 +104,12 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
     for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored+hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
     for (let i = 0; i < RUNS; i++) { const n = 14 + i; await visit(n); await sleepTab(n, 'unload'); await wake('unloaded', n, urlRe(n)); await click(0); await sleep(300); }
     if (flag('with-freeze')) for (let i = 0; i < RUNS; i++) { const n = 19 + i; await visit(n); await sleepTab(n, 'freeze'); await wake('frozen', n, urlRe(n)); await click(0); await sleep(300); }
+    if (!flag('no-restart')) { // a second launch of the same profile: the pages the first one left come back as placeholders, with their pictures
+      await app.close(); await sleep(1500);
+      app = await launchApp(); ui = await app.firstWindow(); await boot();
+      for (let i = 0; i < RUNS; i++) { const n = 2 + i; await wake('restored (picture from last run)', n, urlRe(n)); await click(0); await sleep(300); }
+      for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored (picture) + hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
+    }
     for (let i = 0; i < real.length; i++) {
       const name = `Real ${i}`;
       const pattern = new URL(real[i]).host.replace(/\./g, '\\.');
