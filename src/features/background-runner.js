@@ -782,8 +782,10 @@ function create(deps) {
     // One message for all of them, after the window has had time to load.
     if (cut.length) setTimeout(() => announce(cut[0], 'interrupted', deps.t(cut.length === 1 ? 'tasks.notify.interrupted' : 'tasks.notify.interruptedMany', { title: cut[0].title, count: cut.length })), deps.test ? 300 : 2500).unref?.();
     broadcast();
-    ticker = setInterval(tick, deps.test ? 500 : 15000);
-    ticker.unref?.();
+    // The 15 s check shares the main scheduler's one timer when there is one (never slowed: tasks and watches run while the
+    // window is hidden or the screen is locked); tests keep their own fast interval.
+    if (deps.every && !deps.test) ticker = deps.every('background-tasks', 15000, tick);
+    else { ticker = setInterval(tick, deps.test ? 500 : 15000); ticker.unref?.(); }
     setTimeout(() => { tick(); }, 1500).unref?.();
     // Routines missed while Lumen was closed run once, after the window has loaded; after the Mac wakes,
     // a few seconds later (the network comes back first). A sleeping Mac's timers don't fire on time.
@@ -792,7 +794,7 @@ function create(deps) {
   }
 
   function shutdown() {
-    clearInterval(ticker);
+    if (ticker?.stop) ticker.stop(); else clearInterval(ticker);
     armRoutines(null);
     saveNow(); // a running task is saved as running: the next start marks it interrupted
     closed = true;
