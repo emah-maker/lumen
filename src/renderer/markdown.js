@@ -277,7 +277,46 @@
 
   const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-  const emphasis = (s) => s
+  // Sub/superscripts. Rendered: exactly <sub> <sup> (no attributes, balanced, any case) written as text, H~2~O and x^2^.
+  // Everything else stays escaped. `s` is already HTML-escaped, so a tag arrives as &lt;sub&gt;; the innermost pair is
+  // swapped for the real element first, so nesting works and an unbalanced tag is never touched.
+  const SCRIPT_PAIR = /&lt;(sub|sup)&gt;((?:(?!&lt;\/?(?:sub|sup)&gt;)[^])*?)&lt;\/\1&gt;/i;
+  function scripts(s) {
+    if (!/[~^]|&lt;su[bp]/i.test(s)) return s;
+    let out = s;
+    for (let guard = 0; guard < 50; guard++) {
+      const next = out.replace(SCRIPT_PAIR, (_m, tag, body) => `<${tag.toLowerCase()}>${body}</${tag.toLowerCase()}>`);
+      if (next === out) break;
+      out = next;
+    }
+    return out
+      .replace(/(?<=[A-Za-z0-9)\]])(?<!~)~([A-Za-z0-9+,()-]{1,12})~(?!~)/g, '<sub>$1</sub>')
+      .replace(/(?<=[A-Za-z0-9)\]])(?<!\^)\^([A-Za-z0-9+-]{1,8})\^(?!\^)/g, '<sup>$1</sup>');
+  }
+
+  // The same marks as clean plain text (copy, export, notifications): <sub>x</sub> and H~x~ become _x, <sup>x</sup> and x^x^
+  // become ^x; more than one character goes in parentheses (σ_(xy)). Code and formulas are left as written.
+  const KEEP = /(```[\s\S]*?(?:```|$)|`[^`\n]+`|\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/;
+  function plainScripts(text) {
+    const src = String(text ?? '');
+    if (!/[~^]|<su[bp]/i.test(src)) return src;
+    const group = (mark, body) => (body.length > 1 ? `${mark}(${body})` : `${mark}${body}`);
+    return src.split(KEEP).map((part, i) => {
+      if (i % 2) return part;
+      let out = part;
+      const pair = /<(sub|sup)>((?:(?!<\/?(?:sub|sup)>)[^])*?)<\/\1>/i;
+      for (let guard = 0; guard < 50; guard++) {
+        const next = out.replace(pair, (_m, tag, body) => group(tag.toLowerCase() === 'sub' ? '_' : '^', body));
+        if (next === out) break;
+        out = next;
+      }
+      return out
+        .replace(/(?<=[A-Za-z0-9)\]])(?<!~)~([A-Za-z0-9+,()-]{1,12})~(?!~)/g, (_m, b) => group('_', b))
+        .replace(/(?<=[A-Za-z0-9)\]])(?<!\^)\^([A-Za-z0-9+-]{1,8})\^(?!\^)/g, (_m, b) => group('^', b));
+    }).join('');
+  }
+
+  const emphasis = (s) => scripts(s)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
 
@@ -544,6 +583,7 @@
     window.markdownInMath = inMath;
     window.markdownOpenMath = openMath;
     window.markdownPlainText = plainOf;
+    window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath, plainScripts };
 })();
