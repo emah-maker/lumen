@@ -132,8 +132,8 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'defaul
 
 // A CLI kept for the chat's next message is stopped after this long without one.
 const IDLE_MS = 10 * 60 * 1000;
-// A process pre-warmed on composer focus (agent.js prewarm) that no message has taken is released after this long.
-const PREWARM_IDLE_MS = 10 * 60 * 1000;
+// A process pre-warmed on composer focus (agent.js prewarm) that no message has taken is released after this long (3 min, as codex-warm.js and grok-warm.js do).
+const PREWARM_IDLE_MS = 3 * 60 * 1000;
 // The first turn's wait for the user's own MCP servers under full access (see spawnProc).
 // (Lumen's own server is local HTTP and answers in well under a second. Measured 2026-10-05 with the user's real setup, full access,
 // cold start to the first model output: uncapped 37.8 s, 3 s cap 15.9 s, 1 s cap 14.8 s; the floor with only Lumen's server is 10.6 s.)
