@@ -2637,6 +2637,9 @@ ipcMain.on('wake:cover-shown', (event, id) => {
   if (tab?.wakeMark && !tab.wakeMark.shownAt) tab.wakeMark.shownAt = Date.now();
 });
 
+// Is memory low by the sleep settings (the test hook __tabSleep.fakePressure stands in for the system's answer)?
+const memoryIsLow = async () => { try { return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await pressureCheck()); } catch { return false; } };
+
 // ---- wake ahead ----
 const sensitiveUrl = (url) => Boolean(tabSnaps.skipReason(url, {}));
 function wakeFacts(tab) {
@@ -2673,7 +2676,7 @@ function hoverIntentFor(rec) {
     onIntent: async (id, why) => {
       if (!rcAlive(rec) || !find(id)) return;
       // A press is a click on its way: the wake costs nothing a click would not. A hover also checks memory and the sleep cap.
-      const low = why === 'hover' ? await memoryPressure().catch(() => false) : false;
+      const low = why === 'hover' ? await memoryIsLow() : false;
       if (!rcAlive(rec)) return;
       withWindow(rec, () => {
         const t = find(id);
@@ -2696,7 +2699,7 @@ function wakeAfterKeyboard(direction) {
   const next = list.length > 1 && at >= 0 ? list[(at + direction + list.length) % list.length] : null;
   const rec = curRec;
   if (!next) return;
-  memoryPressure().catch(() => false).then((low) => {
+  memoryIsLow().then((low) => {
     if (!rcAlive(rec)) return;
     withWindow(rec, () => { const t = tabs.find((x) => x.id === next.id); if (t && tabWake.hoverGate(wakeFacts(t), { memoryLow: low, room: awakeRoom() }).go) wakeAhead(t, 'keyboard'); });
   });
@@ -2720,7 +2723,7 @@ async function preloadLoop(rec) {
       const perf = perfMode.mode() === 'on' || perfMode.reasons().some((r) => r.key === 'memory');
       let onBattery = false;
       try { onBattery = require('electron').powerMonitor.isOnBatteryPower(); } catch { /* unknown: not on battery */ }
-      const memoryLow = cap > 0 ? await memoryPressure().catch(() => false) : false;
+      const memoryLow = cap > 0 ? await memoryIsLow() : false;
       const cpu = cap > 0 && front ? await cpuPercent() : null;
       const gate = tabWake.preloadGate({ cap, waiting, frontLoaded: front, cpu, onBattery, perfMode: perf, memoryLow, quitting });
       if (!gate.go) {
@@ -2782,6 +2785,9 @@ if (TEST) {
     hover: (id, on) => { const h = hoverIntentFor(curRec); if (on) h.enter(id); else h.leave(id); },
     down: (id) => hoverIntentFor(curRec).down(id),
     keyboard: (d) => wakeAfterKeyboard(d),
+    keepReason: (id) => { const t = tabs.find((x) => x.id === id); if (!t) return null; const st = tabSleep.normalize(readSettings()); return tabSleep.keepReason({ ...sleepFacts(t), keepPinned: st.keepPinned, neverSite: tabSleep.hostListed(sleepFacts(t).host, st.never) }); },
+    markFrozenFirst: (id) => { const t = tabs.find((x) => x.id === id); if (t?.frozen) { t.frozenFirst = true; t.frozenAt = Date.now(); } return Boolean(t?.frozen); },
+    ageFrozen: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.frozenAt -= ms; },
   };
 }
 
