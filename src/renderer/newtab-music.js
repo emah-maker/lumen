@@ -39,7 +39,8 @@ const thumbOk = (v) => typeof v === 'string' && v.length < 12000 && /^data:image
 const artOk = (v) => (typeof v === 'string' && v.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(v) ? v : '');
 const KINDS = ['song', 'album', 'playlist', 'station', 'artist'];
 const SEARCH_GROUPS = [['song', 'Songs', 'am-songs'], ['album', 'Albums', 'am-albums'], ['artist', 'Artists', 'am-artists'], ['playlist', 'Playlists', 'am-playlists']];
-const SEARCH_DEBOUNCE_MS = 250;
+const MS = globalThis.MusicSearch; // features/music-search-core.js: the pause before a search is asked (200 ms), the shortest term (2), the cache of the last queries
+const SEARCH_DEBOUNCE_MS = MS.DEBOUNCE_MS;
 const RECENT_MAX = 5;
 const ASK_AGAIN_MS = 4000; // a tab's data is asked again no sooner than this
 const STALE_MS = 5 * 60e3; // ...and, unless the user picks the tab again, only this long after it was asked
@@ -274,7 +275,8 @@ function build(w, card, o) {
   }
   // A tab's data is asked for when the tab is shown (the card is large enough for tabs, and the tab is the open one), not again for a few seconds.
   function askTab(name, byUser) {
-    if (!name || name === 'search' || (name === 'devices' && o.engine !== 'spotify-api')) return;
+    if (name === 'search') { if (view.tier !== 'small' && view.tier !== 'medium') view.warmSearch?.(); return; } // (the Search tab is shown: the hidden player starts now)
+    if (!name || (name === 'devices' && o.engine !== 'spotify-api')) return;
     if (view.tier === 'small' || view.tier === 'medium') return;
     const now = Date.now();
     const age = now - (ui.asked[name] || 0);
@@ -414,6 +416,7 @@ function build(w, card, o) {
 
   // The search: the same controller serves the header's pop-over (small and medium cards) and the Search tab (large).
   const search = searchController(view, { id, o, act, ui, cap });
+  view.warmSearch = () => search.warm();
   search.attach({ input, field, pop, toggle, closePop: () => closePop(), openPop: () => openPop() });
   function openPop() { ui.open = true; search.draw(); search.focus(pop); }
   function closePop() { search.close(); }
@@ -674,6 +677,11 @@ function build(w, card, o) {
 function searchController(view, { id, o, act, ui, cap }) {
   const panes = [];
   const note = (d) => o.searchNote(d);
+  const cache = (ui.cache ||= MS.createCache()); // the last 50 queries' rows for ten minutes (kept in `ui`: it survives the card being built again)
+  // When a search is asked: after a short pause in typing, from two letters, at once on Enter; a term whose rows are cached is shown, not asked.
+  const sched = MS.createScheduler({ scope: id, cache, send: (term) => act('esearch', { arg: term.slice(0, 80) }), shown: () => ctl.draw() });
+  const asked = (ui.thumbAsked ||= { term: '', ids: new Set() }); // pictures asked for (per term: main keeps them for a while)
+  let moreAsked = ''; // the query "more songs" was asked for (once each)
   function pane(kind, parts) {
     const p = { kind, ...parts, options: () => [...parts.list.querySelectorAll('.am-opt')] };
     p.setActive = (n) => {
@@ -691,11 +699,25 @@ function searchController(view, { id, o, act, ui, cap }) {
     const list = p.list;
     const d0 = list._drawn;
     const term = ui.term.trim();
-    const results = rowsOf(d.results);
-    const state = sig([p.kind, term, d.searching === true, d.query, d.searchOk, d.searchWhy, results.map((i) => i.kind + i.id + (i.thumb ? 1 : 0)), recentSearches(id), note(d), Boolean(d.can && (d.can.playLater || d.can.playNext)), d.can && d.can.playNext, d.can && d.can.playLater, p.open !== false]);
+    const answered = d.query === term && d.searching !== true; // main has this term's rows
+    let results = rowsOf(d.results);
+    let provisional = false;
+    if (!answered) { // before the answer: this exact term's rows from the last minutes, else those of a longer query that starts with it (dimmed), else none
+      const hit = term ? cache.get(id, term) : null;
+      const near = hit || term.length < MS.MIN_CHARS ? null : cache.prefix(id, term);
+      results = hit ? rowsOf(hit.rows) : near ? rowsOf(near.rows) : [];
+      provisional = Boolean(near);
+    } else if (d.searchOk !== false && d.searchPartial !== true && results.length) { // (a whole answer is kept; the first rows of one still coming are not)
+      const key = sig([term, results.map((i) => i.kind + i.id + (i.thumb ? 1 : 0))]);
+      if (ui.learned !== key) { ui.learned = key; cache.put(id, term, results); }
+    }
+    const state = sig([p.kind, term, answered, provisional, d.searching === true, d.query, d.searchOk, d.searchWhy, d.searchPartial === true, d.moreSongs === true, d.moreLoading === true, results.map((i) => i.kind + i.id + (i.thumb ? 1 : 0)), recentSearches(id), note(d), Boolean(d.can && (d.can.playLater || d.can.playNext)), d.can && d.can.playNext, d.can && d.can.playLater, p.open !== false]);
     if (d0 === state) return;
     list._drawn = state;
+    if (p.io) { p.io.disconnect(); p.io = null; }
     list.replaceChildren();
+    list.classList.toggle('am-stale', provisional);
+    const missing = []; // [row, id]: rows with no picture yet, watched until they are on screen
     let n = 0;
     const optionButton = (item, group) => {
       const row = el('div', 'am-optrow');
@@ -706,7 +728,7 @@ function searchController(view, { id, o, act, ui, cap }) {
       b.setAttribute('aria-selected', 'false');
       b.setAttribute('aria-label', `Play ${text(item.title, 60)}${text(item.sub, 60) ? `, ${text(item.sub, 60)}` : ''}`);
       b.tabIndex = -1;
-      if (thumbOk(item.thumb)) { const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.src = item.thumb; b.append(img); } else b.append(el('span', 'am-thumb none'));
+      if (thumbOk(item.thumb)) { const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = item.thumb; b.append(img); } else { b.append(el('span', 'am-thumb none')); missing.push([row, item.id]); }
       const t = el('span', 'am-opt-text');
       t.append(el('span', 'am-title', text(item.title, 120)));
       if (text(item.sub, 120)) t.append(el('span', 'am-sub', text(item.sub, 120)));
@@ -752,17 +774,62 @@ function searchController(view, { id, o, act, ui, cap }) {
       if (note(d)) line(note(d));
       return;
     }
-    if (d.searching === true || d.query !== term) { line('Searching…'); if (note(d)) line(note(d)); return; }
-    if (d.searchOk === false) { const fail = line(searchFailText(o, d)); if (typeof d.searchDetail === 'string' && d.searchDetail) fail.title = text(d.searchDetail, 120); } else if (!results.length) line('No results.');
+    if (!answered && !results.length) {
+      if (term.length < MS.MIN_CHARS) { line(`Keep typing to search ${o.name}.`); return; } // (from two letters; Enter searches one)
+      line('Searching…');
+      const sk = el('div', 'am-group am-skels'); // rows' outlines while the answer is on its way
+      sk.setAttribute('aria-hidden', 'true');
+      for (let i = 0; i < 5; i++) { const r = el('div', 'am-optrow am-skel'); const t = el('span', 'am-opt-text'); t.append(el('span', 'am-skel-line'), el('span', 'am-skel-line short')); r.append(el('span', 'am-thumb none'), t); sk.append(r); }
+      list.append(sk);
+      if (note(d)) line(note(d));
+      return;
+    }
+    if (answered && d.searchOk === false) { const fail = line(searchFailText(o, d)); if (typeof d.searchDetail === 'string' && d.searchDetail) fail.title = text(d.searchDetail, 120); } else if (!results.length) line('No results.');
     for (const [kind, heading, cls] of SEARCH_GROUPS) {
-      const items = results.filter((i) => i.kind === kind).slice(0, 8);
+      const items = results.filter((i) => i.kind === kind).slice(0, 10);
       if (!items.length) continue;
       const group = el('div', `am-group ${cls}`);
       group.append(el('div', 'am-heading', heading));
       for (const item of items) optionButton(item, group);
+      if (kind === 'song' && answered && d.moreSongs === true) { // Spotify's page listed few songs: a longer list is one more route in the page, opened on request
+        const more = el('button', 'am-more', d.moreLoading ? 'Loading more…' : 'More songs');
+        more.type = 'button';
+        more.disabled = d.moreLoading === true;
+        more.addEventListener('click', () => { moreAsked = d.query; act('emore'); });
+        group.append(more);
+      }
       list.append(group);
     }
     if (note(d)) line(note(d));
+    watchThumbs(p, missing);
+  }
+  // The pictures of the rows that are on screen (not all of the rows: a long list costs only what is looked at): asked together, a moment after they show.
+  function watchThumbs(p, missing) {
+    if (!missing.length) return;
+    const d = view.d || {};
+    if (asked.term !== d.query) { asked.term = d.query; asked.ids.clear(); }
+    const ask = (ids) => {
+      const fresh = MS.thumbsToAsk(ids.map((x) => ({ id: x })), asked.ids);
+      if (!fresh.length) return;
+      for (const x of fresh) asked.ids.add(x);
+      act('ethumb', { arg: fresh.join(',') });
+    };
+    if (typeof IntersectionObserver !== 'function') { ask(missing.slice(0, MS.THUMB_BATCH).map((m) => m[1])); return; }
+    const byRow = new Map(missing);
+    let batch = [];
+    let timer = null;
+    p.io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting && byRow.has(e.target)) { batch.push(byRow.get(e.target)); p.io.unobserve(e.target); }
+      if (batch.length && timer === null) { timer = setTimeout(() => { view.timers.delete(timer); timer = null; const ids = batch; batch = []; if (p.list.isConnected) ask(ids); }, 60); view.timers.add(timer); }
+    });
+    for (const m of missing) p.io.observe(m[0]);
+  }
+  // More songs when the list is scrolled to its end (the "More songs" button does the same).
+  function nearEnd(p) {
+    const d = view.d || {};
+    const l = p.list;
+    if (d.moreSongs !== true || d.moreLoading === true || moreAsked === d.query || d.query !== ui.term.trim()) return;
+    if (l.scrollHeight > l.clientHeight && l.scrollTop + l.clientHeight >= l.scrollHeight - 48) { moreAsked = d.query; act('emore'); }
   }
   function syncInputs() { for (const p of panes) if (p.input.value !== ui.term) p.input.value = ui.term; }
   const ctl = {
@@ -781,13 +848,15 @@ function searchController(view, { id, o, act, ui, cap }) {
       syncInputs();
     },
     search(now) {
-      clearTimeout(ui.timer);
       const term = ui.term.trim();
-      const send = () => { ui.timer = null; act('esearch', { arg: term.slice(0, 80) }); };
-      if (now) send(); else ui.timer = setTimeout(send, SEARCH_DEBOUNCE_MS);
+      if (!term) { sched.type(''); if (view.d && view.d.query) act('esearch', { arg: '' }); } // (cleared: main drops the rows at once)
+      else if (now) sched.enter(term);
+      else sched.type(term);
       ctl.draw();
     },
-    close() { clearTimeout(ui.timer); ui.timer = null; ui.open = false; ui.active = -1; ctl.draw(); const p = panes.find((x) => x.kind === 'pop'); p?.input.blur(); },
+    // The box was focused or the Search tab shown: the hidden player is started now (not at the first key), at most once a minute.
+    warm() { const t = Date.now(); if (t - (ui.warmAt || 0) < 60e3) return; ui.warmAt = t; act('ewarm'); },
+    close() { sched.cancel(); ui.open = false; ui.active = -1; ctl.draw(); const p = panes.find((x) => x.kind === 'pop'); p?.input.blur(); },
     focus(popEl) { const p = panes.find((x) => x.pop === popEl); requestAnimationFrame(() => { if (p && p.input.isConnected) { p.input.focus(); p.input.setSelectionRange(p.input.value.length, p.input.value.length); } }); },
   };
   function wireInput(p) {
@@ -803,6 +872,8 @@ function searchController(view, { id, o, act, ui, cap }) {
     input.autocomplete = 'off';
     input.spellcheck = false;
     input.value = ui.term;
+    input.addEventListener('focus', () => ctl.warm());
+    p.list.addEventListener('scroll', () => nearEnd(p), { passive: true });
     input.addEventListener('input', () => { ui.term = input.value.slice(0, 80); ui.active = -1; ctl.search(false); });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const list = p.options(); if (!list.length) return; const nextIndex = ui.active < 0 ? (e.key === 'ArrowDown' ? 0 : list.length - 1) : (ui.active + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length; p.setActive(nextIndex); return; }

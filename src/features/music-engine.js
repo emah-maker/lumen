@@ -223,7 +223,7 @@ function createMusicEngine(deps) {
       }
       if (m.kind === 'search') {
         if (m.rid !== results.rid) return; // an older search
-        if (m.ok === false && results.items.length && results.ok !== false) { searchCmd = null; changed(); return; } // (rows were already shown: a page that never stood still ends them, it does not take them away)
+        if (m.ok === false && results.partial === true && results.items.length) { searchCmd = null; changed(); return; } // (rows were already shown: a page that never stood still ends them, it does not take them away)
         results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, partial: m.partial === true, more: m.more === true, moreAt: m.more === true ? 0 : results.moreAt, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
         if (m.ok === false || m.items.length) searchCmd = null;
         // (the pictures are asked for by the card when the rows are on screen: loadThumbs)
