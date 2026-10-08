@@ -110,7 +110,7 @@ const DEFAULTS = {
   tabSleepKeepPinned: false, // [tabs] pinned tabs never sleep
   tabSleepNever: [], // [tabs] sites whose tabs never sleep
   tabSleepFreezeFirstMinutes: 0, // [tabs] an idle tab that would unload is frozen first for this many minutes (instant to wake); 0: unload at once
-  tabPreload: 2, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
+  tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   tabSnapshots: true, // [tabs] show a picture of a sleeping tab's page while it wakes (kept on disk, cleared with history)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
