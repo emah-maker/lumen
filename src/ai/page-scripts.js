@@ -603,4 +603,4 @@ ${text}
 </untrusted_page_content>`;
 }
 
-module.exports = { PAGE_TEXT, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };
+module.exports = { PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };

@@ -388,3 +388,13 @@ Find which posts beat their own account's normal. Pure local math: it makes no r
 |---|---|---|---|
 | `posts` | object[] | yes | `{ url, account?, format?, views?, likes?, replies?, reposts?, comments?, shares?, date? }` |
 | `metric` | `views`, `engagement`, `auto` |  | `views` for video, `engagement` (likes + replies + reposts + comments + shares) for text; `auto` (default) uses views when most rows have them. |
+
+### `run_macro`
+
+Run one of the user's saved macros (Settings → Macros: [docs/macros.md](macros.md)) by name. `list: true`, or no name, returns the names with their descriptions, the variables they ask for and any site they are limited to. The macro's steps run as the same tools listed here (`click`, `type_text`, `navigate`, `press_key`, `wait_for`, `scroll`, `switch_tab`, `open_tab`, `close_tab`), so every approval the AI's own steps need still applies: the first click or typing on a new site asks, and a step that clicks a submit, buy, send, post or delete control, or presses Enter to submit, asks again with a card naming the step. A macro that has an "Ask AI" step or uses `{{clipboard}}` is not run by an agent at all. Hands-off mode, a site where the user turned AI off and a tab kept off-limits refuse it like any acting tool. A failed step is an error naming the step and the reason.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string |  | The macro's name (any case; a unique start or piece of the name is enough). |
+| `variables` | object |  | Values for the macro's `{{placeholders}}`, for example `{"query": "red shoes"}`. A missing one is reported by name. |
+| `list` | boolean |  | List the macros instead of running one. |
