@@ -31,12 +31,45 @@ async function ask(call, ui, req, what) {
   return res;
 }
 
-// Pictures for the first few rows of a list, each a small data: URL (kept an hour by ctx.image); a row without one just has no picture.
-async function withThumbs(items, ctx) {
-  const pic = async (images) => { for (const u of images) { const t = await ctx.image(u).catch(() => ''); if (t && t.length < 12000) return t; } return ''; };
-  return Promise.all(items.map((it, i) => { const { images = [], ...row } = it; return (i < THUMBS && images.length ? pic(images) : Promise.resolve('')).then((thumb) => ({ ...row, thumb })); }));
+// A row's picture: the first of its candidate addresses that comes as a small data: URL (kept an hour by `image`), else ''.
+async function pic(images, image) {
+  for (const u of images) { const t = await image(u).catch(() => ''); if (t && t.length < 12000) return t; }
+  return '';
 }
-const bare = (items) => items.map((it) => { const row = { ...it }; delete row.images; return row; });
+// Pictures for the first few rows of a list (the queue), each a small data: URL; a row without one just has no picture.
+async function withThumbs(items, ctx) {
+  return Promise.all(items.map((it, i) => { const { images = [], ...row } = it; return (i < THUMBS && images.length ? pic(images, ctx.image) : Promise.resolve('')).then((thumb) => ({ ...row, thumb })); }));
+}
+const bare = (items) => items.map((it) => { const row = { ...it }; delete row.images; delete row.thumbAsked; return row; });
+
+// ---- search ----
+const searchRows = (items) => bare(items).map((r) => ({ ...r, thumb: r.thumb || '' })); // (every row has a picture field: empty until the card asks for it)
+// ONE request (GET /search for songs, albums, artists and playlists together). The rows come back at once without pictures: the card asks for the
+// pictures of the rows it has on screen (loadThumbs), so a long list costs no more than the rows that are looked at. A search that was asked before a
+// newer one finished is dropped (ui.searchSeq), so an older term never replaces the newer one's rows. `ctx.searchCall` (the user's own search budget,
+// not the shared polling one) is used when the widget has it.
+async function runSearch(ui, term, ctx, call = ctx.searchCall) {
+  const mine = (ui.searchSeq = (ui.searchSeq || 0) + 1);
+  const res = await ask(call, ui, PLAYER.search(term), 'search').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
+  if (mine !== ui.searchSeq) return { stale: true, ok: false };
+  ui.search = { term: term.slice(0, 80), ok: res.ok, items: res.ok ? SV.normalizeSearch(res.body) : [], why: res.ok ? '' : 'page', api: true };
+  return { ok: res.ok, stale: false, status: res.status };
+}
+function clearSearch(ui) { ui.searchSeq = (ui.searchSeq || 0) + 1; ui.search = null; }
+async function loadThumbs(ui, ids, ctx) {
+  const s = ui.search;
+  if (!s || !Array.isArray(s.items)) return;
+  const want = new Set(ids || []);
+  const todo = s.items.filter((i) => want.has(i.id) && !i.thumb && !i.thumbAsked && i.images && i.images.length).slice(0, 12);
+  for (const i of todo) i.thumbAsked = true;
+  await Promise.all(todo.map(async (i) => { i.thumb = await pic(i.images, ctx.searchImage || ctx.image); }));
+}
+// What the search adds to the card's data (the engine's card too, when the Web API answered): null when there is no answered search.
+function directResults(ui) {
+  const s = ui && ui.search;
+  if (!s || !s.api) return null;
+  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: false, moreLoading: false };
+}
 
 async function loadTab(call, name, ctx, playback) {
   const { ui } = ctx;
@@ -121,11 +154,12 @@ async function act(call, action, ctx) {
     case 'elists': { await loadTab(call, 'library', ctx, cached); return { local: true }; }
     case 'esearch': {
       const term = typeof action.text === 'string' ? action.text.trim() : '';
-      if (!term) { ui.search = { term: '', items: [], ok: true }; return { local: true }; }
-      const res = await ask(call, ui, PLAYER.search(term), 'search');
-      ui.search = { term: term.slice(0, 80), ok: res.ok, items: res.ok ? await withThumbs(SV.normalizeSearch(res.body), ctx) : [], why: res.ok ? '' : 'page' };
+      if (!term) { clearSearch(ui); ui.search = { term: '', items: [], ok: true }; return { local: true }; }
+      await runSearch(ui, term, ctx, ctx.searchCall || call);
       return { local: true };
     }
+    case 'ethumb': { await loadThumbs(ui, action.ids, ctx); return { local: true }; }
+    case 'emore': return { local: true }; // (the whole list came in one request)
     case 'playitem': {
       if (!SV.PLAYABLE_KINDS.includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return false;
       let res = await call(...flat(PLAYER.playItem(action.kind, action.item)));
@@ -218,7 +252,7 @@ async function extras(call, ctx, playback) {
     playlists: lib ? lib.playlists : [],
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
-    results: ui.search ? ui.search.items : [],
+    results: ui.search ? searchRows(ui.search.items) : [],
     searchOk: ui.search ? ui.search.ok !== false : true,
     searchWhy: ui.search && ui.search.ok === false ? 'page' : '',
     query: ui.search ? ui.search.term : '',
@@ -228,4 +262,4 @@ async function extras(call, ctx, playback) {
   };
 }
 
-module.exports = { act, extras, loadTab, TABS, NEEDS };
+module.exports = { act, extras, loadTab, runSearch, clearSearch, loadThumbs, directResults, TABS, NEEDS };

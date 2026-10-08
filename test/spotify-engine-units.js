@@ -102,10 +102,38 @@ module.exports = async function spotifyEngineUnits(check) {
   const res = await e.read();
   check('spotify engine: results (song, album, artist) with duration; the card is told', res.results.length === 3 && res.results[0].ms === 219000 && res.results[2].kind === 'artist' && res.query === 'shake it off' && res.searching === false && res.searchOk === true, JSON.stringify(res.results));
   await sleep(30);
+  check('spotify engine: no picture is fetched until the card asks for the rows on screen (lazy: the first rows show without waiting for pictures)', fetched.length === before && (await e.read()).results.every((r) => r.thumb === ''), String(fetched.length - before));
+  check('spotify engine: loadThumbs names rows by id; an id that is not in the results fetches nothing', e.loadThumbs(['nope']) === false && e.loadThumbs([]) === false && (await sleep(20), fetched.length === before), String(fetched.length - before));
+  check('spotify engine: loadThumbs for rows on screen', e.loadThumbs(['4uLU6hMCjMI75M1A2tKUQC', '2QJmrSgbdM35R67eoGQo4j', '06HL4z0CvFAxyc27GXpf02']) === true, '');
+  await sleep(30);
   const withThumbs = await e.read();
-  check('spotify engine: small pictures for the results are fetched (scdn.co only) and then shown as data: URLs', fetched.length > before && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && withThumbs.results[0].thumb.startsWith('data:image/') && withThumbs.results[1].thumb.startsWith('data:image/') && withThumbs.results[2].thumb === '', JSON.stringify(withThumbs.results.map((r) => r.thumb.slice(0, 20))));
+  check('spotify engine: small pictures for the rows asked for are fetched (scdn.co only) and then shown as data: URLs', fetched.length > before && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && withThumbs.results[0].thumb.startsWith('data:image/') && withThumbs.results[1].thumb.startsWith('data:image/') && withThumbs.results[2].thumb === '', JSON.stringify(withThumbs.results.map((r) => r.thumb.slice(0, 20))));
   e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid, ok: false, items: [] }));
   check('spotify engine: a search the page could not answer is flagged (the card says Spotify may have changed)', (await e.read()).searchOk === false, '');
+  // streaming: the first rows (partial) show at once; the whole list replaces them; a page that then never stands still does not take the rows away
+  e.search('daft punk');
+  const rid2 = sent().at(-1).rid;
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid2, ok: true, partial: true, items: [{ id: 'T1', kind: 'song', title: 'One More Time', sub: 'Daft Punk' }] }));
+  const part = await e.read();
+  check('spotify engine: partial results: the first rows are on the card at once, no longer "searching" (and the card may know more follow)', part.results.length === 1 && part.searching === false && part.searchPartial === true && part.searchOk === true, JSON.stringify([part.results.length, part.searching, part.searchPartial]));
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid2, ok: true, items: [{ id: 'T1', kind: 'song', title: 'One More Time', sub: 'Daft Punk' }, { id: 'T2', kind: 'song', title: 'Get Lucky', sub: 'Daft Punk' }] }));
+  const whole = await e.read();
+  check('spotify engine: the whole list replaces the partial one under the same request', whole.results.length === 2 && whole.searchPartial === false, JSON.stringify(whole.results.length));
+  e.search('radiohead');
+  const rid3 = sent().at(-1).rid;
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid3, ok: true, partial: true, items: [{ id: 'R1', kind: 'song', title: 'Creep', sub: 'Radiohead' }] }));
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid3, ok: false, why: 'timeout', items: [] }));
+  const kept = await e.read();
+  check('spotify engine: a failure after the first rows were shown does not take them away (the page never stood still)', kept.results.length === 1 && kept.searchOk === true, JSON.stringify([kept.results.length, kept.searchOk]));
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid2, ok: true, items: [{ id: 'OLD', kind: 'song', title: 'Old' }] }));
+  check('spotify engine: a late answer of an older query (cancelled by a newer one) never replaces the rows of the newer one', (await e.read()).results.every((r) => r.id !== 'OLD') && (await e.read()).query === 'radiohead', '');
+  // more songs
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid3, ok: true, items: [{ id: 'R1', kind: 'song', title: 'Creep', sub: 'Radiohead' }] }));
+  check('spotify engine: with fewer than 8 songs the card may offer more songs; searchMore sends the fixed command for the search shown', (await e.read()).moreSongs === true && e.searchMore() === true && JSON.stringify(sent().at(-1)) === JSON.stringify({ cmd: 'searchMore', term: 'radiohead', rid: rid3 }) && (await e.read()).moreLoading === true, JSON.stringify(sent().at(-1)));
+  check('spotify engine: asking again while it loads sends nothing more', e.searchMore() === true && sent().filter((c) => c.cmd === 'searchMore').length === 1, '');
+  e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: rid3, ok: true, more: true, items: [{ id: 'R1', kind: 'song', title: 'Creep', sub: 'Radiohead' }, { id: 'R2', kind: 'song', title: 'Karma Police', sub: 'Radiohead' }] }));
+  const moreRes = await e.read();
+  check('spotify engine: the longer list arrives under the same request; no more is offered then', moreRes.results.length === 2 && moreRes.moreSongs === false && moreRes.moreLoading === false && e.searchMore() === false, JSON.stringify([moreRes.results.length, moreRes.moreSongs, moreRes.moreLoading]));
   check('spotify engine: playItem sends kind and id; artist is a kind here too', e.playItem('artist', '06HL4z0CvFAxyc27GXpf02') === true && JSON.stringify(sent().at(-1)) === '{"cmd":"playItem","kind":"artist","id":"06HL4z0CvFAxyc27GXpf02"}' && e.playItem('station', '1') === false, '');
 
   // ---- user gesture, and the player shown when a button does nothing ----
