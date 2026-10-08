@@ -90,6 +90,9 @@
         <div class="attachment-note" id="attachment-note" role="status" aria-live="polite" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
         <input type="file" id="attach-input" multiple hidden tabindex="-1" aria-hidden="true" />
+        <button class="screen-btn" id="screen-btn" type="button" title="Include a screenshot of this tab with your message" aria-label="Include a screenshot of this tab" aria-pressed="false" data-state="idle" data-i18n-aria-label="composer.screen.label">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5a1 1 0 0 1 1-1h1.6l.8-1.3h4.2l.8 1.3h1.6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.6" r="2.3"/></svg>
+        </button>
         <button class="attach-btn" id="attach" type="button" title="Attach files (up to 10)" aria-label="Attach files" data-i18n-aria-label="composer.attach">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 7.2 7.6 12.4a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.2 10.8a1.1 1.1 0 0 1-1.5-1.5l4.7-4.7"/></svg>
         </button>
@@ -111,6 +114,7 @@
   <script src="highlight.js"></script>
   <script src="gen-images.js"></script>
   <script src="run-state.js"></script>
+  <script src="../ai/screen-intent.js"></script>
   <script src="chat-core.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>

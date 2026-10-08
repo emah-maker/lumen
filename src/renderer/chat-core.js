@@ -486,6 +486,7 @@ function setRunning(value) {
   renderWorkingIn();
   document.body.classList.toggle('agent-active', value);
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
+  for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value; // (main never edits a chat mid-run)
   send.classList.toggle('stop', value);
   send.title = value ? t('composer.stop') : t('composer.send.title');
   send.setAttribute('aria-label', value ? t('composer.stop') : t('composer.send'));
@@ -498,6 +499,63 @@ function updateSend() {
   const typed = Boolean(prompt.value.trim() || attachments.length);
   send.disabled = !running && !typed;
   sendNowBtn.hidden = !(running && typed);
+}
+
+// ---------- screen context: "what is this?" sends a screenshot of the tab ----------
+// The words decide (ai/screen-intent.js, run on each keystroke; main decides again from the same words and the chat so far), and the
+// camera button shows what will happen: lit softly when the words ask for it, solid when switched on, crossed when switched off.
+// A click toggles what is shown now, for the next message only. Whether the tab may be shared (AI off for its site, Lumen's own
+// pages) is main's call; when the button asked and it can't be, a notice says why.
+const screenBtn = optional('screen-btn');
+let screenMode = null; // 'on' | 'off' | null: the user's choice for the next message
+function recentTurns() {
+  return [...messages.querySelectorAll(':scope > .msg.user, :scope > .msg.assistant')].slice(-4).map((el) => ({ role: el.classList.contains('user') ? 'user' : 'assistant', text: (el.textContent || '').slice(0, 600) }));
+}
+function screenWanted() {
+  try { return Boolean(window.screenIntent && prompt.value.trim() && window.screenIntent.wantsScreen(prompt.value, { lastTurns: recentTurns() }).screen); } catch { return false; }
+}
+function renderScreenBtn() {
+  if (!screenBtn) return;
+  const words = screenMode === null && screenWanted();
+  const state = screenMode === 'on' ? 'on' : screenMode === 'off' ? 'off' : words ? 'auto' : 'idle';
+  screenBtn.dataset.state = state;
+  screenBtn.setAttribute('aria-pressed', String(state === 'on' || state === 'auto'));
+  const title = t(`composer.screen.${state}`);
+  screenBtn.title = title;
+  screenBtn.setAttribute('aria-label', title);
+}
+function takeScreenMode() { const mode = screenMode; screenMode = null; renderScreenBtn(); return mode || undefined; }
+if (screenBtn) {
+  screenBtn.onclick = () => {
+    const lit = screenBtn.dataset.state === 'on' || screenBtn.dataset.state === 'auto';
+    screenMode = lit ? 'off' : 'on';
+    renderScreenBtn();
+    prompt.focus();
+  };
+}
+// The line under a message that carried the tab: { id, kind: 'image' | 'text', title, thumb }. × takes the picture out of the chat.
+function screenChip(bubble, info) {
+  if (!bubble || !info || bubble.querySelector('.msg-screen')) return;
+  const chip = document.createElement('div');
+  chip.className = 'msg-screen';
+  const title = info.title || t('chat.screen.untitled');
+  const label = Object.assign(document.createElement('span'), { className: 'msg-screen-text', textContent: t(info.kind === 'text' ? 'chat.screen.text' : 'chat.screen.image', { title }), title });
+  chip.append(label);
+  if (info.thumb) chip.append(Object.assign(document.createElement('img'), { className: 'msg-screen-thumb', src: info.thumb, alt: '' }));
+  const x = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-screen-x', textContent: '×', title: t('chat.screen.remove') });
+  x.setAttribute('aria-label', t('chat.screen.remove'));
+  x.disabled = running;
+  x.onclick = async () => {
+    x.disabled = true;
+    const ok = await window.assistant.dropScreen?.(info.id).catch(() => false);
+    if (!ok) { x.disabled = running; return; }
+    chip.classList.add('removed');
+    label.textContent = t('chat.screen.removed');
+    chip.querySelector('.msg-screen-thumb')?.remove();
+    x.remove();
+  };
+  chip.append(x);
+  bubble.append(chip);
 }
 
 // ---------- attachments: paste, drop or pick files for the message ----------
@@ -796,7 +854,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs);
+  ask(next.text, next.images, next.tabs, next.screen);
 }
 
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
@@ -813,17 +871,17 @@ function askInNewChat(text) {
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
-function ask(text, images = [], tabs = null) {
+function ask(text, images = [], tabs = null, screen) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry; // (for Send now)
   }
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
-    pendingAsk = { text, images, tabs, at: Date.now() };
+    pendingAsk = { text, images, tabs, screen, at: Date.now() };
     if (!prompt.value.trim() && text) { prompt.value = text; autosize(); updateSend(); }
     const pending = optional('setup-pending');
     pending.textContent = t('setup.pending');
@@ -836,12 +894,12 @@ function ask(text, images = [], tabs = null) {
     return;
   }
   if (tabs?.gone?.length) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('tabs.gone', { names: tabs.gone.join(', ') }) }));
-  lastAsk = { text, images, tabs };
+  lastAsk = { text, images, tabs, screen };
   startTurn(text, images, tabs);
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images));
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
@@ -876,7 +934,7 @@ async function askAgain() {
   const users = messages.querySelectorAll('.msg.user');
   const from = users[users.length - 1];
   if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
-  ask(again.text, again.images, again.tabs);
+  ask(again.text, again.images, again.tabs, again.screen);
   return true;
 }
 
@@ -1268,6 +1326,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'screen_attached': // [screen context] the tab's screenshot (or its text) went along with the message
+      screenChip([...messages.querySelectorAll('.msg.user')].pop(), event);
+      break;
     case 'tabs_attached': // main read the picked tabs: what actually went along (a sleeping tab only by address)
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
@@ -1879,6 +1940,7 @@ function showHistory(items) {
       const files = restoredFiles(item.files);
       if (files.length) bubble.append(fileChips(files));
       if (item.text) bubble.append(document.createTextNode(item.text));
+      if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
       if (!item.text) { // only pictures
@@ -2028,7 +2090,7 @@ new MutationObserver(() => {
 }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && running) reconcile(); });
 prompt.addEventListener('focus', () => { prewarm(); if (running) reconcile(); }); // (a Stop button that belongs to another chat goes as soon as the box is used)
-prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
+prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); renderScreenBtn(); });
 prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -2070,8 +2132,9 @@ async function sendComposer({ now = false } = {}) {
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
-  if (running) { const entry = ask(text, images, tabs); if (now && entry) sendNow(entry); } // (queued for after the reply, or Send now)
-  else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
+  const screen = takeScreenMode(); // [screen context] the camera button's choice for this message
+  if (running) { const entry = ask(text, images, tabs, screen); if (now && entry) sendNow(entry); } // (queued for after the reply, or Send now)
+  else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs, screen);
   updateSend();
 }
 

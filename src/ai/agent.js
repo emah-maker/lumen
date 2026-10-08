@@ -18,6 +18,7 @@ const compactLib = require('../features/chat-compact'); // [context] /compact an
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
+const screenContext = require('./screen-context'); // [screen context] a screenshot of the tab when the message points at what is on screen
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
@@ -76,6 +77,7 @@ How to work:
 - No tools for what needs neither page nor web. Current facts: web_search, then read_urls.
 - Don't ask what you can decide: pick a sensible default and say so.
 - Current page: use its attached text if enough, else read_page mode:"compact" or find.
+- "This", "here", "on screen" with no screenshot attached: call screenshot first; never ask the user to describe it.
 - Go direct: navigate to a URL you know or can build. Batch known steps, make independent calls together, and use observe, read or since_last rather than re-reading.
 - Verify an action that matters. Don't repeat a failed step; after two failures change route or say what blocks you.
 - Stop once answered, with a short written answer citing the page or URL a fact came from.
@@ -1316,13 +1318,17 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
   for (const m of chatMessages) {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
-      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(uploadFiles.FILES_BLOCK, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '')).join('\n').trim();
-      const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(uploadFiles.FILES_BLOCK, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '').replace(screenContext.SCREEN_BLOCK, '').replace(screenContext.DROPPED_NOTE, '')).join('\n').trim();
+      const marks = blocks.map((b, i) => (b.type === 'text' ? [i, screenContext.parseMarker(b.text)] : null)).filter((x) => x && x[1]); // [screen context]
+      const screenAt = new Set(marks.map(([i]) => i + 1)); // the picture right after a marker is the screenshot, not the user's own
+      const shot = marks.length ? marks[0][1] : null;
+      const shotBlock = shot && blocks[marks[0][0] + 1]?.type === 'image' && blocks[marks[0][0] + 1].source?.type === 'base64' ? blocks[marks[0][0] + 1] : null;
+      const images = blocks.filter((b, i) => b.type === 'image' && b.source?.type === 'base64' && !screenAt.has(i)).map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
       const files = blocks.filter((b) => b.type === 'text').flatMap((b) => uploadFiles.parseFilesBlock(b.text)); // [uploads] the files the message carried (chips under the bubble)
       // A message from the user starts a new exchange: one that ended without a final reply (stopped
       // mid-tool) must not lend its step count or "acted" to the next.
       if (text || images.length || files.length) { steps = 0; acted = false; }
-      const fileField = files.length ? { files } : {};
+      const fileField = { ...(files.length ? { files } : {}), ...(shot ? { screen: { id: shot.id, kind: shot.kind, title: shot.title, ...(shotBlock ? { image: `data:${shotBlock.source.media_type};base64,${shotBlock.source.data}` } : {}) } } : {}) };
       if (text === 'The user attached the image(s) above without a message.' || text === uploadFiles.FILES_ONLY_TEXT) items.push({ role: 'user', text: '', images, ...fileField });
       else if (text || images.length || files.length) items.push({ role: 'user', text, images, ...fileField });
     } else {
@@ -1929,22 +1935,28 @@ class Agent {
     // waits for the same start and reports a failure as before.)
     const apiPick = providers.splitModel(String(messages.settings.model));
     if (!viaClaudeCode && !viaGrokBuild && !viaAntigravity && !viaCodex && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
+    // [screen context] "what is this?": the tab's screenshot goes along (a model that can't see: its text). Decided from the words or the
+    // composer's camera button (extra.screen: 'on' | 'off'); the capture runs while the page text is read.
+    const screenPlan = this.screenPlanFor(tab, userText, extra, messages);
+    const screenShot = screenPlan.capture && screenPlan.how === 'image' ? this.screenCapture(tab).catch((err) => ({ error: err })) : null;
     let attached;
     let page;
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
       // A plain question that needs neither the page nor a tool (isSimpleQuestion) is sent without the page's text.
-      page = wanted.includes(tab?.id) || isSimpleQuestion(userText, images.length + attachedFiles + wanted.length) || (!wanted.length && isPictureQuestion(userText, images.length)) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
+      page = wanted.includes(tab?.id) || (!screenPlan.capture && isSimpleQuestion(userText, images.length + attachedFiles + wanted.length)) || (!wanted.length && isPictureQuestion(userText, images.length)) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
     }
+    const screen = await this.screenAttach(screenPlan, screenShot, tab, emit);
     // The attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed).
-    if (page || attached.block || this.skillRun?.tainted) this.markTainted();
+    if (page || attached.block || screen.blocks.length || this.skillRun?.tainted) this.markTainted();
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
+      ...screen.blocks,
       { type: 'text', text: state + page + attached.block + note },
     ];
     const last = messages[messages.length - 1];
@@ -1955,7 +1967,7 @@ class Agent {
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
-    messages.simpleTurn = isSimpleQuestion(userText, images.length + attachedFiles + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
+    messages.simpleTurn = !screenPlan.capture && isSimpleQuestion(userText, images.length + attachedFiles + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
     // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
     if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit)) return;
@@ -1985,6 +1997,7 @@ class Agent {
       if (toGrokBuild && messages.settings.gbSession && (messages.settings.gbModel || 'grokbuild:default') !== messages.settings.model) { delete messages.settings.gbSession; delete messages.settings.gbModel; }
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
       if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
+      const turnImages = screen.image ? [...images, screen.image] : images; // [screen context] the CLI engines take it as an attached picture
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
@@ -1994,10 +2007,10 @@ class Agent {
         emit(event);
       };
       try {
-        if (toClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, gate, { userText, tabCount: wanted.length, plan });
-        else if (toCodex) await this.codexTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
-        else if (toAntigravity) await this.antigravityTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
-        else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
+        if (toClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, turnImages, controller.signal, gate, { userText, tabCount: wanted.length, plan });
+        else if (toCodex) await this.codexTurn(messages, state + page + attached.block + note, turnImages, controller.signal, gate);
+        else if (toAntigravity) await this.antigravityTurn(messages, state + page + attached.block + note, turnImages, controller.signal, gate);
+        else await this.grokBuildTurn(messages, state + page + attached.block + note, turnImages, controller.signal, gate);
       } finally {
         this.engineRuns--;
       }
@@ -2023,6 +2036,64 @@ class Agent {
   inScope(scope, fn) {
     return taskScope.run(scope, fn);
   }
+
+  // ---- [screen context] (ai/screen-context.js, ai/screen-intent.js) A message that points at what the user is looking at ("what is
+  // this?", "fix this error") carries a screenshot of the active tab; the composer's camera button forces it on or off for one message.
+  screenPlanFor(tab, userText, extra = {}, messages = this.messages) {
+    try { return this.screenPlanUnsafe(tab, userText, extra, messages); } catch { return { capture: false, how: null, why: 'error', forced: false }; } // (a failure here must never stop the message)
+  }
+  screenPlanUnsafe(tab, userText, extra, messages) {
+    const wc = tab?.webContents;
+    const url = (() => { try { return wc && !wc.isDestroyed?.() ? wc.getURL() : ''; } catch { return ''; } })();
+    const recent = [];
+    for (const m of (messages || []).slice(-4)) { // the last few turns' words, for "this is wrong" after a reply
+      const text = (Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text) : [String(m.content)]).join(' ').replace(PAGE_BLOCK, '').replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(screenContext.SCREEN_BLOCK, '').trim();
+      if (text) recent.push({ role: m.role, text: text.slice(0, 600) });
+    }
+    return screenContext.plan({
+      text: userText,
+      mode: extra.screen === 'on' || extra.screen === 'off' ? extra.screen : 'auto',
+      hasSelection: extra.hasSelection === true,
+      lastTurns: recent,
+      url,
+      hasTab: Boolean(tab),
+      aiOff: Boolean(url && this.browser.aiOff?.(url)), // [ai controls] never captured, whatever the button says
+      privateWindow: false, // (a private window has no AI sidebar at all: features/private-window.js)
+      pageContext: this.getOptions?.().pageContext !== false,
+      vision: fallback.capsOf(String(messages?.settings?.model || ''), this.fallbackOptionsList?.() || []).vision,
+      viewer: Boolean(url && slidesViewer.isViewerUrl(url)),
+    });
+  }
+
+  // The visible part of the tab, shrunk to a JPEG (the same capture the screenshot tool takes: it also works for a tab behind another).
+  async screenCapture(tab) {
+    const wc = tab.webContents;
+    return screenContext.capture(wc, { title: wc.getTitle(), url: wc.getURL(), capture: captureTab });
+  }
+
+  // What the message carries for the plan: { blocks, image } (nothing when it did not fire); the chip event tells the sidebar.
+  async screenAttach(plan, shot, tab, emit) {
+    const none = { blocks: [], image: null };
+    if (!plan.capture) {
+      if (plan.forced && screenContext.WHY_NOT[plan.why]) emit({ type: 'notice', text: screenContext.WHY_NOT[plan.why] }); // only when the user asked with the button
+      return none;
+    }
+    const wc = tab.webContents;
+    const info = { title: wc.getTitle(), url: wc.getURL() };
+    if (plan.how === 'text') { // can't see images: the page text (attached with the message) is the context
+      const text = screenContext.textMarker(info);
+      emit({ type: 'screen_attached', ...text.chip, words: plan.why });
+      return { blocks: text.blocks, image: null };
+    }
+    const made = shot ? await shot : null;
+    if (!made || made.error) {
+      if (plan.forced) emit({ type: 'notice', text: 'The screenshot could not be taken right now. The page text went along instead.' });
+      return none;
+    }
+    emit({ type: 'screen_attached', ...made.chip, words: plan.why });
+    return { blocks: made.blocks, image: made.image };
+  }
+  // ---- [/screen context]
 
   // ---- [page context] The active tab's title, URL and first ~7k characters of readable text
   // (page-scripts readPage, in the agent's isolated world). Skipped for new-tab and internal pages

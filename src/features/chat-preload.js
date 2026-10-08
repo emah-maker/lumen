@@ -11,7 +11,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images, tabIds, files) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files),
+    ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen),
+    dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
     uploads: {
       stash: (file) => ipcRenderer.invoke('uploads:stash', file),
       discard: (ref) => ipcRenderer.send('uploads:discard', ref),
