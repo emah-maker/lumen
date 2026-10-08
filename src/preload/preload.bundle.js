@@ -671,6 +671,22 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
+// Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
+// them is in lumen://settings (settings-preload.js).
+contextBridge.exposeInMainWorld('macrosApi', {
+  menu: () => ipcRenderer.invoke('macros:menu'),
+  run: (request) => ipcRenderer.invoke('macros:run', request),
+  stop: (runId) => ipcRenderer.invoke('macros:stop', runId),
+  resume: (runId) => ipcRenderer.invoke('macros:resume', runId),
+  edit: (id) => ipcRenderer.invoke('macros:edit', id),
+  stopRecording: (opts) => ipcRenderer.invoke('macros:record-stop', opts),
+  onChanged: on('macros:changed'),
+  onProgress: on('macros:progress'),
+  onVars: on('macros:vars'),
+  onRecording: on('macros:recording'),
+  onSidebar: on('macros:sidebar'),
+});
+
 // ---- [claude code engine] + [page context]
 contextBridge.exposeInMainWorld('lumenExtras', {
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
