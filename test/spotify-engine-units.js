@@ -53,8 +53,8 @@ module.exports = async function spotifyEngineUnits(check) {
   t += 60e3;
   e.onMessage(state({ state: 0, item: null, player: false }));
   check('spotify engine: a signed-out page without the player controls is never reported as changed, however long', (await e.read()).pageChanged === false, '');
-  check('spotify engine: it offers search, seek and nothing else (no lists, no queue)', JSON.stringify((await e.read()).can) === '{"search":true,"lists":false,"seek":true,"queue":false}', JSON.stringify((await e.read()).can));
-  check('spotify engine: lists are never asked for, and play next / add to queue are refused', sent().filter((c) => c.cmd === 'list').length === 0 && e.playNext('song', '1') === false && e.playLater('song', '1') === false && (e.refreshLists(), sent().filter((c) => c.cmd === 'list').length === 0), JSON.stringify(sent()));
+  check('spotify engine: signed out it offers search and seek, but not the heart, the library or lyrics (they need an account)', (() => { const c = out.can; return c.search && c.seek && !c.like && !c.library && !c.lyrics && !c.playNext && !c.playLater; })(), JSON.stringify(out.can));
+  check('spotify engine: signed out, play next and add to queue are refused (nothing is sent)', e.playNext('song', '1') === false && e.playLater('song', '1') === false && sent().filter((c) => c.cmd === 'playLater' || c.cmd === 'playNext').length === 0, JSON.stringify(sent()));
 
   // ---- signing in: the cookie ----
   check('spotify engine: Sign in opens the window with the engine page in it', e.signIn() === true && wins.length === 1 && wins[0].opts.title === 'Sign in to Spotify' && player.pinned.rect.width === 560, '');

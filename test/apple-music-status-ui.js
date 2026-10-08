@@ -109,8 +109,8 @@ async function partFake() {
   await shot('status-sizes.png');
 
   // keyboard
-  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')]; bs[0].focus(); return { n: bs.length, ok: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring: getComputedStyle(bs[0]).boxShadow }; })()`);
-  check('status: the controls are focusable buttons with a visible focus ring', kb.n === 3 && kb.ok && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
+  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')].filter((b) => b.offsetParent !== null); bs[0].focus(); return { n: bs.length, ok: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring: getComputedStyle(bs[0]).boxShadow }; })()`);
+  check('status: the controls are focusable buttons with a visible focus ring', kb.n >= 2 && kb.ok && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
 
   // the bar seeks: a click puts the playhead there, the arrow keys move it by 5 seconds
   check('status: the progress bar is a slider (the app\'s own card is a plain bar)', await page(`${card(D)}.querySelector('.sp-bar').getAttribute('role') === 'slider' && ${card(D)}.querySelector('.sp-bar').tabIndex === 0`), '');

@@ -174,7 +174,7 @@ function fakePlayer() {
 module.exports = async function spotifyDomUnits(check) {
   // ================= the selector table against the saved pages =================
   // Names that only a signed-in page (or an unplayed control) shows: written from public knowledge, not seen in the saved pages.
-  const ASSUMED = ['nowPlaying', 'title', 'artist', 'artistLinks', 'cover', 'connect', 'shuffle', 'chrome'];
+  const ASSUMED = ['nowPlaying', 'title', 'artist', 'artistLinks', 'cover', 'connect', 'chrome', 'like', 'contextLink', 'menuItem', 'libraryLink']; // (shuffle, repeat, volume, lyrics, the three-dots button and the track page's album link are seen)
   const pages = Object.entries(TREES).map(([name, tree]) => [name, makeEl(clone(tree), null, { clicked: [] })]);
   const seen = (name) => pages.filter(([, root]) => SPB.SELECTORS[name].some((s) => root.querySelector(s))).map(([n]) => n);
   const unseen = Object.keys(SPB.SELECTORS).filter((n) => !ASSUMED.includes(n) && seen(n).length === 0);
@@ -234,6 +234,137 @@ module.exports = async function spotifyDomUnits(check) {
   const mediaSession = page({ tree: signedIn(TREES.home), md: { title: 'From Session', artist: 'Ann', album: 'Alb', artwork: [] } });
   mediaSession.advance(1000);
   check('dom: the page\'s media session wins over the widget (it is the page\'s official surface)', mediaSession.last().item.title === 'From Session', JSON.stringify(mediaSession.last()));
+
+
+  // ================= the bigger card: switches, heart, queue, album playing, lyrics, library (music card at its larger sizes) =================
+  // Shuffle, repeat and volume are seen on the saved playbar (signed out); the heart, the queue page, the library links and a context menu are
+  // ASSUMED (a signed-in page): hand-written below from public knowledge of the player, marked as such.
+  const sw = page({ tree: signedIn(TREES.home) });
+  sw.advance(1000);
+  check('dom: the playbar\'s switches are read: shuffle off ("Enable shuffle"), repeat off (aria-checked false), the volume control found; no heart on a page with no now-playing widget', sw.last().shuffle === false && sw.last().repeat === 'off' && sw.last().has.shuffle === true && sw.last().has.repeat === true && sw.last().has.volume === true && sw.last().has.like === false && sw.last().liked === null, JSON.stringify(sw.last()));
+  const shuf = sw.all('button').find((b) => b.getAttribute('aria-label') === 'Enable shuffle');
+  sw.send({ cmd: 'shuffle', on: false });
+  check('dom: asking for shuffle off when it is off presses nothing', shuf.clicks === 0, String(shuf.clicks));
+  sw.send({ cmd: 'shuffle', on: true });
+  check('dom: asking for shuffle on presses the real shuffle button once', shuf.clicks === 1, String(shuf.clicks));
+  shuf.attrs['aria-label'] = 'Disable shuffle';
+  sw.advance(1500);
+  check('dom: "Disable shuffle" on the button reads as shuffle on', sw.last().shuffle === true, JSON.stringify(sw.last()));
+  const rep = sw.el('[data-testid="control-button-repeat"]');
+  sw.send({ cmd: 'repeat', mode: 'off' });
+  check('dom: asking for repeat off when it is off presses nothing', rep.clicks === 0, String(rep.clicks));
+  sw.send({ cmd: 'repeat', mode: 'one' });
+  sw.advance(2000);
+  check('dom: a repeat mode the button never reaches is pressed at most three times (never a loop)', rep.clicks === 3, String(rep.clicks));
+  rep.attrs['aria-checked'] = 'mixed';
+  sw.advance(1500);
+  check('dom: repeat reads aria-checked: mixed is "all", true is "one"', sw.last().repeat === 'all' && (rep.attrs['aria-checked'] = 'true', sw.advance(1500), sw.last().repeat === 'one'), JSON.stringify(sw.last()));
+  const volInput = sw.el('[data-testid="volume-bar"] input[type="range"]');
+  sw.send({ cmd: 'volume', level: 0.4 });
+  check('dom: the volume command sets the range input and fires input and change on it (as the page\'s own slider does)', volInput.__v === '0.4' && volInput.events.includes('input') && volInput.events.includes('change'), JSON.stringify([volInput.__v, volInput.events]));
+  volInput.attrs.max = '1';
+  volInput.__v = '0.25';
+  Object.defineProperty(volInput, 'value', { get() { return volInput.__v; } });
+  sw.advance(1500);
+  check('dom: the volume is read as the input\'s value over its max', sw.last().volume === 0.25, JSON.stringify(sw.last()));
+
+  // the heart (ASSUMED widget button)
+  const heartWidget = (label, checked) => ({ ...widget(), c: [...widget().c, { t: 'button', a: { 'aria-label': label, 'aria-checked': checked }, c: [] }] });
+  const hp = page({ tree: withWidget(heartWidget('Add to Liked Songs', 'false')) });
+  hp.advance(1000);
+  check('dom (assumed widget): the heart is found and reads not liked', hp.last().has.like === true && hp.last().liked === false, JSON.stringify(hp.last()));
+  hp.send({ cmd: 'like', on: true });
+  check('dom (assumed widget): like on presses it once; like off (already off) presses nothing', hp.clicked.length === 1 && (hp.send({ cmd: 'like', on: false }), hp.clicked.length === 1), String(hp.clicked.length));
+  const hp2 = page({ tree: withWidget(heartWidget('Remove from Liked Songs', 'true')) });
+  hp2.advance(1000);
+  check('dom (assumed widget): "Remove from Liked Songs" with aria-checked true reads as liked', hp2.last().liked === true, JSON.stringify(hp2.last()));
+  const hp3 = page({ tree: withWidget(heartWidget('Save to Your Library', 'false')) });
+  hp3.advance(1000);
+  check('dom (assumed widget): the older "Save to Your Library" label is a heart too', hp3.last().has.like === true && hp3.last().liked === false, JSON.stringify(hp3.last()));
+
+  // lyrics: the song's own page, seen signed out (a gate)
+  const trackRoute = (p, h) => { if (p.startsWith('/track/')) h.after(400, signedIn(TREES.track)); };
+  const lyOut = page({ tree: withWidget(widget()), route: (p, h) => { if (p.startsWith('/track/')) h.after(400, TREES.track); } });
+  lyOut.advance(1000);
+  lyOut.send({ cmd: 'lyrics', rid: 7 });
+  lyOut.advance(3000);
+  const lyMsg = lyOut.log.out.find((m) => m.t === 'lyrics');
+  check('dom: signed out, the track page\'s lyrics box holds only a "Sign in to see lyrics" gate: lyrics say why "signedOut" (the card says to sign in)', lyMsg && lyMsg.ok === false && lyMsg.why === 'signedOut' && lyMsg.rid === 7 && lyOut.pushed[0] === '/track/0DiWol3AO6WpXZgp0goxAV', JSON.stringify(lyMsg));
+  const withLines = (tree) => { const t = clone(tree); const walk = (n) => { if (typeof n === 'string') return n; if (n.a && n.a['data-testid'] === 'lyrics-container') return { ...n, c: [{ t: 'h2', c: ['Lyrics'] }, { t: 'div', c: [{ t: 'span', c: ['We were never gonna stop'] }, { t: 'span', c: ['One more time'] }, { t: 'span', c: ['One more time'] }, { t: 'span', c: ['Celebrate'] }] }] }; return { ...n, c: (n.c || []).map(walk) }; }; return walk(t); };
+  const lyIn = page({ tree: withWidget(widget()), route: (p, h) => { if (p.startsWith('/track/')) h.after(400, withLines(signedIn(TREES.track))); } });
+  lyIn.advance(1000);
+  lyIn.send({ cmd: 'lyrics', rid: 8 });
+  lyIn.advance(3000);
+  const lyOk = lyIn.log.out.find((m) => m.t === 'lyrics');
+  check('dom (assumed signed-in lyrics box): the lines are read, one each, with no title and no immediate repeats', lyOk && lyOk.ok === true && JSON.stringify(lyOk.lines) === JSON.stringify(['We were never gonna stop', 'One more time', 'Celebrate']), JSON.stringify(lyOk));
+  check('dom: the lyrics message passes the message check (bounded lines, a known why)', SPB.parseMessage(JSON.stringify(lyOk)).lines.length === 3 && SPB.parseMessage(JSON.stringify(lyMsg)).why === 'signedOut' && SPB.parseMessage(JSON.stringify({ t: 'lyrics', rid: 1, ok: false, why: 'whatever' })).why === 'page' && SPB.parseMessage(JSON.stringify({ t: 'lyrics', rid: 1, ok: true, lines: Array.from({ length: 400 }, () => 'x') })).lines.length === 250, '');
+  void trackRoute;
+
+  // the album playing: the song's page, its album link, the album's rows
+  const albumRoute = (p, h) => { if (p.startsWith('/track/')) h.after(400, signedIn(TREES.track)); else if (p.startsWith('/album/')) h.after(400, signedIn(TREES.album)); };
+  const tk = page({ tree: withWidget(widget()), route: albumRoute });
+  tk.advance(1000);
+  tk.send({ cmd: 'list', kind: 'tracks', rid: 21 });
+  tk.advance(6000);
+  const tkMsg = tk.lists().find((l) => l.kind === 'tracks');
+  check('dom: the album playing is found through the song\'s page and its album link, and its rows listed with the playing song marked', tkMsg && tkMsg.ok === true && tkMsg.rid === 21 && tkMsg.items.length === 7 && tkMsg.items[0].title === 'One More Time' && tkMsg.current === 0 && tkMsg.title === 'Discovery' && JSON.stringify(tk.pushed) === JSON.stringify(['/track/0DiWol3AO6WpXZgp0goxAV', '/album/2noRn2Aes5aoNVsU6iWThc']), JSON.stringify([tkMsg && { ok: tkMsg.ok, n: tkMsg.items.length, cur: tkMsg.current, title: tkMsg.title }, tk.pushed]));
+  tk.send({ cmd: 'playFrom', index: 2, id: tkMsg.items[2].id });
+  tk.advance(3000);
+  const albumRows = tk.all('[data-testid="tracklist-row"]');
+  check('dom: "play from here" presses that row\'s own Play button on the album page', tk.clicked.length === 1 && tk.clicked[0].closest('[data-testid="tracklist-row"]') === albumRows[2] && tk.errors().length === 0, JSON.stringify([tk.clicked.length, tk.errors()]));
+  tk.send({ cmd: 'playFrom', index: 3, id: 'ZZZZZZZZZZZZZZZZZZZZZZ' });
+  tk.advance(3000);
+  check('dom: …but not when the song at that place is not the one the card showed (the list moved on): an error, nothing pressed', tk.clicked.length === 1 && tk.errors().some((e) => /list changed/.test(e.message)), JSON.stringify(tk.errors()));
+  const noCtx = page({ tree: signedIn(TREES.home), route: albumRoute });
+  noCtx.advance(1000);
+  noCtx.send({ cmd: 'list', kind: 'tracks', rid: 22 });
+  noCtx.advance(3000);
+  check('dom: with no song playing there is no album to list: not ok, why "page" (the card says so)', noCtx.lists().some((l) => l.kind === 'tracks' && l.ok === false), JSON.stringify(noCtx.lists()));
+
+  // the queue (ASSUMED page: the saved album page's row markup, a playing row first)
+  const queueTree = (n) => { const a = signedIn(TREES.album); const rows = []; const find = (x) => { if (typeof x === 'string') return; if (x.a && x.a['data-testid'] === 'tracklist-row') rows.push(x); (x.c || []).forEach(find); }; find(a); const mk = (i) => { const r = clone(rows[i % rows.length]); const s = JSON.stringify(r).replace(/\/track\/[A-Za-z0-9]{22}/g, `/track/Q${String(i).padStart(21, '0')}`); return JSON.parse(s); }; const list = Array.from({ length: n }, (_, i) => mk(i)); const walk = (x) => { if (typeof x === 'string') return x; if (x.a && x.a['data-testid'] === 'track-list') return { ...x, c: [{ t: 'div', c: list }] }; return { ...x, c: (x.c || []).map(walk) }; }; return walk(a); };
+  const qp = page({ tree: withWidget(widget()), route: (p, h) => { if (p === '/queue') h.after(400, queueTree(4)); } });
+  qp.advance(1000);
+  qp.send({ cmd: 'list', kind: 'queue', rid: 31 });
+  qp.advance(4000);
+  const qMsg = qp.lists().find((l) => l.kind === 'queue');
+  check('dom (assumed queue page): the queue route\'s rows are listed without the playing song (the first row)', qMsg && qMsg.ok === true && qMsg.rid === 31 && qMsg.items.length === 3 && qp.pushed[0] === '/queue', JSON.stringify(qMsg));
+  qp.send({ cmd: 'playQueue', index: 1, id: qMsg.items[1].id });
+  qp.advance(3000);
+  check('dom (assumed queue page): playing from the queue presses the Play button of that row (the playing row is skipped)', qp.clicked.length === 1 && qp.clicked[0].closest('[data-testid="tracklist-row"]') === qp.all('[data-testid="tracklist-row"]')[2], JSON.stringify(qp.clicked.length));
+  const qEmpty = page({ tree: withWidget(widget()), route: (p, h) => { if (p === '/queue') h.after(300, { t: 'body', c: [{ t: 'main', c: [{ t: 'h1', c: ['Queue'] }, { t: 'p', c: ['Your queue is empty'] }] }, { t: 'aside', a: { 'data-testid': 'now-playing-bar' }, c: [{ t: 'button', a: { 'data-testid': 'control-button-playpause', 'aria-label': 'Pause' } }] }] }); } });
+  qEmpty.send({ cmd: 'list', kind: 'queue', rid: 32 });
+  qEmpty.advance(6000);
+  check('dom (assumed text): an empty queue page is an ok, empty list (not a timeout)', qEmpty.lists().some((l) => l.kind === 'queue' && l.ok === true && l.items.length === 0), JSON.stringify(qEmpty.lists()));
+  const qOut = page({ tree: TREES.home, route: () => {} });
+  qOut.advance(4000);
+  qOut.send({ cmd: 'list', kind: 'queue', rid: 33 });
+  qOut.advance(12000);
+  check('dom: signed out, a queue that never shows says why "signedOut" (the card says to sign in)', (qOut.lists().find((l) => l.kind === 'queue') || {}).ok === false && (qOut.lists().find((l) => l.kind === 'queue') || {}).why === 'signedOut', JSON.stringify(qOut.lists()));
+
+  // the library (ASSUMED links in the left bar)
+  const libTree = (() => { const t = signedIn(TREES.home); const walk = (n) => (typeof n === 'string' ? n : (n.a && n.a['aria-label'] === 'Your Library' ? { ...n, c: [{ t: 'ul', c: [{ t: 'li', c: [{ t: 'a', a: { href: '/playlist/37i9dQZF1DXcBWIGoYBM5M' }, c: ['Today\'s Top Hits'] }] }, { t: 'li', c: [{ t: 'a', a: { href: '/album/2noRn2Aes5aoNVsU6iWThc' }, c: ['Discovery'] }] }, { t: 'li', c: [{ t: 'a', a: { href: '/artist/4tZwfgrHOc3mvqYlEYSvVi' }, c: ['Daft Punk'] }] }, { t: 'li', c: [{ t: 'a', a: { href: '/collection/tracks' }, c: ['Liked Songs'] }] }] }, ...(n.c || [])] } : { ...n, c: (n.c || []).map(walk) })); return walk(t); })();
+  const lb = page({ tree: libTree });
+  lb.advance(1000);
+  lb.send({ cmd: 'list', kind: 'playlists', rid: 41 });
+  lb.send({ cmd: 'list', kind: 'recent', rid: 42 });
+  const lbMsg = lb.lists().find((l) => l.kind === 'playlists');
+  check('dom (assumed library links): the left bar\'s playlists, albums and artists are listed by their links (other links are not)', lbMsg && lbMsg.ok === true && lbMsg.items.map((i) => `${i.kind}:${i.title}`).join('|') === 'playlist:Today\'s Top Hits|album:Discovery|artist:Daft Punk' && lb.lists().find((l) => l.kind === 'recent').items.length === 0, JSON.stringify(lbMsg));
+
+  // add to queue: the item's page, the three-dots button, the menu's "Add to queue"
+  const menuTree = (t) => { const walk = (n) => (typeof n === 'string' ? n : (n.a && n.a['data-testid'] === 'now-playing-bar' ? { ...n, c: [...(n.c || []), { t: 'div', a: { role: 'menu' }, c: [{ t: 'button', a: { role: 'menuitem' }, c: ['Add to playlist'] }, { t: 'button', a: { role: 'menuitem' }, c: ['Add to queue'] }] }] } : { ...n, c: (n.c || []).map(walk) })); return walk(signedIn(t)); };
+  const aq = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p.startsWith('/track/')) h.after(400, menuTree(TREES.track)); } });
+  aq.advance(1000);
+  aq.send({ cmd: 'playLater', kind: 'song', id: '0DiWol3AO6WpXZgp0goxAV' });
+  aq.advance(4000);
+  check('dom (assumed menu): add to queue opens the song\'s page, presses its three-dots button, then the "Add to queue" entry (not "Add to playlist")', aq.pushed[0] === '/track/0DiWol3AO6WpXZgp0goxAV' && aq.clicked.length === 2 && aq.clicked[0].getAttribute('data-testid') === 'more-button' && /Add to queue/.test(aq.clicked[1].textContent) && aq.errors().length === 0, JSON.stringify([aq.clicked.map((c) => c.getAttribute('data-testid') || c.textContent), aq.errors()]));
+  const aqNo = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p.startsWith('/track/')) h.after(400, signedIn(TREES.track)); } });
+  aqNo.advance(1000);
+  aqNo.send({ cmd: 'playLater', kind: 'song', id: '0DiWol3AO6WpXZgp0goxAV' });
+  aqNo.advance(8000);
+  check('dom: a menu without "Add to queue" ends with a specific message, not silence', aqNo.errors().some((e) => /Add to queue/.test(e.message)), JSON.stringify(aqNo.errors()));
+  aq.send({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' });
+  check('dom: an artist can not be added to the queue', SPB.cleanCommand({ cmd: 'playLater', kind: 'artist', id: '4tZwfgrHOc3mvqYlEYSvVi' }) === null, '');
 
   // ================= search =================
   const s1 = page({ tree: signedIn(TREES.home), route: searchRoute('daft punk') });
