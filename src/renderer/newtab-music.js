@@ -449,7 +449,7 @@ function build(w, card, o) {
       for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh'); }, wait);
     }
   }
-  const clock = window.VisibleTicker.createTicker({ period: 1000, needed: () => Boolean(view.prog?.playing) && (root.isConnected || Date.now() - born < 10e3), run: progressTick }); // (a card is built before it is put on the page)
+  const clock = window.VisibleTicker.createTicker({ period: 1000, offset: () => (view.prog ? view.prog.at - view.prog.from : 0), needed: () => Boolean(view.prog?.playing) && (root.isConnected || Date.now() - born < 10e3), run: progressTick }); // (a card is built before it is put on the page)
   view.clock = clock;
   document.addEventListener('visibilitychange', onShown);
   function onShown() {

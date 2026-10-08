@@ -94,6 +94,13 @@ check('YouTube ad check: the 300 ms interval exists only while an ad is showing'
   check('music progress: paused stays put, and never past the end', pos({ ...p, playing: false }, 1e12 + 90e3) === 12e3 && pos(p, 1e12 + 900e3) === 200e3, '');
   const m = src('renderer/newtab-music.js');
   check('music progress: the card\'s drawProgress is that formula', /p\.from \+ \(p\.playing \? Math\.max\(0, Date\.now\(\) - p\.at\) : 0\)/.test(m), '');
+  {
+    const c0 = clock(1e12 + 100);
+    let at = 0;
+    const tk0 = createTicker({ run: () => { at = c0.now(); }, offset: () => 1e12 + 640 - 12e3, needed: () => true, visible: () => true, now: c0.now, setTimeout: c0.setTimeout, clearTimeout: c0.clearTimeout });
+    tk0.poke(); c0.advance(1500);
+    check('music progress ticker: lands on the song own second boundary (the digits never lag the playhead)', ((at - (1e12 + 640 - 12e3)) % 1000 + 1000) % 1000 <= 5, String(at));
+  }
   const c = clock();
   const page = { hidden: false, playing: true, ticks: 0 };
   const tk = createTicker({ run: () => { page.ticks++; }, needed: () => page.playing, visible: () => !page.hidden, now: c.now, setTimeout: c.setTimeout, clearTimeout: c.clearTimeout });
