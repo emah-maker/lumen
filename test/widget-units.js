@@ -221,7 +221,7 @@ module.exports = async function widgetUnits(check) {
 
   // ---- Todoist ----
   const cfg = (o) => TV.cleanConfig(o);
-  check('todoist config: an old widget (no settings) is "Today and overdue", comfortable, ten tasks', JSON.stringify([cfg().source, cfg().density, cfg().max, cfg().group, cfg().sort, cfg(null).quick]) === '["todayOverdue","comfortable",10,"none","due","off"]', JSON.stringify(cfg()));
+  check('todoist config: an old widget (no settings) is "Today and overdue", comfortable, ten tasks', JSON.stringify([cfg().source, cfg().density, cfg().max, cfg().group, cfg().sort, cfg(null).quick]) === '["todayOverdue","comfortable",10,"none","due","top"]', JSON.stringify(cfg()));
   check('todoist config: values are checked (unknown choices fall back, numbers are limited)', cfg({ source: 'nope', days: 999, max: 7, group: 'x', sort: 'y', density: 'z', quick: 'w' }).source === 'todayOverdue' && cfg({ source: 'upcoming', days: 999 }).days === 7 && cfg({ max: 7 }).max === 10 && cfg({ max: 0 }).max === 0 && cfg({ source: 'upcoming', days: 3 }).days === 3, '');
   check('todoist config: a source that needs a value it lacks is the default', cfg({ source: 'project' }).source === 'todayOverdue' && cfg({ source: 'label', label: ' ' }).source === 'todayOverdue' && cfg({ source: 'custom', query: '' }).source === 'todayOverdue' && cfg({ source: 'project', projectId: '2203306141' }).source === 'project', '');
   check('todoist config: a custom filter is limited to 200 characters and control characters go', cfg({ source: 'custom', query: `today\n${'x'.repeat(400)}` }).query.length === 200 && !/\n/.test(cfg({ source: 'custom', query: 'a\nb' }).query) && cfg({ source: 'label', label: '@work stuff' }).label === 'work_stuff', '');

@@ -22,7 +22,7 @@ const SINGLE_LIMIT = 4; // video_frames: up to this many come back as separate i
 
 const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi);
 
-// The model family an image is priced by: from the model string (settings.model, e.g. "claude-sonnet-5",
+// The model family an image is priced by: from the model string (settings.model, e.g. "claude-sonnet-5-5",
 // "openai:gpt-5", "codex:gpt-5", "antigravity:gemini-3-pro"). Unknown: Anthropic.
 function familyOf(model) {
   const m = String(model || '').toLowerCase();

@@ -267,6 +267,17 @@ function normalizePlaylists(text) {
   const b = parse(text);
   return (Array.isArray(b?.items) ? b.items : []).map((p) => listItem(p, 'playlist')).filter(Boolean).slice(0, 40);
 }
+// GET /me/tracks -> the saved songs (Liked Songs), newest first.
+function normalizeLiked(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const e of Array.isArray(b?.items) ? b.items : []) {
+    const it = listItem(e?.track, 'track');
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out.slice(0, 20);
+}
 // GET /me/player/recently-played -> the last songs, each once.
 function normalizeRecent(text) {
   const b = parse(text);
@@ -290,7 +301,8 @@ function normalizeSearch(text) {
   return [...pick(b?.tracks, 'track'), ...pick(b?.albums, 'album'), ...pick(b?.artists, 'artist'), ...pick(b?.playlists, 'playlist')];
 }
 // The album or playlist playing -> { title, items }: GET /albums/{id} (its tracks come in the answer), GET /playlists/{id} (its items; Spotify names the
-// list `items` or, older, `tracks`, and each entry's song `item` or `track`), GET /artists/{id}/top-tracks.
+// list `items` or, older, `tracks`, and each entry's song `item` or `track`). An artist has no list: Spotify removed GET /artists/{id}/top-tracks in
+// February 2026 (the card says there is nothing to list).
 function normalizeContext(kind, text) {
   const b = parse(text);
   if (!b) return { title: '', items: [] };
@@ -305,7 +317,7 @@ function normalizeContext(kind, text) {
     const entries = Array.isArray(page?.items) ? page.items : Array.isArray(b.items) ? b.items : [];
     return { title, items: entries.map((e) => listItem(e?.track || e?.item, 'track')).filter(Boolean).slice(0, 100) };
   }
-  return { title: '', items: (Array.isArray(b.tracks) ? b.tracks : []).map((t) => listItem(t, 'track')).filter(Boolean).slice(0, 20) };
+  return { title: '', items: [] }; // (an artist: its top tracks endpoint is gone)
 }
 // Where each list comes from, and what a card button does. All paths are fixed; only checked ids and numbers are put into them.
 const enc = encodeURIComponent;
@@ -314,29 +326,33 @@ const PLAYER = {
   queue: () => ['GET', '/me/player/queue'],
   playlists: () => ['GET', '/me/playlists?limit=40'],
   recent: () => ['GET', '/me/player/recently-played?limit=30'],
+  liked: () => ['GET', '/me/tracks?limit=20&market=from_token'], // (the saved songs, newest first: still there after Spotify's February 2026 changes)
   devices: () => ['GET', '/me/player/devices'],
+  // More songs for a search: the songs alone, the next page (Spotify's development mode answers 10 at most per request).
+  searchMore: (term, offset) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track&limit=${SEARCH_LIMIT}&offset=${Math.max(0, Math.min(200, Math.round(offset)))}&market=from_token`],
   search: (term) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track,album,artist,playlist&limit=${SEARCH_LIMIT}&market=from_token`], // (one request for every kind; from_token: the account's own market, so what is shown plays)
-  context: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}`] : kind === 'playlist' ? ['GET', `/playlists/${id}`] : ['GET', `/artists/${id}/top-tracks`]),
+  context: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}`] : kind === 'playlist' ? ['GET', `/playlists/${id}`] : null), // (an artist: null, no endpoint any more)
   shuffle: (on) => ['PUT', `/me/player/shuffle?state=${on ? 'true' : 'false'}`],
   repeat: (mode) => ['PUT', `/me/player/repeat?state=${mode === 'all' ? 'context' : mode === 'one' ? 'track' : 'off'}`],
   volume: (percent) => ['PUT', `/me/player/volume?volume_percent=${Math.max(0, Math.min(100, Math.round(percent)))}`],
   seek: (sec) => ['PUT', `/me/player/seek?position_ms=${Math.max(0, Math.round(sec * 1000))}`],
   queueAdd: (id) => ['POST', `/me/player/queue?uri=${enc(`spotify:track:${id}`)}`],
-  saved: (id) => ['GET', `/me/tracks/contains?ids=${id}`],
-  save: (id, on) => [on ? 'PUT' : 'DELETE', `/me/tracks?ids=${id}`],
+  // (February 2026: /me/tracks and /me/tracks/contains were replaced by the uri-based library endpoints)
+  saved: (id) => ['GET', `/me/library/contains?uris=${enc(`spotify:track:${id}`)}`],
+  save: (id, on) => [on ? 'PUT' : 'DELETE', `/me/library?uris=${enc(`spotify:track:${id}`)}`],
   transfer: (deviceId, play) => ['PUT', '/me/player', { device_ids: [deviceId], play: Boolean(play) }],
   playItem: (kind, id) => ['PUT', '/me/player/play', kind === 'song' ? { uris: [`spotify:track:${id}`] } : { context_uri: `spotify:${kind}:${id}` }],
   playFrom: (ctx, index) => ['PUT', '/me/player/play', { context_uri: `spotify:${ctx.kind}:${ctx.id}`, offset: { position: index } }],
 };
 const PLAYABLE_KINDS = ['song', 'album', 'playlist', 'artist'];
-// GET /me/tracks/contains -> true | false | null.
+// GET /me/library/contains -> true | false | null (one uri asked, one boolean answered).
 function parseSaved(text) {
   try { const a = JSON.parse(text); return Array.isArray(a) && typeof a[0] === 'boolean' ? a[0] : null; } catch { return null; }
 }
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

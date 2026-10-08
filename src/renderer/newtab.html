@@ -754,14 +754,19 @@
     .mc .mc-prev, .mc .mc-like, .mc .mc-extra, .mc .sp-elapsed, .mc .sp-total { display: none; }
     .mc-like { align-self: center; }
     .mc-extra { align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
-    .mc-vol { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 60px; max-width: 150px; margin-left: 6px; color: var(--muted); }
-    .mc-vol-icon { display: grid; flex: none; }
-    .mc-vol-icon svg { width: 14px; height: 14px; fill: currentColor; }
+    /* The volume: a speaker button (mute / unmute) and a thin rounded slider. The filled part is the accent, the rest a tint of the muted text
+       colour (readable on the plain card, the frosted glass and over a wallpaper, light or dark); the thumb is a small white dot that grows on
+       hover and gets a ring on keyboard focus. Nothing of the browser's own slider is left. */
+    .mc-vol { display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 96px; max-width: 168px; margin-left: 4px; color: var(--muted); }
+    .mc-vol-icon { flex: none; width: 26px; height: 26px; }
+    .mc-vol-icon svg { width: 15px; height: 15px; fill: currentColor; }
     .mc-vol-icon .mc-stroke { fill: none; }
-    .mc-vol-range { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; cursor: default; }
-    .mc-vol-range::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--field) var(--v, 50%)); }
-    .mc-vol-range::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--text); }
-    .mc-vol-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+    .mc-vol-range { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 26px; margin: 0; padding: 0; border: 0; border-radius: 999px; box-shadow: none; background: transparent; outline: none; cursor: default; --track: color-mix(in srgb, var(--muted) 34%, transparent); }
+    .mc-vol-range::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--accent) 0, var(--accent) var(--v, 50%), var(--track) var(--v, 50%), var(--track) 100%); }
+    .mc-vol-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.35); transition: transform 120ms ease-out; }
+    .mc-vol-range:hover::-webkit-slider-thumb, .mc-vol-range:active::-webkit-slider-thumb { transform: scale(1.2); }
+    .mc-vol-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .mc-vol-range::-webkit-slider-thumb { transition: none; } }
     .mc-tabs { display: flex; gap: 2px; flex: none; margin-bottom: 6px; overflow-x: auto; scrollbar-width: none; }
     .mc-tab { appearance: none; flex: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
     .mc-tab:hover { color: var(--text); }
@@ -831,7 +836,7 @@
     .td-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .td-of { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
     .td-next { font-size: 12.5px; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-    .td-full { display: none; flex-direction: column; }
+    .td-full { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
     @container card (min-width: 190px) and (min-height: 130px) { .td-summary { display: none; } .td-full { display: flex; } }
     .td-meta { display: none; flex-wrap: wrap; align-items: center; gap: 0 8px; color: var(--muted); font-size: 11.5px; }
     .td-desc { display: none; color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -843,7 +848,35 @@
     .dense .w-row { padding: 2px 6px; }
     .dense .w-day { padding-top: 5px; }
     .td-done { margin-top: 6px; } .td-done-row { padding: 2px 0; color: var(--muted); font-size: 12px; text-decoration: line-through; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .td-add { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+    .td-add { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; flex: none; }
+    .td-add.bottom { margin: 8px 0 0; }
+    .td-addbtn { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
+    .td-addbtn:hover { background: var(--hover); color: var(--text); }
+    .td-plus { width: 14px; font-size: 17px; line-height: 1; text-align: center; color: var(--accent); }
+    .td-tabs { display: flex; flex: none; gap: 2px; margin: 0 0 8px; padding: 2px; border-radius: 9px; background: var(--hover); }
+    .td-tab { flex: 1 1 0; min-width: 0; padding: 3px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .td-tab:hover { color: var(--text); }
+    .td-tab[aria-selected="true"] { background: var(--bg); color: var(--text); font-weight: 500; box-shadow: 0 0 0 0.5px var(--border); }
+    .td-switching .td-scroll { opacity: 0.45; transition: opacity 150ms ease-out; }
+    /* The task list scrolls inside the card (wheel, trackpad, keys); the tabs and the add box stay put. Thin, and only on hover, like the other cards. */
+    .td-scroll { flex: 1 1 auto; min-height: 0; margin: 0 -8px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; border-radius: 8px; outline: none; }
+    .td-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+    .td-scroll > .w-list { margin: 0; }
+    .td-scroll > .w-more, .td-scroll > .td-done, .td-scroll > .w-empty { margin-left: 8px; margin-right: 8px; }
+    .td-extra { display: none !important; }
+    .w-row.pending { opacity: 0.55; }
+    .w-row.pending .w-check { border-style: dashed; pointer-events: none; }
+    .w-row.pending.stale { opacity: 0.4; }
+    .w-row .td-pending-note { display: flex; }
+    .td-when { flex: none; align-self: flex-start; padding: 2px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; line-height: 1.3; opacity: 0; cursor: pointer; transition: opacity 120ms ease-out, background-color 120ms ease-out; }
+    .w-row:hover .td-when, .w-row:focus-within .td-when, .td-when[aria-expanded="true"] { opacity: 1; }
+    .td-when:hover { background: var(--hover); color: var(--text); }
+    .td-resched { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .td-chip { padding: 2px 9px; border: 0.5px solid var(--border); border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 11px; cursor: pointer; }
+    .td-chip:hover { background: var(--hover); }
+    .td-showmore { display: block; margin: 4px 8px 2px; padding: 3px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11.5px; cursor: pointer; }
+    .td-showmore:hover { text-decoration: underline; text-underline-offset: 2px; }
+    .td-tab:focus-visible, .td-addbtn:focus-visible, .td-when:focus-visible, .td-chip:focus-visible, .td-showmore:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .td-add input { flex: 1 1 auto; width: auto; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; }
     .td-add .w-btn { margin: 0; flex: none; }
     .td-toast { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 6px 18px var(--shadow); }
@@ -1104,7 +1137,7 @@
       .w-card > .w-foot { margin-bottom: 4px; }
     }
     /* Scrollbars: none unless content really overflows (JS sets overflow inline); then thin, arrowless, and visible only on hover. */
-    .w-card :is(.w-body, .wx-cycle, .wx-hours, .wx-days, .wx-3h, .mu-wrap) { scrollbar-width: auto; }
+    .w-card :is(.w-body, .wx-cycle, .wx-hours, .wx-days, .wx-3h, .mu-wrap, .td-scroll) { scrollbar-width: auto; }
     .w-card *::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
     .w-card *::-webkit-scrollbar-button, .w-card *::-webkit-scrollbar-corner { display: none; width: 0; height: 0; }
     .w-card *::-webkit-scrollbar-track { background: transparent; }

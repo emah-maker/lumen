@@ -35,7 +35,7 @@ const PROVIDERS = {
     label: 'OpenRouter',
     baseURL: 'https://openrouter.ai/api/v1',
     headers: { 'HTTP-Referer': 'https://github.com/emah-maker/lumen', 'X-Title': 'Lumen' },
-    defaults: ['anthropic/claude-sonnet-5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
+    defaults: ['anthropic/claude-sonnet-5.5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
     include: () => true,
   },
 };

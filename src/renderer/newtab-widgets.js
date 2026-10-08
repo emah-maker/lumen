@@ -210,6 +210,25 @@ function webPlayerCard(w, card, name, site, { signInTab = true } = {}) {
 
 // The music cards (Apple Music, Spotify's status and API modes) are renderer/newtab-music.js: one card that does more as it gets bigger.
 
+// The Todoist card's page-side state, kept across redraws: the add box (what is typed, whether it has focus), where the list is scrolled,
+// which cards have "Show more" pressed. Page actions go one at a time, a moment apart (each is a page address main takes over).
+const tdDrafts = new Map();
+const tdScrolls = new Map();
+const tdExpanded = new Set();
+const tdQueue = [];
+let tdBusy = false;
+function tdSend(id, action, extra = {}) {
+  tdQueue.push([id, action, extra]);
+  if (tdBusy) return;
+  tdBusy = true;
+  const next = () => {
+    const job = tdQueue.shift();
+    if (!job) { tdBusy = false; return; }
+    widgetAct(job[0], job[1], job[2]);
+    setTimeout(next, 180);
+  };
+  next();
+}
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -495,20 +514,69 @@ const WIDGET_RENDERERS = {
     if (d.showCount && card.h2) card.h2.textContent = `${text(w.title, 60)} · ${total}`;
     if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
     const today = new Date();
-    const quick = d.quick === 'top' || d.quick === 'bottom' ? d.quick : 'off';
-    const adder = () => {
-      const box = el('div', 'td-add');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.maxLength = 300;
-      input.placeholder = 'Add a task… (“Pay rent tomorrow 9am”)';
-      input.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
-      const go = () => { const v = input.value.trim(); if (v) { input.disabled = true; widgetAct(w.id, 'add', { text: v }); } };
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); });
-      const btn = el('button', 'w-btn', 'Add');
-      btn.type = 'button';
-      btn.addEventListener('click', go);
-      box.append(input, btn);
+    const quick = d.quick === 'top' || d.quick === 'bottom' ? d.quick : 'off'; // off: a "+ Add task" row that opens the box
+    const draft = tdDrafts.get(w.id) || { text: '', focus: false, open: false };
+    tdDrafts.set(w.id, draft);
+    const list = el('div', 'w-list');
+    // A new task shows in the list at once (dimmed); the page's next read puts the real one there, or takes it away again with a note when Todoist said no.
+    const addNow = (value, at) => {
+      const row = el('div', 'w-row pending');
+      const mark = el('span', 'w-check');
+      mark.dataset.p = '1';
+      const main = el('div', 'w-main');
+      const note = el('div', 'td-meta td-pending-note', 'Adding…');
+      main.append(el('span', 'w-title', text(value, 300)), note);
+      row.append(mark, main);
+      if (at === 'top') list.prepend(row); else list.append(row);
+      list.parentElement?.querySelector('.w-empty')?.remove();
+      const sc = list.parentElement; if (sc && sc.classList.contains('td-scroll')) sc.scrollTop = at === 'top' ? 0 : sc.scrollHeight; // (only the list scrolls, never the page)
+      tdSend(w.id, 'add', { text: value });
+      setTimeout(() => { if (row.isConnected && row.classList.contains('pending')) { row.classList.add('stale'); note.textContent = 'Not confirmed'; } }, 12000);
+    };
+    const adder = (where) => {
+      const box = el('div', `td-add ${where}`);
+      const draw = () => {
+        box.replaceChildren();
+        if (quick === 'off' && !draft.open) {
+          const btn = el('button', 'td-addbtn');
+          btn.type = 'button';
+          btn.append(el('span', 'td-plus', '+'), 'Add task');
+          btn.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
+          btn.addEventListener('click', () => { draft.open = true; draw(); box.querySelector('input')?.focus(); });
+          box.append(btn);
+          return;
+        }
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 300;
+        input.value = draft.text;
+        input.placeholder = 'Add a task… (“Pay rent tomorrow 9am”)';
+        input.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
+        input.addEventListener('input', () => { draft.text = input.value; });
+        input.addEventListener('focus', () => { draft.focus = true; });
+        input.addEventListener('blur', () => {
+          draft.focus = false;
+          if (quick === 'off' && !input.value.trim()) { draft.open = false; setTimeout(() => { if (!draft.focus && box.isConnected) draw(); }, 0); }
+        });
+        const go = () => {
+          const v = input.value.trim();
+          if (!v) return;
+          input.value = '';
+          draft.text = '';
+          addNow(v, quick === 'bottom' ? 'bottom' : 'top');
+          input.focus({ preventScroll: true });
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); go(); } else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; draft.text = ''; input.blur(); }
+          e.stopPropagation();
+        });
+        const btn = el('button', 'w-btn', 'Add');
+        btn.type = 'button';
+        btn.addEventListener('click', go);
+        box.append(input, btn);
+        if (draft.focus) requestAnimationFrame(() => { if (input.isConnected) { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); } });
+      };
+      draw();
       return box;
     };
     // Small: how many, and the next one.
@@ -519,13 +587,44 @@ const WIDGET_RENDERERS = {
     else small.append(el('span', 'td-next', 'Nothing due. Enjoy it.'));
     card.body.append(small);
     const full = el('div', 'td-full');
-    if (quick === 'top') full.append(adder());
-    if (!groups.length) full.append(el('p', 'w-empty', 'Nothing here. Enjoy it.'));
-    const list = el('div', 'w-list');
+    // Today / Upcoming / Inbox: a card of one of those can be turned into another from here.
+    if (['today', 'upcoming', 'inbox'].includes(d.view)) {
+      const tabs = el('div', 'td-tabs');
+      tabs.setAttribute('role', 'tablist');
+      tabs.setAttribute('aria-label', 'Show');
+      for (const [key, label] of [['today', 'Today'], ['upcoming', 'Upcoming'], ['inbox', 'Inbox']]) {
+        const tab = el('button', 'td-tab', label);
+        tab.type = 'button';
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', String(d.view === key));
+        tab.addEventListener('click', () => {
+          if (d.view === key) return;
+          for (const t of tabs.children) t.setAttribute('aria-selected', String(t === tab));
+          full.classList.add('td-switching');
+          tdScrolls.delete(w.id);
+          tdExpanded.delete(w.id);
+          widgetAct(w.id, 'tdsource', { arg: key });
+        });
+        tabs.append(tab);
+      }
+      full.append(tabs);
+    }
+    if (quick !== 'bottom') full.append(adder('top'));
+    const scroll = el('div', 'td-scroll');
+    scroll.tabIndex = 0;
+    scroll.setAttribute('role', 'region');
+    scroll.setAttribute('aria-label', `${text(w.title, 60)} tasks`);
+    scroll.addEventListener('scroll', () => tdScrolls.set(w.id, scroll.scrollTop), { passive: true });
+    if (!groups.length) scroll.append(el('p', 'w-empty', 'Nothing here. Enjoy it.'));
+    // More than the card's short list (max) is sent: the rest is behind "Show more", or shown when the card is tall enough, and the list scrolls.
+    const collapsed = int(d.collapsed) || 0;
+    const expanded = tdExpanded.has(w.id);
+    let index = 0;
     for (const g of groups) {
       if (g.label) list.append(el('div', 'w-day', g.label));
       for (const t of g.tasks) {
-        const row = el('div', 'w-row');
+        const row = el('div', `w-row${collapsed > 0 && index >= collapsed && !expanded ? ' td-extra' : ''}`);
+        index++;
         const check = el('button', 'w-check');
         check.type = 'button';
         check.setAttribute('role', 'checkbox');
@@ -537,7 +636,7 @@ const WIDGET_RENDERERS = {
           if (check.getAttribute('aria-checked') === 'true') return;
           check.setAttribute('aria-checked', 'true');
           row.classList.add('done');
-          setTimeout(() => widgetAct(w.id, 'complete', { task: t.id }), 220);
+          setTimeout(() => tdSend(w.id, 'complete', { task: t.id }), 220);
         });
         const main = el('div', 'w-main');
         const url = safeUrl(t.url);
@@ -559,21 +658,69 @@ const WIDGET_RENDERERS = {
         if (meta.children.length) main.append(meta);
         if (t.description) main.append(el('span', 'td-desc', text(t.description, 120)));
         row.append(check, main);
+        // A small menu to move the task to another day (a repeating task keeps its repeat, so it has none).
+        if (!t.recurring) {
+          const when = el('button', 'td-when', '▾');
+          when.type = 'button';
+          when.title = 'Reschedule';
+          when.setAttribute('aria-label', `Reschedule “${title}”`);
+          when.setAttribute('aria-expanded', 'false');
+          when.addEventListener('click', () => {
+            const was = main.querySelector('.td-resched');
+            if (was) { was.remove(); when.setAttribute('aria-expanded', 'false'); return; }
+            when.setAttribute('aria-expanded', 'true');
+            const menu = el('div', 'td-resched');
+            menu.setAttribute('role', 'group');
+            menu.setAttribute('aria-label', 'Move to');
+            for (const [arg, label] of [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['nextweek', 'Next week'], ['none', 'No date']]) {
+              const b = el('button', 'td-chip', label);
+              b.type = 'button';
+              b.addEventListener('click', () => { row.classList.add('done'); menu.remove(); tdSend(w.id, 'reschedule', { task: t.id, arg }); });
+              menu.append(b);
+            }
+            menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); menu.remove(); when.setAttribute('aria-expanded', 'false'); when.focus(); } });
+            main.append(menu);
+            menu.firstChild.focus();
+          });
+          row.append(when);
+        }
         list.append(row);
       }
       if (g.more > 0) list.append(el('p', 'w-more', `${g.more} more`));
     }
-    full.append(list);
-    if (total > shown) full.append(el('p', 'w-more', `${total - shown} more in Todoist`));
+    scroll.append(list);
+    const hidden = list.querySelectorAll('.td-extra').length;
+    if (hidden > 0) {
+      const more = el('button', 'td-showmore', `Show ${hidden} more`);
+      more.type = 'button';
+      more.addEventListener('click', () => { tdExpanded.add(w.id); list.querySelectorAll('.td-extra').forEach((r) => r.classList.remove('td-extra')); more.remove(); });
+      scroll.append(more);
+    } else if (collapsed > 0 && expanded && shown > collapsed) {
+      const less = el('button', 'td-showmore', 'Show fewer');
+      less.dataset.more = 'less';
+      less.type = 'button';
+      less.addEventListener('click', () => {
+        tdExpanded.delete(w.id);
+        tdScrolls.delete(w.id);
+        [...list.querySelectorAll('.w-row:not(.pending)')].slice(collapsed).forEach((r) => r.classList.add('td-extra'));
+        less.remove();
+        scroll.scrollTop = 0;
+        window.settleWidgetCard?.(card.el);
+      });
+      scroll.append(less);
+    }
+    if (total > shown) scroll.append(el('p', 'w-more', `${total - shown} more in Todoist`));
     const done = (Array.isArray(d.done) ? d.done : []).filter((x) => x && typeof x.title === 'string').slice(0, 10);
     if (done.length) {
       const sec = el('div', 'td-done');
       sec.append(el('div', 'w-day', 'Completed today'));
       for (const x of done) sec.append(el('div', 'td-done-row', text(x.title)));
-      full.append(sec);
+      scroll.append(sec);
     }
-    if (quick === 'bottom') full.append(adder());
+    full.append(scroll);
+    if (quick === 'bottom') full.append(adder('bottom'));
     card.body.append(full);
+    if (tdScrolls.get(w.id)) requestAnimationFrame(() => { scroll.scrollTop = tdScrolls.get(w.id) || 0; });
     if (d.undo && typeof d.undo.id === 'string' && /^[\w-]{1,40}$/.test(d.undo.id)) {
       const toast = el('div', 'td-toast');
       toast.setAttribute('role', 'status');
@@ -1615,7 +1762,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom', 'todoist'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {
@@ -1761,6 +1908,18 @@ function fitAiChips(body, parts, bad, hide) {
   }
   if (bad() && parts[1]) fitOff(parts[1]);
 }
+// A Todoist card with room shows more of its list than the short one (the rest is behind "Show more", or scrolls).
+function fitTodoist(cardEl) {
+  const scroll = cardEl.querySelector('.td-scroll');
+  if (!scroll || !isShown(scroll)) return;
+  for (const r of [...scroll.querySelectorAll('.td-extra')]) {
+    r.classList.remove('td-extra');
+    if (tooTall(scroll)) { r.classList.add('td-extra'); break; }
+  }
+  const btn = scroll.querySelector('.td-showmore');
+  const left = scroll.querySelectorAll('.td-extra').length;
+  if (btn && btn.dataset.more !== 'less') { if (left) btn.textContent = `Show ${left} more`; else btn.remove(); }
+}
 function settleCard(cardEl) {
   if (!cardEl?.isConnected || cardEl.classList.contains('sys')) return; // the page's own sections fit themselves (newtab-system.js)
   const body = cardEl.querySelector('.w-body');
@@ -1771,6 +1930,7 @@ function settleCard(cardEl) {
   cardEl.querySelectorAll('.w-fit-more').forEach((n) => n.remove());
   if (cardEl.classList.contains('weather')) fitWeather(cardEl);
   else if (cardEl.classList.contains('aistatus')) fitAiStatus(cardEl, body);
+  else if (cardEl.classList.contains('todoist')) fitTodoist(cardEl);
   else if (!NO_LIST_FIT.some((c) => cardEl.classList.contains(c))) fitLists(cardEl, body);
   // Only what still overflows may scroll (thin, and only while hovered); a card that fits doesn't move or catch the wheel.
   for (const n of scrollers) {
@@ -1815,7 +1975,19 @@ function tick() {
 // (the minute tick: one timer per visible page, none while hidden; a page that comes back catches up at once)
 const refreshTicker = VisibleTicker.createTicker({ period: 60e3, align: false, run: tick });
 refreshTicker.poke();
-document.addEventListener('visibilitychange', () => { if (document.hidden) refreshTicker.stop(); else { tick(); refreshTicker.poke(); } });
+// A card that couldn't load (or shows an older answer) asks again when the page is shown, and when the machine is back online;
+// main also asks again by itself after 2, 10 and 30 seconds, and when the computer wakes up.
+let retriedAt = 0;
+function retryFailed() {
+  if (document.hidden || Date.now() - retriedAt < 4000) return false;
+  const bad = lastList.current.find((w) => w && !w.sys && (w.error || w.warning));
+  if (!bad) return false;
+  retriedAt = Date.now();
+  widgetAct(bad.id, 'retry');
+  return true;
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) refreshTicker.stop(); else { if (!retryFailed()) tick(); refreshTicker.poke(); } });
+window.addEventListener('online', () => setTimeout(retryFailed, 800));
 // A framed page (Google Calendar's embed) may focus itself as it loads, and then the search box
 // stops taking typing. Focus that goes into a frame without the pointer on it or a Tab press goes
 // back where it was.
