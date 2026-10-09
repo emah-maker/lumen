@@ -32,7 +32,7 @@ if (electron.protocol?.registerSchemesAsPrivileged && !electron.app.isReady()) {
 }
 
 // A blocked request with no $redirect in the lists: the stand-in that makes it "succeed" quietly.
-// Other types (media, websockets, pings, fontsâ€¦) are cancelled; pages rarely watch those.
+// Other types (media, websockets, pings, fonts…) are cancelled; pages rarely watch those.
 const STAND_IN = { script: 'noop.js', image: '1x1.gif', xhr: 'noop.txt', subFrame: 'noop.html' };
 // Ad libraries whose absence anti-adblock checks look for: stand-ins that define their API.
 const LIBRARIES = [
@@ -229,7 +229,7 @@ function createAdblock(deps) {
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
-      // Google's own sign-in pages (accounts.google.comâ€¦) load everything they ask for: their risk check reads the
+      // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
       if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
       const request = fromElectronDetails(details);
