@@ -1754,7 +1754,7 @@ class Agent {
       // message only, and never reaches a model. Only on Auto: with a model picked, the text goes as typed (Claude Code has a /fast of its own).
       let hinted = { hint: '', text: userText };
       if (autoModel.isAuto(messages.settings.model)) { hinted = autoModel.hintOf(userText); userText = hinted.text; }
-      this.routeAuto(messages, { text: userText, images, tabs: extra.tabs, hint: hinted.hint, skill }, emit);
+      this.routeAuto(messages, { text: userText, images, tabs: extra.tabs, hint: hinted.hint, skill, page: this.aboutCurrentPage(userText, extra) }, emit);
       this.standInFor(messages.settings, standIn, emit, { chars: historyChars(messages) + String(userText || '').length, images: images.length > 0 || hasImages(messages) });
 
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
@@ -1779,17 +1779,17 @@ class Agent {
   // message's wording and size, nothing about a page is read, sent or logged.
   forgetAuto(settings) {
     if (!settings) return;
-    delete settings.autoFrom; delete settings.autoLast; delete settings.autoTier;
+    delete settings.autoFrom; delete settings.autoLast; delete settings.autoTier; delete settings.autoKind;
   }
 
   // What Auto is told about this message (a pure description, see auto-model.needFor).
-  autoRequest(messages, { text = '', images = [], tabs = [], hint = '', skill = null, kind = 'chat' } = {}) {
+  autoRequest(messages, { text = '', images = [], tabs = [], hint = '', skill = null, kind = 'chat', page = false } = {}) {
     const settings = messages.settings || {};
     const live = Boolean(settings.ccSession || settings.gbSession || settings.agySession || settings.cxSession); // a CLI session with a warm cache
     return {
       prompt: String(text || ''), kind, imageCount: images.length || 0, tabCount: Array.isArray(tabs) ? tabs.length : 0,
       historyChars: historyChars(messages), turns: Math.ceil(messages.length / 2), hint,
-      previousTier: settings.autoTier, floorTier: live ? settings.autoTier : undefined,
+      previousTier: settings.autoTier, previousKind: settings.autoKind, page: page === true, floorTier: live ? settings.autoTier : undefined,
       tools: skill?.mode === 'no-tools' ? false : undefined,
     };
   }
@@ -1798,13 +1798,19 @@ class Agent {
   // exclusions) and put it in settings.model for this turn. Nothing to choose from: the turn fails with a plain message.
   routeAuto(messages, input, emit) {
     const settings = messages.settings;
-    if (!settings || !autoModel.isAuto(settings.model)) return;
+    // An engine's own Default row (Codex, Grok Build, Antigravity) with Settings > "Pick the model for me" on is that engine's own Auto for the
+    // message (the same router, limited to its models; Claude Code's Default does it in claudeCodePlan). An engine that lists no models, or
+    // none free right now, is left on its own default: that is what the row meant before.
+    const ownDefault = settings && autoModel.ownDefaultScope(settings.model) && this.browser.autoModel?.() === true ? autoModel.ownDefaultScope(settings.model) : null;
+    if (!settings || (!ownDefault && !autoModel.isAuto(settings.model))) return;
     const request = this.autoRequest(messages, input);
-    const scope = autoModel.scopeOf(settings.model); // a provider's own Auto ('grokbuild:auto'): only that provider's models; null: every connected one
+    const scope = ownDefault || autoModel.scopeOf(settings.model); // a provider's own Auto ('grokbuild:auto'): only that provider's models; null: every connected one
     const decision = this.browser.autoRoute?.({ request, last: settings.autoLast?.id || null, allowEngines: true, scope }) || null; // [parallel CLI chats] CLI engines run beside other chats
+    if (ownDefault && (!decision?.id || decision.outOfScope)) return;
     if (!decision?.id) throw new Error(decision?.reason ? `${decision.reason}. Pick a model in the model menu, or wait for a limit to reset.` : 'Auto has no model to use. Connect an AI in Settings > AI, or pick a model.');
     settings.autoFrom = settings.model; // the chat's pick ('auto', or the provider's own 'openai:auto'), restored at the start of the next turn
     settings.autoTier = decision.tier;
+    settings.autoKind = decision.situation; // what the message was (browsing, research, ...): a short follow-up keeps it
     settings.autoLast = { id: decision.id, label: decision.label, reason: decision.reason, ...(scope ? { scope } : {}), ...(decision.outOfScope ? { outOfScope: true } : {}) };
     settings.model = decision.id;
     this.browser.onAuto?.(decision); // the picker's row says "Auto · Haiku" (main refreshes every picker)
@@ -1823,7 +1829,7 @@ class Agent {
     if (!failure || tried.has(`auto:${failure.kind}`) || tried.size >= fallback.MAX_HOPS) return null;
     const current = settings.model;
     const request = this.autoRequest(messages, {});
-    const scope = autoModel.scopeOf(settings.autoFrom) || null; // (a provider's own Auto escalates within that provider; one that went outside it, to another provider's model, stays global)
+    const scope = autoModel.scopeOf(settings.autoFrom) || autoModel.ownDefaultScope(settings.autoFrom) || null; // (a provider's own Auto escalates within that provider; one that went outside it, to another provider's model, stays global)
     const next = this.browser.autoEscalate({ current, failure: { ...failure, chars: historyChars(messages) }, request, tried: [...tried].filter((t) => !String(t).startsWith('auto:')), allowEngines, scope: settings.autoLast?.outOfScope ? null : scope });
     if (failure.kind === 'denied') this.browser.autoDeny?.(current); // (remembered even when nothing else is left)
     if (!next?.id) return null;
