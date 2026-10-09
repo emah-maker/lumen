@@ -7750,15 +7750,16 @@ function moveTab(id, toIndex) {
 ipcMain.on('bookmark:toggle', toggleBookmark);
 ipcMain.on('tab:context-menu', (_e, id, point) => tabMenu(id, point));
 // Right-click in the address bar: Cut / Copy / Paste, and Paste and Go (the clipboard opened or searched at once).
-ipcMain.on('address:menu', (_e, point, hasSelection) => {
-  if (!win || win.isDestroyed()) return;
+ipcMain.on('address:menu', (e, point, hasSelection) => {
+  const w = BrowserWindow.fromWebContents(e.sender) || win; // the window whose address bar was right-clicked
+  if (!w || w.isDestroyed()) return;
   const text = editMenu.oneLine(clipboard.readText());
   const items = editMenu.editMenuTemplate(
     { cut: Boolean(hasSelection), copy: Boolean(hasSelection), paste: Boolean(text) },
     { text, isSearch: resolveInput(text).startsWith(searchUrlFor(readSettings().searchEngine, '')), t, go: goFromAddress },
   );
   const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
-  Menu.buildFromTemplate(items).popup({ window: win, x: n(point?.x), y: n(point?.y) });
+  Menu.buildFromTemplate(items).popup({ window: w, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
