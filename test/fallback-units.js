@@ -530,7 +530,10 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
     { id: 'openrouter:vendor/big-vision', label: 'big vision', group: 'OpenRouter', provider: 'OpenRouter', context: 1_000_000, vision: true },
     { id: 'openrouter:vendor/unknown', label: 'unknown', group: 'OpenRouter', provider: 'OpenRouter' },
   ];
-  check('caps: Claude is 200k tokens with vision', capsOf('claude-sonnet-5', O).context === 200_000 && capsOf('claude-sonnet-5', O).vision === true);
+  check('caps: current Claude models have 1M windows with vision (Anthropic\'s model table, 2026-10-09)', ['claude-sonnet-5', 'claude-sonnet-5-5', 'claude-opus-5', 'claude-opus-5-5', 'claude-opus-4-8', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-5-5', 'claude-fable-5-1', 'claude-mythos-5-1', 'openrouter:anthropic/claude-sonnet-5.5', 'openrouter:anthropic/claude-opus-4.7'].every((id) => capsOf(id, O).context === 1_000_000 && capsOf(id, O).vision === true));
+  { const P = require('../src/ai/providers'); const d = P.PROVIDERS.gemini.defaults; check('gemini: the defaults (used when a key lists no models) are current generally available ids, not the 2.5 models Google limits to past users, and pass the provider\'s own filter', d.length === 2 && d.every((id) => !/2\.5/.test(id) && P.PROVIDERS.gemini.include(id)) && d.includes('gemini-3.8-flash') && /flash/.test(P.IMAGE_MODELS.gemini.fallback) && !/2\.5/.test(P.IMAGE_MODELS.gemini.fallback) && P.IMAGE_MODELS.gemini.pick.test(P.IMAGE_MODELS.gemini.fallback), J(d)); }
+  check('caps: older Claude models stay at 200k', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5', 'claude-opus-4-1', 'claude-sonnet-4-0', 'claude-3-7-sonnet-latest'].every((id) => capsOf(id, O).context === 200_000));
+  check('caps: only Haiku 5.x has a price step to stay under (100k tokens)', capsOf('claude-haiku-5-5', O).lean === 100_000 && capsOf('openrouter:anthropic/claude-haiku-5.5', O).lean === 100_000 && ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5', 'openai:gpt-6-luna', 'claudecode:haiku'].every((id) => !capsOf(id, O).lean));
   check('caps: GPT-5.6 is 400k, Grok 4 256k with vision', capsOf('openai:gpt-5.6', O).context === 400_000 && capsOf('xai:grok-4', O).context === 256_000 && capsOf('xai:grok-4', O).vision === true);
   check('caps: Grok 3 and grok-code are text-only', capsOf('xai:grok-3', O).vision === false && capsOf('xai:grok-code-fast-1', O).vision === false);
   check('caps: an OpenRouter row carries its own numbers', capsOf('openrouter:vendor/small-text', O).context === 8000 && capsOf('openrouter:vendor/small-text', O).vision === false);
@@ -538,7 +541,7 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   check('caps: engines see images (Claude Code) or are unknown (Grok Build), and manage their own history', capsOf('claudecode:opus', O).vision === true && capsOf('grokbuild:default', O).vision === null && contextChars('claudecode:opus', O) === Infinity);
   // one check per row of the table (published context windows; vision null: not known either way)
   const ROWS = [
-    ['claude-opus-5-5', 200_000, true], ['claude-3-5-haiku-latest', 200_000, true], ['openrouter:anthropic/claude-sonnet-4', 200_000, true],
+    ['claude-opus-5-5', 1_000_000, true], ['claude-haiku-5-5', 1_000_000, true], ['claude-haiku-4-5', 200_000, true], ['claude-3-5-haiku-latest', 200_000, true], ['openrouter:anthropic/claude-sonnet-4', 200_000, true],
     ['openai:o1-mini', 128_000, false], ['openai:o1-preview', 128_000, false], ['openai:o1', 200_000, true], ['openai:o1-pro', 200_000, true],
     ['openai:o3', 200_000, true], ['openai:o3-pro', 200_000, true], ['openai:o3-mini', 200_000, false], ['openai:o4-mini', 200_000, true],
     ['openai:gpt-5.6', 400_000, true], ['openai:gpt-5-mini', 400_000, true], ['openai:gpt-5-chat-latest', 128_000, true],
@@ -558,7 +561,8 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
     const c = capsOf(id, []);
     check(`caps row: ${id} is ${context / 1000}k, ${vision === null ? 'vision unknown' : vision ? 'sees images' : 'text-only'}`, c.context === context && c.vision === vision, J(c));
   }
-  check('budget: 85% of the window at 3 characters a token (Claude 510k, a 128k model 326k), unknown the old 320k, huge windows are capped', contextChars('claude-opus-5-5', O) === 510_000 && contextChars('openai:gpt-4o', O) === 326_400 && contextChars('openrouter:vendor/unknown', O) === 320_000 && contextChars('openrouter:vendor/big-vision', O) === 1_200_000, J([contextChars('claude-opus-5-5', O), contextChars('openai:gpt-4o', O), contextChars('openrouter:vendor/unknown', O), contextChars('openrouter:vendor/big-vision', O)]));
+  check('budget: a 1M Claude is capped like any huge window; an older 200k Claude keeps 510k; Haiku 5.5 stays under its 100k-token price step (255k)', contextChars('claude-opus-5-5', O) === 1_200_000 && contextChars('claude-sonnet-5-5', O) === 1_200_000 && contextChars('claude-haiku-4-5', O) === 510_000 && contextChars('claude-haiku-5-5', O) === 255_000 && contextChars('openrouter:anthropic/claude-haiku-5.5', O) === 255_000);
+  check('budget: 85% of the window at 3 characters a token (a 200k model 510k, a 128k model 326k), unknown the old 320k, huge windows are capped', contextChars('claude-sonnet-4-5', O) === 510_000 &&contextChars('openai:gpt-4o', O) === 326_400 && contextChars('openrouter:vendor/unknown', O) === 320_000 && contextChars('openrouter:vendor/big-vision', O) === 1_200_000, J([contextChars('claude-opus-5-5', O), contextChars('openai:gpt-4o', O), contextChars('openrouter:vendor/unknown', O), contextChars('openrouter:vendor/big-vision', O)]));
   const cd = createCooldowns();
   const only = (...ids) => O.filter((o) => ids.includes(o.id));
 
@@ -649,7 +653,7 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   // the budget follows the model
   {
     const { agent } = makeAgent({ options: [...OP, { id: 'openrouter:v/tiny', label: 'tiny', name: 'tiny', group: 'OpenRouter', provider: 'OpenRouter', context: 8000 }] });
-    check('contextBudget: by the model\u2019s window', agent.contextBudget('claude-opus-5-5') === 510_000 && agent.contextBudget('openai:gpt-4o') === 326_400 && agent.contextBudget('openrouter:v/tiny') === 20_400 && agent.contextBudget('openai:unheard-of') === 320_000, J([agent.contextBudget('claude-opus-5-5'), agent.contextBudget('openai:gpt-4o'), agent.contextBudget('openrouter:v/tiny'), agent.contextBudget('openai:unheard-of')]));
+    check('contextBudget: by the model\u2019s window', agent.contextBudget('claude-opus-5-5') === 1_200_000 && agent.contextBudget('claude-haiku-4-5') === 510_000 && agent.contextBudget('claude-haiku-5-5') === 255_000 && agent.contextBudget('openai:gpt-4o') === 326_400 && agent.contextBudget('openrouter:v/tiny') === 20_400 && agent.contextBudget('openai:unheard-of') === 320_000, J([agent.contextBudget('claude-opus-5-5'), agent.contextBudget('openai:gpt-4o'), agent.contextBudget('openrouter:v/tiny'), agent.contextBudget('openai:unheard-of')]));
   }
   // a reply that had started says it restarts
   {

@@ -271,6 +271,11 @@ function createCooldowns() {
 // (a model is passed over only when it is known to be text-only). Engines (Claude Code, Grok Build) compact their own
 // history, so only their vision counts.
 const CAPS = [
+  // Claude (Anthropic's model table via the claude-api skill, 2026-10-09): Opus 4.6 and later, Sonnet 4.6 and later, Haiku 5.x, Fable and Mythos have
+  // 1M windows with no beta flag. Haiku 5.5 bills more above a 100k prompt ($0.10/$0.50 up to it, $0.50/$2.50 beyond), so its history is trimmed
+  // at `lean` tokens while the meter still reads against the 1M window. Everything older (Haiku 4.5, Sonnet 4.5, Opus 4.5, Claude 3) stays 200k.
+  [/^(?:anthropic\/)?claude-haiku-5/, { context: 1_000_000, lean: 100_000, vision: true }],
+  [/^(?:anthropic\/)?claude-(?:opus-5|sonnet-5|opus-4[-.][6-9]|sonnet-4[-.][6-9]|fable|mythos)/, { context: 1_000_000, vision: true }],
   [/^claude|^anthropic\//, { context: 200_000, vision: true }],
   [/^o1-(mini|preview)/, { context: 128_000, vision: false }],
   [/^o3-mini/, { context: 200_000, vision: false }],
@@ -311,7 +316,7 @@ const HEADROOM = 0.85; // of the window the history may take: the system prompt 
 const UNKNOWN_CHARS = 320_000; // the flat budget for a model nobody knows the size of
 const MAX_CHARS = 1_200_000; // however large the window, the request itself stays this size
 
-// { context (tokens, 0 unknown), vision (true | false | null), engine } for a picker id. `options` is the picker's list.
+// { context (tokens, 0 unknown), vision (true | false | null), engine, lean (tokens, 0 none) } for a picker id. `options` is the picker's list.
 function capsOf(id, options = []) {
   const o = (options || []).find((x) => x?.id === id) || {};
   const bare = String(id || '').replace(/^[a-z][a-z0-9]*:/, '');
@@ -321,6 +326,7 @@ function capsOf(id, options = []) {
     context: engine ? 0 : Number(o.context) > 0 ? Number(o.context) : row.context,
     vision: typeof o.vision === 'boolean' ? o.vision : engine ? (providerOf(id) === 'claudecode' ? true : null) : row.vision,
     engine,
+    lean: engine ? 0 : row.lean || 0,
   };
 }
 
@@ -328,7 +334,9 @@ function capsOf(id, options = []) {
 function contextChars(id, options = []) {
   const { context, engine } = capsOf(id, options);
   if (engine) return Infinity;
-  return context > 0 ? Math.min(Math.round(context * CHARS_PER_TOKEN * HEADROOM), MAX_CHARS) : UNKNOWN_CHARS;
+  if (!(context > 0)) return UNKNOWN_CHARS;
+  const lean = capsOf(id, options).lean; // a price step above this many tokens: keep the history under it
+  return Math.min(Math.round(context * CHARS_PER_TOKEN * HEADROOM), MAX_CHARS, lean > 0 ? Math.round(lean * CHARS_PER_TOKEN * HEADROOM) : Infinity);
 }
 
 // ---------- choosing the next model ----------
