@@ -67,10 +67,25 @@ const tierOf = (s, coding = false) => (s >= HEAVY_MIN ? 'heavy' : s <= (coding ?
 //   page       a question about the page in view: small, the score may raise it
 //   browse     open / click / fill / buy: reliable tool use beats raw size; a multi-step or form task is never the smallest
 //   research   sources, literature, many tabs: synthesis over long context, never the smallest
+//   compare    "compare", "versus", "pros and cons", "which should I buy": weighing options, never the smallest
+//   writing    new text (an email, a post, a cover letter, an essay): short pieces small, long-form or high-stakes pieces mid-size, deep long-form the strongest
 //   code       code and debugging: the score decides (Sonnet and up unless trivial)
 //   reasoning  proofs and maths: never the smallest, the hardest ("prove", "theorem") the strongest
 //   vision     an attached image: any model that sees; charts, forms, mockups and the like are never the smallest
-const SITUATIONS = ['quick', 'chat', 'page', 'rewrite', 'imagegen', 'browse', 'research', 'code', 'reasoning', 'vision'];
+const SITUATIONS = ['quick', 'chat', 'page', 'rewrite', 'writing', 'imagegen', 'browse', 'research', 'compare', 'code', 'reasoning', 'vision'];
+const WRITE_VERB = /\b(?:write|draft|compose|prepare|put together|come up with|generate|create|make)\b/i;
+const WRITE_NOUN = /\b(?:essays?|reports?|articles?|stor(?:y|ies)|cover letters?|letters?|e-?mails?|posts?|speech(?:es)?|proposals?|(?:personal |mission |purpose )?statements?|bios?|blogs?|paragraphs?|poems?|messages?|captions?|toasts?|newsletters?|white ?papers?|chapters?|reviews?|descriptions?|scripts? for|recommendations?|cv|resume|résumé)\b/i;
+const WRITE_LONG = /\b(?:essays?|reports?|articles?|stor(?:y|ies)|cover letters?|speech(?:es)?|proposals?|(?:personal |mission |purpose )?statements?|white ?papers?|chapters?|newsletters?|recommendation letters?|cv|resume|résumé)\b/i;
+const WRITE_DEEP = /\b(?:in[- ]depth|thorough\w*|comprehensive|rigorous|publication|academic|scholarly|detailed analysis)\b/i;
+const COMPARE = /\b(?:compare|comparison|versus|vs\.?|pros and cons|which (?:\w+ ){0,2}(?:should i|do you|would you) (?:buy|get|choose|pick|go with|recommend)|which is (?:better|best))\b/i;
+// A requested length: "1500 word", "2 pages". -> approximate words (0 when none was asked)
+function lengthAsked(t) {
+  const w = /\b(\d[\d,]{1,5})[- ]?words?\b/i.exec(t);
+  if (w) return Number(w[1].replace(/,/g, ''));
+  const p = /\b(\d{1,3}|one|two|three|four|five)[- ]?pages?\b/i.exec(t);
+  if (p) return ({ one: 1, two: 2, three: 3, four: 4, five: 5 }[p[1].toLowerCase()] || Number(p[1])) * 450;
+  return 0;
+}
 const IMAGEGEN = /^\s*(?:please\s+)?(?:draw|sketch|paint|illustrate|generate|create|make|design|render)\b[^.?!\n]{0,40}\b(?:images?|pictures?|photos?|illustrations?|logos?|icons?|posters?|wallpapers?|sketch(?:es)?|drawings?|portraits?|banners?|avatars?)\b/i;
 const REWRITE = /\b(?:translate|translation|rewrite|rephrase|reword|paraphrase|proofread|copy-?edit|shorten|polish|fix (?:the )?(?:grammar|typos?|spelling)|make (?:it|this|that) (?:shorter|longer|more \w+|sound \w+)|in (?:plain|simple) (?:english|words))\b/i;
 const MATH = /\b(?:prove|proof|theorem|lemma|derive|derivation|integral|derivative|eigen\w+|combinatori\w+|calculus|algebra|olympiad|solve (?:for|the equation)|equations?)\b/i;
@@ -98,7 +113,13 @@ function situationOf(prompt, { imageCount = 0, tabCount = 0, page = false, unatt
   if (CODE_WORDS.test(t)) return { kind: 'code', multi: false };
   if (MATH.test(t)) return { kind: 'reasoning', multi: false };
   if (RESEARCH.test(t) || tabCount >= 3) return { kind: 'research', multi: false };
+  if (COMPARE.test(t)) return { kind: 'compare', multi: false };
   if (REWRITE.test(t) && !browsing) return { kind: 'rewrite', multi: false };
+  const words = lengthAsked(t);
+  if (!browsing && ((WRITE_VERB.test(t) && WRITE_NOUN.test(t)) || (WRITE_VERB.test(t) && words > 0))) {
+    const long = words > 300 || WRITE_LONG.test(t);
+    return { kind: 'writing', multi: false, long, deep: long && WRITE_DEEP.test(t) };
+  }
   if (imageCount) return { kind: 'vision', multi: false };
   if (browsing) return { kind: 'browse', multi };
   if (page || tabCount > 0 || PAGEWORDS.test(t)) return { kind: 'page', multi: false };
@@ -112,7 +133,8 @@ function applySituation(tier, sit, { prompt = '' } = {}) {
     case 'quick': case 'imagegen': return 'light';
     case 'rewrite': return len > 1500 ? atLeast(tier === 'heavy' ? 'standard' : tier, 'standard') : 'light';
     case 'browse': return sit.multi ? atLeast(tier, 'standard') : tier;
-    case 'research': return atLeast(tier, 'standard');
+    case 'research': case 'compare': return atLeast(tier, 'standard');
+    case 'writing': return sit.deep ? 'heavy' : sit.long ? atLeast(tier, 'standard') : (tier === 'heavy' ? 'standard' : 'light');
     case 'reasoning': return atLeast(tier, MATH_HARD.test(prompt) ? 'heavy' : 'standard');
     case 'vision': return VISUAL_HARD.test(prompt) ? atLeast(tier, 'standard') : tier;
     default: return tier;
@@ -128,6 +150,8 @@ function whyOf(kind, tier, { tools = true, multi = false } = {}) {
     case 'page': return tier === 'light' ? 'a question about the page' : tier === 'heavy' ? 'a demanding question about the page' : 'a long page';
     case 'browse': return multi ? 'a multi-step browsing task' : 'a browsing task';
     case 'research': return tier === 'heavy' ? 'deep research' : 'research across sources';
+    case 'compare': return 'a comparison';
+    case 'writing': return tier === 'light' ? 'a short piece of writing' : tier === 'heavy' ? 'a demanding piece of writing' : 'a long piece of writing';
     case 'code': return tier === 'heavy' ? 'a hard coding task' : 'a coding task';
     case 'reasoning': return tier === 'heavy' ? 'a hard proof' : 'a reasoning problem';
     case 'vision': return 'an image';

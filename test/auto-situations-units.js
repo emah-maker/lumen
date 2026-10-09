@@ -41,6 +41,20 @@ const prompts = [
   ['what is in this screenshot?', { imageCount: 1 }, 'vision', 'light'],
   ['extract the numbers from this invoice', { imageCount: 1 }, 'vision', 'standard'],
   ['what does this chart show?', { imageCount: 1 }, 'vision', 'standard'],
+  // writing new text: short pieces small, long-form or high-stakes mid-size, deep long-form the strongest
+  ['write a cover letter for a barista job', {}, 'writing', 'standard'],
+  ['draft an email to my landlord about the broken heater, firm but polite', {}, 'writing', 'light'],
+  ['write a 1500 word essay on the french revolution', {}, 'writing', 'standard'],
+  ['write a short bio for my website', {}, 'writing', 'light'],
+  ['write a linkedin post about our launch', {}, 'writing', 'light'],
+  ['compose a 2 page report on our Q3 results', {}, 'writing', 'standard'],
+  ['write a speech for my sister\'s wedding', {}, 'writing', 'standard'],
+  ['write a thorough, in-depth essay on the causes of the french revolution', {}, 'writing', 'heavy'],
+  ['write a 200 word email declining the invitation', {}, 'writing', 'light'],
+  ['rewrite this email to sound friendlier', {}, 'rewrite', 'light'], // editing given text stays a rewrite
+  ['compare these three laptops', {}, 'compare', 'standard'],
+  ['which phone should I buy, the pixel or the iphone?', {}, 'compare', 'standard'],
+  ['pros and cons of renting versus buying a house', {}, 'compare', 'standard'],
   ['draw a logo for my coffee shop', {}, 'imagegen', 'light'],
   ['generate an image of a cat in space', {}, 'imagegen', 'light'],
 ];
@@ -77,6 +91,9 @@ const engines = { 'Claude Code': [cc, 'claudecode'], 'Claude API': [claudeApi, n
 // situation prompt -> the model each engine should get (the ids' last part)
 const want = {
   'thanks!': { 'Claude Code': 'haiku', 'Claude API': 'claude-haiku-5-5', Codex: 'gpt-6-luna', OpenAI: 'gpt-6-luna', Gemini: 'gemini-3.5-flash-lite', 'Grok API': 'grok-4.7-build-fast' },
+  'write a cover letter for a barista job': { 'Claude Code': 'sonnet', 'Claude API': 'claude-sonnet-5-5', Codex: 'gpt-6.1-sol', OpenAI: 'gpt-6.1-sol', Gemini: 'gemini-3.8-flash' },
+  'draft an email to my landlord about the broken heater, firm but polite': { 'Claude Code': 'haiku', 'Claude API': 'claude-haiku-5-5', Codex: 'gpt-6-luna', OpenAI: 'gpt-6-luna', Gemini: 'gemini-3.5-flash-lite' },
+  'compare these three laptops': { 'Claude Code': 'sonnet', 'Claude API': 'claude-sonnet-5-5', Codex: 'gpt-6.1-sol', OpenAI: 'gpt-6.1-sol', Gemini: 'gemini-3.8-flash' },
   'summarize this article': { 'Claude Code': 'haiku', 'Claude API': 'claude-haiku-5-5', Codex: 'gpt-6-luna', OpenAI: 'gpt-6-luna', Gemini: 'gemini-3.5-flash-lite', 'Grok API': 'grok-4.7-build-fast' },
   'translate this paragraph into French': { 'Claude Code': 'haiku', 'Claude API': 'claude-haiku-5-5', Codex: 'gpt-6-luna', OpenAI: 'gpt-6-luna', Gemini: 'gemini-3.5-flash-lite' },
   // one-step browsing: Haiku 5.5 is a reliable actor; the other small models are not (docs: OSWorld), so they step up one tier

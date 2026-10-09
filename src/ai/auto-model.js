@@ -148,7 +148,7 @@ function needFor(request = {}) {
     else if (history + attachment > LONG_HISTORY_CHARS && tier === 'fast') { tier = 'balanced'; why = 'a long conversation'; }
   }
   // agentic: tool use drives the answer (browsing, research, background tasks): a small model that is weak at it is passed over (route). longContext: the answer needs a lot of text held at once.
-  const agentic = tools && (situation === 'browse' || situation === 'research' || kind === 'agentic');
+  const agentic = tools && (situation === 'browse' || situation === 'research' || situation === 'compare' || kind === 'agentic');
   return { tier, why, top, tools, vision: imageCount > 0, chars: history + attachment, kind, situation, agentic, longContext: situation === 'research' || (situation === 'page' && attachment > 20_000) };
 }
 
