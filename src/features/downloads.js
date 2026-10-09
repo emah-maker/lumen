@@ -96,6 +96,7 @@ function createDownloads(deps) {
 
   function setup() {
     deps.session.defaultSession.on('will-download', (event, item, contents) => {
+      if (deps.blocked?.(contents)) { event.preventDefault(); try { item.cancel(); } catch {} return; } // [agent window] an outside agent's page
       // A file the browser shows itself instead (a local .pptx opened in a tab: features/slides-viewer.js).
       if (deps.openInstead?.(item, contents)) { event.preventDefault(); return; }
       const dir = deps.downloadDir(); // [settings] Downloads folder unless changed in Settings
