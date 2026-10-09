@@ -719,6 +719,20 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
     Date.now = realNow;
   }
 
+  // ---- a saved pick its provider no longer lists: the same provider's model of the same kind (sameKindModel)
+  {
+    const { sameKindModel } = require('../src/ai/fallback');
+    const opts = (ids) => ids.map((id) => ({ id }));
+    const gem = opts(['claude-opus-5-5', 'openai:gpt-6-sol', 'gemini:gemini-3.1-pro-preview', 'gemini:gemini-3.8-flash', 'gemini:gemini-3.5-flash-lite']);
+    check('retired Gemini 2.5 Flash -> current Flash (not the Pro preview, not another provider)', sameKindModel('gemini:gemini-2.5-flash', gem) === 'gemini:gemini-3.8-flash', sameKindModel('gemini:gemini-2.5-flash', gem));
+    check('retired Gemini 2.5 Pro -> current Pro', sameKindModel('gemini:gemini-2.5-pro', gem) === 'gemini:gemini-3.1-pro-preview', sameKindModel('gemini:gemini-2.5-pro', gem));
+    check('retired Gemini 2.5 Flash-Lite -> current Flash-Lite', sameKindModel('gemini:gemini-2.5-flash-lite', gem) === 'gemini:gemini-3.5-flash-lite', sameKindModel('gemini:gemini-2.5-flash-lite', gem));
+    check('an unknown kind falls to that provider\'s first model', sameKindModel('gemini:gemini-exp-1206', gem) === 'gemini:gemini-3.1-pro-preview', sameKindModel('gemini:gemini-exp-1206', gem));
+    check('provider no longer connected (nothing of it listed): null, the caller falls back as before', sameKindModel('xai:grok-3', gem) === null, sameKindModel('xai:grok-3', gem));
+    check('a bare Claude id and a CLI engine are left to the caller', sameKindModel('claude-sonnet-4', gem) === null && sameKindModel('codex:gpt-5', opts(['codex:gpt-6-sol'])) === null, '');
+    check('"More models…" and a provider Auto row are never the stand-in', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])) === 'openrouter:a/b', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])));
+  }
+
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nall fallback checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

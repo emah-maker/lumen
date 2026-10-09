@@ -207,6 +207,22 @@ const isDefaultEngineModel = (id) => /^(claudecode|grokbuild|antigravity|codex):
 const RELATED = { anthropic: ['claudecode'], claudecode: ['anthropic'], xai: ['grokbuild'], grokbuild: ['xai'], gemini: ['antigravity'], antigravity: ['gemini'], openai: ['codex'], codex: ['openai'] };
 const relatedOf = (provider) => RELATED[provider] || [];
 
+// A saved pick its provider no longer lists (a model the provider renamed or retired, or the list not loaded yet) while that
+// provider is still connected: the listed model of the same provider and kind (Flash-Lite for a Flash-Lite, Flash for a Flash,
+// Pro for a Pro), else that provider's first. null when the provider has nothing listed (its key was removed: the caller falls
+// back as before). Without this a retired Gemini 2.5 Flash pick landed on another provider's first model, or on a Pro preview.
+// (Whole words: "gemini" holds the letters "mini".)
+const KINDS = [/flash-lite|-lite\b|(^|[-_.])nano($|[-_.])/, /flash|(^|[-_.])mini($|[-_.])|haiku|luna|fast/, /(^|[-_.])pro($|[-_.])|opus|astra|ultra|fable/];
+const kindOf = (id) => KINDS.findIndex((re) => re.test(String(id || '').replace(/^[a-z][a-z0-9]*:/, '').toLowerCase()));
+function sameKindModel(preferred, options) {
+  const provider = providerOf(preferred);
+  if (!/^[a-z][a-z0-9]*:/.test(String(preferred || '')) || isEngine(preferred)) return null; // a bare Claude id or a CLI engine: not this rule
+  const own = (options || []).filter((o) => o && typeof o.id === 'string' && providerOf(o.id) === provider && !/:__more$/.test(o.id) && !/:auto$/.test(o.id));
+  if (!own.length) return null;
+  const kind = kindOf(preferred);
+  return ((kind >= 0 && own.find((o) => kindOf(o.id) === kind)) || own[0]).id;
+}
+
 // Models a turn can be handed to: connected (the picker only lists those), signed in, and able to use tools.
 function usable(options) {
   return (options || []).filter((o) => o?.id && !String(o.id).endsWith(':__more') && !o.more && o.signedIn !== false && !(o.badges || []).includes('sign in') && !(o.badges || []).includes('chat only'));
@@ -460,4 +476,4 @@ const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, COOLDOWN, MAX_HOPS };
+module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, sameKindModel, COOLDOWN, MAX_HOPS };
