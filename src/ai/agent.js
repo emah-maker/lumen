@@ -45,6 +45,7 @@ const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a
 const pdfInput = require('../features/pdf-input'); // scroll / click_at / press_key on a tab showing the built-in PDF viewer
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
+const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
@@ -4067,7 +4068,7 @@ ${prompt}` : prompt), historyImages: [] };
     const ctx = { windowId: undefined, isPrivate: false };
     const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
       const tab = open.find((t) => t.id === id);
-      if (!tab) return { id, title: '', url: '', skipped: 'no open tab of this window has that id' };
+      if (!tab) return { id, title: '', url: '', skipped: taskScope.getStore()?.mcp && this.browser.tabExistsElsewhere?.(id) ? "that is one of the user's tabs; an agent reads only the tabs of its own window" : 'no open tab of this window has that id' };
       const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url) }, ctx);
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
@@ -4522,14 +4523,23 @@ ${out.text}${note}
   }
 
   clipboardTool(input, clipboard = this.browser.clipboard || require('electron').clipboard) {
+    // [agent window] An outside agent gets a private buffer of its own session: it never writes over, nor reads, what the user copied.
+    const own = taskScope.getStore()?.clipboard || null;
     if (input.action === 'write') {
       const text = String(input.text ?? '');
-      clipboard.writeText(text);
-      return `Copied ${text.length} character${text.length === 1 ? '' : 's'} to the clipboard.`;
+      (own || clipboard).writeText(text);
+      return `Copied ${text.length} character${text.length === 1 ? '' : 's'} to ${own ? "this agent's own clipboard (the user's clipboard is untouched; to put text in a page use type_text)" : 'the clipboard'}.`;
     }
     if (input.action !== 'read') throw new Error('action must be "read" or "write".');
+    if (own) return deviceAccess.clipboardText(own.readText());
     this.requireDeviceAccess(); // (writing needs no setting: it only replaces what the user would paste)
     return deviceAccess.clipboardText(clipboard.readText());
+  }
+  // [agent window] A tab id an outside agent names that is not in its own window: refused by name, never acted on.
+  foreignTabCheck(ids) {
+    if (!taskScope.getStore()?.mcp) return;
+    const bad = handsOff.foreignTabIds(ids, this.browser.listTabs().map((t) => t.id), (id) => this.browser.tabExistsElsewhere?.(id) === true);
+    if (bad.length) throw new Error(handsOff.foreignTabText(bad));
   }
   // ---- [/device access]
 
@@ -5160,15 +5170,18 @@ ${same}
         return `Reloaded ${wc.getURL()}.`;
       }
       case 'group_tabs': {
+        this.foreignTabCheck(input.tab_ids || []);
         const { group, tabs } = this.browser.groupTabs(input.name, input.tab_ids);
         return `Grouped ${tabs.length} tab${tabs.length === 1 ? '' : 's'} as ${quote(group)}.`;
       }
       case 'ungroup_tabs': {
+        this.foreignTabCheck(input.tab_ids || []);
         const count = this.browser.ungroupTabs(input.tab_ids);
         return `Removed ${count} tab${count === 1 ? '' : 's'} from their groups.`;
       }
       case 'close_tab': {
         const id = input.tab_id;
+        this.foreignTabCheck([id]);
         if (!this.browser.listTabs().some((t) => t.id === id)) throw new Error(`No tab with id ${id}.`);
         if (this.tabBusyElsewhere(id)) throw new Error('That tab is in use by a task running in another chat, so it can\'t be closed now.');
         // Same care as the user's own close: text typed into a form isn't thrown away without asking,
@@ -5221,6 +5234,7 @@ ${same}
         return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : input.read === false ? '' : await snapshot.head(this, tab.webContents, { runScript, scripts })}`;
       }
       case 'switch_tab': {
+        this.foreignTabCheck([input.tab_id]);
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.
         const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
         if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);

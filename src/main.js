@@ -2254,7 +2254,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
     handleShortcut(event, input);
   });
-  wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
+  wc.on('focus', () => { if (tab.showGuardUntil > Date.now() && handsOff.mayFocus(tab.rec)) ui()?.focus(); }); // see layout()
   tab.keepKeyboard = keepKeyboardFromBackgroundTab(tab);
   // A real click in the page is the user choosing it: the guard above must not take focus back.
   wc.on('before-mouse-event', (_e, mouse) => {
@@ -2780,7 +2780,7 @@ function keepKeyboardFromBackgroundTab(tab) {
     const back = rec.keyboardOwner;
     // (the owner counts only while it is the UI or the tab in front: a tab left behind is not where the keyboard is)
     const target = back && !back.isDestroyed() && back !== wc && (back === ui || tabByContents(back)?.id === activeId) ? back : ui;
-    target.focus();
+    if (handsOff.mayFocus(rec)) target.focus(); // [agent window] never moves the keyboard in a window the user is not in
   };
   wc.on('focus', take);
   // A page loading behind (autofocus, a script's focus()) can take it silently as it finishes.
@@ -3966,6 +3966,7 @@ const downloads = createDownloads({
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
+  blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
   onChange: () => managers?.pushDownloads(),
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
   // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
@@ -6536,6 +6537,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 // never saved with the session, never merged, and its tabs are not "AI tabs" (nothing in it is the user's to hide or close).
 // It closes a little after the session ends, unless the user used it or pinned a tab in it: then it is theirs, an ordinary window.
 const { createAgentWindows } = require('./features/agent-windows');
+const handsOff = require('./features/agent-hands-off');
 const windowOrder = require('./features/window-order');
 const agentWindowTitle = (label) => `${label} · Lumen`;
 function showBehind(w) {
@@ -6807,7 +6809,14 @@ const runRecNow = () => {
   const rec = scope?.mcp ? scope.rec || null : scope?.rec || chatRuns.get(chatId)?.rec || null; // [agent window] an outside agent's calls are in its own window, never the open chat's
   return rec && winRecs.has(rec) ? rec : null;
 };
-const inRun = (fn) => (...args) => { const rec = runRecNow(); return rec ? withWindow(rec, () => fn(...args)) : fn(...args); };
+// [agent window] An outside agent's call whose window is gone (the user closed it mid-call) is refused: it must never fall through to
+// the user's current window (features/agent-hands-off.js resolveRun).
+const inRun = (fn) => (...args) => {
+  const scope = agent.currentScope();
+  if (scope?.mcp && !(scope.rec && winRecs.has(scope.rec) && rcAlive(scope.rec))) throw new Error(handsOff.AGENT_WINDOW_GONE);
+  const rec = runRecNow();
+  return rec ? withWindow(rec, () => fn(...args)) : fn(...args);
+};
 // [research tabs] web_search / read_urls show what they look at in background tabs (features/research-tabs.js).
 // The tabs open in the run's window, behind the user's current tab, never through agentOpenTab (that
 // would move the task onto them). Private windows have no agent, so none of this reaches them.
@@ -6940,6 +6949,7 @@ const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
