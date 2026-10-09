@@ -468,9 +468,10 @@ function renderWorkingIn() {
   const el = optional('working-in');
   const show = Boolean(running && agentTarget);
   el.hidden = !show;
-  document.body.classList.toggle('agent-away', show && !agentTarget.front);
+  const state = window.agentPill.pillState({ running, target: agentTarget });
+  document.body.classList.toggle('agent-away', state.away); // (the toolbar pill and the page's frame are only for the tab the AI is in; styles.css)
   const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = show && !agentTarget.front ? t('agent.usingOther', { name: assistantIdentity?.name || 'AI' }) : t('agent.usingTab', { name: assistantIdentity?.name || 'AI' });
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t(state.textKey, { name: assistantIdentity?.name || 'AI' });
   if (!show) return;
   const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
   el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));

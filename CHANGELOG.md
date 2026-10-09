@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Try again on a card that couldn’t update works again, and cards get past a network hiccup on their own.** Clicking Try again right after an automatic retry did nothing (a card was fetched at most every 15 s, even one showing an error); now it always asks again (a double click is one request). And after a network glitch that wasn’t a sleep (an update restart, a Wi-Fi change) Lumen could keep a dead connection or a stale DNS answer, so every retry failed with “Couldn’t connect” until Lumen was restarted. Before a card that failed that way asks again, Lumen now drops those first, as it already did on waking from sleep.
+- **The "AI is using this tab" pill shows only on the tab the AI is working in.** While a task ran in one tab, the toolbar pill stayed on every tab you switched to (saying the AI was in another tab). Now it appears only while the tab in front is the AI's tab, follows you as you switch tabs, and goes when the task ends; the sidebar's "Working in" line still says where the AI is.
 
 ## 0.5.21 (2026-10-09)
 
