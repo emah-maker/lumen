@@ -38,6 +38,7 @@ module.exports = async function widgetResilienceUnits(check) {
       readSettings: () => store.settings, writeSettings: (s) => { store.settings = JSON.parse(JSON.stringify(s)); },
       fetch, getSecret: () => secret, setSecret: () => {}, onUpdate: () => { state.updates++; }, endpoints: () => ({}), rateMax: () => 100000,
       now: () => state.now,
+      resetNetwork: () => { state.resets = (state.resets || 0) + 1; if (state.healOnReset) state.fail = null; },
       setTimer: (fn, ms) => { const t = { fn, ms, live: true }; state.timers.push(t); return t; },
       clearTimer: (t) => { if (t) t.live = false; },
     });
@@ -75,6 +76,33 @@ module.exports = async function widgetResilienceUnits(check) {
     await settle(junk, 'wcal00003');
     c = junk.card('wcal00003');
     check('an address that answers with a web page is a parse problem, not a connection one (and no retries)', !/connect/.test(c.error || '') && junk.live().length === 0, JSON.stringify({ e: c.error, d: Boolean(c.data) }));
+  }
+
+  // ---- a dead socket / stale DNS answer: every retry failed the same way until Lumen restarted. Try again (and the retries)
+  // now drop them first, once per 5 s at most; a refusal or a first look does not. ----
+  {
+    const r = rig({ widgets: [{ id: 'wcal00001', type: 'calendar', title: '', span: 3, url: URL1, name: 'School', count: 5 }] });
+    r.state.fail = netFail('ERR_CONNECTION_RESET');
+    r.state.healOnReset = true; // the network is fine; only the old connection was dead
+    await settle(r, 'wcal00001');
+    check('dead socket: the first look fails with Couldn’t connect and resets nothing yet', /Couldn’t connect/.test(r.card('wcal00001').error || '') && !r.state.resets, JSON.stringify({ e: r.card('wcal00001').error, n: r.state.resets }));
+    r.state.now += 1000;
+    await settle(r, 'wcal00001'); // Try again
+    let c = r.card('wcal00001');
+    check('…Try again drops dead connections and the DNS cache first, and then the card loads', r.state.resets === 1 && c.data && !c.error, JSON.stringify({ n: r.state.resets, e: c.error }));
+    r.state.healOnReset = false;
+    r.state.fail = netFail('ENOTFOUND');
+    // A later refresh fails (the card had loaded, so the usual 15 s floor applied; it keeps its events with a warning): no reset
+    // for that one. Then Try again at +2 s (resets), +4 s and +6 s (ask again, but inside the 5 s window: no second reset).
+    r.state.now += 16e3; await settle(r, 'wcal00001');
+    for (let i = 0; i < 3; i++) { r.state.now += 2000; await settle(r, 'wcal00001'); }
+    check('…while it keeps failing, each Try again asks again (even on a card keeping old events), but the reset happens at most once every 5 s', r.state.resets === 2 && r.state.log.length === 6, JSON.stringify({ n: r.state.resets, asks: r.state.log.length }));
+    const refused = rig({ widgets: [{ id: 'wcal00002', type: 'calendar', title: '', span: 3, url: URL1, name: 'Bad', count: 5 }] });
+    refused.state.fail = netFail('ERR_CERT_AUTHORITY_INVALID');
+    await settle(refused, 'wcal00002');
+    refused.state.now += 10e3;
+    await settle(refused, 'wcal00002');
+    check('…a refused address (bad certificate) never resets the network', !refused.state.resets && /refused/.test(refused.card('wcal00002').error || ''), JSON.stringify({ n: refused.state.resets, e: refused.card('wcal00002').error }));
   }
 
   // ---- the first look fails (the machine is offline): retries at 2 s, 10 s, 30 s, then rests ----
@@ -311,6 +339,7 @@ module.exports = async function widgetResilienceUnits(check) {
   check('page: a card that failed asks again when the page is shown and when the browser says it is online', /addEventListener\('online'/.test(nt) && /function retryFailed/.test(nt) && /retryFailed\(\)/.test(nt), '');
   const main = read('src/main.js');
   check('main: waking from sleep or unlocking asks the failed cards again', /pm\.on\('resume', widgetsBack\)/.test(main) && /widgets\.retryNow\(\)/.test(main), '');
+  check('main: the cards get resetNetwork (closeAllConnections + clearHostResolverCache)', /function resetNetwork\(\)/.test(main) && /closeAllConnections/.test(main) && /clearHostResolverCache/.test(main) && /\n {2}resetNetwork, /.test(main), '');
   const settings = read('src/renderer/settings.js');
   check('Settings: the add box is Button / Top / Bottom, and defaults to Top', /\['off', 'Button'\], \['top', 'Top'\], \['bottom', 'Bottom'\]\], t\.quick \|\| 'top'/.test(settings) && TV.cleanConfig({}).quick === 'top', TV.cleanConfig({}).quick);
 };

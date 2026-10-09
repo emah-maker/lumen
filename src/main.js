@@ -5953,9 +5953,7 @@ function wireSchedulerPower() {
   pm.on('resume', () => { scheduler.resume('suspended'); scheduler.resume('locked'); });
   // Waking from sleep: the network takes a few seconds to come back, then every card that failed meanwhile asks again.
   const widgetsBack = () => setTimeout(() => {
-    // After sleep or a network change Chromium may hold dead sockets and a stale DNS cache; drop both so the retry makes fresh ones.
-    try { const ses = require('electron').session.defaultSession; ses.closeAllConnections?.().catch?.(() => {}); ses.clearHostResolverCache?.().catch?.(() => {}); } catch { /* best effort */ }
-    widgets.retryNow().catch(() => {});
+    resetNetwork().then(() => widgets.retryNow()).catch(() => {});
   }, 4000).unref?.();
   pm.on('resume', widgetsBack);
   pm.on('unlock-screen', widgetsBack);
@@ -7377,9 +7375,15 @@ let widgetRefreshTimer = null;
 // any window means a read only looks at what is already known. The page asks again when it is shown (it refreshes when it becomes visible).
 const newTabInFront = () => [...winRecs].some((rec) => rcAlive(rec) && !isSpare(rec) && !rec.agent && !rec.win.isMinimized() && tabsOf(rec).some((t) => t.id === activeIdOf(rec) && alive(t) && isNewTab(t.view.webContents.getURL())));
 const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'command', 'search', 'searchMore', 'loadThumbs', 'warm', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
+// After sleep or a network change Chromium may hold dead sockets and a stale DNS cache; drop both so the next request makes fresh ones.
+function resetNetwork() {
+  const ses = session.defaultSession;
+  return Promise.all([ses.closeAllConnections?.(), ses.clearHostResolverCache?.()]).catch(() => {});
+}
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),
+  resetNetwork, // a card that got no answer from the network drops these before it asks again (Try again, its retries)
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
   canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
