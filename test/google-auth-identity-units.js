@@ -30,7 +30,7 @@ check('the Chrome identity script is not host-scoped', !chromeId.IDENTITY_SCRIPT
   const settings = fs.readFileSync(path.join(__dirname, '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
   check('wiring: Page is enabled before the document-start script is added (without it the script is skipped when the debugging port is open)', /send\('Page\.enable', \{\}, sessionId\)[^\n]*\.then\(\(\) =>\s*send\('Page\.addScriptToEvaluateOnNewDocument'/.test(main), 'order');
   check('wiring: no Firefox identity is applied anywhere', !main.includes('FIREFOX_PROFILE') && !main.includes('firefoxScript') && !settings.includes('firefoxRequestHeaders') && !fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'private-window.js'), 'utf8').includes('firefox'), 'firefox');
-  check('wiring: the ad blocker lets a Google sign-in page load everything it asks for', /isAuthUrl\(page\)\) return callback\(\{\}\)/.test(adblock), 'adblock');
+  check('wiring: the ad blocker lets a Google sign-in page load everything it asks for', /on\(page\) && !googleAuth\.isAuthUrl\(page\)/.test(adblock) && /!filtersPage\(page\)[^\n]*return callback\(\{\}\)/.test(adblock), 'adblock');
 }
 
 assert.strictEqual(failures, 0, `${failures} google-auth-identity check(s) failed`);
