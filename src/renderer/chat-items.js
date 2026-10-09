@@ -133,9 +133,19 @@
       // Shown in several tabs at once ("Also show in this tab"): every tab it is in, its home marked.
       const tabs = Array.isArray(chat.tabs) ? chat.tabs : [];
       const shared = tabs.length > 1;
+      // What a click on the row does. A chat in another tab that is working or shown in several tabs is attached to this tab's
+      // sidebar ('share': it stays where it is, so its run keeps working in its home tab and page actions keep going there; nothing is
+      // pulled away unasked); an idle chat in one other tab moves here; one already in this tab just opens. Without a share handler
+      // (an older page) a working or shared chat's click goes to its tab, as before. The chat page (jump false) always opens it itself.
+      const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      const rowAction = !jump ? 'open'
+        : elsewhere && onShare && (working || shared) ? 'share'
+        : ((shared && api.showTab) || (elsewhere && working && api.showTab)) && !(shared && chat.tab?.here) ? 'tab'
+        : 'open';
       const tabName = (x) => (x.here ? tr('chats.thisTab', 'This tab') : x.title || tr('chats.tabUntitled', 'another tab'));
-      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + ' · ' + tr('chats.clickGoes', 'click to go there') : '';
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
+      const clickHint = () => (rowAction === 'open' && !elsewhere ? '' : rowAction === 'share' ? tr('chats.clickShares', 'click opens it here too') : rowAction === 'tab' ? tr('chats.clickGoes', 'click to go there') : tr('chats.clickMoves', 'click moves it here'));
+      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + (clickHint() ? ' · ' + clickHint() : '') : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + ' · ' + clickHint() : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
@@ -158,14 +168,13 @@
           li.classList.add(`has-${chat.badge}`);
         }
       }
-      // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
-      const working = ['running', 'queued', 'approval'].includes(chat.badge);
       const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
       openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
         if (!jump) await moveHere(); // (the chat page opens a chat on the page itself: it keeps what it shows, whatever the tabs do)
-        else if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
-        else if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
+        else if (rowAction === 'share') await alsoShow(); // attach it to this sidebar: it stays in its tab(s)
+        else if (rowAction === 'tab') await goToTab(); // (no share handler) the tab you are not on, or its home
+        else await moveHere();
       };
 
       const actions = document.createElement('div');
@@ -232,7 +241,7 @@
       // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
       const dropsOne = Boolean(elsewhere && api.showTab);
       if (dropsOne) li.classList.add('drops-one');
-      const clickGoes = working || shared; // (the row's click goes to the tab; otherwise it moves the chat here)
+      const clickGoes = rowAction === 'tab'; // (the row's click goes to the tab; otherwise it moves the chat here or shows it here too)
       const tabActions = [];
       if ((elsewhere || shared) && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));

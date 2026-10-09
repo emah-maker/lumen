@@ -150,7 +150,7 @@
     refreshLists();
   }
 
-  function showSidebar() { if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click(); }
+  function showSidebar() { if (document.body.classList.contains('sidebar-hidden')) (window.showSidebarFor || (() => byId('toggle-sidebar').click()))(); }
   async function openPanel() {
     showSidebar();
     await refresh();

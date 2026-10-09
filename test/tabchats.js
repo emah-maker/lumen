@@ -14,10 +14,15 @@ const http = require('http');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await Promise.resolve(fn()).catch(() => null); if (v) return v; await sleep(100); } return v; };
 
-const launch = (profile) => electron.launch({
-  args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
-});
+// (These checks are about a chat the sidebar reopens on: the "Sidebar button starts a new chat" default is covered by test/sidebar-newchat.js.)
+const launch = async (profile) => {
+  const app = await electron.launch({
+    args: [path.join(__dirname, '..')],
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
+  });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  return app;
+};
 
 // The model: a message that names "chat-X" is chat X. Its first turn streams a line, then waits until the test lets
 // it go (so several chats are in flight together), then reads the page; the second turn answers "X finished" and

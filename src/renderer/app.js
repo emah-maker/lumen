@@ -2406,9 +2406,26 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
   if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
   if (visible && !fromTab) $('prompt').focus({ preventScroll: true });
 }
+// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
+// starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
+// this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
+// open stays in History, and a reply still being written there carries on.
+function toggleSidebarByHand() {
+  const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
+  if (opening) {
+    const plan = window.sidebarOpenPlan({
+      setting: window.lumenSidebarNewChat !== false,
+      empty: !$('empty').hidden,
+      intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
+    });
+    if (plan === 'new') $('new-chat').click();
+  }
+  showSidebar(opening);
+}
+window.showSidebarFor = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); }; // tasks.js, research.js: opening the sidebar for their panel is not "a new chat"
 $('toggle-sidebar').onclick = () => {
   if (chatFull) { exitFull(); return; } // the toggle docks a full chat back rather than closing it
-  showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true');
+  toggleSidebarByHand();
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
@@ -2490,7 +2507,7 @@ resizer.addEventListener('keydown', (e) => {
   const width = setSidebarWidth($('sidebar').getBoundingClientRect().width + (e.key === 'ArrowLeft' ? 20 : -20));
   localStorage.setItem('sidebarWidth', String(width));
 });
-window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
+window.browser.onToggleSidebar(() => toggleSidebarByHand());
 // Ctrl+Shift+K: the New chat button, opening the sidebar first (a run in progress keeps going in its own chat).
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);

@@ -18,10 +18,15 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwA
 
 // A fake Claude key keeps the picker, and so the agent, on the Claude API; the client is swapped for a
 // fake that records what the run could see and can be held back by a gate.
-const launch = (profile) => electron.launch({
-  args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },
-});
+// (These checks are about a chat the sidebar reopens on: the "Sidebar button starts a new chat" default is covered by test/sidebar-newchat.js.)
+const launch = async (profile) => {
+  const app = await electron.launch({
+    args: [path.join(__dirname, '..')],
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },
+  });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  return app;
+};
 const fakeClient = (app) => app.evaluate(() => {
   const fake = global.__fake = { n: 0, gate: null, runs: [] };
   global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
