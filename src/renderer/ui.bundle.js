@@ -6682,27 +6682,6 @@ $('tabs').addEventListener('pointerover', (e) => {
 $('tabs').addEventListener('pointerleave', () => { if (wakeHoverId != null) window.browser.tabHover?.(wakeHoverId, false); wakeHoverId = null; });
 $('tabs').addEventListener('pointerdown', (e) => { if (e.button !== 0) return; const id = sleepingTabOf(e.target); if (id != null) window.browser.tabDown?.(id); }, true);
 
-// The picture of a tab that is waking, over the page area until its real page has painted (main.js showCover / endCover).
-let wakeCover = null;
-function clearWakeCover() {
-  if (!wakeCover) return;
-  wakeCover.remove();
-  URL.revokeObjectURL(wakeCover.src);
-  wakeCover = null;
-}
-window.browser.onWakeCover?.(async ({ id, jpeg }) => {
-  clearWakeCover();
-  const img = new Image();
-  img.className = 'wake-cover';
-  img.alt = '';
-  img.src = URL.createObjectURL(new Blob([jpeg], { type: 'image/jpeg' }));
-  wakeCover = img;
-  await img.decode().catch(() => {});
-  if (wakeCover !== img) return;
-  viewport.append(img);
-  requestAnimationFrame(() => requestAnimationFrame(() => window.browser.wakeCoverShown?.(id))); // on screen: main times it
-});
-window.browser.onWakeCoverEnd?.(() => clearWakeCover());
 // Backstop for a leave that isn't reported (the window-drag area around the strip takes the mouse).
 document.addEventListener('pointermove', (e) => { if (hoverCardTab && !$('tabs').contains(e.target)) hideHoverCard(); }, { passive: true });
 window.addEventListener('blur', hideHoverCard);

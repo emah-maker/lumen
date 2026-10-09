@@ -352,6 +352,12 @@ if (readSettings().favicons) {
   const { favicons, ...rest } = readSettings();
   writeSettings(rest);
 }
+// One-time cleanup: tab wake pictures (an older build kept one per page on disk) are gone, and so is their setting.
+fs.promises.rm(path.join(app.getPath('userData'), 'tab-snapshots'), { recursive: true, force: true }).catch(() => {});
+if ('tabSnapshots' in readSettings()) {
+  const { tabSnapshots, ...rest } = readSettings();
+  writeSettings(rest);
+}
 
 // Outside AI agents (MCP, CDP automation, Claude Code): features/ai-agents.js. The automation
 // switch must be set before ready.
@@ -1752,7 +1758,7 @@ function layout() {
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
-    const show = visible && !viewFrozen && !tab.spareFilling && !tab.cover && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
+    const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -2075,10 +2081,6 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
   wc.once('did-stop-loading', () => setTimeout(markFirstTabLoaded, 200));
-  if (wakeOn()) { // (features/tab-snapshots.js) the first paint ends a woken tab's cover; a loaded front page gets its picture
-    observePaint(tab, wc);
-    wc.on('did-finish-load', () => { setTimeout(() => withWindow(tab.rec, () => { if (tab.id === activeId) captureSnapshot(tab); }), 1500).unref?.(); });
-  }
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   // [ai manners] a page the AI opened that opens another (target=_blank, window.open) opens it behind and as the AI's own: it can be closed again and, in hands-off mode, worked in
@@ -2379,7 +2381,6 @@ function sleepTab(tab) {
   tab.sleeping = true;
   tab.preloaded = false;
   tab.preloadMuted = false;
-  endCover(tab, false);
   wc.off('destroyed', tab.onViewDestroyed); // this is a sleep, not a close: don't let that handler drop the tab
   win.contentView.removeChildView(tab.view);
   wc.close();
@@ -2435,11 +2436,7 @@ function wakeTab(tab) {
   raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
-  if (snapshotsOn()) { // its picture (and where it was scrolled to, when the page comes back without its back/forward list)
-    tab.coverUrl = tab.sleepUrl || '';
-    const peek = tab.coverUrl ? snaps().peek(tab.coverUrl) : null;
-    tab.coverScroll = peek && peek.y > 0 && !history?.entries?.length ? { x: peek.x, y: peek.y } : null;
-  } else tab.coverUrl = '';
+  if (!warm) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
   wireView(tab, tab.sleepUrl || newTabUrl(), history);
 }
 
@@ -2496,7 +2493,7 @@ function sleepFacts(tab) {
     openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) : false,
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
     capturing: wc ? wc.isBeingCaptured() || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded)
-    pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt,
+    pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt, viewedAt: tab.viewedAt || 0,
   };
 }
 
@@ -2585,99 +2582,20 @@ let pressureCheck = () => scheduler.memorySample(); // (one sample shared with t
 scheduler.every('tab-sleep-sweep', SLEEP_CHECK_MS, () => sweepSleep().catch(() => {}), { whenHidden: 2 * 60 * 1000 }); // (still swept while minimised: that is when memory is wanted)
 if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve({ pressure: on }); }, frozen: (id) => Boolean(tabs.find((x) => x.id === id)?.frozen), freeze: (id) => freezeTab(tabs.find((x) => x.id === id)), thaw: (id) => thawTab(tabs.find((x) => x.id === id)), sleepNow: (id) => putToSleep(tabs.find((x) => x.id === id), tabSleep.normalize(readSettings()).how), menuItems: (id) => sleepMenuItems(tabs.find((x) => x.id === id)).map((i) => ({ label: i.label, enabled: i.enabled !== false })), changed: tabSleepSettingChanged, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
-// ---------- waking tabs faster: snapshots, wake ahead, background preload (features/tab-wake.js, tab-snapshots.js) ----------
-// A placeholder (restored, lazy) or unloaded tab used to show a blank view until its real page painted. Now: (1) the page is
-// photographed when it is left (and once after it loads), kept on disk (cached, 50 MB, least recently used out) and shown in
-// the UI over the tab area at once when the tab is switched to, until the real page's first contentful paint; (2) a tab is
-// woken when the pointer rests on it (150 ms), on mousedown, or is the next one a keyboard switch would reach; (3) once the
-// front tab has loaded and the machine is idle, a few likely next tabs are woken one at a time (Settings > Tabs > Memory).
+// ---------- waking tabs faster: wake ahead, background preload (features/tab-wake.js) ----------
+// A placeholder (restored, lazy) or unloaded tab has no page until it is woken. A tab is woken when the pointer rests on it
+// (100 ms), on mousedown, or is the next one a keyboard switch would reach; once the front tab has loaded and the machine is
+// idle, a few likely next tabs are woken one at a time (Settings > Tabs > Memory). There is no picture of the page while it
+// loads: the view shows the theme's background (wakeTab) until the page paints.
 const tabWake = require('./features/tab-wake');
-const tabSnaps = require('./features/tab-snapshots');
 let wakeForTest = false; // tests leave all of this off (it changes what a switch shows) unless one turns it on
 const wakeOn = () => !TEST || wakeForTest;
-const snapshotsOn = () => wakeOn() && readSettings().tabSnapshots !== false;
-let snapStore = null;
-const snaps = () => (snapStore ||= tabSnaps.createSnapshotStore({ dir: path.join(app.getPath('userData'), 'tab-snapshots') }));
-const sendToTabWindow = (tab, channel, payload) => { const w = tab?.rec?.win; if (w && !w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send(channel, payload); };
-const wakeMarks = []; // test/measure only: { id, clickAt, coverAt, shownAt, paintAt }
-
-// The picture of a page as it is now (when it is left, and once after it loads). Never for a page the store's rules exclude
-// (private/research tabs, Lumen's pages, sign-in/payment addresses, a page with a password or card field).
-async function captureSnapshot(tab) {
-  if (!snapshotsOn() || !alive(tab) || tab.sleeping || tab.frozen || tab.outgoing || tab.snapBusy) return;
-  const wc = tab.view.webContents;
-  const url = realUrl(wc);
-  if (!isWebUrl(url) || wc.isLoading() || warmPending.has(wc)) return;
-  if (tabSnaps.skipReason(url, { isolated: tab.isolated, managerPage: tab.managerPage })) { snaps().forget(url); return; }
-  if (tab.snapUrl === url && Date.now() - tab.snapAt < 5000) return;
-  tab.snapBusy = true;
-  try {
-    const probe = await wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSnaps.PAGE_PROBE }]).catch(() => null);
-    if (!probe) return;
-    if (probe.sensitive) { snaps().forget(url); return; }
-    if (!alive(tab) || realUrl(tab.view.webContents) !== url) return;
-    const image = await wc.capturePage();
-    if (image.isEmpty()) return;
-    const size = image.getSize();
-    const small = size.width > 960 ? image.resize({ width: 960, quality: 'good' }) : image;
-    const out = small.getSize();
-    if (snaps().put(url, small.toJPEG(60), { w: out.width, h: out.height, x: probe.x, y: probe.y })) { tab.snapUrl = url; tab.snapAt = Date.now(); }
-  } catch { /* a page going away mid-capture: no picture */ } finally {
-    tab.snapBusy = false;
-  }
-}
-
-// First contentful paint of a freshly woken page (or, for a page with nothing to paint, its load ending): ends the cover.
-const PAINT_JS = `new Promise((done) => { try { const o = new PerformanceObserver((l) => { if (l.getEntries().some((e) => e.name === 'first-contentful-paint')) { o.disconnect(); done(); } }); o.observe({ type: 'paint', buffered: true }); } catch { done(); } })`;
-function observePaint(tab, wc) {
-  tab.painted = false;
-  const done = () => {
-    if (tab.painted || tab.view?.webContents !== wc) return;
-    tab.painted = true;
-    const mark = tab.wakeMark;
-    if (mark && !mark.paintAt) mark.paintAt = Date.now();
-    const scroll = tab.coverScroll;
-    tab.coverScroll = null;
-    if (scroll && !wc.isDestroyed()) wc.executeJavaScript(`if (!window.scrollY) window.scrollTo(${scroll.x | 0}, ${scroll.y | 0})`).catch(() => {});
-    const rec = tab.rec;
-    if (tab.cover) setTimeout(() => { if (rcAlive(rec)) withWindow(rec, () => endCover(tab, true)); }, 16).unref?.(); // (one frame after the paint, as leaveNewTabFor does)
-  };
-  wc.once('did-navigate', () => { wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: PAINT_JS }]).then(done, done); });
-  wc.once('did-fail-load', done);
-  wc.on('did-stop-loading', () => { setTimeout(done, 600).unref?.(); }); // nothing to paint (or no FCP entry): the page is there
-}
-
-// Shown when a tab that has not painted yet is switched to: its picture goes up in the UI and the (blank) view stays hidden.
-function showCover(tab) {
-  if (!snapshotsOn() || tab.cover || tab.painted !== false || !tab.coverUrl || !alive(tab)) return;
-  const snap = snaps().get(tab.coverUrl);
-  if (!snap) return;
-  const rec = tab.rec;
-  tab.cover = { timer: setTimeout(() => { if (rcAlive(rec)) withWindow(rec, () => endCover(tab, true)); }, 6000) };
-  tab.cover.timer.unref?.();
-  tab.wakeMark = { id: tab.id, clickAt: Date.now(), coverAt: Date.now() };
-  wakeMarks.push(tab.wakeMark);
-  if (wakeMarks.length > 50) wakeMarks.shift();
-  sendToTabWindow(tab, 'wake:cover', { id: tab.id, jpeg: snap.jpeg, w: snap.w, h: snap.h });
-}
-function endCover(tab, relayout) {
-  if (!tab.cover) return;
-  clearTimeout(tab.cover.timer);
-  tab.cover = null;
-  if (relayout && tab.id === activeId) layout();
-  setTimeout(() => sendToTabWindow(tab, 'wake:cover-end', { id: tab.id }), 80).unref?.(); // the live page is up a moment before the picture leaves
-}
-ipcMain.on('wake:cover-shown', (event, id) => {
-  const rec = recOfSender(event.sender);
-  const tab = rec ? withWindow(rec, () => tabs.find((t) => t.id === id)) : null;
-  if (tab?.wakeMark && !tab.wakeMark.shownAt) tab.wakeMark.shownAt = Date.now();
-});
 
 // Is memory low by the sleep settings (the test hook __tabSleep.fakePressure stands in for the system's answer)?
 const memoryIsLow = async () => { try { return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await pressureCheck()); } catch { return false; } };
 
 // ---- wake ahead ----
-const sensitiveUrl = (url) => Boolean(tabSnaps.skipReason(url, {}));
+const sensitiveUrl = (url) => Boolean(tabWake.sensitiveAddress(url));
 function wakeFacts(tab) {
   const url = tab.sleepUrl || '';
   return { id: tab.id, sleeping: Boolean(tab.sleeping), frozen: Boolean(tab.frozen), web: isWebUrl(url), isolated: Boolean(tab.isolated), internal: Boolean(tab.settings || tab.managerPage), sensitive: sensitiveUrl(url), lastActive: tab.viewedAt || tab.lastActiveAt || 0 };
@@ -2810,13 +2728,7 @@ function adoptPreloaded(tab) {
 if (TEST) {
   global.__wake = {
     enable: (on = true) => { wakeForTest = on; },
-    last: () => { const m = wakeMarks[wakeMarks.length - 1]; return m ? { ...m } : null; },
-    marks: () => wakeMarks.map((m) => ({ ...m })),
-    snapshotStats: () => snaps().stats(),
-    snapshotClear: () => snaps().clear(),
-    capture: (id) => captureSnapshot(tabs.find((t) => t.id === id)),
-    hasSnapshot: (url) => snaps().has(url),
-    state: () => tabs.map((t) => ({ id: t.id, url: t.sleepUrl || (alive(t) ? realUrl(t.view.webContents) : ''), sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), frozenFirst: Boolean(t.frozenFirst), preloaded: Boolean(t.preloaded), painted: t.painted, cover: Boolean(t.cover), wokeAhead: t.wokeAhead || null })),
+    state: () => tabs.map((t) => ({ id: t.id, url: t.sleepUrl || (alive(t) ? realUrl(t.view.webContents) : ''), sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), frozenFirst: Boolean(t.frozenFirst), preloaded: Boolean(t.preloaded), wokeAhead: t.wokeAhead || null })),
     preload: () => preloadLoop(curRec),
     hover: (id, on) => { const h = hoverIntentFor(curRec); if (on) h.enter(id); else h.leave(id); },
     down: (id) => hoverIntentFor(curRec).down(id),
@@ -2935,8 +2847,6 @@ function switchTab(id, { wake = true } = {}) {
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
     leaving?.endFocusGuard?.(); // a new tab left before it was used no longer holds the cursor in the address bar
-    if (leaving?.cover) endCover(leaving, false);
-    if (leaving && wakeOn()) setTimeout(() => captureSnapshot(leaving), 250).unref?.(); // its picture for next time (after the tab shown now is on its way)
   }
   // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
   // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
@@ -2949,7 +2859,6 @@ function switchTab(id, { wake = true } = {}) {
   if (tab.sleeping || tab.frozen) wakeTab(tab);
   activeId = id;
   adoptPreloaded(tab);
-  if (wakeOn()) showCover(tab); // not painted yet and a picture of it exists: the picture shows until it paints
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
   if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
@@ -3846,7 +3755,6 @@ ipcMain.handle('history:list', async (event) => {
 ipcMain.handle('history:remove', async (event, url) => {
   await historyReady;
   if (!fromHistoryPage(event) || typeof url !== 'string' || !history.delete(url)) return false;
-  try { snaps().forget(url); } catch { /* none */ } // (the saved picture of that page too)
   saveHistorySoon();
   return true;
 });
@@ -3866,7 +3774,6 @@ function historyMenu() {
         if (response !== 1) return;
         await historyReady;
         history.clear();
-        try { snaps().clear(); } catch { /* none */ } // (the pictures of tabs go with the history)
         historyGen++; // (a write in flight must not bring the cleared list back)
         clearTimeout(historySaveTimer);
         historyDirty = false;
@@ -7627,7 +7534,6 @@ const settingsBackend = settingsPage.create({
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   onTabSleepChange: () => tabSleepSettingChanged(),
   onTabPreloadChange: () => schedulePreload(1500),
-  clearTabSnapshots: () => { try { snaps().clear(); } catch { /* none */ } },
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });
