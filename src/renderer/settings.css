@@ -520,7 +520,8 @@ main { --pad: 40px; padding-left: var(--pad); padding-right: var(--pad); max-wid
 /* The page title stays while the section scrolls (a hairline appears once it has). */
 .pane-title { position: sticky; top: 0; z-index: 5; margin: 0 calc(var(--pad) * -1) 0; padding: 14px calc(var(--pad) + 4px) 6px; background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .pane-desc { margin-top: 0; }
-.searching .pane-title { margin: 0 calc(var(--pad) * -1); padding-top: 10px; padding-bottom: 6px; }
+/* Search results stack several sections: their titles are plain, in line with the cards, and don't stick. */
+body.searching .pane-title, body.searching.scrolled .pane-title { position: static; margin: 18px 4px 8px; padding: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
 body.scrolled .pane-title { box-shadow: 0 1px 0 var(--hairline); }
 .subpane .pane-title { margin-bottom: 8px; }
 @media (max-width: 800px) { .nav + main .pane-title { top: 0; } }
