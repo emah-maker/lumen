@@ -2678,6 +2678,8 @@ function createWidgets(deps) {
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     if (action.do === 'signin') return gmailSignInFromPage(w);
     if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
+      // The players load in the normal session: a dead socket or stale DNS answer from a network glitch would fail the reload too.
+      if (w.type === 'applemusic' || w.type === 'spotify') await freshNetwork();
       if (w.type === 'applemusic') { if (w.mode === 'web') deps.appleMusicWebReload?.(); else deps.appleMusic?.reload?.(); return true; }
       if (w.type === 'spotify' && w.mode === 'status') { deps.spotifyEngine?.reload?.(); return true; }
       if (w.type !== 'spotify' || w.mode !== 'web') return false;
