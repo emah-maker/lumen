@@ -227,8 +227,8 @@ async function main() {
   check('search tab: one letter asks nothing as you type, and the box does not warm again within a minute of the tab doing it', asks().filter((a) => a.startsWith('esearch')).length === 0 && asks().filter((a) => a === 'ewarm').length === 0, JSON.stringify(asks()));
   await typeIn('ni'); await sleep(120);
   check('search tab: before the pause is over nothing is asked, and the list shows rows\' outlines (skeleton)', asks().filter((a) => a.startsWith('esearch')).length === 0 && (await js(`document.querySelectorAll('.mc-panel-search .am-skel').length`)) === 5, JSON.stringify(asks()));
-  await sleep(160);
-  check('search tab: ...and the search is asked 200 ms after the last key', asks().includes('esearch:ni'), JSON.stringify(asks()));
+  await sleep(220);
+  check('search tab: ...and the search is asked 250 ms after the last key', asks().includes('esearch:ni'), JSON.stringify(asks()));
   navigations.length = 0;
   await typeIn('nightc'); await js(`document.querySelector('.mc-search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`); await sleep(40);
   check('search tab: Enter asks at once (no pause)', asks().includes('esearch:nightc'), JSON.stringify(asks()));

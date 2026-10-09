@@ -83,7 +83,7 @@ const ENGINES = {
   },
 };
 // Why a search found nothing (main says: features/music-engine.js searchWhy), in words; the detail (the page's address and what it showed) is the hover text.
-const searchFailText = (o, d) => (d.searchWhy === 'signedOut' ? `Sign in to ${o.name} in Lumen to search and play.` : d.searchWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found. Is the web player signed in?` : d.searchWhy === 'timeout' ? `${o.name} didn’t show search results in time. Try again.` : `${o.name} didn’t answer the search. It may have changed its page; try again.`);
+const searchFailText = (o, d) => (d.searchWhy === 'busy' ? `${o.name} asked Lumen to slow down. Search will work again in a moment.` : d.searchWhy === 'signedOut' ? `Sign in to ${o.name} in Lumen to search and play.` : d.searchWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found. Is the web player signed in?` : d.searchWhy === 'timeout' ? `${o.name} didn’t show search results in time. Try again.` : `${o.name} didn’t answer the search. It may have changed its page; try again.`);
 
 const musicUi = new Map(); // widget id -> { tab, term, open, active, timer, asked: {tab: ms}, scroll: {tab: px} }: what the user did, kept for as long as the page lives
 const uiOf = (id) => { let u = musicUi.get(id); if (!u) { u = { tab: '', term: '', open: false, timer: null, active: -1, asked: {}, scroll: {} }; musicUi.set(id, u); } return u; };
@@ -843,30 +843,47 @@ function searchController(view, { id, o, act, ui, cap }) {
     const d0 = list._drawn;
     const term = ui.term.trim();
     const answered = d.query === term && d.searching !== true; // main has this term's rows
-    let results = rowsOf(d.results);
-    let provisional = false;
-    if (!answered) { // before the answer: this exact term's rows from the last minutes, else those of a longer query that starts with it (dimmed), else none
-      const hit = term ? cache.get(id, term) : null;
-      const near = hit || term.length < MS.MIN_CHARS ? null : cache.prefix(id, term);
-      results = hit ? rowsOf(hit.rows) : near ? rowsOf(near.rows) : [];
-      provisional = Boolean(near);
-    } else if (d.searchOk !== false && d.searchPartial !== true && results.length) { // (a whole answer is kept; the first rows of one still coming are not)
-      const key = sig([term, results.map((i) => i.kind + i.id + (i.thumb ? 1 : 0))]);
+    if (!term) ui.lastRows = null; // (cleared: the next term starts from nothing, not from the rows of the one before)
+    let picked;
+    if (answered) picked = MS.pick({ answered: true, rows: rowsOf(d.results) });
+    else if (term.length < MS.MIN_CHARS) picked = { rows: [], provisional: false, skeleton: true };
+    else { // before the answer: this exact term's rows from the last minutes, else those of a longer or a shorter query it goes with (dimmed), else the rows that were on screen (dimmed): the list does not go blank between two keys
+      const hit = cache.get(id, term);
+      picked = MS.pick({ answered: false, hit, near: hit ? null : cache.prefix(id, term), before: hit ? null : cache.before(id, term), last: hit ? null : ui.lastRows });
+    }
+    const results = rowsOf(picked.rows);
+    const provisional = picked.provisional;
+    if (answered && d.searchOk !== false && d.searchPartial !== true && results.length) { // (a whole answer is kept; the first rows of one still coming are not)
+      const key = sig([term, results.map((i) => i.kind + i.id)]);
       if (ui.learned !== key) { ui.learned = key; cache.put(id, term, results); }
     }
-    const state = sig([p.kind, term, answered, provisional, d.searching === true, d.query, d.searchOk, d.searchWhy, d.searchPartial === true, d.moreSongs === true, d.moreLoading === true, results.map((i) => i.kind + i.id + (i.thumb ? 1 : 0)), recentSearches(id), note(d), Boolean(d.can && (d.can.playLater || d.can.playNext)), d.can && d.can.playNext, d.can && d.can.playLater, p.open !== false]);
-    if (d0 === state) return;
+    if (results.length && !provisional) ui.lastRows = results;
+    // Only what the list is drawn from (the pictures are not part of it: a picture arriving is patched into its row, the list is not drawn again)
+    const state = sig([p.kind, term, answered, provisional, d.searching === true, d.query, d.searchOk, d.searchWhy, d.searchPartial === true, d.moreSongs === true, d.moreLoading === true, MS.shapeKey(results), recentSearches(id), note(d), Boolean(d.can && (d.can.playLater || d.can.playNext)), d.can && d.can.playNext, d.can && d.can.playLater, p.open !== false]);
+    const pics = results.map((i) => (thumbOk(i.thumb) ? i.thumb.length : 0)).join();
+    if (d0 === state) { // the same list: only pictures that came since are put into their rows (nothing is rebuilt, nothing moves)
+      if (list._pics !== pics) { list._pics = pics; patchThumbs(p, results); }
+      return;
+    }
     list._drawn = state;
+    list._pics = pics;
+    const top = list.scrollTop;
+    const keyOfOpt = (b) => b.dataset.key || b.textContent;
+    const was = p.options();
+    const activeKey = ui.active >= 0 && was[ui.active] ? keyOfOpt(was[ui.active]) : '';
+    const activeAt = ui.active;
     if (p.io) { p.io.disconnect(); p.io = null; }
     list.replaceChildren();
     list.classList.toggle('am-stale', provisional);
     const missing = []; // [row, id]: rows with no picture yet, watched until they are on screen
     let n = 0;
+    const body = () => {
     const optionButton = (item, group) => {
       const row = el('div', 'am-optrow');
       const b = el('button', 'am-opt');
       b.type = 'button';
       b.id = `am-opt-${id}-${p.kind}-${n++}`;
+      b.dataset.key = `${item.kind}:${item.id}`;
       b.setAttribute('role', 'option');
       b.setAttribute('aria-selected', 'false');
       b.setAttribute('aria-label', `Play ${text(item.title, 60)}${text(item.sub, 60) ? `, ${text(item.sub, 60)}` : ''}`);
@@ -945,6 +962,24 @@ function searchController(view, { id, o, act, ui, cap }) {
     }
     if (note(d)) line(note(d));
     watchThumbs(p, missing);
+    };
+    body();
+    list.scrollTop = top; // (drawn again: the reader stays where they were, and the highlighted row stays the highlighted row)
+    const now = p.options();
+    const at = MS.keepActive(now.map(keyOfOpt), activeKey, activeAt);
+    if (at >= 0 && (activeKey || activeAt >= 0)) { const keep = list.scrollTop; p.setActive(at); list.scrollTop = keep; } else if (ui.active >= 0) p.setActive(-1);
+  }
+  // A picture that arrived for a row already on screen goes into that row.
+  function patchThumbs(p, results) {
+    const byKey = new Map(p.options().map((b) => [b.dataset.key, b]));
+    for (const item of results) {
+      if (!thumbOk(item.thumb)) continue;
+      const b = byKey.get(`${item.kind}:${item.id}`);
+      const slot = b && b.querySelector('.am-thumb.none');
+      if (!slot) continue;
+      const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.decoding = 'async'; img.src = item.thumb;
+      slot.replaceWith(img);
+    }
   }
   // The pictures of the rows that are on screen (not all of the rows: a long list costs only what is looked at): asked together, a moment after they show.
   function watchThumbs(p, missing) {

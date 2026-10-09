@@ -47,16 +47,29 @@ const bare = (items) => items.map((it) => { const row = { ...it }; delete row.im
 
 // ---- search ----
 const searchRows = (items) => bare(items).map((r) => ({ ...r, thumb: r.thumb || '' })); // (every row has a picture field: empty until the card asks for it)
+const BUSY_WAIT_MS = 8000; // a rate limit that clears sooner than this is waited out inside the search
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const busy = (res) => !res.ok && (res.status === 429 || Boolean(res.error && (res.error.waitMs > 0 || /slow down|too many requests/i.test(String(res.error.message || '')))));
 // ONE request (GET /search for songs, albums, artists and playlists together). The rows come back at once without pictures: the card asks for the
 // pictures of the rows it has on screen (loadThumbs), so a long list costs no more than the rows that are looked at. A search that was asked before a
 // newer one finished is dropped (ui.searchSeq), so an older term never replaces the newer one's rows. `ctx.searchCall` (the user's own search budget,
 // not the shared polling one) is used when the widget has it.
 async function runSearch(ui, term, ctx, call = ctx.searchCall) {
   const mine = (ui.searchSeq = (ui.searchSeq || 0) + 1);
-  const res = await ask(call, ui, PLAYER.search(term), 'search').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
+  const go = () => ask(call, ui, PLAYER.search(term), 'search').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
+  let res = await go();
+  // A rate limit (429, or Lumen's own pause after one) is waited out quietly, up to twice and a few seconds each: the rows already on screen stay, nothing
+  // says "failed". A newer search asked meanwhile takes over (and this one is dropped before it asks again).
+  for (let i = 0; i < 2 && mine === ui.searchSeq && busy(res); i++) {
+    const wait = res.error && res.error.waitMs > 0 ? res.error.waitMs : 1500;
+    if (wait > BUSY_WAIT_MS) break;
+    await (ctx.sleep || sleep)(wait + 50);
+    if (mine !== ui.searchSeq) break;
+    res = await go();
+  }
   if (mine !== ui.searchSeq) return { stale: true, ok: false };
-  ui.search = { term: term.slice(0, 80), ok: res.ok, items: res.ok ? SV.normalizeSearch(res.body) : [], why: res.ok ? '' : 'page', api: true };
-  return { ok: res.ok, stale: false, status: res.status };
+  ui.search = { term: term.slice(0, 80), ok: res.ok, items: res.ok ? SV.normalizeSearch(res.body) : [], why: res.ok ? '' : busy(res) ? 'busy' : 'page', api: true };
+  return { ok: res.ok, stale: false, status: res.status, busy: !res.ok && busy(res) };
 }
 function clearSearch(ui) { ui.searchSeq = (ui.searchSeq || 0) + 1; ui.search = null; }
 async function loadThumbs(ui, ids, ctx) {
@@ -73,7 +86,7 @@ const moreSongsOf = (s) => { const songs = s.items.filter((i) => i.kind === 'son
 function directResults(ui) {
   const s = ui && ui.search;
   if (!s || !s.api) return null;
-  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: moreSongsOf(s), moreLoading: false };
+  return { results: searchRows(s.items), searchOk: s.ok !== false, searchWhy: s.ok === false ? s.why || 'page' : '', searchDetail: '', query: s.term, searching: false, searchPartial: false, moreSongs: moreSongsOf(s), moreLoading: false };
 }
 // "More songs": the next page of songs for the search shown (offset paging, 10 a request), merged in under the songs already listed. A newer search
 // meanwhile drops it. Returns { ok, stale }.
@@ -328,7 +341,7 @@ async function extras(call, ctx, playback) {
     devicesOk: dev ? dev.ok : true,
     results: ui.search ? searchRows(ui.search.items) : [],
     searchOk: ui.search ? ui.search.ok !== false : true,
-    searchWhy: ui.search && ui.search.ok === false ? 'page' : '',
+    searchWhy: ui.search && ui.search.ok === false ? ui.search.why || 'page' : '',
     query: ui.search ? ui.search.term : '',
     searching: false,
     moreSongs: Boolean(ui.search && ui.search.api && moreSongsOf(ui.search)),
