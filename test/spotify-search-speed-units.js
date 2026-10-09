@@ -1,5 +1,5 @@
 // The Spotify (and Apple Music) card's search, made fast, without Electron, Spotify or the network:
-//   - search-as-you-type: the 200 ms pause, two letters at least, Enter at once, the cache of the last queries (50, ten minutes, a longer earlier
+//   - search-as-you-type: the 250 ms pause, two letters at least, Enter at once, the cache of the last queries (50, ten minutes, a longer earlier
 //     query shown for what is typed so far), a newer search outrunning an older one (features/music-search-core.js);
 //   - Spotify's Web API as the fast path: one request (GET /v1/search, every kind, market=from_token) whenever the account is connected, also when
 //     the music plays in Lumen's own page; the page's two routes only when it is not (or when the API refuses);
@@ -33,12 +33,12 @@ function coreChecks(check) {
   const cache = MS.createCache({ now: () => clock });
   const s = MS.createScheduler({ send: (t) => sent.push(t), shown: (t) => shown.push(t), cache, scope: 'c1', setTimeout: st, clearTimeout: ct });
 
-  check('search core: the pause is 200 ms, a term needs two letters, the cache keeps 50 queries for ten minutes', MS.DEBOUNCE_MS === 200 && MS.MIN_CHARS === 2 && MS.MAX_QUERIES === 50 && MS.TTL_MS === 10 * 60e3, JSON.stringify([MS.DEBOUNCE_MS, MS.MIN_CHARS, MS.MAX_QUERIES, MS.TTL_MS]));
+  check('search core: the pause is 250 ms, a term needs two letters, the cache keeps 50 queries for ten minutes', MS.DEBOUNCE_MS === 250 && MS.MIN_CHARS === 2 && MS.MAX_QUERIES === 50 && MS.TTL_MS === 10 * 60e3, JSON.stringify([MS.DEBOUNCE_MS, MS.MIN_CHARS, MS.MAX_QUERIES, MS.TTL_MS]));
   s.type('d');
   advance(1000);
   check('search core: one letter is not searched as you type', sent.length === 0 && s.type('d') === 'short', JSON.stringify(sent));
-  s.type('da'); advance(199);
-  check('search core: a search is asked 200 ms after the last key, not before', sent.length === 0 && s.pending(), JSON.stringify(sent));
+  s.type('da'); advance(249);
+  check('search core: a search is asked 250 ms after the last key, not before', sent.length === 0 && s.pending(), JSON.stringify(sent));
   advance(2);
   check('search core: …and then it is asked once', sent.join() === 'da' && !s.pending(), JSON.stringify(sent));
   sent.length = 0;
