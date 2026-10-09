@@ -5,14 +5,17 @@
 // it off it costs nothing. One small canvas that never takes a click (pointer-events: none; the
 // page's CSS also fades it behind the content column), kept light on purpose: a particle count
 // scaled to the window and capped, at most 30 frames a second (20 and half as many particles in
-// Performance mode), a capped pixel ratio, nothing drawn while the tab is hidden, and one still
-// frame with Reduce motion. Each color is one batched fill, so rainbow costs a few more calls only.
+// Performance mode), a capped pixel ratio and canvas size, no animation frame asked for while the
+// page is not in front (and its pixel buffer freed after a while), and one still frame with Reduce motion. Each color is one batched fill, so rainbow costs a few more calls only.
 
 (() => {
   const TAU = Math.PI * 2;
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
   const LEVEL = { few: 0.5, normal: 1, many: 1.8, slow: 0.5, fast: 1.8, small: 0.65, large: 1.6 };
   const RAINBOW = ['255, 99, 132', '255, 159, 64', '255, 214, 10', '52, 199, 89', '10, 132, 255', '191, 90, 242'];
+
+  const MAX_PIXELS = 2.6e6; // the canvas never holds more pixels than this (about 1920 x 1350)
+  const FREE_AFTER_MS = 20e3; // hidden this long: the canvas gives its pixel buffer back (redrawn from the particles when shown)
 
   let style = { size: 1 }; // the current run's multipliers (make() reads the size)
 
@@ -132,6 +135,8 @@
   function stop() {
     if (!run) return;
     cancelAnimationFrame(run.raf);
+    clearTimeout(run.freeTimer);
+    document.removeEventListener('visibilitychange', run.onVisibility);
     removeEventListener('resize', run.onResize);
     removeEventListener('pointermove', run.onPointer);
     document.documentElement.removeEventListener('pointerleave', run.onLeave);
@@ -158,8 +163,8 @@
 
   function size() {
     const r = run;
-    const dpr = Math.min(devicePixelRatio || 1, r.lite ? 1 : 1.5);
     const w = innerWidth; const h = innerHeight;
+    const dpr = Math.min(devicePixelRatio || 1, r.lite ? 1 : 1.5, Math.max(1, Math.sqrt(MAX_PIXELS / Math.max(1, w * h)))); // (a huge window: fewer pixels, not a 4K canvas)
     r.canvas.width = Math.round(w * dpr); r.canvas.height = Math.round(h * dpr);
     r.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const fx = r.w ? w / r.w : 1; const fy = r.h ? h / r.h : 1;
@@ -203,7 +208,8 @@
   function frame(t) {
     const r = run;
     if (!r) return;
-    r.raf = requestAnimationFrame(frame); // the browser stops calling this while the tab is hidden
+    if (document.hidden) { r.raf = 0; return; } // (onVisibility starts the loop again)
+    r.raf = requestAnimationFrame(frame);
     const interval = r.lite ? 50 : 33;
     if (t - r.last < interval) return;
     const dt = (Math.min(3, (t - (r.last || t - interval)) / 16.7)) * r.speed; // in 60 Hz frames; a long pause doesn't jump
@@ -236,6 +242,23 @@
     run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 } };
     size();
     if (!motion) { draw(); return; }
+    // Not in front (another tab, the spare page, a minimised window): no animation frame is even asked for, and after a while the canvas
+    // gives its pixels back. Back in front: the buffer is made again and the loop starts where the particles are.
+    run.onVisibility = () => {
+      const r = run;
+      if (!r) return;
+      if (document.hidden) {
+        cancelAnimationFrame(r.raf); r.raf = 0;
+        clearTimeout(r.freeTimer);
+        r.freeTimer = setTimeout(() => { if (run === r && document.hidden) { r.canvas.width = 1; r.canvas.height = 1; r.freed = true; } }, FREE_AFTER_MS);
+        return;
+      }
+      clearTimeout(r.freeTimer);
+      if (r.freed) { r.freed = false; size(); }
+      r.last = 0;
+      if (!r.raf) r.raf = requestAnimationFrame(frame);
+    };
+    document.addEventListener('visibilitychange', run.onVisibility);
     run.onResize = () => { run.resized = true; };
     addEventListener('resize', run.onResize, { passive: true });
     if (opts.interact) {
@@ -244,7 +267,7 @@
       addEventListener('pointermove', run.onPointer, { passive: true });
       document.documentElement.addEventListener('pointerleave', run.onLeave);
     }
-    run.raf = requestAnimationFrame(frame);
+    if (document.hidden) run.onVisibility(); else run.raf = requestAnimationFrame(frame);
   };
   // What is running, for tests and a glance in DevTools.
   window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still } : null);

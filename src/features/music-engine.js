@@ -13,7 +13,7 @@
 
 const AMV = require('./apple-music-view'); // the now-playing card's shared helpers (the card's unavailable shape, art checks, button names)
 
-const UNLOAD_MS = 15 * 60e3; // idle (no card read, nothing pressed, nothing playing) this long: the hidden page is closed
+const UNLOAD_MS = 5 * 60e3; // idle (no card read, nothing pressed, nothing playing) this long: the hidden page is closed
 const NO_CARD_UNLOAD_MS = 2 * 60e3; // the same, when no card of this service exists any more
 const LISTS_FRESH_MS = 60e3;
 const APP_WAIT_MS = 2500; // how long a read waits for the desktop app's answer
@@ -192,7 +192,7 @@ function createMusicEngine(deps) {
       if (bridge.playbackKind(m.state) === 'seeking') return; // a seek in progress: the card keeps what it shows until the playhead lands
       const was = msg;
       msg = m;
-      touch();
+      if (bridge.playbackKind(m.state) === 'playing') touch(); // (the page sends its heartbeat every 5 s whatever it is doing: only music playing counts as use, or a paused page would never be idle)
       if (pending && pending.effect(m)) { const wasLate = pending.late; clearTimeout(pending.timer); pending = null; if (wasLate) changed(); }
       if (m.player === false && authState() === true) playerMissingSince ||= now(); else playerMissingSince = 0;
       if (m.item?.art && !arts.has(m.item.art)) fetchArt(m.item.art);

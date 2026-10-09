@@ -2490,7 +2490,8 @@ function sleepFacts(tab) {
   const url = wc ? realUrl(wc) : tab.sleepUrl || '';
   return {
     id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen), active: tab.id === activeId, settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
-    openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) : false,
+    openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) || isNewTab(url) : false, newTab: wc ? isNewTab(url) : false, // (a new-tab page sleeps too, and soon: tab-sleep.js)
+   
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
     capturing: wc ? wc.isBeingCaptured() || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded)
     pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt, viewedAt: tab.viewedAt || 0,
@@ -2534,7 +2535,7 @@ async function sweepSleep() {
       if (!alive(tab) || tab.sleeping || tab.frozen || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
       // Freeze first (Settings > Tabs > Memory, off by default): an idle tab that would unload is frozen instead for a while, so
       // coming back to it is instant; it unloads once that time has passed (below) or memory runs low.
-      const how = tabWake.sleepHow({ how: s.how, why, freezeFirstMin: s.freezeFirst, low });
+      const how = sleepFacts(tab).newTab ? 'unload' : tabWake.sleepHow({ how: s.how, why, freezeFirstMin: s.freezeFirst, low }); // (a new-tab page is cheap to build again: always unloaded)
       if (how === 'freeze-first') {
         if (await freezeTab(tab)) { tab.frozenFirst = true; tab.frozenAt = Date.now(); sendTabs(); continue; }
       }

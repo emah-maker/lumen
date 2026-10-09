@@ -38,6 +38,7 @@ const MAX_AWAKE_CHOICES = [0, 2, 3, 4, 5, 6, 8, 10, 15, 20]; // 0: no limit (Per
 const KEEP_RECENT_CHOICES = [0, 1, 2, 3, 4, 5, 8]; // the most recently used background tabs kept awake whatever the idle timer says; 0: none
 const MAX_MINUTES = 7 * 24 * 60;
 const MEMORY_IDLE_MS = 2 * 60 * 1000; // under memory pressure a tab idle this long may sleep
+const NEW_TAB_IDLE_MS = 10 * 60 * 1000; // a new-tab page left in the background this long unloads (whatever the idle setting says: it holds nothing and is rebuilt in a moment)
 const DEFAULTS = { tabSleepMode: 'both', tabSleepMinutes: 20, tabSleepHow: 'unload', tabSleepFreePercent: 10, tabSleepLumenGb: 0, tabSleepMaxAwake: 0, tabSleepKeepPinned: true, tabSleepKeepRecent: 3, tabSleepNever: [], tabSleepFreezeFirstMinutes: 10 };
 
 const cleanMinutes = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 && n <= MAX_MINUTES ? n : null; };
@@ -107,6 +108,7 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
   if (s.mode === 'off') return out;
   out.low = (s.mode === 'memory' || s.mode === 'both') && memoryLow(s, memory);
   const idleMs = Math.min(s.minutes * 60e3, Number.isFinite(limits.sleepAfterMs) ? limits.sleepAfterMs : Infinity);
+  const newTabMs = Math.min(idleMs, NEW_TAB_IDLE_MS);
   const useIdle = s.mode === 'idle' || s.mode === 'both';
   const facts = (t) => ({ alive: true, webPage: true, ...t, agentUsing: t.agentUsing || t.aiBusy, keepPinned: s.keepPinned, neverSite: hostListed(t.host, s.never) });
   const byAge = [...tabs].sort((a, b) => (a.lastActive || 0) - (b.lastActive || 0));
@@ -115,7 +117,8 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
   for (const t of byAge) {
     if (!t.lastActive || keepReason(facts(t))) continue;
     const idle = now - t.lastActive;
-    if (useIdle && idle >= idleMs && !recent.has(t.id)) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); }
+    if (t.newTab && idle >= newTabMs) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); } // (a new-tab page: soon, in every mode that sleeps tabs)
+    else if (useIdle && idle >= idleMs && !recent.has(t.id)) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); }
     else if (out.low && idle >= MEMORY_IDLE_MS) { out.sleep.push({ id: t.id, why: 'memory' }); chosen.add(t.id); }
   }
   // Too many background tabs awake: the ones used least recently go first, none used in the last minute.
@@ -199,4 +202,4 @@ function wakeBounds(contentBounds, { fullscreen = false, full = null } = {}) {
   return { x: Math.round(Number(b?.x) || 0), y: Math.round(Number(b?.y) || 0), width: width > 1 ? width : 800, height: height > 1 ? height : 600 };
 }
 
-module.exports = { MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, KEEP_RECENT_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, recentTabs, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };
+module.exports = { MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, KEEP_RECENT_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, NEW_TAB_IDLE_MS, recentTabs, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };

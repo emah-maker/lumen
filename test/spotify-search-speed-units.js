@@ -276,7 +276,7 @@ async function warmChecks(check) {
   e.warm();
   check('warm: focusing the search box starts the hidden page (it is made now, not at the first key)', player.wc !== null && intervals.length === 1, '');
   t += 16 * 60e3; tick();
-  check('warm: …and 16 minutes of idleness after the focus does not unload it (the search is open: the 15-minute idle unload waits)', player.destroyed === 0 && player.wc !== null, String(player.destroyed));
+  check('warm: …and 16 minutes of idleness after the focus does not unload it (the search is open: the 5-minute idle unload waits)', player.destroyed === 0 && player.wc !== null, String(player.destroyed));
   t += 15 * 60e3; tick();
   check('warm: …but once the half hour since the last sign of the search has passed, the idle unload goes ahead as before', player.destroyed === 1, String(player.destroyed));
   e.search('x'); // wake: a new page
@@ -291,6 +291,15 @@ async function warmChecks(check) {
   e3.onMessage(JSON.stringify({ t: 'state', state: 2, pos: 1, dur: 200, device: '', player: true, item: { title: 'Song', artist: 'A', album: 'B', art: '', ms: 200000 } }));
   t += 3 * 3600e3; iv3.forEach((f) => f());
   check('playing: a song that is playing is never unloaded for idleness (three hours with no card read)', p3.destroyed === 0, String(p3.destroyed));
+  // paused: the page's 5-second heartbeat is not use, so with no card reading it the hidden page goes after five minutes
+  const p4 = { destroyed: 0, wc: null, ensure() { if (!p4.wc) p4.wc = { executeJavaScript: () => Promise.resolve() }; }, webContents: () => p4.wc, status: () => ({ state: 'ready', drm: 'ok' }), isSignedIn: () => true, generation: () => 1, destroy() { p4.destroyed++; p4.wc = null; }, showIn() {}, release() {}, reload() {} };
+  const iv4 = [];
+  const e4 = createEngine({ player: p4, now: () => t, fetchBytes: async () => null, resizeArt: (b) => b, hasCard: () => true, onChange: () => {}, setInterval: (f) => { iv4.push(f); return { unref() {} }; } });
+  await e4.read();
+  e4.onMessage('{"t":"ready"}');
+  const paused = JSON.stringify({ t: 'state', state: 1, pos: 1, dur: 200, device: '', player: true, item: { title: 'Song', artist: 'A', album: 'B', art: '', ms: 200000 } });
+  for (let i = 0; i < 80; i++) { t += 5e3; e4.onMessage(paused); iv4.forEach((f) => f()); } // (400 s of heartbeats from a paused page)
+  check('paused: a paused page that only sends its heartbeat is unloaded after five minutes (the heartbeat is not use)', p4.destroyed === 1, String(p4.destroyed));
   const wp = fs.readFileSync(path.join(root, 'features', 'web-player.js'), 'utf8');
   check('playing: the hidden player view is made with backgroundThrottling off (music is not slowed or stopped while hidden)', /backgroundThrottling: false/.test(wp), '');
   check('warm: the engine offers warm, loadThumbs and searchMore to the widget', typeof e.warm === 'function' && typeof e.loadThumbs === 'function' && typeof e.searchMore === 'function', '');

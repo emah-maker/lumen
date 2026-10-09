@@ -144,6 +144,15 @@ check('cleanHost rejects junk', TS.cleanHost('not a host') === '' && TS.cleanHos
 check('cleanHosts dedupes and drops junk', JSON.stringify(TS.cleanHosts(['a.com', 'https://www.a.com/x', '??', 'b.org'])) === '["a.com","b.org"]');
 check('cleanHosts rejects a non-list', TS.cleanHosts('a.com') === null);
 
+// ---- a new-tab page left in the background unloads after 10 minutes (it holds nothing and is rebuilt in a moment)
+check('new tab: idle 11 minutes sleeps (the idle setting is 20)', JSON.stringify(ids(decide([tab(1, 11, { newTab: true })]))) === '[1]');
+check('new tab: idle 9 minutes stays', ids(decide([tab(1, 9, { newTab: true })])).length === 0);
+check('new tab: a web page idle 11 minutes stays (only the new-tab page is quick)', ids(decide([tab(1, 11)])).length === 0);
+check('new tab: sleeps in "when memory is low" mode too, not under "off"', ids(decide([tab(1, 11, { newTab: true })], { tabSleepMode: 'memory' }, okMem)).length === 1 && ids(decide([tab(1, 11, { newTab: true })], { tabSleepMode: 'off' })).length === 0);
+check('new tab: a 5-minute idle setting still wins when shorter', ids(decide([tab(1, 6, { newTab: true })], { tabSleepMinutes: 5 })).length === 1);
+check('new tab: the active one and one with a reason to stay do not sleep', ids(decide([tab(1, 30, { newTab: true, active: true }), tab(2, 30, { newTab: true, openPopups: 1 })])).length === 0);
+check('new tab: it counts as a page (not "internal") for keepReason', TS.keepReason({ alive: true, webPage: true, newTab: true }) === null);
+
 // ---- the sleep policy of fast waking: recent tabs, pinned, audio, forms (decideSleep with the defaults)
 {
   const dflt = (tabs, settings = {}, memory = null, limits = {}) => TS.decideSleep({ tabs, settings, now: NOW, memory, limits });
