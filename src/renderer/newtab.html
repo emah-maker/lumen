@@ -790,6 +790,19 @@
     .mc-dot { flex: none; width: 8px; height: 8px; margin: 0 4px; border-radius: 50%; background: var(--field); box-shadow: inset 0 0 0 1px var(--border); }
     .mc-row.current .mc-dot { background: var(--accent); box-shadow: none; }
     .mc-ctx { margin: 2px 6px 4px; }
+    .mc-tab-pin { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-listhead { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+    .mc-listhead .mc-ctx { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-listback, .mc-listpin { appearance: none; flex: none; margin: 0; padding: 2px 8px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 11.5px; cursor: default; }
+    .mc-listback:hover, .mc-listpin:hover:not(:disabled) { background: var(--hover); }
+    .mc-listpin:disabled { opacity: 0.5; }
+    .mc-listback:focus-visible, .mc-listpin:focus-visible, .mc-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .mc-listbar { display: flex; gap: 6px; margin: 2px 2px 6px; }
+    .mc-pin { appearance: none; flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin: 0 2px 0 0; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: default; opacity: 0.55; }
+    .mc-row:hover .mc-pin, .mc-pin:focus-visible, .mc-pin.on { opacity: 1; }
+    .mc-pin.on { color: var(--accent); }
+    .mc-pin:hover:not(:disabled) { background: var(--hover); }
+    .mc-pin:disabled { opacity: 0.3; }
     .mc-lyrics { padding: 2px 6px 10px; }
     .mc-line { margin: 0 0 7px; font-size: 13px; line-height: 1.4; }
     @container card (min-width: 300px) and (min-height: 200px) { .mc .mc-prev { display: grid; } .mc .mc-like { display: grid; } .mc .mc-extra { display: flex; } .mc .sp-elapsed, .mc .sp-total { display: inline; } }
