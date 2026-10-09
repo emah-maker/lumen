@@ -49,7 +49,7 @@
        behind it takes room from the space above it (--main-pad, set by newtab-system.js), so the search box, the
        sections and every card stay where they are. (The top padding is fixed px, not a share of the window's height,
        so resizing the window doesn't move them either.) */
-    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: var(--main-pad, 88px) 0 48px; }
+    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: var(--main-pad, 88px) 0 var(--main-room, 48px); }
 
     /* [look] Backgrounds (Settings → Appearance → New tab page). On anything but Plain, text turns
        light and the cards become frosted glass over the picture or gradient. */

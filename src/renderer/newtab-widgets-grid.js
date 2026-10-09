@@ -131,7 +131,8 @@
     }
     // In Edit layout the page runs half a window past the lowest card, so a card can be dropped into a row far below the rest.
     const slack = editing ? Math.round(window.innerHeight * 0.5) : 0;
-    boxEl().style.height = list.length ? `${Math.ceil(bottom + 32 + slack)}px` : '';
+    const lowest = bottom + slack;
+    boxEl().style.height = list.length ? `${Math.ceil(lowest + WL.pageRoom(lowest, document.documentElement.clientHeight, 32))}px` : '';
     shiftMain(WL.bannerRows(list, o));
   }
   // Edit layout frees the page's sections into cards, so the centre column's obstacle shrinks to the header and search
