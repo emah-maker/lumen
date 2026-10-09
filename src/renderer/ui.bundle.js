@@ -2117,6 +2117,23 @@ const api = { wantsScreen, THRESHOLD };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.screenIntent = api; // (the renderer: globalThis is the window)
 ;
+// ---- agent-pill.js
+// The toolbar's "<AI> is using this tab" pill: when it shows, and what it says. It is about the tab in front, so it shows only
+// while the running task works in that tab. A task left in another tab (the user switched away) shows nothing here; the
+// sidebar's "Working in: <tab>" line says where it is. `target` is { front } from main (agent:target), or null when main
+// has not said (the first moments of a run), which counts as the tab in front. An outside agent's pill (MCP, `mcpActive`)
+// is not about a tab of this window and is left alone. Loaded by index.src.html (before chat-core.js), required by
+// test/agent-pill-units.js.
+(function (root) {
+  function pillState({ running, target, mcpActive } = {}) {
+    const away = Boolean(running && target && !target.front);
+    return { away, textKey: away ? 'agent.usingOther' : 'agent.usingTab', visible: Boolean(mcpActive || (running && !away)) };
+  }
+  const api = { pillState };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.agentPill = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- chat-core.js
 // The chat itself, shared by the sidebar (index.html) and the full-page chat (chat-page.html): the
 // model picker, the "set up an AI" card, messages and streaming, image attachments, approval cards,
@@ -2588,9 +2605,10 @@ function renderWorkingIn() {
   const el = optional('working-in');
   const show = Boolean(running && agentTarget);
   el.hidden = !show;
-  document.body.classList.toggle('agent-away', show && !agentTarget.front);
+  const state = window.agentPill.pillState({ running, target: agentTarget });
+  document.body.classList.toggle('agent-away', state.away); // (the toolbar pill and the page's frame are only for the tab the AI is in; styles.css)
   const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = show && !agentTarget.front ? t('agent.usingOther', { name: assistantIdentity?.name || 'AI' }) : t('agent.usingTab', { name: assistantIdentity?.name || 'AI' });
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t(state.textKey, { name: assistantIdentity?.name || 'AI' });
   if (!show) return;
   const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
   el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));
