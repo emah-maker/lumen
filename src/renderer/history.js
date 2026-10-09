@@ -1,4 +1,6 @@
 // Renders the browsing history, fetched from the browser (history-preload.js): [{ url, title, last }].
+// The wording is locales/en.json (historyPage.*), through window.t (i18n.js).
+const t = window.t || ((key) => key);
 let entries = [];
 
 const list = document.getElementById('list');
@@ -8,8 +10,8 @@ const dayLabel = (d) => {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const day = new Date(d); day.setHours(0, 0, 0, 0);
   const diff = Math.round((today - day) / 86400000);
-  if (diff === 0) return 'Today';
-  if (diff === 1) return 'Yesterday';
+  if (diff === 0) return t('historyPage.today');
+  if (diff === 1) return t('historyPage.yesterday');
   return day.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 };
 
@@ -30,7 +32,7 @@ function render() {
   const shown = entries.filter((e) => !q || (e.title || '').toLowerCase().includes(q) || e.url.toLowerCase().includes(q));
   list.replaceChildren();
   if (!shown.length) {
-    list.append(Object.assign(document.createElement('p'), { className: 'empty', textContent: q ? 'No matches.' : 'No history yet.' }));
+    list.append(Object.assign(document.createElement('p'), { className: 'empty', textContent: q ? t('historyPage.noMatch') : t('historyPage.none') }));
     return;
   }
   let section = null;
@@ -50,8 +52,8 @@ function render() {
     const title = Object.assign(document.createElement('span'), { className: 'title', textContent: e.title || host(e.url) });
     const where = Object.assign(document.createElement('span'), { className: 'host', textContent: host(e.url) });
     a.append(time, title, where);
-    const del = Object.assign(document.createElement('button'), { className: 'remove', type: 'button', title: 'Remove from history' });
-    del.setAttribute('aria-label', `Remove ${e.title || host(e.url)} from history`);
+    const del = Object.assign(document.createElement('button'), { className: 'remove', type: 'button', title: t('historyPage.remove') });
+    del.setAttribute('aria-label', t('historyPage.removeNamed', { name: e.title || host(e.url) }));
     del.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8"/></svg>';
     del.onclick = () => remove(e, row);
     row.append(a, del);

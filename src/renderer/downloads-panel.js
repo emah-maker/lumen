@@ -1,14 +1,21 @@
 // The downloads panel (the toolbar button): rows from features/downloads.js (panelEntry), actions
 // back by id; "Show all downloads" opens the Downloads page (downloads.html). A
 // finished file can be dragged out (main.js starts a native file drag), opened with a click or
-// Enter, or shown in its folder.
+// Enter, or shown in its folder. The wording is locales/en.json (dlpanel.*), through window.t (i18n.js).
+//
+// Progress arrives many times a second. Each download keeps one row for as long as it is listed
+// (`rows`, by download id) and an update patches that row's text, bar, state and buttons in place, so a
+// press that began on a row still ends on the same element (a rebuilt row dropped the click) and the
+// focused button stays focused.
 (() => {
   const api = window.downloadsPanel;
+  const t = window.t || ((key) => key);
   const $ = (id) => document.getElementById(id);
   const list = $('list');
   const card = $('card');
   let items = [];
   let selected = -1;
+  const rows = new Map(); // download id -> { li, d, name, status, text, bar, fill, actions, iconSrc, fresh }
   const seen = new Set(); // ids already drawn once: only new rows animate in
 
   const ICONS = {
@@ -19,7 +26,6 @@
     show: '<circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/>',
     file: '<path d="M4 1.8h5.2L13 5.6v8.1c0 .3-.2.5-.5.5h-8.5a.5.5 0 0 1-.5-.5V2.3c0-.3.2-.5.5-.5zM9 1.8v4h4"/>',
   };
-  const LABELS = { pause: 'Pause', resume: 'Resume', cancel: 'Cancel', retry: 'Retry', show: 'Show in folder', remove: 'Remove from list' };
   const svg = (name, box = 16) => `<svg viewBox="0 0 ${box} ${box}" aria-hidden="true">${ICONS[name === 'remove' ? 'cancel' : name]}</svg>`;
 
   const size = (n) => {
@@ -31,13 +37,13 @@
   };
   const duration = (s) => {
     if (!Number.isFinite(s) || s <= 0) return '';
-    if (s < 60) return `${Math.ceil(s)} s left`;
-    if (s < 3600) return `${Math.ceil(s / 60)} min left`;
-    return `${Math.floor(s / 3600)} h ${Math.ceil((s % 3600) / 60)} min left`;
+    if (s < 60) return t('dlpanel.left.s', { n: Math.ceil(s) });
+    if (s < 3600) return t('dlpanel.left.min', { n: Math.ceil(s / 60) });
+    return t('dlpanel.left.hour', { h: Math.floor(s / 3600), m: Math.ceil((s % 3600) / 60) });
   };
-  const when = (t) => {
-    if (!t) return '';
-    const d = new Date(t);
+  const when = (time) => {
+    if (!time) return '';
+    const d = new Date(time);
     const today = new Date();
     return d.toDateString() === today.toDateString()
       ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -46,18 +52,18 @@
 
   function statusOf(d) {
     if (d.state === 'progressing') {
-      if (d.awaitingOk) return 'Waiting for your OK';
+      if (d.awaitingOk) return t('dlpanel.awaitingOk');
       // "3.0 of 47.7 MB" when both sizes share a unit, so speed and time left still fit.
       const [got, all] = [size(d.received), size(d.total)];
-      const unit = (t) => t.split(' ')[1];
-      const of = !d.total ? got : unit(got) === unit(all) ? `${got.split(' ')[0]} of ${all}` : `${got} of ${all}`;
-      if (d.paused) return `Paused · ${of}`;
+      const unit = (text) => text.split(' ')[1];
+      const of = !d.total ? got : t('dlpanel.of', { got: unit(got) === unit(all) ? got.split(' ')[0] : got, all });
+      if (d.paused) return t('dlpanel.paused', { progress: of });
       const eta = d.total && d.speed ? duration((d.total - d.received) / d.speed) : '';
-      return [of, d.speed ? `${size(d.speed)}/s` : '', eta].filter(Boolean).join(' · ');
+      return [of, d.speed ? t('dlpanel.speed', { speed: size(d.speed) }) : '', eta].filter(Boolean).join(' · ');
     }
-    if (d.state === 'completed') return d.missing ? 'Deleted' : [size(d.total || d.received), d.host, when(d.endedAt)].filter(Boolean).join(' · ');
-    if (d.state === 'cancelled') return ['Canceled', d.host].filter(Boolean).join(' · ');
-    return ['Failed', d.host].filter(Boolean).join(' · ');
+    if (d.state === 'completed') return d.missing ? t('dlpanel.deleted') : [size(d.total || d.received), d.host, when(d.endedAt)].filter(Boolean).join(' · ');
+    if (d.state === 'cancelled') return [t('dlpanel.canceled'), d.host].filter(Boolean).join(' · ');
+    return [t('dlpanel.failed'), d.host].filter(Boolean).join(' · ');
   }
   function actionsOf(d) {
     if (d.state === 'progressing') return d.awaitingOk ? ['cancel'] : [d.paused ? 'resume' : 'pause', 'cancel'];
@@ -66,51 +72,97 @@
   }
   const openable = (d) => d.state === 'completed' && !d.missing;
 
-  function render() {
-    list.textContent = '';
-    items.forEach((d, i) => {
-      const li = document.createElement('li');
-      li.setAttribute('role', 'option');
-      li.dataset.index = String(i);
-      li.className = [d.state, d.paused ? 'paused' : '', d.missing ? 'missing' : '', d.state === 'interrupted' ? 'failed' : '', openable(d) ? 'openable' : '', i === selected ? 'selected' : '', seen.has(d.id) ? '' : 'fresh'].filter(Boolean).join(' ');
-      li.setAttribute('aria-selected', String(i === selected));
-      li.draggable = openable(d);
-      if (openable(d)) li.title = `${d.name} — click to open, or drag it into another app`;
+  // Sets a property or attribute only when it differs: an update that changes nothing touches nothing.
+  const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+  const setAttr = (node, name, value) => { if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
 
-      const icon = document.createElement('div');
-      icon.className = 'icon';
-      if (d.icon) { const img = document.createElement('img'); img.src = d.icon; img.alt = ''; icon.append(img); } else icon.innerHTML = svg('file');
+  function makeRow(d) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    const icon = document.createElement('div');
+    icon.className = 'icon';
+    const text = document.createElement('div');
+    text.className = 'text';
+    const name = Object.assign(document.createElement('div'), { className: 'name' });
+    const status = Object.assign(document.createElement('div'), { className: 'status' });
+    text.append(name, status);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    li.append(icon, text, actions);
+    const row = { li, d, icon, name, status, text, bar: null, fill: null, actions, iconSrc: undefined, fresh: !seen.has(d.id) };
+    // Handlers read row.d: the row outlives any one update of its download.
+    li.addEventListener('click', () => { if (openable(row.d)) { api.act('open', row.d.id); api.close(); } });
+    li.addEventListener('dragstart', (e) => { e.preventDefault(); if (openable(row.d)) api.drag(row.d.id); });
+    li.addEventListener('animationend', () => { row.fresh = false; });
+    return row;
+  }
 
-      const text = document.createElement('div');
-      text.className = 'text';
-      const name = Object.assign(document.createElement('div'), { className: 'name', textContent: d.name });
-      const status = Object.assign(document.createElement('div'), { className: 'status', textContent: statusOf(d) });
-      text.append(name, status);
-      if (d.state === 'progressing' && !d.awaitingOk) {
-        const bar = document.createElement('div');
-        bar.className = `bar${d.total ? '' : ' unknown'}`;
-        const fill = document.createElement('i');
-        if (d.total) fill.style.width = `${Math.min(100, (d.received / d.total) * 100).toFixed(1)}%`;
-        bar.append(fill);
-        text.append(bar);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'actions';
-      for (const a of actionsOf(d)) {
-        const b = document.createElement('button');
+  function patchActions(row, d) {
+    const wanted = actionsOf(d);
+    wanted.forEach((a, k) => {
+      let b = row.actions.children[k];
+      if (!b) {
+        b = document.createElement('button');
         b.type = 'button';
         b.className = 'act';
-        b.title = LABELS[a];
-        b.setAttribute('aria-label', `${LABELS[a]}: ${d.name}`);
-        b.innerHTML = svg(a);
-        b.addEventListener('click', (e) => { e.stopPropagation(); api.act(a, d.id); });
-        actions.append(b);
+        // (The same button turns from Pause into Resume: it keeps focus, and a press stays a press on it.)
+        b.addEventListener('click', (e) => { e.stopPropagation(); api.act(b.dataset.action, row.d.id); });
+        row.actions.append(b);
       }
-      li.append(icon, text, actions);
-      li.addEventListener('click', () => { if (openable(d)) { api.act('open', d.id); api.close(); } });
-      li.addEventListener('dragstart', (e) => { e.preventDefault(); if (openable(d)) api.drag(d.id); });
-      list.append(li);
+      const label = t(`dlpanel.action.${a}`);
+      if (b.dataset.action !== a) { b.dataset.action = a; b.innerHTML = svg(a); }
+      setAttr(b, 'title', label);
+      setAttr(b, 'aria-label', t('dlpanel.action.label', { action: label, name: d.name }));
+    });
+    while (row.actions.children.length > wanted.length) row.actions.children[wanted.length].remove();
+  }
+
+  function patchBar(row, d) {
+    const want = d.state === 'progressing' && !d.awaitingOk;
+    if (!want) {
+      if (row.bar) { row.bar.remove(); row.bar = row.fill = null; }
+      return;
+    }
+    if (!row.bar) {
+      row.bar = document.createElement('div');
+      row.fill = document.createElement('i');
+      row.bar.append(row.fill);
+      row.text.append(row.bar);
+    }
+    const cls = `bar${d.total ? '' : ' unknown'}`;
+    if (row.bar.className !== cls) row.bar.className = cls;
+    const width = d.total ? `${Math.min(100, (d.received / d.total) * 100).toFixed(1)}%` : '';
+    if (row.fill.style.width !== width) row.fill.style.width = width;
+  }
+
+  function patchRow(row, d, i) {
+    row.d = d;
+    const { li } = row;
+    const cls = [d.state, d.paused ? 'paused' : '', d.missing ? 'missing' : '', d.state === 'interrupted' ? 'failed' : '', openable(d) ? 'openable' : '', i === selected ? 'selected' : '', row.fresh ? 'fresh' : ''].filter(Boolean).join(' ');
+    if (li.className !== cls) li.className = cls;
+    li.dataset.index = String(i);
+    setAttr(li, 'aria-selected', String(i === selected));
+    li.draggable = openable(d);
+    if (openable(d)) setAttr(li, 'title', t('dlpanel.openTip', { name: d.name }));
+    else if (li.hasAttribute('title')) li.removeAttribute('title');
+    if (row.iconSrc !== (d.icon || '')) {
+      row.iconSrc = d.icon || '';
+      if (d.icon) { const img = document.createElement('img'); img.src = d.icon; img.alt = ''; row.icon.replaceChildren(img); } else row.icon.innerHTML = svg('file');
+    }
+    setText(row.name, d.name);
+    setText(row.status, statusOf(d));
+    patchBar(row, d);
+    patchActions(row, d);
+  }
+
+  function render() {
+    const live = new Set(items.map((d) => d.id));
+    for (const [id, row] of rows) if (!live.has(id)) { row.li.remove(); rows.delete(id); }
+    items.forEach((d, i) => {
+      let row = rows.get(d.id);
+      if (!row) { row = makeRow(d); rows.set(d.id, row); }
+      patchRow(row, d, i);
+      if (list.children[i] !== row.li) list.insertBefore(row.li, list.children[i] || null); // (only a row out of place moves)
     });
     for (const d of items) seen.add(d.id);
     $('empty').hidden = items.length > 0;

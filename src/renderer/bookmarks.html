@@ -3,23 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:" />
-  <title>Bookmarks</title>
+  <title data-i18n="bookmarksPage.title">Bookmarks</title>
   <link rel="stylesheet" href="managers.css" />
 </head>
 <body>
   <main>
     <header>
-      <h1>Bookmarks</h1>
-      <button id="add" type="button">Add bookmark</button>
-      <button id="import" type="button">Import…</button>
-      <button id="export" type="button">Export…</button>
+      <h1 data-i18n="bookmarksPage.title">Bookmarks</h1>
+      <button id="add" type="button" data-i18n="bookmarksPage.add">Add bookmark</button>
+      <button id="import" type="button" data-i18n="bookmarksPage.import">Import…</button>
+      <button id="export" type="button" data-i18n="bookmarksPage.export">Export…</button>
     </header>
-    <input id="q" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks" autocomplete="off" />
+    <input id="q" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks" data-i18n-placeholder="bookmarksPage.search" data-i18n-aria-label="bookmarksPage.search" autocomplete="off" />
     <p id="status" role="status" aria-live="polite"></p>
     <div id="form-slot"></div>
     <div id="list"></div>
     <datalist id="folders"></datalist>
   </main>
+  <script src="i18n.js"></script>
   <script src="bookmarks.js"></script>
 </body>
 </html>

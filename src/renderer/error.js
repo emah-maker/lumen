@@ -1,3 +1,4 @@
+// The wording comes from locales/en.json through window.t (i18n.js, with the table error-preload.js fetched).
 const params = new URLSearchParams(location.search);
 const url = params.get('url') || '';
 let host = url;
@@ -6,9 +7,9 @@ try { host = new URL(url).host || url; } catch {}
 // that stopped responding). Reloading starts it fresh.
 const crashed = params.get('kind') === 'crashed';
 if (crashed) {
-  document.title = 'This page crashed';
-  document.querySelector('h1').textContent = 'This page crashed';
-  document.getElementById('retry').textContent = 'Reload';
+  document.title = window.t('errorPage.crashed.title');
+  document.querySelector('h1').textContent = window.t('errorPage.crashed.title');
+  document.getElementById('retry').textContent = window.t('errorPage.reload');
 }
 const desc = params.get('desc');
 // A network error names what went wrong and what to try (renderer/error-kinds.js).
@@ -21,8 +22,8 @@ if (kind) {
   hint.hidden = !kind.hint;
 }
 document.getElementById('message').textContent = crashed
-  ? `Something went wrong while showing ${host ? `“${host}”` : 'this page'}.`
-  : kind ? kind.message : host ? `The browser can't connect to “${host}”.` : "The browser can't connect to the server.";
+  ? window.t('errorPage.crashed.message', { site: host ? `“${host}”` : window.t('errorPage.thisPage') })
+  : kind ? kind.message : host ? window.t('errorPage.kind.general.message', { site: `“${host}”` }) : window.t('errorPage.kind.general.messageNoHost');
 document.getElementById('code').textContent = desc ? `${desc}${params.get('code') ? ` (${params.get('code')})` : ''}` : '';
 const retry = document.getElementById('retry');
 if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);

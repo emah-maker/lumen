@@ -1,5 +1,7 @@
 // The Bookmarks page: list, search, add, edit, remove, import and export (features/managers.js,
 // through managers-preload.js). Bookmarks are [{ url, title, folder }]; folder '' is the top level.
+// The wording is locales/en.json (bookmarksPage.*), through window.t (i18n.js).
+const t = window.t || ((key) => key);
 const api = window.lumenBookmarks;
 let entries = [];
 let editing = null; // the url being edited, or '' while adding a new one
@@ -24,24 +26,24 @@ async function load() {
 
 // The add/edit form. `entry` is the bookmark being edited, or null to add a new one.
 function form(entry) {
-  const title = el('input', { name: 'title', value: entry?.title || '', placeholder: 'Title', autocomplete: 'off' });
+  const title = el('input', { name: 'title', value: entry?.title || '', placeholder: t('bookmarksPage.field.title'), autocomplete: 'off' });
   const url = el('input', { name: 'url', value: entry?.url || '', placeholder: 'https://example.com', autocomplete: 'off', required: true });
-  const folder = el('input', { name: 'folder', value: entry?.folder || '', placeholder: 'None', autocomplete: 'off' });
+  const folder = el('input', { name: 'folder', value: entry?.folder || '', placeholder: t('bookmarksPage.folderNone'), autocomplete: 'off' });
   folder.setAttribute('list', 'folders');
   const error = el('span', { className: 'error', role: 'alert' });
-  const cancel = el('button', { type: 'button', textContent: 'Cancel', onclick: close });
+  const cancel = el('button', { type: 'button', textContent: t('bookmarksPage.cancel'), onclick: close });
   const f = el('form', { className: 'edit' },
-    el('label', { className: 'wide' }, 'Title', title),
-    el('label', {}, 'Address', url),
-    el('label', {}, 'Folder', folder),
-    el('div', { className: 'buttons' }, error, cancel, el('button', { type: 'submit', className: 'primary', textContent: entry ? 'Save' : 'Add' })));
+    el('label', { className: 'wide' }, t('bookmarksPage.field.title'), title),
+    el('label', {}, t('bookmarksPage.field.address'), url),
+    el('label', {}, t('bookmarksPage.field.folder'), folder),
+    el('div', { className: 'buttons' }, error, cancel, el('button', { type: 'submit', className: 'primary', textContent: entry ? t('bookmarksPage.save') : t('bookmarksPage.addButton') })));
   f.onsubmit = async (e) => {
     e.preventDefault();
     const result = entry
       ? await api.update({ url: entry.url, newUrl: url.value, title: title.value, folder: folder.value })
       : await api.add({ url: url.value, title: title.value, folder: folder.value });
-    if (!result?.ok) { error.textContent = result?.error || 'Could not save.'; return; }
-    say(entry ? 'Bookmark saved.' : 'Bookmark added.');
+    if (!result?.ok) { error.textContent = result?.error || t('bookmarksPage.saveError'); return; }
+    say(entry ? t('bookmarksPage.saved') : t('bookmarksPage.added'));
     close();
     await load();
   };
@@ -70,13 +72,13 @@ function row(b) {
   // Opens in a new tab, so the Bookmarks page stays where it is.
   a.onclick = (e) => { e.preventDefault(); api.open(b.url); };
   a.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); api.open(b.url); } };
-  const edit = el('button', { type: 'button', className: 'edit-button', textContent: 'Edit', onclick: () => { editing = b.url; render(); } });
-  edit.setAttribute('aria-label', `Edit ${b.title || host(b.url)}`);
-  const del = el('button', { type: 'button', textContent: 'Remove' });
-  del.setAttribute('aria-label', `Remove ${b.title || host(b.url)}`);
+  const edit = el('button', { type: 'button', className: 'edit-button', textContent: t('bookmarksPage.edit'), onclick: () => { editing = b.url; render(); } });
+  edit.setAttribute('aria-label', t('bookmarksPage.editNamed', { name: b.title || host(b.url) }));
+  const del = el('button', { type: 'button', textContent: t('bookmarksPage.remove') });
+  del.setAttribute('aria-label', t('bookmarksPage.removeNamed', { name: b.title || host(b.url) }));
   del.onclick = async () => {
     if (!(await api.remove(b.url))) return;
-    say(`Removed “${b.title || host(b.url)}”.`);
+    say(t('bookmarksPage.removed', { name: b.title || host(b.url) }));
     await load();
     query.focus();
   };
@@ -90,14 +92,14 @@ function render() {
   const shown = entries.filter((b) => !q || b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q) || b.folder.toLowerCase().includes(q));
   list.replaceChildren();
   if (!shown.length) {
-    list.append(el('p', { className: 'empty', textContent: q ? 'No matches.' : `No bookmarks yet. Press ${navigator.platform.startsWith('Mac') ? '⌘D' : 'Ctrl+D'} on a page to bookmark it.` }));
+    list.append(el('p', { className: 'empty', textContent: q ? t('bookmarksPage.noMatch') : t('bookmarksPage.none') })); // (i18n.js writes Ctrl+D as ⌘D on a Mac)
     return;
   }
   const folders = [''].concat([...new Set(shown.map((b) => b.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
   for (const folder of folders) {
     const items = shown.filter((b) => b.folder === folder);
     if (!items.length) continue;
-    list.append(el('section', {}, el('h2', { textContent: folder || 'Bookmarks' }), ...items.map(row)));
+    list.append(el('section', {}, el('h2', { textContent: folder || t('bookmarksPage.topLevel') }), ...items.map(row)));
   }
 }
 
@@ -109,12 +111,12 @@ $('add').onclick = () => {
 };
 $('export').onclick = async () => {
   const r = await api.exportFile();
-  if (r?.ok) say(`Exported ${r.count} bookmark${r.count === 1 ? '' : 's'}.`);
+  if (r?.ok) say(t(r.count === 1 ? 'bookmarksPage.exported.one' : 'bookmarksPage.exported.other', { count: r.count }));
 };
 $('import').onclick = async () => {
   const r = await api.importFile();
   if (r?.error) say(r.error);
-  else if (r?.ok) { say(`Imported ${r.added} new bookmark${r.added === 1 ? '' : 's'}.`); await load(); }
+  else if (r?.ok) { say(t(r.added === 1 ? 'bookmarksPage.imported.one' : 'bookmarksPage.imported.other', { count: r.added })); await load(); }
 };
 query.addEventListener('input', render);
 api?.onChange(() => { if (editing === null) load(); });

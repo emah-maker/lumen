@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data:" />
-  <title>History</title>
+  <title data-i18n="historyPage.title">History</title>
   <link rel="stylesheet" href="tokens.css" />
   <style>
     :root { --ring: rgba(0, 122, 255, 0.22); }
@@ -35,10 +35,11 @@
 </head>
 <body>
   <main>
-    <h1>History</h1>
-    <input id="q" type="search" placeholder="Search history" aria-label="Search history" autocomplete="off" />
+    <h1 data-i18n="historyPage.title">History</h1>
+    <input id="q" type="search" placeholder="Search history" aria-label="Search history" data-i18n-placeholder="historyPage.search" data-i18n-aria-label="historyPage.search" autocomplete="off" />
     <div id="list"></div>
   </main>
+  <script src="i18n.js"></script>
   <script src="history.js"></script>
 </body>
 </html>

@@ -69,6 +69,8 @@ const { createTabGroups, siteName, pathWords, siteHint } = require('./browser/ta
 const taskbarTasks = require('./features/taskbar-tasks'); // the taskbar's "Close tabs the AI opened" (Jump List task / Dock menu)
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
+const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
+const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
@@ -292,6 +294,8 @@ let activeId = null;
 let nextTabId = 1;
 let contentBounds = { x: 0, y: 0, width: 800, height: 600 };
 const closedTabs = []; // URLs, most recent last
+const closedInfo = []; // what each closedTabs entry was besides its address: pinned, group, place, back/forward (features/closed-tabs.js)
+const closedTabsKept = require('./features/closed-tabs');
 const tabTools = require('./features/tab-tools').create({ onChange: () => sendTabs(), isWebUrl }); // tab search, tab audio
 
 // ---------- settings / API key ----------
@@ -870,6 +874,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
@@ -1101,6 +1106,7 @@ const privateWindows = createPrivateWindows({
     ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
     pdfViewer.attachSession(ses, pdfHandler);
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
@@ -1344,7 +1350,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
       ]),
       chunk([
-        { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
+        { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: reopenLastClosed },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
         ...mergeWindowItems(curRec),
@@ -1357,7 +1363,7 @@ function showAppMenu({ x, y, right }) {
       ], 'ai', t('menu.aiAndTasks'), 5),
     ],
     [
-      chunk([{ label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } }]),
+      chunk([{ label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: openFindBar }]),
       chunk([
         { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
         { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
@@ -1830,6 +1836,7 @@ function researchSession() {
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // pages the AI opened: always the hidden API (features/passkeys.js candidate)
   settingsBackend.mirrorSession(ses); // the profile's proxy, Do Not Track / Global Privacy Control, languages
   adblock.attachSession(ses); // the same filters as normal tabs (waits for the engine if it is still loading)
@@ -2913,9 +2920,10 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
   if (url && !isInternal(url) && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
     closedTabs.push(url);
+    closedInfo.push(closedTabsKept.snapshot({ pinned: tab.pinned, groupId: tab.groupId, index, history: tab.pendingCloseHistory ?? navSnapshot(tab) }));
     tabTools.noteClosed(url, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
   }
-  if (closedTabs.length > 50) closedTabs.splice(0, closedTabs.length - 50); // Reopen Closed Tab goes back 50
+  if (closedTabs.length > 50) { closedTabs.splice(0, closedTabs.length - 50); closedInfo.splice(0, closedInfo.length - 50); } // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
@@ -2948,6 +2956,7 @@ function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
+  tab.pendingCloseHistory = navSnapshot(tab); // (the page is gone by the time closeTab runs)
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
   // the strip drops the tab now, and the next tab is shown now if this one was in front.
@@ -3010,7 +3019,7 @@ function zoomPage(wc, step) {
   // site follows that default again; zooming by hand makes the default leave this site alone.
   if (step === 0) settingsBackend.resetZoom(wc);
   else {
-    const level = Math.min(Math.max(wc.getZoomLevel() + step, -3), 5);
+    const level = zoomSteps.nextLevel(wc.getZoomLevel(), step); // Chrome's stops, 25% to 500% (features/zoom-steps.js)
     settingsBackend.noteUserZoom(wc, level); // (kept for the site across restarts: features/site-zoom.js)
     wc.setZoomLevel(level);
   }
@@ -3435,7 +3444,7 @@ function openTabSearch() {
 function reopenClosed(index, url) {
   if (!Number.isInteger(index) || closedTabs[index] !== url) return false; // the list changed meanwhile
   closedTabs.splice(index, 1);
-  openTab(url);
+  reopenClosedTab(url, closedInfo.splice(index, 1)[0]);
   return true;
 }
 // ---- [/tab audio + tab search]
@@ -3534,7 +3543,35 @@ function closeTabs(keepId, list) {
 }
 
 function reopenLastClosed() {
-  if (closedTabs.length) openTab(closedTabs.pop());
+  if (closedTabs.length) reopenClosedTab(closedTabs.pop(), closedInfo.pop());
+}
+
+// A tab's back/forward list as { entries, index }, or null (a sleeping tab keeps its own; a page that is gone has none).
+function navSnapshot(tab) {
+  if (!alive(tab)) return tab?.sleepHistory || null;
+  try {
+    const nav = tab.view.webContents.navigationHistory;
+    return { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
+  } catch {
+    return null;
+  }
+}
+
+// Reopen Closed Tab: the page with its back/forward list, pinned if it was, in its group when that still exists,
+// and where it was in the strip (features/closed-tabs.js).
+function reopenClosedTab(url, info) {
+  const plan = closedTabsKept.placement(info, { count: tabs.length, pinned: tabs.filter((t) => t.pinned).length, hasGroup: (gid) => tabGroups.groups.has(gid) });
+  const { id } = openTab(url, { ...(info?.history ? { history: info.history } : {}), ...(plan.groupId ? { groupId: plan.groupId } : {}) });
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab) return;
+  if (plan.pinned) tab.pinned = true;
+  tab.userRemoved = true; // put back by hand: automatic grouping leaves it alone
+  const list = tabs.filter((t) => t !== tab);
+  list.splice(Math.min(plan.at, list.length), 0, tab);
+  tabs = list;
+  keepPinnedFirst();
+  tabGroups.arrange();
+  sendTabs();
 }
 
 // Puts `tab` right after `anchor`, in anchor's group. An unpinned tab next to a pinned one goes
@@ -3562,15 +3599,7 @@ function newTabRightOf(id) {
 function duplicateTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab || tab.settings) return null;
-  let history = tab.sleepHistory || null;
-  if (alive(tab)) {
-    try {
-      const nav = tab.view.webContents.navigationHistory;
-      history = { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
-    } catch {
-      history = null; // loads the URL instead
-    }
-  }
+  const history = navSnapshot(tab); // (null loads the URL instead)
   const url = tabUrl(tab) || newTabUrl();
   const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null, partition: tab.isolated });
   const copy = tabs.find((t) => t.id === newId);
@@ -4266,7 +4295,7 @@ function handleShortcut(event, input) {
   const extra = extraShortcut(input);
   if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
-  else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
+  else if (mod && input.shift && key === 't') reopenLastClosed();
   else if (mod && input.shift && key === 'a') openTabSearch();
   else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
@@ -4280,7 +4309,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'l') focusAddress();
   else if (mod && key === 'f' && pdfViewer.isViewerUrl(wc?.getURL())) pdfRt.command(wc, 'find'); // the PDF viewer's own find bar searches every page
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
-  else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
+  else if (mod && key === 'f') openFindBar();
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
@@ -4318,6 +4347,13 @@ function handleShortcut(event, input) {
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
+}
+
+// Ctrl+F / Edit > Find: the find bar opens (focus moves to it now) holding the text selected on the page, as in Chrome
+// (features/find-selection.js); with nothing selected it opens as it was, on the last search.
+function openFindBar() {
+  ui()?.focus();
+  findSelection.pageSelection(activeTab()?.webContents).then((text) => ui()?.send('find:open', text ? { text } : undefined));
 }
 
 // F6 / Alt+D, F3 / Ctrl+G, Ctrl+F4 (browser/shortcut-mod.js extraShortcut). False: not ours here, the key goes on to the page.
@@ -4914,7 +4950,7 @@ function aiTabsReopen(token) {
   for (const item of items) {
     if (!isWebUrl(item.url)) continue;
     const at = closedTabs.lastIndexOf(item.url);
-    if (at >= 0) closedTabs.splice(at, 1);
+    if (at >= 0) { closedTabs.splice(at, 1); closedInfo.splice(at, 1); }
     const rec = item.rec && winRecs.has(item.rec) && rcAlive(item.rec) ? item.rec : curRec;
     withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}), ...(item.groupId && tabGroups.groups.has(item.groupId) ? { groupId: item.groupId } : {}) })); // (back in its group, when the group is still there)
     reopened++;
@@ -5137,7 +5173,7 @@ function macMenu() {
       submenu: [
         { label: t('menu.reload'), ...shown('Cmd+R'), click: pv('reload', () => reloadActive({ always: true })) },
         { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: pv('forceReload', () => reloadActive({ ignoreCache: true, always: true })) },
-        { label: t('menu.find'), ...shown('Cmd+F'), click: pv('find', () => { ui()?.focus(); ui()?.send('find:open'); }) },
+        { label: t('menu.find'), ...shown('Cmd+F'), click: pv('find', openFindBar) },
         normal({ label: t('menu.readerMode'), click: () => toggleReaderActive() }),
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))).map(normal),
         { label: t('menu.pictureInPicture'), click: pv('pictureInPicture', () => togglePictureInPicture(wc())) },
@@ -7711,7 +7747,13 @@ ipcMain.on('tab:new', (_e, url) => {
 });
 // The UI's and Settings' strings in the system's language (features/i18n.js).
 ipcMain.on('ui:strings', (event) => { event.returnValue = { locale: i18n().locale, strings: i18n().strings }; });
-ipcMain.handle('settings:strings', () => ({ locale: i18n().locale, strings: i18n().strings }));
+// The same table for Lumen's own pages that have a preload of their own (the error, History, Bookmarks and Downloads pages and
+// the downloads panel): nothing in it is private, but it goes only to a page of Lumen's renderer/ folder.
+const RENDERER_PAGES = (pathToFileURL(path.join(__dirname, 'renderer')).href + '/').toLowerCase();
+ipcMain.on('pages:strings', (event) => {
+  event.returnValue = event.senderFrame?.url?.toLowerCase().startsWith(RENDERER_PAGES) ? { locale: i18n().locale, strings: i18n().strings } : { locale: 'en', strings: {} };
+});
+ipcMain.handle('settings:strings',() => ({ locale: i18n().locale, strings: i18n().strings }));
 if (TEST) global.__i18n = () => i18n(); // test/a11y.js
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));

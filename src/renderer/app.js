@@ -2161,9 +2161,12 @@ const findInput = $('find-input');
 let findHideTimer = null;
 
 // `opts.step` (F3 / Ctrl+G: 1 next, -1 previous): with the bar open it goes to the next match; closed, it opens the bar on the last search.
+// `opts.text` (Ctrl+F with text selected on the page): the bar starts from it, as in Chrome; not while you are typing in the bar.
 function openFind(opts) {
   const step = opts && typeof opts === 'object' ? Number(opts.step) || 0 : 0;
   if (step && !findbar.hidden && findbar.classList.contains('open') && findInput.value) { findStep(step > 0); return; }
+  const text = opts && typeof opts === 'object' && typeof opts.text === 'string' ? opts.text : '';
+  if (text && !(findbar.classList.contains('open') && document.activeElement === findInput)) findInput.value = text;
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
