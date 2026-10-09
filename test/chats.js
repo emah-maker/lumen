@@ -13,10 +13,15 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
 
 // A fake Claude key keeps the picker, and so the agent, on the Claude API even when this machine
 // has Claude Code installed; the client itself is swapped for a fake below.
-const launch = (profile) => electron.launch({
-  args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
-});
+// (These checks are about a chat the sidebar reopens on: the "Sidebar button starts a new chat" default is covered by test/sidebar-newchat.js.)
+const launch = async (profile) => {
+  const app = await electron.launch({
+    args: [path.join(__dirname, '..')],
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
+  });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  return app;
+};
 
 // Every reply is "Reply N." and reports 1000 input + 200 output tokens (claude-opus-5: $0.01).
 const fakeClient = (app) => app.evaluate(() => {

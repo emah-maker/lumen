@@ -152,6 +152,7 @@ const DEFAULTS = {
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
+  sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'off', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js)
@@ -344,7 +345,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -685,7 +686,7 @@ function create(deps) {
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }

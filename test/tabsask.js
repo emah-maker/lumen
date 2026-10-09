@@ -24,6 +24,7 @@ const path = require('path');
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabsask-'));
   const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x' } });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false)); // (these checks count the messages of the chat the sidebar reopens on; test/sidebar-newchat.js covers the new-chat default)
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));

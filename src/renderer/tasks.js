@@ -119,7 +119,7 @@
 
   // ---- the panel
   function showSidebar() {
-    if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click();
+    if (document.body.classList.contains('sidebar-hidden')) (window.showSidebarFor || (() => byId('toggle-sidebar').click()))();
   }
   async function openPanel(id = null, { tab } = {}) {
     showSidebar();

@@ -4861,9 +4861,19 @@ function startChat() {
       // Shown in several tabs at once ("Also show in this tab"): every tab it is in, its home marked.
       const tabs = Array.isArray(chat.tabs) ? chat.tabs : [];
       const shared = tabs.length > 1;
+      // What a click on the row does. A chat in another tab that is working or shown in several tabs is attached to this tab's
+      // sidebar ('share': it stays where it is, so its run keeps working in its home tab and page actions keep going there; nothing is
+      // pulled away unasked); an idle chat in one other tab moves here; one already in this tab just opens. Without a share handler
+      // (an older page) a working or shared chat's click goes to its tab, as before. The chat page (jump false) always opens it itself.
+      const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      const rowAction = !jump ? 'open'
+        : elsewhere && onShare && (working || shared) ? 'share'
+        : ((shared && api.showTab) || (elsewhere && working && api.showTab)) && !(shared && chat.tab?.here) ? 'tab'
+        : 'open';
       const tabName = (x) => (x.here ? tr('chats.thisTab', 'This tab') : x.title || tr('chats.tabUntitled', 'another tab'));
-      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + ' · ' + tr('chats.clickGoes', 'click to go there') : '';
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
+      const clickHint = () => (rowAction === 'open' && !elsewhere ? '' : rowAction === 'share' ? tr('chats.clickShares', 'click opens it here too') : rowAction === 'tab' ? tr('chats.clickGoes', 'click to go there') : tr('chats.clickMoves', 'click moves it here'));
+      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + (clickHint() ? ' · ' + clickHint() : '') : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + ' · ' + clickHint() : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
@@ -4886,14 +4896,13 @@ function startChat() {
           li.classList.add(`has-${chat.badge}`);
         }
       }
-      // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
-      const working = ['running', 'queued', 'approval'].includes(chat.badge);
       const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
       openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
         if (!jump) await moveHere(); // (the chat page opens a chat on the page itself: it keeps what it shows, whatever the tabs do)
-        else if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
-        else if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
+        else if (rowAction === 'share') await alsoShow(); // attach it to this sidebar: it stays in its tab(s)
+        else if (rowAction === 'tab') await goToTab(); // (no share handler) the tab you are not on, or its home
+        else await moveHere();
       };
 
       const actions = document.createElement('div');
@@ -4960,7 +4969,7 @@ function startChat() {
       // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
       const dropsOne = Boolean(elsewhere && api.showTab);
       if (dropsOne) li.classList.add('drops-one');
-      const clickGoes = working || shared; // (the row's click goes to the tab; otherwise it moves the chat here)
+      const clickGoes = rowAction === 'tab'; // (the row's click goes to the tab; otherwise it moves the chat here or shows it here too)
       const tabActions = [];
       if ((elsewhere || shared) && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
@@ -5057,6 +5066,24 @@ function startChat() {
   const api = { snapshotArrival };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.snapshotArrival = snapshotArrival;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
+// ---- sidebar-open.js
+// What the AI button (and Ctrl+J) does when it opens the sidebar (app.js): start a new chat, or leave the chat as it is.
+// A plain script in the UI; test/sidebar-open-units.js loads it with require().
+//   'keep'   leave the sidebar on the chat it shows (the setting is off, or the open request carries an intent: a chat to show,
+//            "Ask AI about this", a task or run that needs an OK, a notification, an agent event)
+//   'reuse'  the setting is on but the open chat is already empty: use it (empty chats are not piled up)
+//   'new'    the setting is on and the open chat has messages: the sidebar opens on a fresh empty chat; the old one stays in
+//            History (a run still going in it keeps going)
+(function (root) {
+  function sidebarOpenPlan({ setting = true, empty = false, intent = false } = {}) {
+    if (intent || setting === false) return 'keep';
+    return empty ? 'reuse' : 'new';
+  }
+  const api = { sidebarOpenPlan };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.sidebarOpenPlan = sidebarOpenPlan;
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
 // ---- freeze-keepalive.js
@@ -7565,9 +7592,26 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
   if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
   if (visible && !fromTab) $('prompt').focus({ preventScroll: true });
 }
+// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
+// starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
+// this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
+// open stays in History, and a reply still being written there carries on.
+function toggleSidebarByHand() {
+  const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
+  if (opening) {
+    const plan = window.sidebarOpenPlan({
+      setting: window.lumenSidebarNewChat !== false,
+      empty: !$('empty').hidden,
+      intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
+    });
+    if (plan === 'new') $('new-chat').click();
+  }
+  showSidebar(opening);
+}
+window.showSidebarFor = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); }; // tasks.js, research.js: opening the sidebar for their panel is not "a new chat"
 $('toggle-sidebar').onclick = () => {
   if (chatFull) { exitFull(); return; } // the toggle docks a full chat back rather than closing it
-  showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true');
+  toggleSidebarByHand();
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
@@ -7649,7 +7693,7 @@ resizer.addEventListener('keydown', (e) => {
   const width = setSidebarWidth($('sidebar').getBoundingClientRect().width + (e.key === 'ArrowLeft' ? 20 : -20));
   localStorage.setItem('sidebarWidth', String(width));
 });
-window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
+window.browser.onToggleSidebar(() => toggleSidebarByHand());
 // Ctrl+Shift+K: the New chat button, opening the sidebar first (a run in progress keeps going in its own chat).
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
@@ -8261,7 +8305,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
   // ---- the panel
   function showSidebar() {
-    if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click();
+    if (document.body.classList.contains('sidebar-hidden')) (window.showSidebarFor || (() => byId('toggle-sidebar').click()))();
   }
   async function openPanel(id = null, { tab } = {}) {
     showSidebar();
@@ -8839,7 +8883,7 @@ $('agent-stop')?.addEventListener('click', () => {
     refreshLists();
   }
 
-  function showSidebar() { if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click(); }
+  function showSidebar() { if (document.body.classList.contains('sidebar-hidden')) (window.showSidebarFor || (() => byId('toggle-sidebar').click()))(); }
   async function openPanel() {
     showSidebar();
     await refresh();
@@ -10517,6 +10561,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false })); // [subagents] the sidebar's Helpers button follows Settings → AI
+    if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false; // [sidebar new chat] app.js: the AI button opens on a new chat
     accent = p.accent || null;
     applyAccent();
   };
