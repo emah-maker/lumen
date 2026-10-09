@@ -4,9 +4,9 @@
 // optionally reacting to the pointer. newtab.js loads this file only when an effect is on, so with
 // it off it costs nothing. One small canvas that never takes a click (pointer-events: none; the
 // page's CSS also fades it behind the content column), kept light on purpose: a particle count
-// scaled to the window and capped, at most 30 frames a second (each one asked for just in time, none thrown away; the loop rests after 90 s without input) (20 and half as many particles in
+// scaled to the window and capped, at most 30 frames a second, each asked for just in time (20 and half as many particles in
 // Performance mode), a capped pixel ratio and canvas size, no animation frame asked for while the
-// page is not in front (and its pixel buffer freed after a while), and one still frame with Reduce motion. Each color is one batched fill, so rainbow costs a few more calls only.
+// page is not in front (and its pixel buffer freed after a while), one still frame with Reduce motion, and a rest after 90 s without input. Each color is one batched fill, so rainbow costs a few more calls only.
 
 (() => {
   const TAU = Math.PI * 2;
