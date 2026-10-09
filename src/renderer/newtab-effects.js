@@ -4,7 +4,7 @@
 // optionally reacting to the pointer. newtab.js loads this file only when an effect is on, so with
 // it off it costs nothing. One small canvas that never takes a click (pointer-events: none; the
 // page's CSS also fades it behind the content column), kept light on purpose: a particle count
-// scaled to the window and capped, at most 30 frames a second (20 and half as many particles in
+// scaled to the window and capped, at most 30 frames a second (each one asked for just in time, none thrown away; the loop rests after 90 s without input) (20 and half as many particles in
 // Performance mode), a capped pixel ratio and canvas size, no animation frame asked for while the
 // page is not in front (and its pixel buffer freed after a while), and one still frame with Reduce motion. Each color is one batched fill, so rainbow costs a few more calls only.
 
@@ -16,6 +16,8 @@
 
   const MAX_PIXELS = 2.6e6; // the canvas never holds more pixels than this (about 1920 x 1350)
   const FREE_AFTER_MS = 20e3; // hidden this long: the canvas gives its pixel buffer back (redrawn from the particles when shown)
+
+  const IDLE_PAUSE_MS = 90e3; // no pointer, key or wheel input this long: the animation rests (a still canvas) until the next input
 
   let style = { size: 1 }; // the current run's multipliers (make() reads the size)
 
@@ -130,13 +132,16 @@
     },
   };
 
+  const INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'];
   let run = null; // { name, key, canvas, ctx, list, raf, colors, ... } while an effect is on
 
   function stop() {
     if (!run) return;
     cancelAnimationFrame(run.raf);
+    clearTimeout(run.timer);
     clearTimeout(run.freeTimer);
     document.removeEventListener('visibilitychange', run.onVisibility);
+    for (const t of INPUTS) removeEventListener(t, run.onInput);
     removeEventListener('resize', run.onResize);
     removeEventListener('pointermove', run.onPointer);
     document.documentElement.removeEventListener('pointerleave', run.onLeave);
@@ -205,19 +210,30 @@
     fade(r);
   }
 
+  // The loop asks for an animation frame only when a frame is due: a timer waits out most of the interval (30 fps, 20 in
+  // Performance mode), then one requestAnimationFrame draws it. It used to ask for all 60 a second and return early for half of them.
+  // It also stops after IDLE_PAUSE_MS without input (the canvas keeps the last frame) and starts again on the next input.
+  function next(r, spent) {
+    clearTimeout(r.timer);
+    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden) r.raf = requestAnimationFrame(frame); }, Math.max(0, (r.lite ? 50 : 33) - 9 - spent));
+  }
+
   function frame(t) {
     const r = run;
     if (!r) return;
-    if (document.hidden) { r.raf = 0; return; } // (onVisibility starts the loop again)
-    r.raf = requestAnimationFrame(frame);
+    r.raf = 0;
+    if (document.hidden) return; // (onVisibility starts the loop again)
     const interval = r.lite ? 50 : 33;
-    if (t - r.last < interval) return;
+    if (t - r.last < interval - 1) { r.raf = requestAnimationFrame(frame); return; } // (a frame came early: wait for the next)
+    if (performance.now() - r.input > IDLE_PAUSE_MS) { r.last = 0; r.idle = true; return; } // (onInput starts the loop again)
     const dt = (Math.min(3, (t - (r.last || t - interval)) / 16.7)) * r.speed; // in 60 Hz frames; a long pause doesn't jump
     r.last = t;
     if (r.resized) { r.resized = false; size(); }
     const e = EFFECTS[r.name];
+    const began = performance.now();
     for (const p of r.list) e.step(p, r.w, r.h, dt, r.mouse);
     draw();
+    next(r, performance.now() - began);
   }
 
   // name: an EFFECTS key or anything else for none. still: one frame, no animation. lite: Performance
@@ -239,7 +255,7 @@
     canvas.id = 'effect';
     canvas.setAttribute('aria-hidden', 'true');
     document.getElementById('backdrop').after(canvas);
-    run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 } };
+    run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, timer: 0, idle: false, input: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 } };
     size();
     if (!motion) { draw(); return; }
     // Not in front (another tab, the spare page, a minimised window): no animation frame is even asked for, and after a while the canvas
@@ -249,15 +265,24 @@
       if (!r) return;
       if (document.hidden) {
         cancelAnimationFrame(r.raf); r.raf = 0;
+        clearTimeout(r.timer); r.timer = 0;
         clearTimeout(r.freeTimer);
         r.freeTimer = setTimeout(() => { if (run === r && document.hidden) { r.canvas.width = 1; r.canvas.height = 1; r.freed = true; } }, FREE_AFTER_MS);
         return;
       }
       clearTimeout(r.freeTimer);
       if (r.freed) { r.freed = false; size(); }
-      r.last = 0;
+      r.last = 0; r.input = performance.now(); r.idle = false;
       if (!r.raf) r.raf = requestAnimationFrame(frame);
     };
+    run.input = performance.now();
+    run.onInput = () => {
+      const r = run;
+      if (!r) return;
+      r.input = performance.now();
+      if (r.idle && !document.hidden) { r.idle = false; if (!r.raf) r.raf = requestAnimationFrame(frame); }
+    };
+    for (const t of INPUTS) addEventListener(t, run.onInput, { passive: true });
     document.addEventListener('visibilitychange', run.onVisibility);
     run.onResize = () => { run.resized = true; };
     addEventListener('resize', run.onResize, { passive: true });

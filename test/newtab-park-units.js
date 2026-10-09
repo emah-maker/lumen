@@ -55,7 +55,7 @@ function make(startHidden = false) {
 }
 {
   const fx = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'newtab-effects.js'), 'utf8');
-  check('effect: asks for no animation frame while hidden, frees its canvas after a while, and starts again when shown', /document\.hidden\) \{ r\.raf = 0; return; \}/.test(fx) && /FREE_AFTER_MS/.test(fx) && /addEventListener\('visibilitychange', run\.onVisibility\)/.test(fx) && /removeEventListener\('visibilitychange', run\.onVisibility\)/.test(fx));
+  check('effect: asks for no animation frame while hidden, frees its canvas after a while, and starts again when shown', /document\.hidden\) return;/.test(fx) && /FREE_AFTER_MS/.test(fx) && /addEventListener\('visibilitychange', run\.onVisibility\)/.test(fx) && /removeEventListener\('visibilitychange', run\.onVisibility\)/.test(fx));
   check('effect: the canvas is capped in pixels (a huge window)', /MAX_PIXELS/.test(fx));
 }
 
