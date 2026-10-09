@@ -37,7 +37,9 @@ const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' 
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const matchPattern = require('./browser/match-pattern'); // which pages an extension's content scripts apply to
-const { shortcutMod } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere
+const { shortcutMod, extraShortcut, appCommandAction } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere; F6, F3, Ctrl+F4; the mouse's back / forward buttons
+const { reloadAction } = require('./browser/reload-action');
+const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Paste and Go) for the browser's own text fields
 // The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
@@ -212,7 +214,7 @@ const UI_ONLY_IPC = new Set([
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
-  'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
+  'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
@@ -3468,7 +3470,7 @@ function tabMenuTemplate(id) {
   }
   items.push(
     { type: 'separator' },
-    { label: t('menu.reload'), click: () => reloadTab(tab) },
+    { label: t('menu.reload'), click: () => reloadTab(tab, { always: true }) },
     ...(tab.settings ? [] : sleepMenuItems(tab)),
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
@@ -3577,14 +3579,16 @@ function duplicateTab(id) {
 
 // A tab's Reload (and Cmd+Shift+R for the one in front, bypassing the cache). A sleeping tab is
 // woken, which loads it.
-function reloadTab(tab, { ignoreCache = false } = {}) {
+// `always`: F5 / Ctrl+R and the tab menu reload even while the page is loading (the toolbar button is Stop then; reload-action.js).
+function reloadTab(tab, { ignoreCache = false, always = false } = {}) {
   if (!tab) return;
   if (tab.sleeping || tab.frozen) { wakeTab(tab); layout(); sendTabs(); return; }
   if (!alive(tab)) return;
   const wc = tab.view.webContents;
-  if (wc.isLoading() && !ignoreCache) wc.stop();
-  else if (isErrorPage(wc.getURL())) wc.loadURL(realUrl(wc)).catch(() => {});
-  else if (ignoreCache) wc.reloadIgnoringCache();
+  const action = reloadAction({ loading: wc.isLoading(), ignoreCache, errorPage: isErrorPage(wc.getURL()), always });
+  if (action === 'stop') wc.stop();
+  else if (action === 'reload-failed') wc.loadURL(realUrl(wc)).catch(() => {});
+  else if (action === 'reload-hard') wc.reloadIgnoringCache();
   else wc.reload();
 }
 
@@ -4255,6 +4259,8 @@ function handleShortcut(event, input) {
   const wc = activeTab()?.webContents;
   let handled = true;
   if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
+  const extra = extraShortcut(input);
+  if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
@@ -4279,7 +4285,7 @@ function handleShortcut(event, input) {
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
-  else if (mod && key === 'r') reloadActive({ ignoreCache: input.shift }); // Shift: Force Reload, past the cache
+  else if (mod && key === 'r') reloadActive({ ignoreCache: input.shift, always: true }); // Shift: Force Reload, past the cache
   else if (mod && key === 'tab') cycleTab(input.shift ? -1 : 1);
   else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
   else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
@@ -4303,11 +4309,22 @@ function handleShortcut(event, input) {
   else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5' && !input.shift && !input.control && slidesViewer.isViewerUrl(wc?.getURL())) slidesRt.present(wc); // F5 presents a deck, as in PowerPoint
-  else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control });
+  else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
+}
+
+// F6 / Alt+D, F3 / Ctrl+G, Ctrl+F4 (browser/shortcut-mod.js extraShortcut). False: not ours here, the key goes on to the page.
+function runExtraShortcut(action, wc) {
+  if (action === 'focus-address') { focusAddress(); return true; }
+  if (action === 'close-tab') { if (activeId) requestCloseTab(activeId); return true; }
+  // Find next / previous: opens the find bar when it is closed. The PDF viewer and Settings have their own find.
+  if (pdfViewer.isViewerUrl(wc?.getURL()) || tabs.find((t) => t.id === activeId)?.settings) return false;
+  ui()?.focus();
+  ui()?.send('find:open', { step: action === 'find-prev' ? -1 : 1 });
+  return true;
 }
 
 // Ctrl+Shift+K / the menu: a fresh chat in the sidebar (opens it if closed); the renderer clicks its New chat button.
@@ -4336,10 +4353,10 @@ function cycleTab(direction) {
   if (list.length) { switchTab(list[(index + direction + list.length) % list.length].id); wakeAfterKeyboard(direction); }
 }
 
-function reloadActive({ ignoreCache = false } = {}) {
+function reloadActive({ ignoreCache = false, always = false } = {}) {
   const tab = tabs.find((t) => t.id === activeId);
   userTookOver(tab); // [ai manners] only the user's own reload reaches here (the AI's reload tool calls webContents.reload)
-  reloadTab(tab, { ignoreCache });
+  reloadTab(tab, { ignoreCache, always });
 }
 
 // ---------- saved chats (survive restarts; the sidebar's history list) ----------
@@ -5114,8 +5131,8 @@ function macMenu() {
     {
       label: t('menu.view'),
       submenu: [
-        { label: t('menu.reload'), ...shown('Cmd+R'), click: pv('reload', () => reloadActive()) },
-        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: pv('forceReload', () => reloadActive({ ignoreCache: true })) },
+        { label: t('menu.reload'), ...shown('Cmd+R'), click: pv('reload', () => reloadActive({ always: true })) },
+        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: pv('forceReload', () => reloadActive({ ignoreCache: true, always: true })) },
         { label: t('menu.find'), ...shown('Cmd+F'), click: pv('find', () => { ui()?.focus(); ui()?.send('find:open'); }) },
         normal({ label: t('menu.readerMode'), click: () => toggleReaderActive() }),
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))).map(normal),
@@ -6369,6 +6386,28 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   if (firstWindow) Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   else refreshWindowMenu(); // a window opened: "Merge All Windows" may now be possible
   w.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
+  // The mouse's back / forward buttons and a keyboard's browser keys (Windows, Linux: 'app-command'), and macOS's
+  // two-finger swipe, move through the page's history, as in Chrome. Only for the window the event came from.
+  const navigateFrom = (action) => {
+    if (action !== 'back' && action !== 'forward' && action !== 'reload' && action !== 'stop') return;
+    if (curRec?.win !== w) return;
+    const wc = activeTab()?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    userTookOver(tabs.find((x) => x.id === activeId)); // [ai manners] the user navigated this tab
+    if (action === 'back') goBack(wc);
+    else if (action === 'forward') wc.navigationHistory.goForward();
+    else if (action === 'reload') reloadActive({ always: true });
+    else wc.stop();
+  };
+  w.on('app-command', (event, command) => { const action = appCommandAction(command); if (action) { event.preventDefault(); navigateFrom(action); } });
+  // Right-click in one of the UI's own text fields (Find, the sidebar's message box; the address bar has its own, 'address:menu'):
+  // Cut / Copy / Paste / Select All. Without this the window popped nothing.
+  w.webContents.on('context-menu', (_e, p) => {
+    if (!p.isEditable || w.isDestroyed()) return;
+    const flags = p.editFlags || {};
+    Menu.buildFromTemplate(editMenu.editMenuTemplate({ cut: flags.canCut, copy: flags.canCopy, paste: flags.canPaste })).popup({ window: w });
+  });
+  w.on('swipe', (_e, direction) => { if (direction === 'left') navigateFrom('back'); else if (direction === 'right') navigateFrom('forward'); });
   hardenOwnView(w.webContents, UI_URL);
   // will-navigate doesn't see loads started from the main process: if anything ever points the UI
   // elsewhere, put the UI straight back (the IPC gate already ignores any other document meanwhile).
@@ -7710,6 +7749,17 @@ function moveTab(id, toIndex) {
 }
 ipcMain.on('bookmark:toggle', toggleBookmark);
 ipcMain.on('tab:context-menu', (_e, id, point) => tabMenu(id, point));
+// Right-click in the address bar: Cut / Copy / Paste, and Paste and Go (the clipboard opened or searched at once).
+ipcMain.on('address:menu', (_e, point, hasSelection) => {
+  if (!win || win.isDestroyed()) return;
+  const text = editMenu.oneLine(clipboard.readText());
+  const items = editMenu.editMenuTemplate(
+    { cut: Boolean(hasSelection), copy: Boolean(hasSelection), paste: Boolean(text) },
+    { text, isSearch: resolveInput(text).startsWith(searchUrlFor(readSettings().searchEngine, '')), t, go: goFromAddress },
+  );
+  const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
+  Menu.buildFromTemplate(items).popup({ window: win, x: n(point?.x), y: n(point?.y) });
+});
 ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
@@ -7741,7 +7791,7 @@ ipcMain.on('downloads:menu', (_e, anchor) => {
   showDownloadsPanel({ right: n(anchor?.right ?? anchor?.x), bottom: n(anchor?.bottom ?? anchor?.y) });
 });
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
-ipcMain.on('nav:go', (_e, text) => {
+function goFromAddress(text) {
   const wc = activeTab()?.webContents;
   if (!wc) return;
   userTookOver(tabs.find((t) => t.id === activeId)); // [ai manners] the user navigated this tab
@@ -7758,7 +7808,8 @@ ipcMain.on('nav:go', (_e, text) => {
   if (leaveNewTabFor(current, target)) { activeTab()?.webContents.focus(); return; } // (a new-tab page: the page loads in the warm view)
   wc.loadURL(target).catch(() => {});
   wc.focus();
-});
+}
+ipcMain.on('nav:go', (_e, text) => goFromAddress(text));
 function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }

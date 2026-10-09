@@ -476,6 +476,7 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
+  addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),
   renameGroup: (id, name) => ipcRenderer.send('group:rename', id, name),
