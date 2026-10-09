@@ -46,6 +46,8 @@ const RECENT_MAX = 5;
 const ASK_AGAIN_MS = 4000; // a tab's data is asked again no sooner than this
 const STALE_MS = 5 * 60e3; // ...and, unless the user picks the tab again, only this long after it was asked
 const LOADING_MS = 3500; // "Loading…" is shown this long after a tab was asked, when nothing has come yet
+const PIN_SLOTS = ['pin0', 'pin1', 'pin2', 'pin3']; // (the tab names of the pinned playlists, in pin order)
+const PIN_KINDS = ['playlist', 'album'];
 const TAB_ORDER = [['search', 'Search', 'search'], ['queue', 'Up next', 'queue'], ['library', 'Library', 'library'], ['devices', 'Devices', 'devices'], ['tracks', 'Album', 'tracks'], ['lyrics', 'Lyrics', 'lyrics']];
 
 // What differs between the services; everything else is one card. (Spotify's "Now playing" API mode has its own entry.)
@@ -118,7 +120,7 @@ function build(w, card, o) {
     const can = d.can && typeof d.can === 'object' ? d.can : null;
     if (!base[f]) return false;
     if (d.source === 'app' && !['art', 'title', 'playPause', 'next', 'prev', 'progress', 'tabs'].includes(f)) return false; // (the desktop app: only its own buttons)
-    return !['search', 'seek', 'like', 'shuffle', 'repeat', 'volume', 'queue', 'library', 'devices', 'tracks', 'lyrics'].includes(f) || Boolean(can && can[f]);
+    return !['search', 'seek', 'like', 'shuffle', 'repeat', 'volume', 'queue', 'library', 'devices', 'tracks', 'lyrics', 'playlists'].includes(f) || Boolean(can && can[f]);
   };
   view.cap = cap;
 
@@ -275,7 +277,7 @@ function build(w, card, o) {
   const panels = el('div', 'mc-panels');
   side.append(tabs, panels);
   const tab = {};
-  for (const [name, label, feature] of TAB_ORDER) {
+  const mkTab = (name, label, feature) => {
     const b = el('button', `mc-tab mc-tab-${name}`, label);
     b.type = 'button';
     b.setAttribute('role', 'tab');
@@ -292,8 +294,13 @@ function build(w, card, o) {
     tabs.append(b);
     panels.append(p);
     tab[name] = { b, p };
-  }
+    return b;
+  };
+  for (const [name, label, feature] of TAB_ORDER) mkTab(name, label, feature);
+  // The pinned playlists: up to four more tabs after the built-in ones, shown only for a pin that exists (their label and list come from `d.pins`).
+  for (const name of PIN_SLOTS) mkTab(name, '', 'playlists').classList.add('mc-tab-pin');
   tabs.addEventListener('keydown', (e) => {
+    if (e.key === 'Delete' && ui.tab.startsWith('pin') && pinOf(ui.tab)) { e.preventDefault(); unpin(pinOf(ui.tab)); return; } // (a pinned tab: Delete unpins it)
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const list = visibleTabs();
     const i = list.indexOf(ui.tab);
@@ -309,7 +316,8 @@ function build(w, card, o) {
   const stateOf = () => { const d = view.d || {}; return d.state === 'playing' || d.state === 'paused' ? d.state : 'idle'; };
   function visibleTabs() {
     const idle = stateOf() === 'idle';
-    return TAB_ORDER.filter(([, , feature]) => cap(feature) && (feature !== 'tracks' && feature !== 'lyrics' ? true : view.tier === 'xl' && !idle)).map(([n]) => n); // (an album and lyrics are of a song)
+    const built = TAB_ORDER.filter(([, , feature]) => cap(feature) && (feature !== 'tracks' && feature !== 'lyrics' ? true : view.tier === 'xl' && !idle)).map(([n]) => n); // (an album and lyrics are of a song)
+    return cap('playlists') ? [...built, ...pinsOf().map((_, i) => PIN_SLOTS[i])] : built;
   }
   function selectTab(name, byUser) {
     if (ui.tab !== name) { ui.tab = name; if (byUser) ui.userTab = true; }
@@ -325,6 +333,7 @@ function build(w, card, o) {
   }
   // A tab's data is asked for when the tab is shown (the card is large enough for tabs, and the tab is the open one), not again for a few seconds.
   function askTab(name, byUser) {
+    if (name.startsWith('pin')) { const p = pinOf(name); if (p && (view.tier === 'large' || view.tier === 'xl')) askList(p, byUser === true); return; }
     if (name === 'search') { if (view.tier !== 'small' && view.tier !== 'medium') view.warmSearch?.(); return; } // (the Search tab is shown: the hidden player starts now)
     if (!name || (name === 'devices' && o.engine !== 'spotify-api')) return;
     if (view.tier === 'small' || view.tier === 'medium') return;
@@ -333,6 +342,61 @@ function build(w, card, o) {
     if (age < ASK_AGAIN_MS || (!byUser && ui.asked[name] && age < STALE_MS)) return; // (asked: the engine keeps the list up to date; picked again by the user: asked again)
     ui.asked[name] = now;
     act('etab', { arg: name });
+  }
+  // ---- playlists: opened in the card (from the Library) or pinned as a tab ----
+  const pinsOf = () => (view.d && Array.isArray(view.d.pins) ? view.d.pins : []).filter((p) => p && PIN_KINDS.includes(p.kind) && typeof p.id === 'string' && SAFE_ID.test(p.id) && typeof p.title === 'string').slice(0, 4);
+  const pinOf = (name) => pinsOf()[PIN_SLOTS.indexOf(name)] || null;
+  const isPinned = (it) => pinsOf().some((p) => p.kind === it.kind && p.id === it.id);
+  const keyOfList = (p) => `${p.kind}:${p.id}`;
+  const listOf = (p) => { const l = view.d && view.d.lists && view.d.lists[keyOfList(p)]; return l && typeof l === 'object' ? l : null; };
+  // A list's songs are asked for when it is shown, not again for a few seconds; the user picking it again asks again (main keeps them two minutes).
+  function askList(p, byUser, force) {
+    const k = `list:${keyOfList(p)}`;
+    const age = Date.now() - (ui.asked[k] || 0);
+    if (!force && (age < ASK_AGAIN_MS || (!byUser && ui.asked[k] && age < STALE_MS))) return;
+    ui.asked[k] = Date.now();
+    act('eopen', force ? { kind: p.kind, arg: p.id, force: '1' } : { kind: p.kind, arg: p.id });
+  }
+  function pin(it) { act('pin', { kind: it.kind, arg: it.id }); }
+  function unpin(it) { ui.tab = ''; ui.userTab = false; ui.openList = null; act('unpin', { kind: it.kind, arg: it.id }); }
+  // The songs of one playlist or album, into `box`: a header (Back to the library, Pin / Unpin), Play and Shuffle, then the numbered songs.
+  function listSig(p) { const l = listOf(p); return [keyOfList(p), l ? [l.ok, l.current, (l.items || []).map((i) => i.id)] : null, isPinned(p), pinsOf().length, l ? 0 : Date.now() - (ui.asked[`list:${keyOfList(p)}`] || 0) < LOADING_MS]; }
+  function drawList(box, p, { onBack, redraw }) {
+    const l = listOf(p);
+    const items = l ? rowsOf(l.items) : [];
+    const name = text(p.title, 60) || text(l && l.title, 60) || (p.kind === 'album' ? 'Album' : 'Playlist');
+    const head = el('div', 'mc-listhead');
+    if (onBack) { const b = el('button', 'mc-listback', '‹ Back'); b.type = 'button'; b.setAttribute('aria-label', 'Back to your library'); b.addEventListener('click', onBack); head.append(b); }
+    head.append(el('span', 'am-heading mc-ctx', name));
+    const pinned = isPinned(p);
+    const full = !pinned && pinsOf().length >= 4;
+    const pb = el('button', 'mc-listpin', pinned ? 'Unpin' : 'Pin');
+    pb.type = 'button';
+    pb.disabled = full;
+    pb.setAttribute('aria-label', pinned ? `Unpin ${name}` : full ? 'Up to 4 playlists can be pinned' : `Pin ${name} as a tab`);
+    pb.title = pb.getAttribute('aria-label');
+    pb.addEventListener('click', () => (pinned ? unpin(p) : pin(p)));
+    head.append(pb);
+    box.append(head);
+    const fresh = Date.now() - (ui.asked[`list:${keyOfList(p)}`] || 0) < LOADING_MS;
+    if (!l && fresh) { note(box, 'Loading the songs…'); later(LOADING_MS + 50, redraw); return; }
+    if (!l || l.ok === false) { note(box, l && l.why === 'scope' ? 'Reconnect Spotify in Settings to allow this.' : 'Couldn’t read the songs.', l && l.why === 'scope' ? {} : { button: 'Try again', onClick: () => { askList(p, true, true); redraw(); } }); return; }
+    if (!items.length) { note(box, 'Nothing to play in here.'); return; }
+    const bar = el('div', 'mc-listbar');
+    for (const [label, shuffle] of [['Play', false], ['Shuffle', true]]) {
+      const b = el('button', 'w-btn', label);
+      b.type = 'button';
+      b.setAttribute('aria-label', `${label} ${name}`);
+      b.addEventListener('click', () => act('pplay', shuffle ? { kind: p.kind, arg: p.id, shuffle: '1' } : { kind: p.kind, arg: p.id }));
+      bar.append(b);
+    }
+    box.append(bar);
+    items.forEach((it, i) => box.append(listRow(it, { index: i, current: i === l.current, label: `Play ${text(it.title, 60)} from ${name}`, onClick: () => act('pplay', { kind: p.kind, arg: p.id, pos: String(Number.isInteger(it.pos) ? it.pos : i), with: it.id }) })));
+  }
+  function drawPinned(name) {
+    const p = pinOf(name);
+    if (!p) return;
+    fill(tab[name].p, sig(['pin', listSig(p)]), (box) => drawList(box, p, { redraw: () => drawPinned(name) }));
   }
   const loadingFor = (name, list) => { const d = view.d || {}; return Boolean(list && list.pending) || (!rowsOf(list && list.items).length && Date.now() - (ui.asked[name] || 0) < LOADING_MS && (list ? list.ok !== false : d.recent === undefined)); };
   // After the loading window passes with nothing, the panel says "nothing" instead of "Loading…".
@@ -385,8 +449,10 @@ function build(w, card, o) {
     const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs);
     const out = d.signedIn === false;
     const failed = d.libraryOk === false; // (the engine's page could not be read: said, never "Loading…" or an empty list)
+    const op = ui.openList && cap('playlists') ? ui.openList : null; // (a playlist opened in the card: its songs take the panel until Back)
+    if (op) { fill(tab.library.p, sig(['open', listSig(op)]), (box) => drawList(box, op, { onBack: () => { ui.openList = null; drawLibrary(); }, redraw: drawLibrary })); return; }
     const state = out ? 'out' : d.needsScopes === true && !recent.length && !lists.length && !liked.length ? 'scope' : recent.length || lists.length || liked.length ? 'rows' : (Date.now() - (ui.asked.library || 0) < LOADING_MS ? 'loading' : failed ? 'err' : 'empty');
-    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), d.needsScopes === true, d.libraryWhy]), (box) => {
+    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), d.needsScopes === true, d.libraryWhy, pinsOf().map((p) => p.id), cap('playlists')]), (box) => {
       if (state === 'err') { note(box, d.libraryWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found.` : 'Couldn’t read your library.', { button: 'Try again', onClick: retry('library') }); return; }
       if (state === 'out') { note(box, `Sign in to ${o.name} to see your library.`); if (o.signIn) { const b = el('button', 'w-btn primary am-signin', o.signIn); b.type = 'button'; b.addEventListener('click', () => act('esignin')); box.append(b); } return; }
       if (state === 'loading') { note(box, 'Loading your library…'); return; }
@@ -396,7 +462,11 @@ function build(w, card, o) {
         if (!items.length) return;
         const g = el('div', 'am-group');
         g.append(el('div', 'am-heading', heading));
-        for (const it of items) if (KINDS.includes(it.kind)) g.append(listRow(it, { withThumbs: false, label: `Play ${text(it.title, 60)}`, onClick: () => act('playitem', { kind: it.kind, arg: it.id }) }));
+        for (const it of items) {
+          if (!KINDS.includes(it.kind)) continue;
+          if (cap('playlists') && PIN_KINDS.includes(it.kind)) { g.append(listRow(it, { withThumbs: false, label: `Open ${text(it.title, 60)}`, onClick: () => { ui.openList = { kind: it.kind, id: it.id, title: text(it.title, 60) }; askList(ui.openList, true); drawLibrary(); }, acts: pinToggle(it) })); continue; }
+          g.append(listRow(it, { withThumbs: false, label: `Play ${text(it.title, 60)}`, onClick: () => act('playitem', { kind: it.kind, arg: it.id }) }));
+        }
         box.append(g);
       };
       group('Recently played', recent);
@@ -405,6 +475,21 @@ function build(w, card, o) {
       if (d.needsScopes === true) reconnectNote(box);
     });
     if (state === 'loading') later(LOADING_MS + 50, drawLibrary);
+  }
+  // A Library row's pin: pins it as a tab (up to four), or takes it off again.
+  function pinToggle(it) {
+    const on = isPinned(it);
+    const full = !on && pinsOf().length >= 4;
+    const b = el('button', `mc-pin${on ? ' on' : ''}`);
+    b.type = 'button';
+    b.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 2.5h4l-.6 4 2.1 2.2v1H8.6V14H7.4v-4.3H4.5v-1L6.6 6.5z" fill="currentColor"/></svg>';
+    const label = on ? `Unpin ${text(it.title, 60)}` : full ? 'Up to 4 playlists can be pinned' : `Pin ${text(it.title, 60)} as a tab`;
+    b.setAttribute('aria-label', label);
+    b.setAttribute('aria-pressed', String(on));
+    b.title = label;
+    b.disabled = full;
+    b.addEventListener('click', () => (on ? unpin(it) : pin(it)));
+    return b;
   }
   function reconnectNote(box) {
     note(box, 'Reconnect Spotify to use your library and likes here. Lumen asks for the extra permission once.', { button: 'Reconnect in Settings', onClick: () => act('configure') });
@@ -478,7 +563,7 @@ function build(w, card, o) {
   function drawPanels() {
     if (view.tier === 'small' || view.tier === 'medium') return;
     const name = ui.tab;
-    if (name === 'queue') drawQueue(); else if (name === 'library') drawLibrary(); else if (name === 'devices') drawDevices(); else if (name === 'tracks') drawTracks(); else if (name === 'lyrics') drawLyrics(); else if (name === 'search') inline.draw();
+    if (name === 'queue') drawQueue(); else if (name === 'library') drawLibrary(); else if (name === 'devices') drawDevices(); else if (name === 'tracks') drawTracks(); else if (name === 'lyrics') drawLyrics(); else if (name === 'search') inline.draw(); else if (name.startsWith('pin')) drawPinned(name);
   }
 
   // ---- progress: main sends where the playhead was and when; this page moves it on once a second ----
@@ -670,6 +755,7 @@ function build(w, card, o) {
   function syncTabs() {
     const names = new Set(visibleTabs());
     for (const [n, t] of Object.entries(tab)) { t.b.hidden = !names.has(n); }
+    pinsOf().forEach((p, i) => { const b = tab[PIN_SLOTS[i]].b; const label = text(p.title, 60); if (b.textContent !== label) b.textContent = label; b.title = label; });
     side.hidden = !names.size;
     const idleTab = stateOf() === 'idle' && ['queue', 'tracks', 'lyrics'].includes(ui.tab) && !ui.userTab;
     if (!names.has(ui.tab) || idleTab) {

@@ -18,6 +18,8 @@ const TAB_MAX_AGE_MS = 5000;
 const THUMBS = 6; // pictures fetched for a list (each distinct picture is a request, and all widgets share 40 a minute: a queue of one album is one)
 const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played', liked: 'user-library-read' };
 const MAX_SONGS = 30; // songs a search can grow to by "more songs" (three pages of 10)
+const LIST_MAX_AGE_MS = 2 * 60e3; // a playlist's songs are read again only when asked for after this (a tab opened again, "Try again")
+const MAX_LISTS = 6; // playlists kept (the pinned ones and the one open)
 const TABS = ['queue', 'library', 'devices', 'tracks', 'search'];
 
 const failure = (res, what) => {
@@ -107,6 +109,7 @@ async function loadTab(call, name, ctx, playback) {
       recent: recent.ok ? bare(SV.normalizeRecent(recent.body)).slice(0, 10) : [],
       playlists: playlists.ok ? bare(SV.normalizePlaylists(playlists.body)).slice(0, 25) : [],
     };
+    for (const p of ui.library.playlists) remember(ui, 'playlist', p.id, p.title);
     return;
   }
   if (name === 'devices') {
@@ -124,6 +127,27 @@ async function loadTab(call, name, ctx, playback) {
     ui.tracksCtx = c;
     ui.tracks = { ok: true, at, title: got.title, current: -1, items: bare(got.items), key: `${c.kind}:${c.id}` };
   }
+}
+// ---- playlists and albums in the card (opened from the Library, or pinned as tabs) ----
+const listKey = (kind, id) => `${kind}:${id}`;
+const listable = (kind, id) => SV.PIN_KINDS.includes(kind) && SV.SAFE_ID.test(id || '');
+// What the card says a playlist is called (from the library it read, or the list itself): a pin takes its title from here, never from the page.
+function titleOf(ui, kind, id) {
+  return ui.titles?.[listKey(kind, id)] || '';
+}
+const remember = (ui, kind, id, title) => { if (title) (ui.titles ||= {})[listKey(kind, id)] = title; };
+async function loadList(call, kind, id, ctx) {
+  const { ui } = ctx;
+  const key = listKey(kind, id);
+  const at = ctx.now();
+  const res = await ask(call, ui, SV.PLAYER.listing(kind, id), 'library');
+  const lists = (ui.lists ||= {});
+  if (!res.ok) { lists[key] = { ok: false, at, why: SV.scopeError(res.status, res.body) ? 'scope' : 'page', items: [], title: titleOf(ui, kind, id) }; return; }
+  const got = SV.normalizeListing(kind, res.body);
+  remember(ui, kind, id, got.title);
+  lists[key] = { ok: true, at, title: got.title || titleOf(ui, kind, id), items: bare(got.items) };
+  const keys = Object.keys(lists);
+  if (keys.length > MAX_LISTS) for (const k of keys.sort((a, b) => lists[a].at - lists[b].at).slice(0, keys.length - MAX_LISTS)) delete lists[k];
 }
 const currentIndex = (items, id) => items.findIndex((i) => i.id === id);
 
@@ -162,6 +186,30 @@ async function act(call, action, ctx) {
       if (have && ctx.now() - have.at < TAB_MAX_AGE_MS && !action.force && (action.arg !== 'tracks' || have.key === playingFrom)) return { local: true };
       await loadTab(call, action.arg, ctx, cached);
       return { local: true };
+    }
+    case 'eopen': { // a playlist or album opened in the card (from the Library, or its pinned tab): its songs are read, or kept for a couple of minutes
+      if (!listable(action.kind, action.item)) return false;
+      const have = ui.lists?.[listKey(action.kind, action.item)];
+      if (have && have.ok && ctx.now() - have.at < LIST_MAX_AGE_MS && !action.force) return { local: true };
+      await loadList(call, action.kind, action.item, ctx);
+      return { local: true };
+    }
+    case 'pplay': { // Play / Shuffle of a listed playlist, or a row of it (arg: its place, item: the playlist's id, with: the song)
+      if (!listable(action.kind, action.item)) return false;
+      const list = ui.lists?.[listKey(action.kind, action.item)];
+      const hasPos = action.arg !== undefined && action.arg !== null;
+      const row = hasPos ? list?.items?.find((r) => r.pos === Number(action.arg)) : null;
+      if (hasPos && (!row || (action.with && row.id !== action.with))) throw new Error('The list changed. Look again.');
+      const play = () => SV.PLAYER.playContext(action.kind, action.item, hasPos ? Number(action.arg) : undefined);
+      if (action.shuffle) {
+        const sh = await call(...flat(SV.PLAYER.shuffle(true)));
+        if (!sh.ok && !noDevice(sh)) need(sh, 'shuffle');
+        else if (sh.ok) cached.shuffle = true;
+      }
+      let res = await call(...flat(play()));
+      if (!res.ok && noDevice(res)) res = await wakeAndRetry(call, play);
+      need(res, 'play');
+      return { delay: 1200 };
     }
     case 'seek': { // (the progress bar: seconds)
       if (!Number.isFinite(action.sec)) return false;
@@ -258,17 +306,21 @@ async function extras(call, ctx, playback) {
   const t = ui.tracks;
   const tracks = t ? { ...t, current: currentIndex(t.items, song), pending: false, signedOut: false } : { items: [], title: '', current: -1, ok: true, why: '', pending: false };
   const q = ui.queue || { items: [], ok: true };
+  const here = playback.context ? listKey(playback.context.kind, playback.context.id) : '';
+  const lists = {};
+  for (const [k, l] of Object.entries(ui.lists || {})) lists[k] = { ...l, current: k === here ? currentIndex(l.items, song) : -1 };
   const lib = ui.library;
   const dev = ui.devices;
   return {
     liked,
     can: {
       search: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: Boolean(playback.itemId) && !missing.like && liked !== null, shuffle: playback.shuffle !== null, repeat: playback.repeat !== null,
-      volume: playback.volume !== null, library: !(missing.library && missing.recent), tracks: Boolean(playback.context || ui.tracks), lyrics: false, devices: 'pick',
+      volume: playback.volume !== null, playlists: true, library: !(missing.library && missing.recent), tracks: Boolean(playback.context || ui.tracks), lyrics: false, devices: 'pick',
     },
     needsScopes: Object.keys(missing).filter((k) => NEEDS[k] && missing[k]).length > 0,
     queue: { items: q.items || [], pending: false, ok: q.ok !== false, why: q.ok === false ? q.why || 'page' : '', title: '', current: -1, signedOut: false },
     tracks,
+    lists,
     recent: lib ? lib.recent : [],
     likedSongs: lib ? lib.liked || [] : [],
     playlists: lib ? lib.playlists : [],
@@ -286,4 +338,4 @@ async function extras(call, ctx, playback) {
   };
 }
 
-module.exports = { act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+module.exports = { listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
