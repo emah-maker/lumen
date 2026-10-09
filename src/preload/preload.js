@@ -34,9 +34,6 @@ contextBridge.exposeInMainWorld('browser', {
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   tabHover: (id, on) => ipcRenderer.send('tab:hover', id, on), // the pointer rests on / leaves a tab: main wakes a sleeping one ahead of the click
   tabDown: (id) => ipcRenderer.send('tab:down', id), // the button went down on a tab (the click follows)
-  onWakeCover: on('wake:cover'), // { id, jpeg, w, h }: a woken tab's last picture, shown until its page paints
-  onWakeCoverEnd: on('wake:cover-end'),
-  wakeCoverShown: (id) => ipcRenderer.send('wake:cover-shown', id),
   moveTab: (id, toIndex, done) => ipcRenderer.send('tab:move', id, toIndex, Boolean(done)), // done: the strip is waiting to show the tab in its slot
   moveTabs: (ids, beforeId, groupId, join) => ipcRenderer.send('tab:move-block', ids, beforeId, groupId, join), // several tabs (a selection, a group) as one block
   // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.

@@ -26,17 +26,19 @@ function keepReason(f) {
 }
 
 // ---- the settings (Settings > Tabs > Memory) and the decision that uses them -------------------------------
-// Defaults are what Lumen did before these were adjustable: unload a tab untouched for 20 minutes, and any tab
-// idle 2 minutes while the computer is short of memory (under 10% free), whatever the pinned state.
+// Defaults: unload a tab untouched for 20 minutes (frozen first for 10 of them, so coming back is instant), and any tab
+// idle 2 minutes while the computer is short of memory (under 10% free); pinned tabs and the 3 most recently used background
+// tabs are kept awake whatever the timer says.
 const MODES = ['off', 'idle', 'memory', 'both'];
 const HOWS = ['unload', 'freeze']; // unload: close the page, reload on return; freeze: keep it in memory, paused
 const MINUTE_CHOICES = [5, 15, 20, 30, 60, 120, 240, 480];
 const FREE_PERCENT_CHOICES = [5, 10, 15, 20, 25];
 const LUMEN_GB_CHOICES = [0, 1, 2, 3, 4, 6, 8]; // 0: no limit on Lumen's own use
 const MAX_AWAKE_CHOICES = [0, 2, 3, 4, 5, 6, 8, 10, 15, 20]; // 0: no limit (Performance mode may still set one)
+const KEEP_RECENT_CHOICES = [0, 1, 2, 3, 4, 5, 8]; // the most recently used background tabs kept awake whatever the idle timer says; 0: none
 const MAX_MINUTES = 7 * 24 * 60;
 const MEMORY_IDLE_MS = 2 * 60 * 1000; // under memory pressure a tab idle this long may sleep
-const DEFAULTS = { tabSleepMode: 'both', tabSleepMinutes: 20, tabSleepHow: 'unload', tabSleepFreePercent: 10, tabSleepLumenGb: 0, tabSleepMaxAwake: 0, tabSleepKeepPinned: false, tabSleepNever: [], tabSleepFreezeFirstMinutes: 0 };
+const DEFAULTS = { tabSleepMode: 'both', tabSleepMinutes: 20, tabSleepHow: 'unload', tabSleepFreePercent: 10, tabSleepLumenGb: 0, tabSleepMaxAwake: 0, tabSleepKeepPinned: true, tabSleepKeepRecent: 3, tabSleepNever: [], tabSleepFreezeFirstMinutes: 10 };
 
 const cleanMinutes = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 && n <= MAX_MINUTES ? n : null; };
 // A site as typed (an address or a bare host) -> its host without "www.", or '' when it isn't one.
@@ -59,7 +61,8 @@ function normalize(raw = {}) {
     freePercent: num(r.tabSleepFreePercent, FREE_PERCENT_CHOICES, DEFAULTS.tabSleepFreePercent),
     lumenGb: num(r.tabSleepLumenGb, LUMEN_GB_CHOICES, DEFAULTS.tabSleepLumenGb),
     maxAwake: num(r.tabSleepMaxAwake, MAX_AWAKE_CHOICES, DEFAULTS.tabSleepMaxAwake),
-    keepPinned: r.tabSleepKeepPinned === true,
+    keepPinned: r.tabSleepKeepPinned !== false,
+    keepRecent: num(r.tabSleepKeepRecent, KEEP_RECENT_CHOICES, DEFAULTS.tabSleepKeepRecent),
     never: cleanHosts(r.tabSleepNever) || [],
     freezeFirst: require('./tab-wake').cleanFreezeFirst(r.tabSleepFreezeFirstMinutes), // minutes a tab is frozen (instant to wake) before it unloads; 0: unload at once
   };
@@ -80,6 +83,18 @@ function memoryLow(s, memory) {
   return s.lumenGb > 0 && Number.isFinite(m.lumenBytes) && m.lumenBytes > s.lumenGb * 1024 ** 3;
 }
 
+// The ids of the `n` most recently used background tabs (not the active one, not asleep, and only tabs the user has
+// looked at: `viewedAt` is read when a tab has one). These are the ones the user is likely to go back to next, so the idle
+// timer does not take them; memory pressure and the awake cap still can.
+function recentTabs(tabs, n) {
+  if (!(n > 0)) return new Set();
+  return new Set(tabs
+    .filter((t) => t.alive !== false && !t.sleeping && !t.active && t.lastActive && (!('viewedAt' in t) || t.viewedAt))
+    .sort((a, b) => b.lastActive - a.lastActive)
+    .slice(0, n)
+    .map((t) => t.id));
+}
+
 // Which tabs go to sleep now. tabs: [{ id, lastActive, pinned, audible, host, capturing, aiBusy, active, sleeping, alive?,
 // loading?, fullscreen?, devTools?, openPopups?, closing?, settings?, webPage?, ... }] (the facts keepReason reads, too);
 // settings: raw Settings values (normalize); now: ms; memory: see memoryLow; limits: { sleepAfterMs, maxLiveBackgroundTabs }
@@ -96,10 +111,11 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
   const facts = (t) => ({ alive: true, webPage: true, ...t, agentUsing: t.agentUsing || t.aiBusy, keepPinned: s.keepPinned, neverSite: hostListed(t.host, s.never) });
   const byAge = [...tabs].sort((a, b) => (a.lastActive || 0) - (b.lastActive || 0));
   const chosen = new Set();
+  const recent = recentTabs(tabs, s.keepRecent);
   for (const t of byAge) {
     if (!t.lastActive || keepReason(facts(t))) continue;
     const idle = now - t.lastActive;
-    if (useIdle && idle >= idleMs) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); }
+    if (useIdle && idle >= idleMs && !recent.has(t.id)) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); }
     else if (out.low && idle >= MEMORY_IDLE_MS) { out.sleep.push({ id: t.id, why: 'memory' }); chosen.add(t.id); }
   }
   // Too many background tabs awake: the ones used least recently go first, none used in the last minute.
@@ -183,4 +199,4 @@ function wakeBounds(contentBounds, { fullscreen = false, full = null } = {}) {
   return { x: Math.round(Number(b?.x) || 0), y: Math.round(Number(b?.y) || 0), width: width > 1 ? width : 800, height: height > 1 ? height : 600 };
 }
 
-module.exports = { MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };
+module.exports = { MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, KEEP_RECENT_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, recentTabs, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };

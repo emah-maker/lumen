@@ -11,7 +11,8 @@ const NOW = 10_000 * MIN;
 const GB = 1024 ** 3;
 const tab = (id, idleMin, extra = {}) => ({ id, lastActive: NOW - idleMin * MIN, host: `site${id}.com`, ...extra });
 const ids = (r) => r.sleep.map((x) => x.id);
-const decide = (tabs, settings = {}, memory = null, limits = {}) => TS.decideSleep({ tabs, settings, now: NOW, memory, limits });
+// (the recent-tabs and pinned rules are off here unless a test turns them on: they have their own tests below)
+const decide = (tabs, settings = {}, memory = null, limits = {}) => TS.decideSleep({ tabs, settings: { tabSleepKeepRecent: 0, tabSleepKeepPinned: false, ...settings }, now: NOW, memory, limits });
 const okMem = { totalBytes: 16 * GB, freeBytes: 8 * GB, lumenBytes: 1 * GB };
 const lowMem = { totalBytes: 16 * GB, freeBytes: 1 * GB, lumenBytes: 1 * GB };
 
@@ -23,7 +24,9 @@ check('default way is unload', d.how === 'unload');
 check('default low-memory threshold is 10% free', d.freePercent === 10);
 check('default Lumen memory limit is off', d.lumenGb === 0);
 check('default awake cap is none', d.maxAwake === 0);
-check('default: pinned tabs are not exempt (as before)', d.keepPinned === false);
+check('default: pinned tabs never sleep', d.keepPinned === true && TS.normalize({ tabSleepKeepPinned: false }).keepPinned === false);
+check('default: the 3 most recent background tabs stay awake', d.keepRecent === 3 && TS.normalize({ tabSleepKeepRecent: 0 }).keepRecent === 0 && TS.normalize({ tabSleepKeepRecent: 7 }).keepRecent === 3);
+check('default: idle tabs are frozen for 10 minutes before they unload', d.freezeFirst === 10 && TS.normalize({ tabSleepFreezeFirstMinutes: 0 }).freezeFirst === 0);
 check('default: no never-sleep sites', d.never.length === 0);
 check('old on/off switch off -> off', TS.normalize({ tabSleep: false }).mode === 'off');
 check('old switch off beats a stored mode', TS.normalize({ tabSleep: false, tabSleepMode: 'idle' }).mode === 'off');
@@ -140,6 +143,27 @@ check('cleanHost from a bare host', TS.cleanHost(' Mail.Example.com ') === 'mail
 check('cleanHost rejects junk', TS.cleanHost('not a host') === '' && TS.cleanHost('') === '' && TS.cleanHost(null) === '');
 check('cleanHosts dedupes and drops junk', JSON.stringify(TS.cleanHosts(['a.com', 'https://www.a.com/x', '??', 'b.org'])) === '["a.com","b.org"]');
 check('cleanHosts rejects a non-list', TS.cleanHosts('a.com') === null);
+
+// ---- the sleep policy of fast waking: recent tabs, pinned, audio, forms (decideSleep with the defaults)
+{
+  const dflt = (tabs, settings = {}, memory = null, limits = {}) => TS.decideSleep({ tabs, settings, now: NOW, memory, limits });
+  const t = [tab(1, 300), tab(2, 90), tab(3, 60), tab(4, 40), tab(5, 30)]; // all long past the 20-minute timer
+  check('recent: the 3 tabs used last are left alone by the idle timer', JSON.stringify(ids(dflt(t))) === '[1,2]', JSON.stringify(dflt(t).sleep));
+  check('recent: 0 turns it off', JSON.stringify(ids(dflt(t, { tabSleepKeepRecent: 0 }))) === '[1,2,3,4,5]');
+  check('recent: 5 keeps them all', ids(dflt(t, { tabSleepKeepRecent: 5 })).length === 0);
+  check('recent: the active tab and sleeping tabs do not take a place', JSON.stringify(ids(dflt([tab(9, 1, { active: true }), tab(8, 2, { sleeping: true }), ...t]))) === '[1,2]');
+  check('recent: a tab never looked at (woken ahead or preloaded) takes no place', JSON.stringify(ids(dflt([tab(6, 5, { viewedAt: 0 }), ...t]))) === '[1,2]' && TS.recentTabs([tab(6, 5, { viewedAt: 0 }), tab(7, 6, { viewedAt: 1 })], 3).size === 1);
+  check('recent: low memory still takes them (after 2 minutes idle)', JSON.stringify(ids(dflt(t, {}, lowMem))) === '[1,2,3,4,5]', JSON.stringify(dflt(t, {}, lowMem).sleep));
+  check('recent: the awake cap still takes the least recent first', (() => { const r = dflt([tab(1, 70), tab(2, 60), tab(3, 50), tab(4, 40)], { tabSleepMaxAwake: 2, tabSleepMode: 'memory' }, okMem); return r.capExcess === 2 && JSON.stringify(ids(r).slice(0, 2)) === '[1,2]'; })());
+  check('pinned tabs never sleep by default', ids(dflt([tab(1, 300, { pinned: true })])).length === 0 && ids(dflt([tab(1, 300, { pinned: true })], {}, lowMem)).length === 0);
+  check('...unless turned off', JSON.stringify(ids(dflt([tab(1, 300, { pinned: true })], { tabSleepKeepPinned: false, tabSleepKeepRecent: 0 }))) === '[1]');
+  check('a tab playing audio never sleeps', ids(dflt([tab(1, 300, { audible: true })], {}, lowMem)).length === 0);
+  check('a tab being captured, fullscreen, or loading never sleeps', ids(dflt([tab(1, 300, { capturing: true }), tab(2, 300, { fullscreen: true }), tab(3, 300, { loading: true })])).length === 0);
+  // (typed form input is the page's own check: pageBusyScript, run before the sleep)
+  check('a page with typed input is kept by its own check', TS.pageBusy('input') && TS.pageBusy('upload') && TS.pageBusy(undefined) && !TS.pageBusy(''));
+  const script = TS.pageBusyScript(0);
+  check('...which looks at fields, uploads and media', /input,textarea/.test(script) && /input\[type=file\]/.test(script) && /video,audio/.test(script));
+}
 
 if (failed) { console.error(`${failed} check(s) failed`); process.exit(1); }
 console.log('tab-sleep settings units OK');

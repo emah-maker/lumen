@@ -62,7 +62,7 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
   const urls = [...Array.from({ length: COUNT }, (_, i) => `${base}/${i}`), ...real];
   const titles = urls.map((u, i) => (i < COUNT ? `Wake ${i}` : `Real ${i - COUNT}`));
   const session = { urls, titles, favicons: urls.map(() => null), active: 0, groupIds: urls.map(() => null), pinned: urls.map(() => false) };
-  const settings = { session, ...(flag('freeze-first') ? { tabSleepFreezeFirstMinutes: 10 } : {}), ...(args.includes('--preload') ? { tabPreload: value('preload', 2) } : { tabPreload: 0 }) };
+  const settings = { session, performanceMode: 'off', tabSleepFreePercent: 5, tabSleepKeepRecent: 0, ...(flag('freeze-first') ? { tabSleepFreezeFirstMinutes: 10 } : {}), ...(args.includes('--preload') ? { tabPreload: value('preload', 2) } : { tabPreload: 0 }) };
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify(settings));
   const launchApp = () => electron.launch({ args: [path.join(__dirname, '..')], timeout: 60000, env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
   let app = await launchApp();
@@ -90,8 +90,8 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
 
     // Time the wake of one tab: hover first when asked, then click; the clock starts at the click.
     async function wake(name, n, pattern, { hover = 0 } = {}) {
-      if (hover) { const p = await tabEl(label(n)); if (p) { await ui.mouse.move(p.x, p.y); await sleep(hover); } }
-      if (flag('verbose') && hover) console.error('before click', JSON.stringify(await app.evaluate((_m, n) => global.__wake?.state().filter((t) => t.url.endsWith('/' + n)).map((t) => ({ ...t, snap: global.__wake.hasSnapshot(t.url) })), n)));
+      if (hover) { const p = await tabEl(label(n)); if (p) { await ui.mouse.move(p.x - 60, p.y); await ui.mouse.move(p.x, p.y, { steps: 3 }); await sleep(hover); /* a real move: a pointer that stays put gets no enter event on the tab that scrolled under it */ } }
+      if (flag('verbose') && hover) console.error('before click', JSON.stringify(await app.evaluate((_m, n) => global.__wake?.state().filter((t) => t.url.endsWith('/' + n)).map((t) => ({ ...t})), n)));
       const clickAt = Date.now();
       if (hover) { await ui.mouse.down(); await ui.mouse.up(); } else await click(n); // after a hover: a real press and release on the tab
       const fcp = await fcpOf(app, pattern);
@@ -113,11 +113,10 @@ const fcpOf = (app, pattern, timeout = 15000) => app.evaluate(async ({ webConten
     for (let i = 0; i < RUNS; i++) { const n = 14 + i; await visit(n); await sleepTab(n, 'unload'); await wake('unloaded', n, urlRe(n)); await click(0); await sleep(300); }
     if (flag('with-freeze')) for (let i = 0; i < RUNS; i++) { const n = 19 + i; await visit(n); await sleepTab(n, 'freeze'); await wake('frozen', n, urlRe(n)); await click(0); await sleep(300); }
     if (!flag('no-restart')) { // a second launch of the same profile: the pages the first one left come back as placeholders, with their pictures
-      if (flag('verbose')) console.error('snapshots before restart', JSON.stringify(await app.evaluate((_m, base) => Array.from({ length: 24 }, (_, i) => [i, global.__wake?.hasSnapshot(`${base}/${i}`)]).filter((x) => x[1]).map((x) => x[0]), base)));
       await app.close(); await sleep(1500);
       app = await launchApp(); ui = await app.firstWindow(); await boot();
-      for (let i = 0; i < RUNS; i++) { const n = 2 + i; await wake('restored (picture from last run)', n, urlRe(n)); await click(0); await sleep(300); }
-      for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored (picture) + hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
+      for (let i = 0; i < RUNS; i++) { const n = 2 + i; await wake('restored (second launch)', n, urlRe(n)); await click(0); await sleep(300); }
+      for (let i = 0; i < RUNS; i++) { const n = 8 + i; await wake('restored (second launch) + hover', n, urlRe(n), { hover: HOVER }); await click(0); await sleep(300); }
     }
     for (let i = 0; i < real.length; i++) {
       const name = `Real ${i}`;

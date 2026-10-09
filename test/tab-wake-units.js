@@ -36,23 +36,23 @@ function clock() {
   const fired = [];
   const previews = [];
   const h = W.createHoverIntent({ onIntent: (id, why) => fired.push([id, why]), onPreview: (id) => previews.push(id), setTimer: c.set, clearTimer: c.clear });
-  h.enter(1); c.advance(149);
-  check('hover: not before 150 ms', fired.length === 0);
+  h.enter(1); c.advance(W.HOVER_MS - 1);
+  check('hover: not before the hover time (100 ms)', fired.length === 0);
   c.advance(1);
-  check('hover: fires at 150 ms', JSON.stringify(fired) === '[[1,"hover"]]', JSON.stringify(fired));
+  check('hover: fires at 100 ms', JSON.stringify(fired) === '[[1,"hover"]]', JSON.stringify(fired));
   c.advance(1000);
   check('hover: fires once per visit', fired.length === 1);
   check('hover: preview on enter', JSON.stringify(previews) === '[1]');
-  h.leave(1); h.enter(1); c.advance(150);
+  h.leave(1); h.enter(1); c.advance(W.HOVER_MS);
   check('hover: a new visit fires again', fired.length === 2);
 }
 {
   const c = clock();
   const fired = [];
   const h = W.createHoverIntent({ onIntent: (id, why) => fired.push([id, why]), setTimer: c.set, clearTimer: c.clear });
-  h.enter(2); c.advance(100); h.leave(2); c.advance(500);
+  h.enter(2); c.advance(60); h.leave(2); c.advance(500);
   check('hover: leaving quickly cancels', fired.length === 0 && c.pending() === 0);
-  h.enter(3); c.advance(100); h.enter(4); c.advance(100);
+  h.enter(3); c.advance(60); h.enter(4); c.advance(60);
   check('hover: moving to another tab restarts the clock', fired.length === 0);
   c.advance(50);
   check('hover: the second tab fires, not the first', JSON.stringify(fired) === '[[4,"hover"]]', JSON.stringify(fired));
@@ -125,7 +125,11 @@ const strip = (n, extra = () => ({})) => Array.from({ length: n }, (_, i) => tab
 // ---- settings values ----
 check('preload default is 1', W.cleanPreload(undefined) === 1 && W.cleanPreload('x') === 1 && W.cleanPreload(7) === 1);
 check('preload choices', [0, 1, 2, 3, 5].every((n) => W.cleanPreload(n) === n));
-check('freeze-first default is off', W.cleanFreezeFirst(undefined) === 0 && W.cleanFreezeFirst(11) === 0 && W.cleanFreezeFirst(30) === 30);
+check('freeze-first default is 10 minutes; 0 (off) is still a choice', W.cleanFreezeFirst(undefined) === 10 && W.cleanFreezeFirst(11) === 10 && W.cleanFreezeFirst(30) === 30 && W.cleanFreezeFirst(0) === 0);
+check('hover time is 100 ms', W.HOVER_MS === 100);
+// ---- addresses never woken ahead (kept from the old picture rules)
+for (const u of ['https://login.example.com/', 'https://www.paypal.com/myaccount', 'https://example.com/checkout/step2', 'https://example.com/?token=abc', 'https://user:pw@example.com/', 'lumen://newtab']) check(`not woken ahead: ${u}`, Boolean(W.sensitiveAddress(u)), String(W.sensitiveAddress(u)));
+for (const u of ['https://example.com/article/1', 'http://example.com/', 'https://example.com/blog/accounting-tips']) check(`woken ahead: ${u}`, W.sensitiveAddress(u) === null);
 
 // ---- freeze first, then unload ----
 {
