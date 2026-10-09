@@ -105,6 +105,20 @@ module.exports = async function widgetResilienceUnits(check) {
     check('…a refused address (bad certificate) never resets the network', !refused.state.resets && /refused/.test(refused.card('wcal00002').error || ''), JSON.stringify({ n: refused.state.resets, e: refused.card('wcal00002').error }));
   }
 
+  // ---- a Web player's Try again (Spotify, Apple Music in their own view) also drops dead connections before it reloads ----
+  {
+    const order = [];
+    const W = createWidgets({
+      readSettings: () => ({ homeWidgets: [{ id: 'wspot0001', type: 'spotify', title: '', span: 3, mode: 'web' }] }), writeSettings: () => {},
+      fetch: async () => { throw new Error('no network in this test'); }, getSecret: () => null, setSecret: () => {}, endpoints: () => ({}), rateMax: () => 100000,
+      now: () => 1e12, setTimer: () => ({}), clearTimer: () => {},
+      resetNetwork: () => { order.push('reset'); },
+      spotifyWebReload: () => { order.push('reload'); },
+    });
+    await W.act({ id: 'wspot0001', do: 'reload' });
+    check('web player: Try again resets the network first, then reloads the player', order.join(',') === 'reset,reload', order.join(','));
+  }
+
   // ---- the first look fails (the machine is offline): retries at 2 s, 10 s, 30 s, then rests ----
   {
     const r = rig({ widgets: [{ id: 'wcal00001', type: 'calendar', title: '', span: 3, url: URL1, name: 'School', count: 5 }] });
