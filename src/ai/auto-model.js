@@ -47,6 +47,9 @@ function scopeOf(id) {
   return m && SCOPES.includes(m[1]) ? m[1] : undefined;
 }
 const isAuto = (id) => scopeOf(id) !== undefined;
+// An engine's own "Default" row that Settings > "Pick the model for me" turns into that engine's Auto: 'codex:default' -> 'codex'. Claude Code's
+// Default is routed by features/model-route.js (claudeCodePlan); the API providers have no Default row (their own Auto is a row of its own).
+const ownDefaultScope = (id) => (/^(codex|grokbuild|antigravity):default$/.exec(String(id || '')) || [])[1] || null;
 const autoIdOf = (scope) => (scope ? `${scope}:auto` : AUTO);
 const scopeName = (scope) => SCOPE_NAMES[scope] || scope;
 
@@ -65,6 +68,11 @@ function tierOf(option) {
   if (option?.tier && TIERS.includes(option.tier)) return option.tier;
   const s = bareOf(id);
   if (!s || s === 'default' || s === 'auto') return 'balanced'; // an engine's own default: whatever the CLI picks, in the middle
+  // The 2026 lines name their tiers with words of their own (docs/auto-model.md, Research): GPT-6 Luna / Sol / Astra, Gemini 3.7+ Flash.
+  if (/(^|[-_. ])luna(?=$|[-_. ])/.test(s)) return 'fast';
+  if (/(^|[-_. ])astra(?=$|[-_. ])/.test(s)) return 'strong';
+  if (/(^|[-_. ])sol(?=$|[-_. ])/.test(s)) return 'balanced';
+  if (/^gemini-3\.(?:[7-9]|\d{2,})-flash(?!-lite)/.test(s)) return 'balanced'; // Google positions Flash 3.7 and later for coding and multi-step agents
   if (/(^|[-_. ])(haiku|nano|lite|mini|flash|small|fast|instant|tiny|light|8b|7b|3b|1b)(?=$|[-_. ])/.test(s) && !/(^|[-_. ])pro(?=$|[-_. ])/.test(s)) {
     return /^o\d.*mini|^o\d.*-mini/.test(s) ? 'balanced' : 'fast'; // o3-mini / o4-mini reason: balanced, not fast
   }
@@ -76,9 +84,15 @@ function tierOf(option) {
   return 'balanced';
 }
 
-// Cost class for a tie-break: the catalog's price per million input tokens when known, else by tier.
+// Cost class for a tie-break: the catalog's price per million input tokens when known, else the list price of the model families
+// the vendors publish (docs/auto-model.md, Research: Anthropic 2026-10-06, OpenAI and xAI 2026-10-09), else by tier. The families matter
+// between models of one tier: Opus 5.5 ($4) before Fable ($10), Sonnet ($2) before an unknown "balanced" model.
+const LIST_PRICE = [[/fable|mythos/, 10], [/opus/, 4], [/sonnet/, 2], [/haiku/, 0.1], [/astra/, 10], [/(^|[-_. ])sol(?=$|[-_. ])/, 2], [/luna/, 0.1], [/gemini-3\.1-pro/, 2], [/flash-lite/, 0.25]];
 function costOf(option) {
   if (Number.isFinite(option?.price) && option.price >= 0) return option.price;
+  const bare = bareOf(typeof option === 'string' ? option : option?.id);
+  const known = LIST_PRICE.find(([re]) => re.test(bare));
+  if (known) return known[1];
   return { fast: 0.5, balanced: 3, strong: 15 }[tierOf(option)];
 }
 
@@ -103,18 +117,24 @@ function needFor(request = {}) {
   const history = Math.max(0, Number(request.historyChars) || 0);
   const attachment = Math.max(0, Number(request.attachmentChars) || 0);
   const hint = String(request.hint || '').toLowerCase();
+  const top = hint === 'think' || hint === 'deep' || hint === 'strong'; // asked for the strongest: among the strong, the most capable (not the cheapest)
   const tools = typeof request.tools === 'boolean' ? request.tools : TOOL_KINDS.has(kind);
   let tier;
   let why;
+  let situation = kind; // what the request is (browsing, research, a rewrite, ...): the named kinds, or read from the prompt for a chat
   if (kind in KIND_TIER) {
     tier = KIND_TIER[kind];
     why = { quick: 'a quick lookup', lookup: 'a quick lookup', summary: 'a summary', translation: 'a translation', classification: 'a quick classification', title: 'a short title', code: 'code', reasoning: 'a hard problem' }[kind];
     if (kind === 'summary' && attachment > BIG_ATTACHMENT_CHARS) { tier = 'balanced'; why = 'a long summary'; }
   } else {
     const prev = TIERS.includes(request.previousTier) ? { light: 'light', balanced: 'standard', fast: 'light', strong: 'heavy' }[request.previousTier] : null;
-    const t = modelRoute.tierFor(request.prompt || '', { imageCount, tabCount: request.tabCount || 0, previous: prev ? { tier: prev, turns: Math.max(1, request.turns || 1) } : null, pinned: false });
+    // The situation (browsing, research, a rewrite, an image, ...) sets a floor or ceiling on the scored tier (features/model-route.js).
+    // A background task ('agentic') has nobody watching it: it is treated as browsing and never goes to the smallest model.
+    const t = modelRoute.tierFor(request.prompt || '', { imageCount, tabCount: request.tabCount || 0, previous: prev ? { tier: prev, turns: Math.max(1, request.turns || 1), kind: request.previousKind } : null, pinned: false, page: request.page === true, unattended: kind === 'agentic', tools });
     tier = { light: 'fast', standard: 'balanced', heavy: 'strong' }[t.tier];
-    why = t.tier === 'light' ? (tools ? 'a quick task' : 'a quick question') : t.tier === 'heavy' ? (/```|debug|refactor|fix|code|implement/i.test(request.prompt || '') ? 'a coding task' : 'a demanding task') : 'a typical request';
+    situation = t.kind;
+    why = t.why;
+    if (attachment > BIG_ATTACHMENT_CHARS && tier === 'fast' && (situation === 'page' || situation === 'research')) { tier = 'balanced'; why = 'a long page'; } // reading a very long page is no quick lookup
     if (t.followUp && prev && tier === { light: 'fast', standard: 'balanced', heavy: 'strong' }[prev]) why = 'a follow-up';
   }
   // A CLI session already running (its prompt cache is warm) is not handed to a smaller model mid-way.
@@ -127,7 +147,9 @@ function needFor(request = {}) {
     if (history + attachment > HUGE_HISTORY_CHARS && tier !== 'strong') { tier = 'strong'; why = 'a very long conversation'; }
     else if (history + attachment > LONG_HISTORY_CHARS && tier === 'fast') { tier = 'balanced'; why = 'a long conversation'; }
   }
-  return { tier, why, tools, vision: imageCount > 0, chars: history + attachment, kind };
+  // agentic: tool use drives the answer (browsing, research, background tasks): a small model that is weak at it is passed over (route). longContext: the answer needs a lot of text held at once.
+  const agentic = tools && (situation === 'browse' || situation === 'research' || kind === 'agentic');
+  return { tier, why, top, tools, vision: imageCount > 0, chars: history + attachment, kind, situation, agentic, longContext: situation === 'research' || (situation === 'page' && attachment > 20_000) };
 }
 
 // ---------- candidates ----------
@@ -175,6 +197,22 @@ const shortName = (option) => String(option?.name || option?.label || bareOf(opt
 // a model that can't manage is worse than one that is only dearer.
 const tierCost = (have, want) => { const d = TIERS.indexOf(have) - TIERS.indexOf(want); return d === 0 ? 0 : d > 0 ? 6 * d : 10 * -d; };
 
+// What a situation asks of a model beyond its tier (a cost added to the candidate's score; lower is better).
+//   agentic   tool use drives the answer (browsing, research, an unattended task). The smallest models of most families are weak at it: the
+//             published computer-use numbers put Haiku 5.5 at 72.4% on OSWorld 2.1 against 48.9% for GPT-6 Luna (Anthropic's launch table, see
+//             docs/auto-model.md), and no comparable figure exists for the other small models. So a small model that is not a Haiku counts as
+//             one tier too weak: it still answers when it is all there is, but a balanced model of its own provider (or Haiku) is chosen first.
+//   long      research and long pages keep a lot of text in view: among equals, the larger window wins (a small nudge, never a tier).
+function fitCost(option, need, options) {
+  let cost = 0;
+  if (need.agentic && need.tier === 'fast' && tierOf(option) === 'fast' && !/haiku/.test(bareOf(option.id)) && !/:default$/.test(option.id)) cost += 8;
+  if (need.longContext) {
+    const window = fallback.capsOf(option.id, options).context;
+    if (window > 0) cost -= Math.min(0.8, Math.log2(Math.max(1, window / 200_000)) / 4);
+  }
+  return cost;
+}
+
 // route({ options, request, ... }) -> { id, tier, need, why, label, reason, option, candidates } | { id: null, reason }
 // last: the model the chat's previous Auto turn used: kept when it is still as good as any, so the answer doesn't flip
 // between two models of one tier (and a CLI's session isn't restarted for nothing). options: the picker's list. prefer: provider keys to stay with, best first (the chat's last Auto provider, then the
@@ -188,11 +226,11 @@ function route({ options = [], request = {}, prefer = [], last = null, exclude =
     const p = providerOf(o.id);
     const at0 = home.indexOf(p);
     const stay = at0 === 0 ? 0 : at0 > 0 ? 2 : home.length ? 4 : 0;
-    return tierCost(tierOf(o), need.tier) + stay + (o.id === last ? -1.5 : 0) + Math.min(0.9, Math.log10(1 + costOf(o)) / 10) + index / 10000;
+    return tierCost(tierOf(o), need.tier) + stay + (o.id === last ? -1.5 : 0) + (need.top ? -1 : 1) * Math.min(0.9, Math.log10(1 + costOf(o)) / 10) + fitCost(o, need, options) + index / 10000;
   };
   const ranked = list.map((o, i) => ({ o, s: score(o, i) })).sort((a, b) => a.s - b.s).map((x) => x.o);
   const best = ranked[0];
-  return { id: best.id, tier: tierOf(best), need, why: need.why, scope, label: label(best), reason: reasonOf(shortName(best), need.why, scope) + skippedNote(options, need, list, { exclude, denied, cooldowns, at, allowEngines, scope }), option: best, candidates: ranked.map((o) => o.id) };
+  return { id: best.id, tier: tierOf(best), situation: need.situation, need, why: need.why, scope, label: label(best), reason: reasonOf(shortName(best), need.why, scope) + skippedNote(options, need, list, { exclude, denied, cooldowns, at, allowEngines, scope }), option: best, candidates: ranked.map((o) => o.id) };
 }
 
 // " (Claude Code skipped: out of usage)": the providers Auto left out only because they hit a usage limit (a cooldown that
@@ -350,4 +388,4 @@ function pickerEntry({ last = null, describe = '' } = {}) {
 // The provider keys Auto may stay with, from the chat's last Auto choice and the pick the user made before Auto.
 const preferFrom = ({ lastId = null, home = null } = {}) => [lastId ? providerOf(lastId) : null, home ? providerOf(home) : null].filter(Boolean);
 
-module.exports = { hintOf, HINTS, AUTO, TIERS, KINDS, KIND_TIER, SCOPES, SCOPE_NAMES, isAuto, scopeOf, autoIdOf, scopeName, routableOf, withProviderAutos, tierOf, costOf, needFor, candidatesOf, route, routeOrFallBack,escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };
+module.exports = { ownDefaultScope, hintOf, HINTS, AUTO, TIERS, KINDS, KIND_TIER, SCOPES, SCOPE_NAMES, isAuto, scopeOf, autoIdOf, scopeName, routableOf, withProviderAutos, tierOf, costOf, needFor, candidatesOf, route, routeOrFallBack,escalate, failureOf, createDenied, pickerEntry, preferFrom, label, reasonOf };

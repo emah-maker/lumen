@@ -275,6 +275,7 @@ const CAPS = [
   [/^o1-(mini|preview)/, { context: 128_000, vision: false }],
   [/^o3-mini/, { context: 200_000, vision: false }],
   [/^o[134](-|$)/, { context: 200_000, vision: true }], // o1, o1-pro, o3, o3-pro, o4-mini
+  [/^gpt-6/, { context: 1_050_000, vision: true }], // Astra, Sol, Luna (OpenAI's model page, 2026-10-09)
   [/^gpt-5-chat/, { context: 128_000, vision: true }],
   [/^gpt-5/, { context: 400_000, vision: true }],
   [/^gpt-4\.1/, { context: 1_000_000, vision: true }],
@@ -284,6 +285,8 @@ const CAPS = [
   [/^gpt-3/, { context: 16_000, vision: false }],
   [/^grok-4-fast|^grok-4\.1-fast/, { context: 2_000_000, vision: true }],
   [/^grok-code/, { context: 256_000, vision: false }],
+  [/^grok-4\.(?:[567])/, { context: 500_000, vision: true }], // xAI's model page, 2026-10-09
+  [/^grok-4\.(?:3|20)/, { context: 1_000_000, vision: true }],
   [/^grok-4/, { context: 256_000, vision: true }],
   [/^grok-3/, { context: 131_072, vision: false }],
   [/^grok-2-vision/, { context: 32_768, vision: true }],
