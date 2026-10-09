@@ -177,6 +177,7 @@ const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, 
 const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
 const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
+const ERROR_CLICK_MS = 1e3; // ...except a card showing an error: Try again works at once (a double click is one request)
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
 const SEARCH_RATE = { window: 60e3, max: 90 }; // ...and a search the user typed (and the pictures of its rows) has a budget of its own: polling can't make it wait
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
@@ -211,6 +212,7 @@ function netError(err) {
   return Object.assign(new Error('Couldn’t connect. Check your internet connection.'), { transient: true, why: bits.slice(0, 80) });
 }
 const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
+const NET_RESET_MS = 5e3; // dead sockets and the DNS cache are dropped before a retry at most this often
 // One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
 // last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
 async function calendarOf(x, s, { fresh = false } = {}) {
@@ -1819,6 +1821,14 @@ function createWidgets(deps) {
     }
     return Promise.all(jobs).then((r) => r.some(Boolean));
   }
+  // After a network failure Chromium may keep a dead socket or a stale DNS answer, and every retry would fail on it the same way
+  // (a fresh Lumen gets through). Before a card that failed that way asks again, those are dropped: at most once in NET_RESET_MS.
+  let netResetAt = -Infinity;
+  function freshNetwork() {
+    if (!deps.resetNetwork || now() - netResetAt < NET_RESET_MS) return Promise.resolve();
+    netResetAt = now();
+    return Promise.resolve().then(() => deps.resetNetwork()).catch(() => {});
+  }
   function refresh(w, { force = false, retry = false } = {}) {
     const c = connector(w);
     let entry = cache.get(w.id);
@@ -1828,17 +1838,22 @@ function createWidgets(deps) {
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = !retry && entry.at && age < (entry.error ? ERROR_TTL : ttl);
-    if (fresh && (!force || age < (typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH)))) return Promise.resolve(false);
+    // A card showing an error asks again on Try again (only a double click is held back): the usual 15 s floor kept a click
+    // right after an automatic retry from doing anything.
+    const floor = entry.error || entry.retrying ? ERROR_CLICK_MS : typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH);
+    if (fresh && (!force || age < floor)) return Promise.resolve(false);
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
-    entry.pending = Promise.resolve()
+    entry.pending = (entry.netFail ? freshNetwork() : Promise.resolve())
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => {
         entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
         entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
+        entry.netFail = entry.retrying;
         if (entry.retrying) scheduleRetry(w, entry); else { entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } }
       }, (err) => {
         entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0;
         entry.retrying = false;
+        entry.netFail = err?.transient === true; // a passing failure (no answer, a reset, a timeout, a busy server), not a refusal
         if (err?.transient === true && !entry.retryAt) scheduleRetry(w, entry);
       })
       .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
