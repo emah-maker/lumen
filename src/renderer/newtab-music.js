@@ -22,6 +22,7 @@
 const MCF = globalThis.MusicCardFeatures;
 
 const ICONS = {
+  pin: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 2.5h4l-.6 4 2.1 2.2v1H8.6V14H7.4v-4.3H4.5v-1L6.6 6.5z" fill="currentColor"/></svg>',
   prev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3h1.7v10H3.5zM13 3.4v9.2L6.2 8z"/></svg>',
   next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 3h1.7v10h-1.7zM3 3.4v9.2L9.8 8z"/></svg>',
   play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>',
@@ -482,7 +483,7 @@ function build(w, card, o) {
     const full = !on && pinsOf().length >= 4;
     const b = el('button', `mc-pin${on ? ' on' : ''}`);
     b.type = 'button';
-    b.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 2.5h4l-.6 4 2.1 2.2v1H8.6V14H7.4v-4.3H4.5v-1L6.6 6.5z" fill="currentColor"/></svg>';
+    b.innerHTML = ICONS.pin;
     const label = on ? `Unpin ${text(it.title, 60)}` : full ? 'Up to 4 playlists can be pinned' : `Pin ${text(it.title, 60)} as a tab`;
     b.setAttribute('aria-label', label);
     b.setAttribute('aria-pressed', String(on));
