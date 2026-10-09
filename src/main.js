@@ -8538,6 +8538,10 @@ function effectiveModel(preferred = readSettings().model) {
   // [auto model] Nothing picked yet (a fresh install, or a profile that never chose): Auto, once there is more than one model to
   // choose from. A saved pick is never replaced: not by Auto, and when it is gone (its key was removed) it falls back as before.
   if ((preferred == null || preferred === '') && options.filter((o) => o.signedIn !== false && !(o.badges || []).includes('sign in')).length > 1) return autoModel.AUTO;
+  // A pick its provider no longer lists while that provider is still connected (Gemini 2.5 Flash after Google limited the 2.5
+  // models): the same provider's model of the same kind, not another provider's first (ai/fallback.js sameKindModel).
+  const sameKind = preferred ? aiFallback.sameKindModel(preferred, options) : null;
+  if (sameKind) return sameKind;
   // Nothing picked yet (or it's gone): the default model when it's connected, else the first one.
   return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
