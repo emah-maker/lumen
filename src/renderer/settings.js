@@ -40,17 +40,46 @@ async function save(key, value) {
 
 // ---------- row builders ----------
 
-// A paragraph-long description shows three lines with a "Show more" button (the full text stays in the page for search and screen readers).
-const LONG_DESC = 280;
-function collapseDesc(desc) {
-  desc.classList.add('clamp');
-  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
-  more.addEventListener('click', () => {
-    const open = desc.classList.toggle('clamp') === false;
-    more.setAttribute('aria-expanded', String(open));
-    more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
-  });
-  desc.after(more);
+// A description of more than a line or two is clamped to two lines; fitDescs() adds a quiet "Show more" only where the text really is clipped.
+const CLAMP_FROM = 60;
+function fitDescs() {
+  for (const d of document.querySelectorAll('.desc.clamp')) {
+    if (!d.offsetParent || d.classList.contains('open')) continue; // on another page, filtered out, or already opened
+    const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
+    const clipped = d.scrollHeight > d.clientHeight + 1;
+    if (clipped && !has) {
+      const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
+      more.addEventListener('click', () => {
+        const open = d.classList.toggle('open');
+        more.setAttribute('aria-expanded', String(open));
+        more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
+        if (!open) requestAnimationFrame(fitDescs);
+      });
+      d.after(more);
+    } else if (!clipped && has) has.remove();
+  }
+}
+let fitTimer = 0;
+const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitDescs, 80); };
+
+// Search hits: the matched words are wrapped in <mark class="hit"> in the visible labels and descriptions.
+function highlight(words) {
+  const parents = new Set();
+  for (const m of document.querySelectorAll('mark.hit')) { parents.add(m.parentNode); m.replaceWith(document.createTextNode(m.textContent)); }
+  for (const el of parents) el.normalize();
+  if (!words.length) return;
+  const source = `(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`;
+  const split = new RegExp(source, 'gi');
+  const has = new RegExp(source, 'i');
+  for (const el of document.querySelectorAll('.row:not(.filtered) .label, .row:not(.filtered) .desc')) {
+    if (!el.offsetParent) continue;
+    for (const node of [...el.childNodes]) {
+      if (node.nodeType !== 3 || !has.test(node.data)) continue;
+      const frag = document.createDocumentFragment();
+      node.data.split(split).forEach((part, i) => { if (!part) return; frag.append(i % 2 ? h('mark', { class: 'hit', text: part }) : document.createTextNode(part)); });
+      node.replaceWith(frag);
+    }
+  }
 }
 
 function row(label, desc, ...controls) {
@@ -58,7 +87,7 @@ function row(label, desc, ...controls) {
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
-  if (typeof desc === 'string' && desc.length > LONG_DESC) collapseDesc(el.querySelector('.desc'));
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
   return el;
 }
 function stackRow(label, desc, ...content) {
@@ -2246,13 +2275,15 @@ function buildAntigravity(slot, refreshModels) {
 }
 
 async function buildDownloads(card) {
-  const where = h('span', { class: 'mono', id: 'download-dir' });
+  const where = h('span', { class: 'mono desc', id: 'download-dir' });
   const showDir = () => { where.textContent = st.prefs.downloadDir || st.defaultDownloadDir; };
   showDir();
+  // The folder under the label, its two buttons on the same line at the right.
+  const locationRow = row('Location', null, h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
+    h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }));
+  locationRow.querySelector('.text').append(where);
   card.append(
-    stackRow('Location', null, where, h('div', { class: 'controls' },
-      h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
-      h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }))),
+    locationRow,
     toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
     select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
   );
@@ -2408,7 +2439,7 @@ function buildLanguages(card) {
   };
   add.addEventListener('change', async () => { if (!add.value) return; await save('languages', [...st.prefs.languages, add.value]); render(); });
   render();
-  card.append(stackRow('Preferred languages', 'Websites see these, in this order, when they choose a language (the Accept-Language header).', list, h('div', { class: 'controls' }, preview, add)));
+  card.append(stackRow('Preferred languages', 'Websites see these, in this order, when they choose a language (the Accept-Language header).', list, h('div', { class: 'controls' }, add, preview)));
 
   card.append(toggle('spellcheck', 'Check spelling when you type', 'Misspelled words are underlined; right-click one for suggestions.', () => renderSpell()));
   const spell = h('div', { class: 'list', id: 'spellcheck-languages' });
@@ -2437,7 +2468,7 @@ function buildLanguages(card) {
   };
   spellSummary();
   spellDetails.addEventListener('change', () => setTimeout(spellSummary, 0));
-  card.append(h('div', { class: 'row stack' }, spellDetails));
+  card.append(h('div', { class: 'row stack flush' }, spellDetails));
   buildTranslate(card);
 }
 
@@ -2881,6 +2912,8 @@ function show() {
   syncNavStop();
   $('no-results').hidden = !searching || any;
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
+  highlight(words);
+  requestAnimationFrame(fitDescs);
 }
 
 // The category list is one Tab stop (the current page, or the first that still matches a search); arrow keys move within it.
@@ -3000,12 +3033,24 @@ async function init() {
     }
   }));
   refreshRestartNotes();
-  // A list of one row whose label is its own title (Default browser, On startup) needs no heading above it.
+  // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
+  // address bar") is said once: a one-row list loses the heading, a longer one keeps it and the row's label is read by screen readers only.
+  const norm = (text) => text.trim().toLowerCase().replace(/[.…:]+$/, '');
   for (const slot of slots.values()) for (const g of slot.groups) {
-    const rows = g.querySelectorAll('.row');
     const t = g.querySelector('.group-title');
-    if (t && rows.length === 1 && rows[0].querySelector('.label')?.textContent.trim().toLowerCase() === t.textContent.trim().toLowerCase()) t.remove();
+    const rows = g.querySelectorAll('.row');
+    const first = rows[0]?.querySelector('.label');
+    if (!t || !first) continue;
+    const a = norm(t.textContent);
+    const b = norm(first.textContent);
+    const same = a === b;
+    const near = b.startsWith(`${a} `) || a.startsWith(`${b} `);
+    if (rows.length === 1 && (same || near)) t.remove();
+    else if (same) first.classList.add('sr-only');
   }
+  window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
+  window.addEventListener('resize', fitSoon);
+  document.fonts?.ready.then(fitDescs).catch(() => {});
   $('search').addEventListener('input', show);
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
