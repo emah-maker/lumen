@@ -199,7 +199,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   body { grid-template-columns: 200px minmax(0, 1fr); }
   main { padding: 24px 24px 96px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 800px) {
   body { grid-template-columns: minmax(0, 1fr); }
   .nav { position: static; height: auto; padding: 12px 12px 8px; overflow: visible; box-shadow: inset 0 -1px 0 var(--hairline); }
   .nav .search { padding: 0 0 8px; }
@@ -478,3 +478,74 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 /* Settings → Usage: each AI's section starts with its name (same structure for every AI). */
 .usage-head { margin-top: 10px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25)); }
 .usage-head .label { font-size: 15px; font-weight: 650; }
+
+/* ---- Polish pass: hierarchy, long text, press and focus states ---- */
+.pane-title { font-size: 28px; margin: 4px 4px 4px; }
+.pane-desc { margin: 0 4px 24px; max-width: 56ch; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.searching .pane-desc, .subpane .pane-desc { display: none; }
+.group { margin-bottom: 28px; }
+.group-title { margin: 0 16px 8px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: var(--muted); }
+.card { box-shadow: 0 0 0 1px var(--hairline), 0 1px 3px rgba(0, 0, 0, 0.05); }
+@media (prefers-color-scheme: dark) { .card { box-shadow: 0 0 0 1px var(--hairline); } }
+.row { min-height: 48px; padding: 11px 16px; }
+.row .label { font-weight: 450; }
+.row .desc { color: var(--muted); max-width: 80ch; }
+/* Buttons: one press state, and a danger hover. */
+button { transition: background-color var(--t-fast) ease-out, box-shadow var(--t-fast) ease-out, transform var(--t-press) ease-out; }
+button:active:not(:disabled) { transform: scale(0.97); background: var(--hover); }
+button.primary:active:not(:disabled) { background: var(--ring); }
+button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
+input:not(.switch):hover:not(:disabled):not(:focus-visible), select:hover:not(:disabled):not(:focus-visible) { background: color-mix(in srgb, var(--field) 70%, var(--hover)); }
+input.switch { cursor: pointer; }
+input.switch:hover:not(:checked):not(:disabled) { background: color-mix(in srgb, var(--field) 60%, var(--border)); }
+input.switch:checked:focus-visible { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.nav a { font-weight: 450; }
+.nav a:active { background: var(--accent-soft); }
+.nav a[aria-current="page"] { font-weight: 600; }
+.nav .search input[type="search"]:focus-visible { background: var(--surface); }
+@media (max-width: 800px) {
+  .pane-title { font-size: 24px; }
+  .pane-desc { margin-bottom: 18px; }
+  .row .desc { max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  button:active:not(:disabled) { transform: none; }
+}
+
+/* ---- Round 2: sticky title, 2-line descriptions, row-level disclosures, left-aligned stacks ---- */
+main { --pad: 40px; padding-left: var(--pad); padding-right: var(--pad); max-width: calc(820px + 2 * var(--pad)); }
+@media (max-width: 960px) { main { --pad: 24px; } }
+@media (max-width: 800px) { main { --pad: 16px; } }
+/* The page title stays while the section scrolls (a hairline appears once it has). */
+.pane-title { position: sticky; top: 0; z-index: 5; margin: 0 calc(var(--pad) * -1) 0; padding: 14px calc(var(--pad) + 4px) 6px; background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.pane-desc { margin-top: 0; }
+/* Search results stack several sections: their titles are plain, in line with the cards, and don't stick. */
+body.searching .pane-title, body.searching.scrolled .pane-title { position: static; margin: 18px 4px 8px; padding: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+body.scrolled .pane-title { box-shadow: 0 1px 0 var(--hairline); }
+.subpane .pane-title { margin-bottom: 8px; }
+@media (max-width: 800px) { .nav + main .pane-title { top: 0; } }
+/* Descriptions: two lines, then a quiet inline "Show more" where the text really is clipped. */
+.row .desc.clamp:not(.open) { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.searching .row .desc.clamp { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.row .more { display: block; height: auto; margin: 2px 0 0; padding: 0; background: none; border-radius: 4px; color: color-mix(in srgb, var(--accent) 70%, var(--muted)); font-size: 11.5px; font-weight: 400; line-height: 1.4; }
+.row .more:hover:not(:disabled) { background: none; box-shadow: none; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.row .more:active:not(:disabled) { transform: none; background: none; }
+.searching .row .more { display: none; }
+mark.hit { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; margin: 0 -1px; box-shadow: 0 0 0 1px var(--accent-soft); }
+/* Stacked rows: label and description on top, their controls underneath and left-aligned with the text. */
+.row.stack > .controls { justify-content: flex-start; align-self: stretch; margin-left: 0; max-width: none; }
+.row.stack > .controls > select { min-width: 200px; }
+.row .text > .mono.desc { color: var(--text); word-break: break-all; }
+/* Disclosure rows (spell check languages, language packs and site lists): the whole row opens, the chevron is on the right. */
+.row.flush { padding: 0; }
+details.disclosure, details.adv-rows { width: 100%; }
+details.disclosure > summary, details.adv-rows > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; padding: 11px 16px; font-weight: 450; color: var(--text); cursor: default; list-style: none; transition: background-color var(--t-fast) ease-out; }
+details.disclosure > summary:hover, details.adv-rows > summary:hover { background: var(--hover); }
+details.disclosure > summary::before, details.adv-rows > summary::before { content: none; }
+details.disclosure > summary::after, details.adv-rows > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin: 0 4px 0 2px; border-right: 1.6px solid var(--faint); border-top: 1.6px solid var(--faint); transform: rotate(45deg); transition: transform var(--t-fast) ease-out; }
+details.disclosure[open] > summary::after, details.adv-rows[open] > summary::after { transform: rotate(135deg); }
+details.disclosure > summary:focus-visible, details.adv-rows > summary:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 0; }
+details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px solid var(--hairline); }
+.card > details.adv-rows { border-top: 1px solid var(--hairline); }
+.card > details.adv-rows:first-child { border-top: none; }
