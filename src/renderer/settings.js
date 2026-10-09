@@ -40,11 +40,25 @@ async function save(key, value) {
 
 // ---------- row builders ----------
 
+// A paragraph-long description shows three lines with a "Show more" button (the full text stays in the page for search and screen readers).
+const LONG_DESC = 280;
+function collapseDesc(desc) {
+  desc.classList.add('clamp');
+  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
+  more.addEventListener('click', () => {
+    const open = desc.classList.toggle('clamp') === false;
+    more.setAttribute('aria-expanded', String(open));
+    more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
+  });
+  desc.after(more);
+}
+
 function row(label, desc, ...controls) {
   const el = h('div', { class: 'row' },
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
+  if (typeof desc === 'string' && desc.length > LONG_DESC) collapseDesc(el.querySelector('.desc'));
   return el;
 }
 function stackRow(label, desc, ...content) {
@@ -2741,8 +2755,21 @@ async function buildAbout(card) {
   };
   slots.get('task-manager').append(stackRow('Task manager', 'Every Lumen process, with memory (working set) and CPU.', table));
   await render();
-  const timer = setInterval(() => { if (visibleNow(table) && !document.hidden && !query()) render(); }, 2000);
-  window.addEventListener('pagehide', () => clearInterval(timer));
+  // Refreshed every 2 s only while the table is on screen: the timer starts when it comes into view (its page opened,
+  // the tab shown, the search cleared) and stops when it leaves or the page closes, so nothing runs in other sections.
+  let timer = null;
+  const stop = () => { clearInterval(timer); timer = null; };
+  const sync = () => {
+    const on = visibleNow(table) && !document.hidden && !query();
+    if (on && !timer) timer = setInterval(() => { if (visibleNow(table) && !document.hidden && !query()) render(); else stop(); }, 2000);
+    else if (!on) stop();
+  };
+  window.addEventListener('hashchange', () => setTimeout(sync, 0));
+  document.addEventListener('visibilitychange', sync);
+  $('search').addEventListener('input', () => setTimeout(sync, 0));
+  window.addEventListener('pagehide', stop);
+  if (window.IntersectionObserver) new IntersectionObserver(sync).observe(table);
+  sync();
 }
 
 async function buildInternals(card) {
@@ -2936,7 +2963,8 @@ async function init() {
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
     if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
-    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }));
+    const blurb = tr(`settings.blurb.${def.id}`, '');
+    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }), blurb ? h('p', { class: 'pane-desc', text: blurb }) : null);
     categories.set(def.id, { ...def, pane, link });
     $('sections').append(pane);
   }
