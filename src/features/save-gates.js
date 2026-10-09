@@ -40,4 +40,20 @@ function quietBursts(delayMs, fire, schedule = setTimeout) {
   };
 }
 
-module.exports = { sessionWriteGate, memoByGeneration, quietBursts };
+// The tab strip's state goes to a window's UI only when it differs from what that window last got. `key` is the window
+// (an object, held weakly). A forced send (a move, open, close, activation, a reloaded UI) always goes and becomes the
+// baseline; a coalesced burst (a page's loading/title/favicon events) is skipped when it changed nothing the strip shows.
+function tabsSendGate() {
+  const last = new WeakMap();
+  return {
+    shouldSend(key, state, force = false) {
+      const text = JSON.stringify(state);
+      if (!force && last.get(key) === text) return false;
+      last.set(key, text);
+      return true;
+    },
+    forget(key) { last.delete(key); },
+  };
+}
+
+module.exports = { sessionWriteGate, memoByGeneration, quietBursts, tabsSendGate };

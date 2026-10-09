@@ -58,6 +58,20 @@ const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 };
 
+// `decide(pageUrl)` remembered per page URL (a page's many requests share one answer: no URL parsing for each). Bounded.
+function pageMemo(decide, limit = 64) {
+  const known = new Map();
+  const get = (pageUrl) => {
+    if (known.has(pageUrl)) return known.get(pageUrl);
+    const out = decide(pageUrl);
+    if (known.size >= limit) known.delete(known.keys().next().value);
+    known.set(pageUrl, out);
+    return out;
+  };
+  get.clear = () => known.clear();
+  return get;
+}
+
 // deps: { app, session, readSettings, writeSettings, activeContents, realUrl, isWebUrl, onResponseHeaders }
 function createAdblock(deps) {
   let blocker = null;
@@ -77,6 +91,15 @@ function createAdblock(deps) {
   function on(pageUrl) {
     const { enabled, allow } = settings();
     return enabled && !allow.has(hostOf(pageUrl));
+  }
+  // Whether requests from this page are filtered at all (on, and not a Google sign-in page): answered once per page URL
+  // and settings state, not by parsing the page's URL for each of its requests.
+  const pageDecisions = pageMemo((page) => on(page) && !googleAuth.isAuthUrl(page));
+  let decidedFor = null;
+  function filtersPage(page) {
+    const state = settings();
+    if (decidedFor !== state) { decidedFor = state; pageDecisions.clear(); }
+    return pageDecisions(page);
   }
 
   // Stand-in bodies by key: a few dozen at most (one per resource used).
@@ -208,7 +231,7 @@ function createAdblock(deps) {
       const page = details.webContents?.getURL() || details.referrer || '';
       // Google's own sign-in pages (accounts.google.comâ€¦) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
-      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || googleAuth.isAuthUrl(page)) return callback({});
+      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = engine.match(request);
@@ -344,4 +367,4 @@ function createAdblock(deps) {
   };
 }
 
-module.exports = { createAdblock, hostOf };
+module.exports = { createAdblock, hostOf, pageMemo };
