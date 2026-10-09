@@ -113,8 +113,8 @@ const notices = (events) => events.filter((e) => e.type === 'notice').map((e) =>
     let events = await runOn(agent, 'tell me about cats');
     answer = 'OK';
     const ctx = agent.messages.settings.context;
-    check('api: a reply records the chat\'s context (its request\'s whole input)', ctx?.tokens === 31_040 && ctx.window === 200_000 && !ctx.estimated, J(ctx));
-    check('api: ... and the sidebar is told', events.some((e) => e.type === 'context' && e.context.tokens === 31_040 && Math.round(e.context.percent) === 16), J(events.filter((e) => e.type === 'context')));
+    check('api: a reply records the chat\'s context (its request\'s whole input)', ctx?.tokens === 31_040 && ctx.window === 1_000_000 && !ctx.estimated, J(ctx));
+    check('api: ... and the sidebar is told', events.some((e) => e.type === 'context' && e.context.tokens === 31_040 && Math.round(e.context.percent) === 3 && e.context.window === 1_000_000), J(events.filter((e) => e.type === 'context')));
     events = await runOn(agent, '/compact');
     check('api: /compact with one exchange says there is nothing to compact', notices(events).some((n) => /Nothing to compact yet/.test(n)) && agent.messages.length === 2, J(notices(events)));
     await runOn(agent, 'and dogs?');
@@ -132,7 +132,7 @@ const notices = (events) => events.filter((e) => e.type === 'notice').map((e) =>
     const sent = requests[requests.length - 1].messages;
     check('api: the next request starts with the summary', J(sent[0]).includes('earlier_conversation_summary') && J(sent).includes('and birds?') && !J(sent).includes('tell me about cats'), J(sent).slice(0, 200));
     events = await runOn(agent, '/context');
-    check('api: /context reports the chat\'s figure in words, as a reply', /\*\*Tokens:\*\* 31\.0k \/ 200\.0k \(16%\)/.test(textOf(events)) && /Compacted once/.test(textOf(events)) && !J(agent.messages).includes('/context'), textOf(events));
+    check('api: /context reports the chat\'s figure in words, as a reply', /\*\*Tokens:\*\* 31\.0k \/ 1\.0M \(3%\)/.test(textOf(events)) && /Compacted once/.test(textOf(events)) && !J(agent.messages).includes('/context'), textOf(events));
 
     // auto-compact: a history near what one request may carry is summarized first
     agent.contextBudget = () => 200; // (characters: this chat is well over 80% of it)

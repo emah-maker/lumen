@@ -19,7 +19,7 @@ const text = (t) => ({ type: 'text', text: t });
 (async () => {
   // ---- the cheaper model, per provider
   check('model: Claude chats use Haiku, Haiku stays', S.helperModel('claude-opus-5-5') === 'claude-haiku-5-5' && S.helperModel('claude-fable-5-1') === 'claude-haiku-5-5' && S.helperModel('claude-haiku-5-5') === 'claude-haiku-5-5');
-  check('model: OpenAI gets its mini, Gemini its flash', S.helperModel('openai:gpt-5.6') === 'openai:gpt-5.6-mini' && S.helperModel('openai:gpt-5.6-mini') === 'openai:gpt-5.6-mini' && S.helperModel('gemini:gemini-2.5-pro') === 'gemini:gemini-2.5-flash' && S.helperModel('gemini:gemini-2.5-flash') === 'gemini:gemini-2.5-flash');
+  check('model: OpenAI gets its mini, Gemini its flash', S.helperModel('openai:gpt-5.6') === 'openai:gpt-5.6-mini' && S.helperModel('openai:gpt-5.6-mini') === 'openai:gpt-5.6-mini' && S.helperModel('gemini:gemini-2.5-pro') === 'gemini:gemini-3.8-flash' && S.helperModel('gemini:gemini-3.1-pro-preview') === 'gemini:gemini-3.8-flash' && S.helperModel('gemini:gemini-3.5-flash-lite') === 'gemini:gemini-3.5-flash-lite' && S.helperModel('gemini:gemini-2.5-flash') === 'gemini:gemini-2.5-flash');
   check('model: Grok and OpenRouter (no known cheaper one) and "same" keep the chat\'s model', S.helperModel('xai:grok-4') === 'xai:grok-4' && S.helperModel('openrouter:anthropic/claude-opus-5.5') === 'openrouter:anthropic/claude-opus-5.5' && S.helperModel('claude-opus-5-5', 'same') === 'claude-opus-5-5');
 
   // ---- the tasks

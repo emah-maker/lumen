@@ -27,7 +27,7 @@ const PROVIDERS = {
   gemini: {
     label: 'Gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    defaults: ['gemini-3.1-pro-preview', 'gemini-3.8-flash'], // ai.google.dev/gemini-api/docs/models, 2026-10-09: the 2.5 models are limited to past users
     include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|audio|computer-use|robotics)/.test(id),
   },
   // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
@@ -306,7 +306,7 @@ async function completeJSON({ provider, model, apiKey, system, user, maxTokens, 
 const IMAGE_MODELS = {
   openai: { fallback: 'gpt-image-1', pick: /^gpt-image/ },
   xai: { fallback: 'grok-2-image', pick: /image|imagine/, skip: /video|edit/ },
-  gemini: { fallback: 'gemini-2.5-flash-image', pick: /flash-image|pro-image|image-preview/, skip: /imagen|live|tts/ },
+  gemini: { fallback: 'gemini-3.1-flash-image', pick: /flash-image|pro-image|image-preview/, skip: /imagen|live|tts/ },
 };
 // Can this model make pictures when asked? (OpenAI, Grok and Gemini: through their image models; OpenRouter: only
 // the models its catalog lists as making images, which answer in the chat itself.)
