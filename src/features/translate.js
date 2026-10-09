@@ -462,6 +462,9 @@ const cleanHosts = (value) => (Array.isArray(value) ? [...new Set(value.map((h) 
 const cleanConsent = (value) => (Array.isArray(value) ? [...new Set(value.map(String).filter((p) => /^[a-z0-9:_./-]{1,80}$/i.test(p)))].slice(0, 30) : null);
 
 // ---- the page side (runs in the isolated world) ----
+const MISSING = '({ __lumenMissing: true })'; // what a call returns when the page script is not in the document yet
+// The language probe of a load (same fields as PAGE_SRC's `sample`), small enough to send on every page.
+const SAMPLE_SRC = `({ lang: document.documentElement.lang || '', title: document.title || '', text: (document.body ? document.body.innerText : '').slice(0, 3000) })`;
 const PAGE_SRC = `
 ${excludedElement}
 ${translatableText}
@@ -685,10 +688,15 @@ function createTranslate(deps) {
     return { phase, lang, langName: lang ? langName(lang) : '', target, targetName: target ? langName(target) : '', progress: progress || 0, detail: st.detail || '', provider: provider || '', via: via || '', size: size || '', pair: pair || '', error: error || '', dismissed: Boolean(dismissed), translated: Boolean(translated) };
   };
 
-  const script = (tab, op, arg) => {
+  // The ~9 KB page script goes into a document once: later calls (a run's many chunks) send only the call, and the
+  // full source again only if the document no longer has it (a new page in the same tab).
+  const script = async (tab, op, arg) => {
     const wc = live(tab);
-    if (!wc) return Promise.reject(new Error('tab closed'));
-    return wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: `${PAGE_SRC}\n;__lumenTr.${op}(${arg === undefined ? '' : JSON.stringify(arg)})` }]);
+    if (!wc) throw new Error('tab closed');
+    const call = `__lumenTr.${op}(${arg === undefined ? '' : JSON.stringify(arg)})`;
+    const out = await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: `globalThis.__lumenTr ? ${call} : ${MISSING}` }]);
+    if (!(out && out.__lumenMissing)) return out;
+    return wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: `${PAGE_SRC}\n;${call}` }]);
   };
 
   function stopRun(tab, { restore = false } = {}) {
@@ -708,7 +716,7 @@ function createTranslate(deps) {
     const target = targetOf();
     if (!isWebUrl(url) || isPrivate(wc) || !s.offer || states.get(tab)?.url === url) return;
     let sample;
-    try { sample = await script(tab, 'sample'); } catch { return; }
+    try { sample = await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: SAMPLE_SRC }]); } catch { return; } // (just the sample: not the whole page script, once per load)
     if (!live(tab) || wc.getURL() !== url) return;
     const lang = pageLanguage(sample?.lang, sample?.text);
     const langTag = String(sample?.lang || '').slice(0, 20);
@@ -1096,7 +1104,7 @@ function createTranslate(deps) {
   };
 
   return {
-    attach, act, stateOf, menuItems, pageMenuItem, start, google, detect,
+    attach, act, stateOf, menuItems, pageMenuItem, start, google, detect, script,
     targetOf, googleUrl,
     setTestEngine: (eng) => { testEngine = eng; },
     setTestLocal: (loc) => { testLocal = loc; },
@@ -1110,6 +1118,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, groupItems, splitSegment, checkNumber, numberValue, asciiDigits, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, NUMBER_MISMATCHES, LOCAL_PROBE_FIRST, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, checkNumber, numberValue, asciiDigits, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, NUMBER_MISMATCHES, LOCAL_PROBE_FIRST, PAGE_SRC, SAMPLE_SRC, MISSING, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };

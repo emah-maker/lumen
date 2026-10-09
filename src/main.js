@@ -1708,10 +1708,14 @@ function batchTabs(fn) {
     }
   }
 }
-function sendTabs() {
+const tabStripGate = saveGates.tabsSendGate();
+// `coalesced`: a burst of a page's own events (sendTabsSoon). Nothing is sent, run or saved when the strip would show what it already does.
+function sendTabs(coalesced = false) {
   if (tabsBatch && curRec) { tabsBatched.add(curRec); return; }
   keepPinnedFirst();
-  ui()?.send('tabs', tabState());
+  const state = tabState();
+  if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
+  ui()?.send('tabs', state);
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose navigation keeps changing).
@@ -1729,7 +1733,7 @@ function sendTabs() {
 const tabsSoon = saveGates.quietBursts(16, (rec, quiet) => { // (16 ms: one frame, a load's events arrive in separate turns)
   if (!rcAlive(rec)) return;
   tabsQuiet = quiet;
-  try { withWindow(rec, sendTabs); } finally { tabsQuiet = false; }
+  try { withWindow(rec, () => sendTabs(true)); } finally { tabsQuiet = false; }
 });
 function sendTabsSoon(quiet = false) {
   const rec = curRec;
