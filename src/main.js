@@ -215,7 +215,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
@@ -8751,6 +8751,7 @@ const aiAgents = setupAiAgents({
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
   // [agent window] each outside MCP session's own window (features/agent-windows.js); its steps and approval cards go to the user's window.
   agentWindows: { windows: agentWindows, activeTabId: (rec) => activeIdOf(rec) },
+  showAgentWindow: (rec) => { if (rec && rcAlive(rec) && rec.agent) { if (rec.win.isMinimized()) rec.win.restore(); rec.win.focus(); } }, // the toolbar badge, clicked by the user
   userUi: () => {
     const user = [focusedRec(), curRec].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || null;
     return user ? user.win.webContents : ui();

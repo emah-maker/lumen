@@ -126,7 +126,7 @@ const text = (t) => ({ type: 'text', text: t });
     check('usage: the helpers\' tokens are summed into the chat\'s totals (6 turns, priced as Haiku)', chat.settings.usage.turns === 6 && chat.settings.usage.input === 7500 && chat.settings.usage.output === 450 && chat.settings.usage.cost > 0, J(chat.settings.usage));
     check('usage: the sidebar gets the new total as each helper turn lands', events.filter((e) => e.type === 'usage').length === 6);
     const tools = events.filter((e) => e.type === 'tool');
-    check('progress: a step per helper showing its task, updated while it works, then marked done', tools.length === 3 && tools.every((e) => e.name === 'helper' && /^Helper \d: [ABC]$/.test(e.label)) && events.filter((e) => e.type === 'tool_update').some((e) => /reading pages/.test(e.label)) && events.filter((e) => e.type === 'tool_done' && e.ok).length === 3, J(events.filter((e) => e.type !== 'usage').map((e) => [e.type, e.label || e.ok])));
+    check('out of sight: the chat gets no row per helper and no live helper steps (only the final result comes back)', !events.some((e) => (e.type === 'tool' || e.type === 'tool_update' || e.type === 'tool_done') && (e.name === 'helper' || /^helper-/.test(e.id || ''))), J(events.filter((e) => e.type !== 'usage').map((e) => [e.type, e.label || e.ok])));
     check('taint: what helpers read marks the chat as having read page content', chat.tainted === true);
   }
   {

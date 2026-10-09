@@ -78,6 +78,8 @@
 
       <div class="toolbar-end">
         <div class="agent-window-chip" id="agent-window-chip" role="status" hidden></div>
+        <!-- [agents out of sight] an outside agent in its own window is waiting for an OK: a count only, nothing opens; the click takes you to that window -->
+        <button type="button" class="agents-pending" id="agents-pending" hidden title="An agent in its own window is waiting for your OK" aria-label="An agent is waiting for your OK" data-i18n-title="agentWindow.pending.title" data-i18n-aria-label="agentWindow.pending.title"><span id="agents-pending-count">1</span></button>
         <div class="agent-pill" id="agent-pill" role="status">
           <span class="agent-dot" aria-hidden="true"></span>
           <span id="agent-pill-text">Lumen is using this tab</span>

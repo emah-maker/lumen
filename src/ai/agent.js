@@ -32,6 +32,8 @@ const pdfViewer = require('../features/pdf-viewer'); // a PDF in Lumen's own vie
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
+const agentsQuiet = require('../features/agents-quiet');
+const screenIntent = require('./screen-intent');
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
@@ -1758,7 +1760,7 @@ class Agent {
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
       // (a chat that waited for a free slot); otherwise in the front tab.
       const tab = (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra) });
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
@@ -3495,28 +3497,13 @@ ${prompt}` : prompt), historyImages: [] };
         }
       }
       const run = () => this.execute(name, args);
-      const value = await (scope ? taskScope.run({ ...scope, ...(hostGate ? { gate: hostGate } : {}) }, run) : run());
+      const value = await (scope ? taskScope.run({ ...scope, helper: true, ...(hostGate ? { gate: hostGate } : {}) }, run) : run());
       if (name === 'read_urls') { state.run.tainted = true; read = true; }
       return value;
     };
-    const ids = new Map();
-    const short = (task) => String(task).replace(/\s+/g, ' ').slice(0, 70);
-    const labelOf = (n, task, doing) => `Helper ${n}: ${short(task)}${doing ? ` (${doing})` : ''}`;
-    const onEvent = (e) => {
-      if (e.type === 'start') {
-        const id = `helper-${++this.approvalSeq}`;
-        ids.set(e.n, id);
-        emit({ type: 'tool', id, name: 'helper', input: { n: e.n, task: short(e.task) }, label: labelOf(e.n, e.task) });
-      } else if (e.type === 'step') {
-        const doing = e.kind === 'read_urls' ? 'reading pages' : e.kind === 'web_search' ? 'searching' : e.kind === 'think' ? 'thinking' : 'working';
-        emit({ type: 'tool_update', id: ids.get(e.n), name: 'helper', input: { n: e.n, task: short(e.task), doing: e.kind }, label: labelOf(e.n, e.task, doing) });
-      } else if (e.type === 'done') {
-        const id = ids.get(e.n);
-        if (e.status === 'done') emit({ type: 'tool_done', id, ok: true });
-        else if (e.status === 'stopped') emit({ type: 'tool_done', id, ok: false, stopped: true });
-        else emit({ type: 'tool_done', id, ok: false, error: e.status === 'timeout' ? `${e.error}; partial answer` : e.error });
-      }
-    };
+    // [agents out of sight] The chat that called delegate gets the delegate call's own row and the final answers, not a row per helper
+    // that expands as it reads: the helpers' live steps (start / step / done) are not sent to the user's window.
+    const onEvent = agentsQuiet.helperUiEvent;
     const limits = this.browser.subagentLimits?.() || {};
     let results;
     try {
@@ -4543,6 +4530,32 @@ ${out.text}${note}
   }
   // ---- [/device access]
 
+  // [agents out of sight] Is the message about the page the user is looking at ("summarize this", "what is this error", a selection,
+  // an attached tab)? Then the AI may act in that tab; any other request that makes it load a page does so in a tab of its own.
+  aboutCurrentPage(userText, extra = {}) {
+    try {
+      return extra.screen === 'on' || extra.hasSelection === true || Boolean(extra.tabs?.length) || screenIntent.wantsScreen(String(userText || ''), { hasSelection: extra.hasSelection === true }).screen;
+    } catch { return true; } // (can't tell: the user's page is left as the request had it)
+  }
+
+  // [agents out of sight] navigate in the user's chat: it loads in a tab the AI opened (a fresh background one, then reused by the
+  // chat's later steps), never in the user's own tab, unless the request is about the current page. Only the sidebar chat comes here:
+  // outside agents, tasks and helpers have windows (or no window) of their own and are never moved.
+  async ownNavigationTab() {
+    const scope = taskScope.getStore();
+    if (!scope?.chat || scope.mcp || scope.helper || scope.userRun) return;
+    const current = this.taskTab();
+    if (!current) return;
+    const own = scope.chat.aiNavTabId != null && this.browser.tabById?.(scope.chat.aiNavTabId);
+    const ownAlive = Boolean(own) && Boolean(this.browser.isAiTab?.(scope.chat.aiNavTabId));
+    const target = agentsQuiet.navTarget({ aboutPage: scope.aboutPage === true, onAiTab: Boolean(this.browser.isAiTab?.(current.id)), ownTabAlive: ownAlive, outside: typeof this.browser.openTab !== 'function' });
+    if (target === 'own') { this.pinTab(own.id); return; }
+    if (target !== 'new') return;
+    const tab = this.browser.openTab(undefined, { ai: true, show: false }); // behind the user's tab, marked as the AI's
+    scope.chat.aiNavTabId = tab.id;
+    this.pinTab(tab.id);
+  }
+
   requireTab() {
     const tab = this.taskTab();
     if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
@@ -4710,6 +4723,7 @@ ${out.text}${note}
   // [research tabs] features/research-tabs.js: web_search / read_urls also open what they look at as
   // background tabs (Settings > Show AI research in tabs). Returns the function that ends the "reading" marker.
   showResearch(what) {
+    if (taskScope.getStore()?.helper) return () => {}; // [agents out of sight] a delegate helper reads out of sight: no tabs in the user's window
     try { return this.browser.research?.begin(taskScope.getStore() || 'external', what) || (() => {}); } catch { return () => {}; }
   }
 
@@ -4908,6 +4922,7 @@ ${same}
         ];
       }
       case 'navigate': {
+        await this.ownNavigationTab();
         const wc = this.requireTab();
         const url = navUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
