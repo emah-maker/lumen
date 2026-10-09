@@ -189,6 +189,11 @@ function compact(items, { cols = COLS, obstacle = null } = {}) {
   return inOrder(items, out);
 }
 
+// ---- page room ----
+// The breathing room kept under the last thing on the page (the cards, the centre column). It exists only for a page that
+// scrolls anyway: content that fits the window gets none, so a spacer never makes a page that fits scroll by a few px.
+const pageRoom = (contentBottom, viewport, room) => (contentBottom > viewport + 0.5 ? room : 0);
+
 // ---- snapping ----
 // The window's rows for docks: how many rows of cells fit in a window `height` px tall.
 const pageRows = (height, m) => Math.max(2, Math.floor((height - m.top + GAP) / m.pitchY));
@@ -487,7 +492,7 @@ function decode(text) {
 const api = {
   COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
-  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
+  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, pageRoom, compact, stack, firstFit, flowOrder,
   MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
