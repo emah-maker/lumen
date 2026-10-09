@@ -494,6 +494,9 @@ body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy
   font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent);
 }
 .agent-window-chip[hidden] { display: none; }
+/* [agents out of sight] approvals waiting in agent windows: a small count, never a card */
+.agents-pending { flex: none; min-width: 18px; height: 18px; padding: 0 5px; margin-right: 6px; border: 0; border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 18px; color: var(--accent-text, #fff); background: var(--warning); cursor: pointer; }
+.agents-pending[hidden] { display: none; }
 @keyframes pill-in { from { opacity: 0; transform: translateX(8px); } }
 .agent-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .agent-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1px solid var(--accent); animation: ping 1.6s var(--ease-out) infinite; }

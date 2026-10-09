@@ -89,7 +89,29 @@ function setupAiAgents(deps) {
   let mcpServer = null;
   // Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
   // The steps, the "driven by" pill and the approval cards go to the window the user is in, not to the agent's own window.
-  const mcpEvent = (event) => { if (!event.engine) (deps.userUi?.() || ui())?.send('mcp:event', event); };
+  // [agents out of sight] An outside agent's events never reach the user's window while it has a window of its own: steps, "connected"
+  // notices and approval cards go to that window; the user's only gets a passive count (the toolbar badge, `agents:pending`), which
+  // opens nothing and takes no focus. Without agent windows (tests share the user's) everything goes there as before.
+  const quiet = require('./agents-quiet');
+  const pendingApprovals = quiet.createPendingApprovals();
+  const userWc = () => deps.userUi?.() || ui();
+  const sendPending = () => { try { userWc()?.send('agents:pending', { count: pendingApprovals.count() }); } catch {} };
+  const hasAgentWindows = () => Boolean(deps.agentWindows) && !(global.__mcpSharedWindow && require('../test-mode').isTest());
+  const sendToWindow = (rec, event) => { try { const wc = rec?.win?.webContents; if (wc && !wc.isDestroyed()) wc.send('mcp:event', event); } catch {} };
+  // rec: the agent's window when known (a call), else none (a connect notice: nobody to tell, the user's window least of all).
+  const mcpEvent = (event, rec = null) => {
+    const route = quiet.routeMcpEvent(event, { hasWindow: hasAgentWindows() });
+    if (route === 'user') userWc()?.send('mcp:event', event);
+    else if (route === 'agent') sendToWindow(rec, event);
+    else if (route === 'pending') {
+      if (event.type === 'approval') pendingApprovals.add(event.approvalId, { clientName: event.clientName, key: rec });
+      else pendingApprovals.remove(event.approvalId);
+      sendToWindow(rec, { ...event, quiet: false }); // (in its own window the card may open the sidebar)
+      sendPending();
+    }
+  };
+  const focusPendingWindow = () => { try { deps.showAgentWindow?.(pendingApprovals.keyOf()); } catch {} }; // (the user's own click on the badge; main.js brings the window up)
+  ipcMain.on('agents:focus-pending', focusPendingWindow);
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
   // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
   const mcpEnabled = () => readSettings().mcpEnabled === true;
@@ -436,9 +458,11 @@ function setupAiAgents(deps) {
     // shows the latest one; the user's window gets none of them (no chat rows, no pill, no panel). Only what needs the user
     // (an approval card, quiet: it opens nothing) goes there. With no window of its own (tests share the user's) they go
     // to the user's window as before.
-    const STEPS = new Set(['tool', 'tool_update', 'tool_done']);
-    const toAgentWindow = (event) => { try { const wc = agentRec?.win?.webContents; if (wc && !wc.isDestroyed()) wc.send('mcp:event', event); } catch {} };
-    const toUi = engineRun ? engineRun.emit : (event) => (windows && STEPS.has(event.type) ? toAgentWindow(event) : mcpEvent(event));
+        const mineApprovals = new Set(); // this call's cards waiting in its window: void when the call ends
+    const toUi = engineRun ? engineRun.emit : (event) => {
+      if (event.type === 'approval') mineApprovals.add(event.approvalId); else if (event.type === 'approval_done') mineApprovals.delete(event.approvalId);
+      mcpEvent(event, agentRec);
+    };
     const signal = engineRun ? engineRun.signal : session.controller.signal;
     const scope = engineRun && (engineRun.scope || runAgent.engineScope()); // [parallel CLI chats] the run's own scope, carried by its connection
     if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
@@ -498,6 +522,7 @@ function setupAiAgents(deps) {
       return { content: [{ type: 'text', text: message }], isError: true };
     } finally {
       finished = true; // a label still being worked out is dropped: the row is done
+      if (mineApprovals.size) { for (const id of mineApprovals) pendingApprovals.remove(id); sendPending(); }
       if (engineRun) owner.callEnd?.(engineRun);
     }
   }
@@ -674,7 +699,7 @@ function setupAiAgents(deps) {
           app.on('web-contents-created', (_e, wc) => cb(wc));
         },
         userAgent: () => deps.userTabs()[0]?.webContents.getUserAgent() || '',
-        onSession: ({ active, remaining }) => mcpEvent({ type: 'session', active: Boolean(active), remaining, clientName: 'Playwright (CDP)' }),
+        onSession: ({ active, remaining }) => userWc()?.send('mcp:event', { type: 'session', active: Boolean(active), remaining, clientName: 'Playwright (CDP)' }), // (opt-in CDP: the user handed over their own tabs, so this pill is the safety signal and stays)
       },
     });
   }

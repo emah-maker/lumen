@@ -2665,6 +2665,15 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+// [agents out of sight] The one passive place for an outside agent's approvals: a count in the toolbar. It opens nothing by itself.
+window.browser.onAgentsPending?.(({ count } = {}) => {
+  const b = $('agents-pending');
+  if (!b) return;
+  b.hidden = !(count > 0);
+  const n = $('agents-pending-count');
+  if (n) n.textContent = count > 99 ? '99+' : String(count || 0);
+});
+$('agents-pending')?.addEventListener('click', () => window.browser.focusPendingAgent?.());
 // [agent window] This window is an outside agent's own (Claude Code, Codex…): a badge in the toolbar says whose it is.
 window.browser.onAgentWindow?.((info) => {
   const chip = $('agent-window-chip');

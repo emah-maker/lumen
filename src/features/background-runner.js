@@ -25,6 +25,7 @@ const { WebContentsView, Notification, BrowserWindow } = require('electron');
 const { Agent, cliSystemPrompt } = require('../ai/agent');
 const { engineModel } = require('../ai/cli-utils');
 const autoModel = require('../ai/auto-model');
+const quiet = require('./agents-quiet');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 const routines = require('./routines');
@@ -132,8 +133,9 @@ function create(deps) {
   function announce(task, kind, text) {
     const entry = { id: task.id, kind, title: task.title, text };
     notifications.push(entry);
-    const plan = bg.notifyPlan(kind, { settings: settings(), focused: appFocused() });
-    if (plan.toast) ui()?.send('tasks:toast', entry);
+    // [agents out of sight] A task is not the chat the user is typing into: no banner pops up in their window. The Background
+    // tasks button's badge (tasks:state) and, when Lumen is not in front, the system notification are the places it shows.
+    const plan = quiet.taskToastPlan(bg.notifyPlan(kind, { settings: settings(), focused: appFocused() }));
     if (!plan.os || deps.test || !Notification.isSupported()) return;
     try {
       const n = new Notification({ title: task.title, body: text, silent: false });
