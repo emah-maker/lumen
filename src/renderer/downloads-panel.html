@@ -72,21 +72,22 @@
   </style>
 </head>
 <body>
-  <div id="card" role="dialog" aria-label="Downloads">
+  <div id="card" role="dialog" aria-label="Downloads" data-i18n-aria-label="dlpanel.title">
     <header>
-      <h1>Downloads</h1>
-      <button class="act" id="folder" type="button" title="Open Downloads folder" aria-label="Open Downloads folder">
+      <h1 data-i18n="dlpanel.title">Downloads</h1>
+      <button class="act" id="folder" type="button" title="Open Downloads folder" aria-label="Open Downloads folder" data-i18n-title="dlpanel.folder" data-i18n-aria-label="dlpanel.folder">
         <svg viewBox="0 0 16 16"><path d="M2 4.5c0-.8.7-1.5 1.5-1.5h2.6l1.4 1.5h5c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9c-.8 0-1.5-.7-1.5-1.5z"/></svg>
       </button>
     </header>
-    <ul id="list" role="listbox" aria-label="Recent downloads"></ul>
-    <div id="empty" hidden><b>No downloads yet</b>Files you download appear here.</div>
-    <div class="hint" id="hint" hidden>Drag a file into any app to use it there.</div>
+    <ul id="list" role="listbox" aria-label="Recent downloads" data-i18n-aria-label="dlpanel.list"></ul>
+    <div id="empty" hidden><b data-i18n="dlpanel.emptyTitle">No downloads yet</b><span data-i18n="dlpanel.emptyBody">Files you download appear here.</span></div>
+    <div class="hint" id="hint" hidden data-i18n="dlpanel.hint">Drag a file into any app to use it there.</div>
     <footer>
-      <button class="link" id="clear" type="button">Clear list</button>
-      <button class="link" id="show-all" type="button">Show all downloads</button>
+      <button class="link" id="clear" type="button" data-i18n="dlpanel.clear">Clear list</button>
+      <button class="link" id="show-all" type="button" data-i18n="dlpanel.showAll">Show all downloads</button>
     </footer>
   </div>
+  <script src="i18n.js"></script>
   <script src="downloads-panel.js"></script>
 </body>
 </html>

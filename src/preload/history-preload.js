@@ -4,6 +4,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 if (location.protocol === 'file:' && /\/renderer\/history\.html$/.test(location.pathname)) {
+  contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} }); // renderer/i18n.js
   contextBridge.exposeInMainWorld('lumenHistory', {
     list: () => ipcRenderer.invoke('history:list'),
     remove: (url) => ipcRenderer.invoke('history:remove', url),

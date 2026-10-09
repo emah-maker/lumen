@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const page = location.protocol === 'file:' ? (/\/renderer\/(bookmarks|downloads)\.html$/.exec(location.pathname) || [])[1] : null;
 const onChange = (channel) => (fn) => { if (typeof fn === 'function') ipcRenderer.on(channel, () => fn()); };
 
+if (page) contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} }); // renderer/i18n.js
 if (page === 'bookmarks') {
   contextBridge.exposeInMainWorld('lumenBookmarks', {
     list: () => ipcRenderer.invoke('bookmarks:list'),

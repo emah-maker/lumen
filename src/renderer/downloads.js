@@ -20,19 +20,22 @@ const size = (n) => {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 };
 
+// The wording is locales/en.json (dlpage.*), through window.t (i18n.js).
+const t = window.t || ((key) => key);
+
 function statusOf(d) {
-  if (d.state === 'completed') return d.exists ? size(d.total || d.received) : 'Deleted';
-  if (d.state === 'cancelled') return 'Canceled';
-  if (d.state === 'interrupted') return 'Failed';
-  if (d.awaitingOk) return 'Waiting for your OK';
-  const progress = d.total ? `${size(d.received)} of ${size(d.total)}` : size(d.received);
-  return d.paused ? `Paused${progress ? ` · ${progress}` : ''}` : progress || 'Starting…';
+  if (d.state === 'completed') return d.exists ? size(d.total || d.received) : t('dlpage.deleted');
+  if (d.state === 'cancelled') return t('dlpage.canceled');
+  if (d.state === 'interrupted') return t('dlpage.failed');
+  if (d.awaitingOk) return t('dlpage.awaitingOk');
+  const progress = d.total ? t('dlpage.of', { got: size(d.received), all: size(d.total) }) : size(d.received);
+  return d.paused ? (progress ? t('dlpage.pausedWith', { progress }) : t('dlpage.paused')) : progress || t('dlpage.starting');
 }
 
-function button(d, action, label) {
+function button(d, action, label = t(`dlpage.action.${action}`)) {
   const b = el('button', { type: 'button', textContent: label });
   b.dataset.action = action;
-  b.setAttribute('aria-label', `${label} ${d.name}`);
+  b.setAttribute('aria-label', t('dlpage.action.label', { action: label, name: d.name }));
   b.onclick = async () => { await api.act(d.id, action); await load(); };
   return b;
 }
@@ -40,13 +43,13 @@ function button(d, action, label) {
 function row(d) {
   const actions = [];
   if (d.state === 'completed') {
-    if (d.exists) actions.push(button(d, 'open', 'Open'), button(d, 'show', 'Show in folder'));
-    actions.push(button(d, 'remove', 'Remove'));
+    if (d.exists) actions.push(button(d, 'open'), button(d, 'show'));
+    actions.push(button(d, 'remove'));
   } else if (d.state === 'progressing') {
-    if (!d.awaitingOk) actions.push(d.paused ? button(d, 'resume', 'Resume') : button(d, 'pause', 'Pause'));
-    actions.push(button(d, 'cancel', 'Cancel'));
+    if (!d.awaitingOk) actions.push(d.paused ? button(d, 'resume') : button(d, 'pause'));
+    actions.push(button(d, 'cancel'));
   } else {
-    actions.push(button(d, 'retry', d.canResume ? 'Resume' : 'Retry'), button(d, 'remove', 'Remove'));
+    actions.push(button(d, 'retry', d.canResume ? t('dlpage.action.resume') : t('dlpage.action.retry')), button(d, 'remove'));
   }
   const failed = d.state === 'interrupted' || (d.state === 'completed' && !d.exists);
   const main = el('div', { className: 'main' },
@@ -72,7 +75,7 @@ function render() {
   const keep = active?.dataset?.action ? { id: active.closest('.row')?.dataset.id, action: active.dataset.action } : null;
   list.replaceChildren();
   if (!shown.length) {
-    list.append(el('p', { className: 'empty', textContent: q ? 'No matches.' : 'No downloads yet.' }));
+    list.append(el('p', { className: 'empty', textContent: q ? t('dlpage.noMatch') : t('dlpage.none') }));
     return;
   }
   list.append(el('section', {}, ...shown.map(row)));
