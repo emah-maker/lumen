@@ -18,6 +18,11 @@ const searchUrlFor = (id, query) => engineFor(id).url.replace('%s', encodeURICom
 // classic trick to make someone run script on the site they're on, so it is searched as text.
 const TLDS = require('./tlds');
 const LOCAL_HOST = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?([/?#]|$)/i;
+// An intranet name with a port ("intranet:8080", "nas:5000/admin") is an address, as in Chrome; a bare word is not.
+const HOST_PORT = /^[a-z0-9][a-z0-9-]*:\d{2,5}([/?#]|$)/i;
+const DOTTED_QUAD = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])/;
+// "999.1.1.1" and "1.2.3.400" are not IP addresses: searched, not opened.
+const badQuad = (value) => { const m = DOTTED_QUAD.exec(value); return Boolean(m) && m.slice(1).some((o) => Number(o) > 255); };
 // A path typed or pasted into the address bar opens the file, as in Chrome: /Users/me/page.html,
 // ~/Downloads/report.pdf, C:\\Users\\me\\page.html. Spaces are allowed (paths have them), so this
 // runs before the "has a space, so it's a search" rule. "//host" is left alone.
@@ -37,7 +42,8 @@ function resolveInput(text, engineId) {
   const file = localPath(value);
   if (file) return file;
   if (/\s/.test(value)) return search();
-  if (LOCAL_HOST.test(value) || /^[^/?#]+\.localhost(:\d+)?([/?#]|$)/i.test(value)) return `http://${value}`;
+  if (badQuad(value)) return search();
+  if (LOCAL_HOST.test(value) || HOST_PORT.test(value) || /^[^/?#]+\.localhost(:\d+)?([/?#]|$)/i.test(value)) return `http://${value}`;
   const host = value.split(/[/?#]/)[0].replace(/:\d+$/, '').replace(/\.$/, '');
   if (host.includes('@') || !/^[^.:]+(\.[^.:]+)+$/.test(host)) return search();
   let tld = host.slice(host.lastIndexOf('.') + 1).toLowerCase();

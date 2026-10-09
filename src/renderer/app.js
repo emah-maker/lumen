@@ -1855,7 +1855,7 @@ function finishTabsRender(state, before, container, switched) {
   const reader = $('reader');
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
-  reader.title = active?.page === 'reader' ? 'Leave reader mode' : 'Reader mode';
+  reader.title = t(active?.page === 'reader' ? 'toolbar.reader.leave' : 'toolbar.reader.title');
   // [ai off-tab] The shield: keeps the AI from acting on this tab (read-only for every AI path, main.js setKeepOff). Shown on pages, like the star.
   const offTab = $('ai-off-tab');
   const kept = Boolean(active?.aiKeepOff);
@@ -2047,6 +2047,12 @@ $('omnibox').addEventListener('mousedown', (e) => {
   if (!wasFocused) address.select();
   else address.setSelectionRange(address.value.length, address.value.length);
 });
+// Right-click: Cut / Copy / Paste and Paste and Go (main.js 'address:menu'), with the field focused as it is in Chrome.
+address.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (document.activeElement !== address) address.focus();
+  window.browser.addressMenu?.({ x: e.clientX, y: e.clientY }, address.selectionStart !== address.selectionEnd);
+});
 address.addEventListener('blur', () => {
   // When the page (another view) takes focus, activeElement stays on the address bar, so check
   // hasFocus too: otherwise the suggestion view stayed up over the page and swallowed clicks.
@@ -2154,7 +2160,10 @@ const findInput = $('find-input');
 // The bar opens by growing its row, so the page view (which follows the viewport) eases down with it.
 let findHideTimer = null;
 
-function openFind() {
+// `opts.step` (F3 / Ctrl+G: 1 next, -1 previous): with the bar open it goes to the next match; closed, it opens the bar on the last search.
+function openFind(opts) {
+  const step = opts && typeof opts === 'object' ? Number(opts.step) || 0 : 0;
+  if (step && !findbar.hidden && findbar.classList.contains('open') && findInput.value) { findStep(step > 0); return; }
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
