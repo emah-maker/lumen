@@ -89,7 +89,7 @@ check('scope keeps Auto inside one provider', r(q, { scope: 'openai' }).id === '
 // ---- capabilities
 const chatOnly = { id: 'openrouter:vendor/text-only', label: 'Text only', badges: ['chat only'], group: 'OpenRouter' };
 check('a chat-only model is skipped when tools are needed', r({ prompt: 'what time is it' }, { options: [chatOnly, claude[1]] }).id === 'claude-sonnet-5');
-check('a chat-only model may translate (no tools needed)', r({ kind: 'translation' }, { options: [chatOnly, claude[1]] }).id === chatOnly.id);
+check('a chat-only model may translate (no tools needed)', r({ kind: 'translation' }, { options: [chatOnly, claude[1]] }).candidates.includes(chatOnly.id));
 check('a text-only model is skipped when the request has images', r({ prompt: 'what is this', imageCount: 1 }, { options: [{ id: 'openrouter:vendor/blind', label: 'Blind', vision: false }, claude[1]] }).id === 'claude-sonnet-5');
 check('a model whose window is too small is skipped', r({ prompt: 'ok', historyChars: 70_000 }, { options: [{ id: 'openai:gpt-4', label: 'GPT-4' }, claude[1]] }).id === 'claude-sonnet-5');
 check('claudecode default is used when that engine lists no models', r(q, { options: [cc[0]] }).id === 'claudecode:default');

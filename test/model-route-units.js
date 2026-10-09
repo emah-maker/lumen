@@ -14,8 +14,12 @@ for (const p of ['fix the login bug on this page', 'Write a function that parses
   check(`standard: ${p}`, tier(p) === 'standard', `${tier(p)} (${score(p)})`);
 }
 // Haiku 5.5 takes everyday chat, page questions, summaries and plain browsing (light), not just greetings and lookups.
-for (const p of ['find the cheapest flight from Boston to Denver next month on this site', 'what does this page say about refunds?', 'explain how photosynthesis works', 'write a short email declining the invite', 'compare these two laptops and tell me which is better for travel', 'Draft a cover letter for this job posting and keep it under 300 words and friendly']) {
+for (const p of ['find the cheapest flight from Boston to Denver next month on this site', 'what does this page say about refunds?', 'explain how photosynthesis works', 'write a short email declining the invite']) {
   check(`light (Haiku 5.5): ${p}`, tier(p) === 'light', `${tier(p)} (${score(p)})`);
+}
+// A comparison weighs options, and a cover letter is high-stakes writing: mid-size (docs/auto-model.md, by situation).
+for (const p of ['compare these two laptops and tell me which is better for travel', 'Draft a cover letter for this job posting and keep it under 300 words and friendly']) {
+  check(`standard (a comparison, long-form writing): ${p}`, tier(p) === 'standard', `${tier(p)} (${score(p)})`);
 }
 check('code still goes up a tier: Sonnet, not Haiku', route({ engine: 'claudecode', picked: 'default', prompt: 'fix the login bug on this page' }).model === 'sonnet' && route({ engine: 'claudecode', picked: 'default', prompt: 'what does this page say about refunds?' }).model === 'haiku');
 check('a code fence is never light', tier('what is this\n```js\nx\n```') !== 'light');
