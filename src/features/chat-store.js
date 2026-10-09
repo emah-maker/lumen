@@ -115,8 +115,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // A listed chat is read from disk, and on Windows a file that was just written or replaced can be unreadable for a
   // moment (a virus scanner or indexer holds it: EBUSY/EPERM/EACCES, or ENOENT while a rename replaces it). One failed
-  // read must not become "Could not open this chat", so those are tried again briefly. A file that stays missing is gone
-  // for good: its entry is dropped, so History stops offering a chat that can never open.
+  // read must not become "Could not open this chat", so those are tried again briefly. A file that stays unreadable
+  // shows the error but keeps its History entry (see load()).
   const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOENT']);
   const READ_TRIES = 4;
   const pause = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no wait: retry at once */ } };
@@ -126,10 +126,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       try { return readEnc(chatFile(id)); } catch (err) {
         if (!TRANSIENT.has(err?.code)) return null; // damaged or undecryptable: retrying will not help
         if (attempt < READ_TRIES) { pause(20 * attempt); continue; }
-        if (err.code === 'ENOENT') { // still missing after the retries: the entry points at nothing
-          const idx = readIndex();
-          if (!idx.degraded && idx.current !== id) { idx.chats = idx.chats.filter((c) => c.id !== id); try { writeIndex(); } catch { /* retried on the next write */ } }
-        }
+        // Still unreadable: say so, but keep the entry. Something outside Lumen (a scanner, a sync client) may hand the
+        // file back later, and dropping the entry from the index would orphan a chat that still exists.
         return null;
       }
     }

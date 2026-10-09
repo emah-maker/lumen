@@ -37,20 +37,25 @@ for (const code of ['EBUSY', 'EPERM', 'EACCES', 'ENOENT']) {
   ok(`${code} on the first reads is retried`);
 }
 
-{ // a file that is really gone: not opened, and History stops listing it
+{ // a file missing for longer than the retries (a scanner or sync client holding it): not opened, but its entry is kept,
+  // so when the file comes back the chat opens again instead of being orphaned
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-openrace-'));
   const store = createChatStore({ dir, encrypt: enc, decrypt: dec });
   const keep = store.newId();
-  const gone = store.newId();
+  const away = store.newId();
   store.save(keep, snap('keep'));
-  store.save(gone, snap('gone'));
-  fs.rmSync(path.join(dir, `${gone}.json`));
-  assert.strictEqual(store.load(gone), null);
-  assert.deepStrictEqual(store.list().map((c) => c.id), [keep], 'the dangling entry is dropped');
+  store.save(away, snap('away'));
+  const file = path.join(dir, `${away}.json`);
+  const saved = fs.readFileSync(file);
+  fs.rmSync(file);
+  assert.strictEqual(store.load(away), null);
+  assert.deepStrictEqual(store.list().map((c) => c.id).sort(), [keep, away].sort(), 'the entry is kept');
   assert.ok(store.load(keep), 'the others still open');
+  fs.writeFileSync(file, saved); // the file is handed back
+  assert.ok(store.load(away), 'and the chat opens again once its file is back');
   const again = createChatStore({ dir, encrypt: enc, decrypt: dec });
-  assert.deepStrictEqual(again.list().map((c) => c.id), [keep], 'and it stays dropped after a restart');
-  ok('a chat whose file is gone is not offered again');
+  assert.ok(again.list().some((c) => c.id === away), 'still listed after a restart');
+  ok('a chat whose file is missing for a while keeps its History entry and opens when the file is back');
 }
 
 { // damaged: no retry storm, no change to the index
