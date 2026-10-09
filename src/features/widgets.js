@@ -606,10 +606,16 @@ const CONNECTORS = {
       return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
-    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : d),
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : c.mode === 'api' ? { ...d, pins: SV.cleanPins(c.pins) } : d),
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
+      if (action.do === 'pin' || action.do === 'unpin') { // the playlist tabs (the Web API card): the pins are saved in the card's settings
+        if (c.mode !== 'api') return false;
+        const got = SV.applyPin(c.pins, action.do === 'pin' ? 'add' : 'remove', action.kind, action.item, SAC.titleOf(x.ui(c.id), action.kind, action.item));
+        if (got.error) throw new Error(got.error);
+        return { config: { pins: got.pins }, local: true };
+      }
       if (c.mode === 'status') {
         if (!x.spotifyEngine) return false;
         const direct = await statusSearch(c, action, x, cached); // (the Web API answers searches when the account is connected, whatever plays the music)
@@ -1542,7 +1548,7 @@ function createWidgets(deps) {
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, rotate, smart, colors, pf, ...rest }) => JSON.stringify(rest);
+  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, rotate, smart, colors, pf, pins, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -1890,6 +1896,7 @@ function createWidgets(deps) {
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id, known);
     // Paper trades survive an edit; the starting cash can only change while there are none (Reset first).
+    if (prev?.pins && widget.type === 'spotify' && widget.mode === 'api' && !widget.pins) widget.pins = prev.pins; // (the form has no pins: they stay)
     if (prev?.pf && CONNECTORS[widget.type].portfolio) widget.pf = { cash0: prev.pf.trades.length ? prev.pf.cash0 : widget.pf?.cash0, trades: prev.pf.trades };
     const ci = cleanInput(input);
     if (prev) {
@@ -2393,7 +2400,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|playfrom|playqueue|transfer|retry|reschedule|tdsource)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
     if (action.do === 'reschedule') { // a task's new day, from the card's small menu
       action.arg = params.get('arg');
@@ -2456,6 +2463,19 @@ function createWidgets(deps) {
     if (action.do === 'etab') {
       action.arg = params.get('arg');
       if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
+    }
+    if (action.do === 'eopen' || action.do === 'pplay' || action.do === 'pin' || action.do === 'unpin') { // a playlist or album (kind, arg: its id): open its songs in the card, play it (pos: from that entry; with: which song; shuffle=1), pin it as a tab or unpin it
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!SV.PIN_KINDS.includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return { invalid: true };
+      if (action.do === 'eopen' && params.get('force') === '1') action.force = true;
+      if (action.do === 'pplay') {
+        if (params.has('pos')) { action.arg = params.get('pos'); if (!/^\d{1,4}$/.test(action.arg)) return { invalid: true }; }
+        action.with = params.get('with');
+        if (action.with !== null && !AMB.ID_RE.test(action.with)) return { invalid: true };
+        if (action.with === null) delete action.with;
+        if (params.get('shuffle') === '1') action.shuffle = true;
+      }
     }
     if (action.do === 'playfrom' || action.do === 'playqueue') { // a row's place in the list the card showed (arg), and which song it was (with), so a list that moved on is not played from
       action.arg = params.get('arg');

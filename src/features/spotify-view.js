@@ -50,7 +50,33 @@ function clientIdSource({ user, env, builtin = BUILTIN_SPOTIFY_CLIENT_ID } = {})
 // user's own and may be empty: the built-in or environment one is used then.
 function cleanConfig(c) {
   if (!c || typeof c !== 'object') return null;
-  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false };
+  const pins = cleanPins(c.pins);
+  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false, ...(pins.length ? { pins } : {}) };
+}
+// ---- pinned playlists: their own tabs in the card ----
+// Up to MAX_PINS playlists or albums, each { kind, id, title }; the title is Spotify's name for it, short. Anything else is dropped (a stored list, a form).
+const MAX_PINS = 4;
+const PIN_KINDS = ['playlist', 'album'];
+function cleanPins(v) {
+  const out = [];
+  for (const p of Array.isArray(v) ? v : []) {
+    if (!p || typeof p !== 'object' || !PIN_KINDS.includes(p.kind) || !SAFE_ID.test(p.id || '')) continue;
+    const title = flat(p.title, 60);
+    if (title && !out.some((q) => q.kind === p.kind && q.id === p.id)) out.push({ kind: p.kind, id: p.id, title });
+    if (out.length >= MAX_PINS) break;
+  }
+  return out;
+}
+// The pins after pinning (add) or unpinning (remove) one: the new list, or an Error's message in { error } (full, not a playlist, no name).
+function applyPin(pins, op, kind, id, title) {
+  const have = cleanPins(pins);
+  if (!PIN_KINDS.includes(kind) || !SAFE_ID.test(id || '')) return { error: 'That can’t be pinned.' };
+  if (op === 'remove') return { pins: have.filter((p) => !(p.kind === kind && p.id === id)) };
+  if (have.some((p) => p.kind === kind && p.id === id)) return { pins: have };
+  if (have.length >= MAX_PINS) return { error: `Up to ${MAX_PINS} pinned playlists. Unpin one first.` };
+  const name = flat(title, 60);
+  if (!name) return { error: 'Open your library again, then pin it.' };
+  return { pins: [...have, { kind, id, title: name }] };
 }
 
 // ---- sign-in (RFC 7636 PKCE) ----
@@ -319,6 +345,25 @@ function normalizeContext(kind, text) {
   }
   return { title: '', items: [] }; // (an artist: its top tracks endpoint is gone)
 }
+// GET /playlists/{id}/items (February 2026: `items`, each entry's song under `item`; older `track`) or GET /albums/{id} -> { title, items }. Each row
+// keeps `pos`, its place in the list as Spotify counts it (an episode, a removed or a local song is skipped but still counts), which is what
+// "play from here" sends.
+function normalizeListing(kind, text) {
+  const b = parse(text);
+  if (!b) return { title: '', items: [] };
+  if (kind === 'album') {
+    const cover = b.images;
+    const entries = Array.isArray(b.tracks?.items) ? b.tracks.items : [];
+    const items = [];
+    entries.forEach((t, pos) => { const it = listItem({ ...t, album: { images: cover } }, 'track'); if (it) items.push({ ...it, pos }); });
+    return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
+  }
+  const entries = Array.isArray(b.items) ? b.items : Array.isArray(b.items?.items) ? b.items.items : Array.isArray(b.tracks?.items) ? b.tracks.items : [];
+  const items = [];
+  entries.forEach((e, pos) => { const it = listItem(e?.item || e?.track, 'track'); if (it) items.push({ ...it, pos }); });
+  return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
+}
+const MAX_LIST = 100;
 // Where each list comes from, and what a card button does. All paths are fixed; only checked ids and numbers are put into them.
 const enc = encodeURIComponent;
 const SEARCH_LIMIT = 10; // per kind (the most Spotify's search answers for an app in development mode)
@@ -332,6 +377,10 @@ const PLAYER = {
   searchMore: (term, offset) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track&limit=${SEARCH_LIMIT}&offset=${Math.max(0, Math.min(200, Math.round(offset)))}&market=from_token`],
   search: (term) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track,album,artist,playlist&limit=${SEARCH_LIMIT}&market=from_token`], // (one request for every kind; from_token: the account's own market, so what is shown plays)
   context: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}`] : kind === 'playlist' ? ['GET', `/playlists/${id}`] : null), // (an artist: null, no endpoint any more)
+  // A playlist's or album's songs (the card's playlist tabs). Playlist: /items (the Feb 2026 name; `tracks` is gone for apps in development mode).
+  listing: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}?market=from_token`] : kind === 'playlist' ? ['GET', `/playlists/${id}/items?limit=${MAX_LIST}&market=from_token&additional_types=track`] : null),
+  // Start a playlist or album (from its `pos`th entry when given).
+  playContext: (kind, id, pos) => ['PUT', '/me/player/play', { context_uri: `spotify:${kind}:${id}`, ...(Number.isInteger(pos) && pos >= 0 && pos < 10000 ? { offset: { position: pos } } : {}) }],
   shuffle: (on) => ['PUT', `/me/player/shuffle?state=${on ? 'true' : 'false'}`],
   repeat: (mode) => ['PUT', `/me/player/repeat?state=${mode === 'all' ? 'context' : mode === 'one' ? 'track' : 'off'}`],
   volume: (percent) => ['PUT', `/me/player/volume?volume_percent=${Math.max(0, Math.min(100, Math.round(percent)))}`],
@@ -352,7 +401,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };
