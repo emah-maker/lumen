@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The "AI is using this tab" pill shows only on the tab the AI is working in.** While a task ran in one tab, the toolbar pill stayed on every tab you switched to (saying the AI was in another tab). Now it appears only while the tab in front is the AI's tab, follows you as you switch tabs, and goes when the task ends; the sidebar's "Working in" line still says where the AI is.
+
 ## 0.5.21 (2026-10-09)
 
 - **Settings looks calmer and reads faster.** Each page opens with a short line saying what it holds, and its title stays at the top while you scroll. A heading that only repeated its first row is said once (On startup, Search engine). Descriptions show two lines, with a small Show more only where the text is really cut off. Rows that held a value and buttons now put them on one line (Downloads location), stacked controls line up under their label, and the folded lists (Spell check languages, Language packs and site lists) are full-width rows with a chevron on the right like the other link rows. Searching highlights the matched words. Buttons, switches and fields get a press state and firmer hover and focus rings, motion is cut when the system asks for reduced motion, the content column is a steady 820 px wide and centered, and the sidebar turns into a row of categories below 800 px (was 720). The Task manager in Advanced no longer keeps a 2-second timer running in other sections: it refreshes only while it is on screen and the tab is visible.

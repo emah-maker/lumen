@@ -490,6 +490,8 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
 }
 body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy) var(--spring-snappy); }
+/* The task works in another tab: this tab is not its tab, so no pill here (the sidebar's "Working in" line says where it is). */
+body.agent-active.agent-away:not(.mcp-active) .agent-pill { display: none; }
 /* [agent window] the badge in an outside agent's own window */
 .agent-window-chip {
   display: flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 22px; padding: 0 10px; margin-right: 6px; border-radius: 11px;
