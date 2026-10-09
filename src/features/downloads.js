@@ -16,6 +16,8 @@ const settingsFile = require('../settings/settings-file'); // tmp + rename + .ba
 // Programs, installers and scripts Windows runs on open, and shortcut/settings files that launch them (a .url, .scf,
 // .inf or .diagcab file runs something when opened). Not disk images or documents: those are ordinary downloads.
 const RISKY_TYPES = /^\.(exe|msi|msp|mst|msix|msixbundle|bat|cmd|com|scr|pif|cpl|msc|ps1|ps1xml|psm1|psd1|vbs|vbe|vb|js|jse|wsf|wsh|wsc|sct|hta|jar|jnlp|dll|ocx|lnk|url|scf|inf|reg|appx|appxbundle|appinstaller|application|gadget|diagcab|settingcontent-ms)$/i;
+const { trailingThrottle } = require('../browser/trailing-throttle');
+const PROGRESS_MS = 250; // how often a running download's progress reaches the panel and the page
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
 
 // deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)?,
@@ -56,12 +58,18 @@ function createDownloads(deps) {
     missing: d.state === 'completed' && !exists(d), canResume: Boolean(d.item && d.state === 'interrupted' && d.item.canResume()),
     icon: icons.get(d.path)?.dataUrl || null,
   });
-  const sendDownloads = () => {
+  const pushDownloads = () => {
     deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
     deps.onChange?.(); // the Downloads page (features/managers.js)
     deps.panel?.()?.send('downloads:list', downloads.map(panelEntry)); // the toolbar's panel
     save();
   };
+  // Chromium reports a running download's progress many times a second. Each report rebuilt the whole panel list (and
+  // stat()ed every finished file in it), and the panel redraws its rows from scratch, so a click on a button could land
+  // on a row that had just been replaced. Progress goes out a few times a second; anything else (a start, a finish,
+  // a pause, a removal) goes out at once.
+  const sendProgress = trailingThrottle(pushDownloads, PROGRESS_MS);
+  const sendDownloads = () => sendProgress.now();
   function loadIcon(entry) {
     if (!entry.path || icons.has(entry.path) || !exists(entry)) return;
     deps.app.getFileIcon(entry.path, { size: 'normal' }).then((image) => {
@@ -139,7 +147,8 @@ function createDownloads(deps) {
         entry.paused = item.isPaused() || entry.awaitingOk;
         entry.state = state === 'interrupted' ? 'interrupted' : 'progressing';
         progress();
-        sendDownloads();
+        if (entry.state === 'interrupted') sendDownloads();
+        else sendProgress();
       });
       Object.defineProperty(entry, 'holding', { value: holding });
       item.once('done', (_ev, state) => {

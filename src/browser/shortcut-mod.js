@@ -9,4 +9,24 @@ function shortcutMod(input, platform = process.platform) {
   return Boolean(input.meta || (input.control && MAC_CTRL_KEYS.has(String(input.key || '').toLowerCase())));
 }
 
-module.exports = { shortcutMod };
+// The browser keys Chrome has that handleShortcut (main.js) had no entry for, as an action name or null:
+// F6 and Alt+D (Windows / Linux) focus the address bar; F3 / Ctrl+G (Cmd+G) find the next match and Shift
+// adds the previous one; Ctrl+F4 closes the tab (Windows / Linux; Cmd+W does on macOS).
+function extraShortcut(input, platform = process.platform) {
+  if (!input || input.type !== 'keyDown') return null;
+  const key = String(input.key || '').toLowerCase();
+  const mac = platform === 'darwin';
+  const mod = shortcutMod(input, platform);
+  if (key === 'f6' && !mod && !input.alt && !input.shift) return 'focus-address';
+  if (!mac && key === 'd' && input.alt && !mod && !input.shift) return 'focus-address';
+  if (key === 'f3' && !mod && !input.alt) return input.shift ? 'find-prev' : 'find-next';
+  if (key === 'g' && mod && !input.alt) return input.shift ? 'find-prev' : 'find-next';
+  if (!mac && key === 'f4' && input.control && !input.alt && !input.shift) return 'close-tab';
+  return null;
+}
+
+// BrowserWindow 'app-command' names (Windows: the mouse's back / forward buttons, keyboards' browser keys) -> what to do.
+const APP_COMMANDS = { 'browser-backward': 'back', 'browser-forward': 'forward', 'browser-refresh': 'reload', 'browser-stop': 'stop' };
+const appCommandAction = (command) => APP_COMMANDS[command] || null;
+
+module.exports = { shortcutMod, extraShortcut, appCommandAction };
