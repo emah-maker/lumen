@@ -4526,7 +4526,9 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
   const snapshot = id && !live ? chats().load(id) : null;
-  if (id && !snapshot && !live && !ensure) return null;
+  // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
+  // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
+  if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
   saveChat();
   chatGeneration++;
   clearTimeout(saveChatTimer);
@@ -4750,7 +4752,14 @@ function followTabChat(tab, { push = true } = {}) {
   if (plan.chat) {
     if (chatBind.chatOf(tab.id) !== plan.chat) chatBind.bind(tab.id, plan.chat); // (a tab already showing it stays as it is: coming to the front must not make it the home)
     const keep = unseen(plan.chat);
-    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
+    if (plan.chat !== chatId && !switchChat(plan.chat, { ensure: true, quiet: true })) { // its saved file can't be read (gone, or locked): the tab lets go of it and starts over, never an empty chat under its id
+      carriedTabs.delete(tab.id);
+      chatBind.unbindTab(tab.id);
+      followTabChat(tab, { push });
+      const page = tab.managerPage === 'chat' ? tab.view?.webContents : null;
+      if (page && !page.isDestroyed()) page.send('chat:sync', { view: chatView() }); // a chat page shows the chat it has now, not the one that is gone
+      return;
+    }
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.carry) {
