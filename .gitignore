@@ -6,7 +6,9 @@ shot-*.png
 .env
 .env.*
 !.env.example
-.claude/
+.claude/*
+# (the project's Claude Code settings are shared: the docs-check Stop hook, CLAUDE.md "Docs")
+!.claude/settings.json
 out/
 # The GitHub Pages site, built by scripts/build-site.js
 _site/
