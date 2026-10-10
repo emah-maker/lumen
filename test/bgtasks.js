@@ -165,7 +165,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await ui.evaluate(() => [...document.querySelectorAll('.task-row')].find((r) => r.textContent.includes('TASK-B')).click());
   await ui.waitForSelector('.task-approval');
   const cardText = await ui.evaluate(() => document.querySelector('.task-approval').textContent);
-  check('the Tasks panel shows an approval card with Allow once / Allow site / Deny / Stop task', ['Allow once', 'Allow site for this task', 'Deny', 'Stop task'].every((s) => cardText.includes(s)), cardText);
+  check('the Tasks panel shows an approval card with Allow once / Allow site / Don’t allow / Stop task', ['Allow once', 'Allow site for this task', 'Don’t allow', 'Stop task'].every((s) => cardText.includes(s)), cardText);
   await ui.evaluate(() => [...document.querySelectorAll('.task-approval button')].find((x) => x.textContent === 'Allow once').click());
   check('after Allow once it resumes and finishes', await waitFor(async () => (await statusOf('TASK-B')) === 'done'), JSON.stringify(await taskBy('TASK-B')));
   check('the page was really loaded after the approval', (fixture.hits['/b'] || 0) >= 1 && /RESULT-B/.test((await taskBy('TASK-B')).result), JSON.stringify(fixture.hits));
@@ -470,7 +470,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const kept = await app.evaluate(() => global.__bg.tasks().map((t) => t.status));
   check('finished tasks and the watch tasks came back too', kept.filter((s) => s === 'done').length >= 4 && kept.length >= 10, JSON.stringify(kept));
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await ui.click('#tasks-btn', { force: true }); // (its unseen-dot animation never settles)
+  await ui.evaluate(() => document.getElementById('tasks-btn').click()); // (the button is a row of the More menu now)
   await ui.waitForSelector('.task-row');
   await ui.evaluate(() => [...document.querySelectorAll('.task-row')].find((r) => r.textContent.includes('TASK-G')).click());
   await ui.waitForSelector('.task-actions');

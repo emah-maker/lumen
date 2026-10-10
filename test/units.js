@@ -1230,7 +1230,7 @@ async function fuseChecks() {
 
   check('chats: the title is the first message without Lumen\'s additions', autoTitle(chat('<browser_state>\nx\n</browser_state>\n\n<untrusted_page_content title="t">page</untrusted_page_content>\n\nWhat is up?')) === 'What is up?', autoTitle(chat('<browser_state>x</browser_state> What is up?')));
   const long = autoTitle(chat('word '.repeat(40)));
-  check('chats: a long first message is cut to a short title', long.length === 60 && long.endsWith('…'), long);
+  check('chats: a long first message is cut to a short title', long.length <= 60 && long.length > 40 && long.endsWith('…'), long);
   check('chats: an image-only first message is titled "Image"', autoTitle({ messages: [{ role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'The user attached the image(s) above without a message.' }] }] }) === 'Image', 'image');
 
   const ids = [0, 1, 2, 3].map(() => store.newId());

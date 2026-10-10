@@ -700,6 +700,23 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .more-menu .menu-item[data-shortcut]::before { content: attr(data-shortcut); order: 3; margin-left: auto; font-size: 11px; color: var(--muted); }
 .more-menu .menu-item:hover, .more-menu .menu-item:focus-visible { background: var(--hover, rgba(127,127,127,.12)); outline: none; }
 body:not(.chat-full) .more-menu #dock-to-side { display: none !important; }
+/* Labelled rows in the More menu (Helpers, Background tasks, Research board): the name is real text, with the state or a count at the right. */
+.more-menu .menu-item.labeled::after { content: none; }
+.more-menu .menu-label { font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.more-menu .menu-state { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.more-menu .menu-item[aria-checked="true"] .menu-state { color: var(--accent); }
+.more-menu #helpers-btn svg circle { fill: none; }
+.more-menu #helpers-btn[aria-checked="true"] svg circle { fill: currentColor; }
+.more-menu .task-badge { position: static; margin-left: auto; flex: none; }
+.more-menu .tasks-btn.has-unseen::after { content: ""; position: static; margin-left: auto; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: none; }
+.more-menu .menu-sep { height: 1px; margin: 4px 6px; background: var(--hairline, var(--border)); }
+/* Something in the menu needs you (a task running or waiting, or finished unseen): a dot on the More button, so the tasks button's old badge is not lost. */
+#more-actions { position: relative; }
+#more-actions.has-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+#more-actions.has-attention.waiting::after { background: var(--warning); }
+/* The permission bolt names its level while it is not "Ask". */
+.icon-btn.auto-allow:has(.perm-state) { display: inline-flex; align-items: center; justify-content: center; width: auto; padding: 0 8px 0 6px; gap: 4px; }
+.perm-state { font-size: 11px; font-weight: 600; line-height: 1; }
 .queue-btn { margin-left: 4px; height: 20px; padding: 0 6px; border: none; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
 .queue-btn:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 .msg.assistant .reply-regen.armed { opacity: 1; color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
@@ -794,6 +811,8 @@ body.chat-full .setup { text-align: left; }
 .step.failed { color: var(--danger); }
 .step.stopped::before { background: var(--faint); }
 .step .step-detail { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.step .step-time { flex: none; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.step .step-time:empty { display: none; }
 .step .step-action { flex: none; margin: 0; padding: 0 2px; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .step .step-action:disabled { opacity: .5; cursor: default; }
 .step .step-error { flex-basis: 100%; min-width: 0; padding-left: 14px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; animation: fade-in var(--t-base) ease-out; }
@@ -858,6 +877,8 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .send svg { width: 14px; height: 14px; stroke-width: 1.75; transition: transform var(--t-snappy) var(--spring-snappy), opacity var(--t-fast) ease-out; }
 .send:not(:disabled):hover { background: var(--accent-deep); }
 .send:disabled { background: var(--field); color: var(--faint); box-shadow: none; transform: scale(0.92); }
+.send.stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; min-width: 26px; padding: 0 10px 0 9px; border-radius: 13px; font-size: 12px; font-weight: 500; }
+.send.stop::after { content: attr(data-label); }
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
 /* Send now: beside Stop while a reply runs and something is typed (it stops the reply and sends this next). */
@@ -1351,6 +1372,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   background: rgb(127 127 127 / 0.16); color: color-mix(in srgb, var(--text) 78%, transparent);
 }
 .picker-badge.warn { background: color-mix(in srgb, #ff9500 18%, transparent); color: color-mix(in srgb, #ff9500 70%, var(--text)); }
+.picker-group .picker-group-signin { margin: 0 auto 0 8px; font-weight: 500; letter-spacing: 0; }
 .picker-more { padding-left: 28px; color: color-mix(in srgb, var(--accent) 72%, var(--text)); font-weight: 500; } /* readable on the dark menu too */
 .picker-section > .picker-more:not(.picker-extra) { color: color-mix(in srgb, var(--text) 62%, transparent); font-weight: 500; font-size: 12px; } /* "Show all": quieter than a model or "More models…" */
 .picker-extra { margin-top: 4px; border-top: 0.5px solid var(--border); border-radius: 0 0 7px 7px; padding-top: 8px; }
@@ -1455,10 +1477,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
 }
 
-/* Helpers (sidebar head, ai/subagents.js): the three nodes light up in accent while the AI may hand jobs to helpers. */
-.icon-btn.helpers-btn svg circle { fill: none; }
-.icon-btn.helpers-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.icon-btn.helpers-btn[aria-pressed="true"] svg circle { fill: currentColor; }
+/* Helpers is a labelled row in the sidebar's More menu now (styles.css .more-menu .menu-state): "Helpers  On". */
 
 /* Auto-allow actions (sidebar head): the bolt fills in accent while on. */
 .icon-btn.auto-allow svg path { fill: none; }

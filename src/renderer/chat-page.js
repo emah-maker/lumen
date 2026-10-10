@@ -19,7 +19,8 @@
   chatHost.emptyText = (name) => t('chatpage.empty', { name });
 
   function refreshUsage(text) {
-    usageLine.textContent = text || '';
+    usageLine.dataset.usage = text || '';
+    usageLine.textContent = text ? t('chats.usage.line', { usage: text }) : '';
     usageLine.hidden = !text;
     usageLine.title = text ? t('chats.usage.title') : '';
   }
