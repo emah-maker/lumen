@@ -32,6 +32,13 @@ const prompts = [
   ['compare these tabs and tell me which laptop is best', { tabCount: 4 }, 'research', 'standard'],
   ['find sources on intermittent fasting and cite them', {}, 'research', 'standard'],
   ['research the best noise cancelling headphones under $300', {}, 'research', 'standard'],
+  ['can you double check the tables', {}, 'research', 'standard'], // a steam table (0.08 bar hf / hfg) the AI had given from memory: it has to find the source and compare
+  ['verify the 0.08 bar values', {}, 'research', 'standard'],
+  ['check the tables', {}, 'research', 'standard'],
+  ['is this right?', {}, 'research', 'standard'],
+  ['look it up', {}, 'research', 'standard'],
+  ['confirm the values in table 15.3.1', {}, 'research', 'standard'],
+  ['find the source for that number', {}, 'research', 'standard'],
   ['what does the literature say about spaced repetition?', {}, 'research', 'standard'],
   ['fix the bug in this function', {}, 'code', 'standard'],
   ['why does my regex not match?', {}, 'code', 'standard'],
