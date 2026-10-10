@@ -48,6 +48,8 @@ const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOC
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
 const { createBurstLimit } = require('./features/popup-guard'); // caps windows/tabs one page opens in a burst
+const hideActivity = require('./features/hide-activity'); // [hide activity] leaving the tab, split screen
+const activityScripts = hideActivity.createFrameScripts(() => settingsBackend.prefs());
 const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
@@ -891,6 +893,9 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
+  // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
+  hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
+  session.defaultSession.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
@@ -1138,6 +1143,7 @@ const privateWindows = createPrivateWindows({
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD }); // [hide activity]
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
@@ -4234,8 +4240,10 @@ function applyChromeIdentity(wc) {
   // (Google's sign-in hosts get the same identity as every other page: Google refuses a Firefox one, google-auth-identity.js.)
   // The Page domain is switched on first: with Chromium's debugging port open (automation, test drivers) a script added
   // to a session that never enabled Page is not run at document start, and window.chrome stayed Electron's empty {}.
-  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() =>
-    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}));
+  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() => Promise.all([
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
+    activityScripts.add(wc, send, sessionId), // [hide activity] other sites' frames too (features/hide-activity.js)
+  ]));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
@@ -7702,6 +7710,7 @@ const settingsBackend = settingsPage.create({
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   onTabSleepChange: () => tabSleepSettingChanged(),
   onTabPreloadChange: () => schedulePreload(1500),
+  onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });

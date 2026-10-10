@@ -275,14 +275,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- Do Not Track / GPC / Accept-Language headers ----
   await clickEl('#pref-sendDoNotTrack');
-  await clickEl('#pref-sendGpc');
+  // (Global Privacy Control ships on: its switch is already on here, so only DNT is clicked.)
+  check('Global Privacy Control is on by default', await inTab(sid, "document.getElementById('pref-sendGpc').checked") === true, 'off');
   await inTab(sid, "window.lumenSettings.set('languages', ['fr-CA', 'en-US'])");
   web = await openWeb(`${base}/headers`);
   const headers = JSON.parse(await inTab(web, "document.getElementById('h').textContent"));
   check('DNT, Sec-GPC and Accept-Language headers are sent', headers.dnt === '1' && headers['sec-gpc'] === '1' && headers['accept-language'].startsWith('fr-CA,fr;q=0.9,en-US'), JSON.stringify(headers));
   await closeTab(web);
   await clickEl('#pref-sendDoNotTrack');
-  await clickEl('#pref-sendGpc');
   await inTab(sid, "window.lumenSettings.set('languages', [])");
 
   // ---- spell check languages ----

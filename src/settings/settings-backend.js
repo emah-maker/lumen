@@ -83,7 +83,13 @@ const DEFAULTS = {
   startupPages: [],
   blockThirdPartyCookies: false,
   sendDoNotTrack: false,
-  sendGpc: false,
+  sendGpc: true, // Sec-GPC: 1, and navigator.globalPrivacyControl (preload/activity-preload.js)
+  hideTabActivity: true, // [hide activity] pages always read as the visible, focused tab (preload/activity-preload.js)
+  hideWindowSize: true, // [hide activity] the screen reads as the window's size: split screen or a small window doesn't show
+  stripTrackingParams: true, // utm_*, fbclid, gclid… are taken off the addresses pages open at (features/tracking-params.js)
+  fingerprintProtection: true, // canvas, WebGL and audio readouts vary per site; the battery reads as a desktop's (preload/activity-preload.js)
+  webrtcIpProtection: true, // WebRTC uses only the default route's public address: no local or VPN-bypassing IPs (settings-backend.js attachTab)
+  blockTrackingPings: true, // hyperlink-auditing pings (<a ping>) and navigator.sendBeacon reports are not sent (features/adblock.js)
   httpsOnly: false,
   passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
@@ -587,8 +593,15 @@ function create(deps) {
   }
 
   // Every ordinary tab: default zoom, HTTPS-only.
+  // WebRTC (video calls, and pages that use it only to learn your addresses): with the setting on, only the public
+  // address of the default route is offered, so a page can't read your local network address or the real one behind
+  // a VPN that doesn't take all traffic. Calls still connect (through the default route, or a relay).
+  function webrtcPolicy(wc) {
+    try { wc.setWebRTCIPHandlingPolicy(prefs().webrtcIpProtection ? 'default_public_interface_only' : 'default'); } catch (err) { console.error('WebRTC policy:', err.message); }
+  }
   function attachTab(wc) {
     pinchZoom(wc);
+    webrtcPolicy(wc);
     wc.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) upgrade(wc, details.url);
     });
@@ -689,6 +702,8 @@ function create(deps) {
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': deps.onTabSleepChange?.(key); break;
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
+      case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));

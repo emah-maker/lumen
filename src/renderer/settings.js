@@ -2043,6 +2043,12 @@ async function buildPrivacy(card) {
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
     toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
+    withKeywords(toggle('hideTabActivity', tr('settings.privacy.hideTab', 'Hide when you leave the tab'), tr('settings.privacy.hideTabDesc', '')), 'visibility focus blur switch tab window away exit intent proctoring track'),
+    withKeywords(toggle('hideWindowSize', tr('settings.privacy.hideSize', 'Hide your window size'), tr('settings.privacy.hideSizeDesc', '')), 'split screen window size screen resolution fingerprint'),
+    withKeywords(toggle('fingerprintProtection', tr('settings.privacy.fingerprint', 'Protect against fingerprinting'), tr('settings.privacy.fingerprintDesc', '')), 'fingerprint canvas webgl audio battery tracking unique identify'),
+    withKeywords(toggle('webrtcIpProtection', tr('settings.privacy.webrtc', 'Hide your IP address from WebRTC'), tr('settings.privacy.webrtcDesc', '')), 'webrtc ip address leak vpn local network'),
+    withKeywords(toggle('stripTrackingParams', tr('settings.privacy.stripParams', 'Remove tracking from links'), tr('settings.privacy.stripParamsDesc', '')), 'utm fbclid gclid query parameters url clean'),
+    withKeywords(toggle('blockTrackingPings', tr('settings.privacy.pings', 'Block tracking pings'), tr('settings.privacy.pingsDesc', '')), 'beacon sendbeacon ping hyperlink auditing analytics'),
     withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
   );
 
