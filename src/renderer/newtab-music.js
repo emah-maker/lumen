@@ -130,9 +130,14 @@ function build(w, card, o) {
   const refresh = refreshButton(w);
   head.append(refresh);
   const badge = el('span', 'mk-badge'); // (in the header only while it has something to say)
-  const open = o.openUrl ? o.openUrl(view.d || {}) : null;
-  const openEl = open ? openLink(open, `Open in ${o.name}`) : null;
-  if (openEl) head.append(openEl);
+  let openEl = null; // the "Open in" link: follows the track (drawn by update; a local file or an ad has none)
+  const drawOpen = (d) => {
+    const url = o.openUrl ? o.openUrl(d || {}) : null;
+    if (!url) { openEl?.remove(); openEl = null; return; }
+    if (!openEl) { openEl = openLink(url, `Open in ${o.name}`); (badge.isConnected ? badge : refresh).after(openEl); }
+    else if (openEl.getAttribute('href') !== url) openEl.href = url;
+  };
+  drawOpen(view.d);
   const field = el('div', 'am-searchfield');
   const input = el('input');
   const toggle = iconButton(ICONS.search, `Search ${o.name}`, () => { ui.open ? closePop() : openPop(); });
@@ -599,6 +604,7 @@ function build(w, card, o) {
     view.w = nextW;
     const d = applyOpt(nextW.data && typeof nextW.data === 'object' ? nextW.data : {});
     view.d = d;
+    drawOpen(d);
     const state = stateOf();
     const isIdle = state === 'idle';
     const loading = d.reason === 'loading';

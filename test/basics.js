@@ -184,15 +184,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await app.evaluate(() => global.__pageTools.handleShortcut({ control: process.platform !== 'darwin', meta: process.platform === 'darwin', key: '=' }));
     await sleep(500);
     const host = `127.0.0.1:${server.address().port}`;
-    check('zooming in remembers the level for the site', settingsOf(profile).siteZoom?.[host] === 0.5, JSON.stringify(settingsOf(profile).siteZoom));
+    const ONE_TEN = Math.log(1.1) / Math.log(1.2); // zoom stops are Chrome's (110%); Electron's level is log base 1.2 of the factor
+    check('zooming in remembers the level for the site', Math.abs((settingsOf(profile).siteZoom?.[host] ?? 99) - ONE_TEN) < 1e-9, JSON.stringify(settingsOf(profile).siteZoom));
     menu = await info();
     check('page info shows the remembered zoom', menu.some((i) => /^Zoom: 110%/.test(i.label)), menu.map((i) => i.label).join(' | '));
     await app.close();
 
     ({ app } = await launch(profile));
     const again = await openIn(app, `${base}/zoomed-again`);
-    const level = await waitFor(() => app.evaluate((_e, id) => { const wc = global.__settings.contents(id); return wc && wc.getZoomLevel() === 0.5 ? 0.5 : null; }, again));
-    check('after a restart the site opens at that zoom', level === 0.5, String(level));
+    const level = await waitFor(() => app.evaluate((_e, { id, want }) => { const wc = global.__settings.contents(id); return wc && Math.abs(wc.getZoomLevel() - want) < 1e-9 ? 'ok' : null; }, { id: again, want: ONE_TEN }));
+    check('after a restart the site opens at that zoom', level === 'ok', String(level));
     await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), again); // (Actual Size acts on the tab in front, as in the first half)
     await app.evaluate(() => global.__pageTools.handleShortcut({ control: process.platform !== 'darwin', meta: process.platform === 'darwin', key: '0' }));
     await sleep(500);

@@ -228,6 +228,9 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
+  'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
+  'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
@@ -2522,7 +2525,7 @@ function sleepFacts(tab) {
     openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) || isNewTab(url) : false, newTab: wc ? isNewTab(url) : false, // (a new-tab page sleeps too, and soon: tab-sleep.js)
    
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
-    capturing: wc ? wc.isBeingCaptured() || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded)
+    capturing: wc ? (wc.isBeingCaptured() && !TEST) || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded). (Not in tests: the Playwright connection that drives them counts as a capturer on every page.)
     pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt, viewedAt: tab.viewedAt || 0,
   };
 }
@@ -7461,7 +7464,7 @@ const widgets = createWidgets({
     const tab = tabs.find((t) => t.id === openSettingsPage('widgets'));
     const wc = tab?.view?.webContents;
     const tell = () => { if (wc && !wc.isDestroyed()) wc.send('widgets:edit'); };
-    if (wc && !wc.isDestroyed()) { if (wc.isLoading()) wc.once('did-finish-load', tell); else tell(); }
+    if (wc && !wc.isDestroyed()) { if (wc.isLoading()) wc.once('did-stop-loading', tell); else tell(); } // (did-stop-loading, not did-finish-load: pointing an open Settings tab at another section is an in-page navigation, which never finishes a load)
   },
   // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
