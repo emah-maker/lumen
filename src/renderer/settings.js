@@ -1887,6 +1887,8 @@ async function buildWidgets(card) {
       h('div', { class: 'widget-head' }, existing ? widgetIcon(existing.type) : null, h('div', { class: 'grow' },
         h('h2', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
         h('span', { class: 'note', text: existing ? `${WS.kindName(existing.type)} · ${WS.widgetSummary(existing, ws)}` : 'Pick what to show, then set it up.' }))),
+      // The new-tab page's Add widget sent us here for a kind that needs a key or a sign-in: say what to paste, and where to get it.
+      !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
       existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
       fields,
       section('Card', [

@@ -171,7 +171,22 @@ function widgetSummary(w, ctx = {}) {
   return w.stack ? [line, 'In a stack'].filter(Boolean).join(' · ') : line; // shown in turn with others of its size (features/widget-stacks.js)
 }
 
-const api = { KINDS, ORDER, kindName, kindHint, accountStatus, widgetSummary };
+
+// What a kind that has a key or a sign-in asks for, and where to get it. The new-tab Add widget list says it before opening
+// Settings, and Settings' new-widget form repeats it. Kinds with nothing to paste or connect are not here.
+const SETUP_NOTES = {
+  todoist: 'Paste your personal API token. Find it in Todoist under Settings, Integrations, Developer.',
+  github: 'Paste a read-only access token. Create one at github.com/settings/personal-access-tokens with read access to Issues and Pull requests.',
+  stocks: 'Paste a free Twelve Data API key. Get one at twelvedata.com (the free plan is enough).',
+  muse: 'Paste your Meta API key. Get one at dev.meta.ai.',
+  gmail: 'Sign in with Google there. Nothing to paste: Lumen only reads your inbox.',
+  slack: 'Create the Lumen app in Slack there, then copy its token back. Lumen guides you through it.',
+  spotify: 'Connect your Spotify account there, or paste your own app’s Client ID.',
+  crypto: 'Optional: paste a free CoinGecko Demo key for steadier prices.',
+};
+const setupNote = (type) => (Object.prototype.hasOwnProperty.call(SETUP_NOTES, type) ? SETUP_NOTES[type] : '');
+
+const api = { SETUP_NOTES, setupNote, KINDS, ORDER, kindName, kindHint, accountStatus, widgetSummary };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetSummary = api;
 })();

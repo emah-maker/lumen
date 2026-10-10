@@ -191,14 +191,22 @@ function tile(b, size) {
 function section(title, content) {
   const s = document.createElement('section');
   s.setAttribute('aria-label', title);
-  s.append(Object.assign(document.createElement('h2'), { textContent: title }), content);
+  const h2 = Object.assign(document.createElement('h2'), { textContent: title });
+  if (title === 'Favorites') h2.title = `Your bookmarks. Press ${MAC ? 'Cmd' : 'Ctrl'}+D on any page to add it here.`;
+  s.append(h2, content);
   return s;
 }
 
+// Where Favorites come from: your bookmarks. Said on an empty list, and under a short one (the heading's tooltip says it too).
+const MAC = /mac|iphone|ipad/i.test(String(navigator.userAgentData?.platform || navigator.platform || ''));
+const hintLine = (lead) => {
+  const kbd = (t) => Object.assign(document.createElement('kbd'), { textContent: t });
+  return ['Favorites are your bookmarks. ' + lead, kbd(MAC ? 'Cmd' : 'Ctrl'), '+', kbd('D'), ' on any page to add it here.'];
+};
 function favorites(list) {
   if (!list.length) {
     const p = Object.assign(document.createElement('p'), { className: 'empty' });
-    p.append('Bookmark a page with ', Object.assign(document.createElement('kbd'), { textContent: 'Ctrl' }), '+', Object.assign(document.createElement('kbd'), { textContent: 'D' }), ' and it appears here.');
+    p.append(...hintLine('Press '));
     return p;
   }
   const nav = Object.assign(document.createElement('nav'), { className: 'grid' });
@@ -210,7 +218,12 @@ function favorites(list) {
     a.append(tile(b, 28), Object.assign(document.createElement('span'), { className: 'name', textContent: label(b) }));
     nav.append(a);
   }
-  return nav;
+  if (list.length >= 4) return nav;
+  const box = document.createElement('div');
+  const hint = Object.assign(document.createElement('p'), { className: 'section-hint' });
+  hint.append(...hintLine('Press '));
+  box.append(nav, hint);
+  return box;
 }
 
 function frequent(list) {
@@ -253,7 +266,7 @@ function privacy(blocked) {
 
 function greeting(now) {
   const h = now.getHours();
-  return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
 function render() {
@@ -303,11 +316,14 @@ window.addEventListener('hashchange', render);
   try { if (localStorage.getItem(KEY) === 'ask') mode = 'ask'; } catch {}
   // Who the box asks and which engine it searches are read from the hash each time (the browser rewrites it when
   // the user picks another model or search engine), so the label never shows what was true when the page loaded.
-  const current = () => { const d = data(); return { engine: d.search, who: d.assistant?.name || 'Claude', model: d.assistant?.model || '', modelLabel: d.assistant?.label || '' }; };
+  const current = () => { const d = data(); return { engine: d.search, who: d.assistant?.name || 'AI', connected: !d.assistant || d.assistant.agentUsable !== false, model: d.assistant?.model || '', modelLabel: d.assistant?.label || '' }; };
 
+  let hintTimer = null;
+  const goConnect = () => { location.href = `${location.pathname}?connect-ai=1${location.hash}`; }; // the browser opens Settings > API keys and sign-ins and keeps this tab here
+  document.getElementById('mode-connect')?.addEventListener('click', goConnect);
   function apply(next, { save = true, focus = false } = {}) {
     mode = next === 'ask' ? 'ask' : 'search';
-    const { engine, who, model, modelLabel } = current();
+    const { engine, who, connected, model, modelLabel } = current();
     const askRadio = document.getElementById('mode-ask');
     askRadio.dataset.model = model; // exactly which model an ask goes to
     askRadio.title = modelLabel ? `${modelLabel}` : '';
@@ -317,7 +333,14 @@ window.addEventListener('hashchange', render);
       r.tabIndex = on ? 0 : -1;
       if (on && focus) r.focus();
     }
-    const text = mode === 'ask' ? `Ask ${who}…` : `Search ${engine?.label || 'Google'}`;
+    // Ask AI with no AI connected yet: a setup prompt, not a box that would ask nobody.
+    const text = mode === 'ask' ? (connected ? `Ask ${who}…` : 'Connect an AI to ask questions') : `Search ${engine?.label || 'Google'}`;
+    const setup = mode === 'ask' && !connected;
+    const connect = document.getElementById('mode-connect');
+    if (connect) connect.hidden = !setup;
+    const hintEl = document.getElementById('mode-hint');
+    if (hintEl && hintEl.dataset.base === undefined) hintEl.dataset.base = hintEl.textContent;
+    if (hintEl && !hintTimer) hintEl.textContent = setup ? 'No AI is connected yet.' : hintEl.dataset.base;
     input.placeholder = text;
     input.setAttribute('aria-label', text);
     if (save) try { localStorage.setItem(KEY, mode); } catch {}
@@ -341,13 +364,12 @@ window.addEventListener('hashchange', render);
   // taken in silently. It says where images go.
   const hint = document.getElementById('mode-hint');
   const hintText = hint ? hint.textContent : '';
-  let hintTimer = null;
   const refuseImages = (e, files) => {
     if (mode !== 'ask' || !hint || ![...files].some((f) => String(f.type).startsWith('image/'))) return;
     e.preventDefault();
     hint.textContent = 'Images can’t go in this box. Ask here, then add the picture in the chat (paste, drop, or the attach button).';
     clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { hint.textContent = hintText; }, 9000);
+    hintTimer = setTimeout(() => { hintTimer = null; hint.textContent = hintText; apply(mode, { save: false }); }, 9000);
   };
   input.addEventListener('paste', (e) => refuseImages(e, e.clipboardData?.files || []));
   form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
@@ -357,6 +379,7 @@ window.addEventListener('hashchange', render);
     const q = input.value.trim();
     if (mode === 'ask') {
       e.preventDefault();
+      if (!current().connected) { goConnect(); return; }
       if (q) location.href = `${location.pathname}?ask=${encodeURIComponent(q)}${location.hash}`;
       return;
     }
