@@ -6,7 +6,7 @@
 (function () {
   // query word -> other words that mean the same here (each side is matched at word starts, never as a substring).
   const SYNONYMS = {
-    night: ['dark'], dim: ['dark'], appearance: ['theme'], colour: ['color'], colours: ['color'],
+    mode: ['theme'], night: ['dark'], dim: ['dark'], appearance: ['theme'], colour: ['color'], colours: ['color'],
     adblock: ['tracker', 'trackers', 'ads'], adblocker: ['tracker', 'trackers', 'ads'], ads: ['tracker', 'trackers'], advert: ['ads', 'tracker'], tracking: ['tracker', 'trackers'],
     password: ['passwords', 'logins', 'sign-in'], login: ['logins', 'passwords', 'sign-in'],
     history: ['browsing data', 'clear'], cache: ['browsing data', 'clear'], cookie: ['cookies', 'site data'],
@@ -19,6 +19,7 @@
     download: ['downloads', 'save'], save: ['downloads'], folder: ['downloads', 'location'],
     chatgpt: ['ai', 'openai'], claude: ['ai', 'anthropic'], gemini: ['ai', 'google'], grok: ['ai', 'xai'], assistant: ['ai', 'model'], llm: ['ai', 'model'],
     reset: ['defaults', 'restore'], backup: ['export', 'import'], bookmarks: ['import', 'favorites'], favourites: ['favorites'],
+    mic: ['microphone'], webcam: ['camera'], gps: ['location'], popup: ['pop-ups'], popups: ['pop-ups'], notification: ['notifications'],
     shortcut: ['keyboard', 'keys'], shortcuts: ['keyboard', 'keys'], accessibility: ['reduce motion', 'contrast', 'text size'],
   };
 

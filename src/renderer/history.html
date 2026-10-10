@@ -11,7 +11,11 @@
     html, body { margin: 0; background: var(--bg); color: var(--text); }
     body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.005em; }
     main { width: min(720px, 90vw); margin: 0 auto; padding: 56px 0 80px; }
-    h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 18px; }
+    header { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; }
+    h1 { flex: 1; min-width: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+    #clear { flex: none; height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; }
+    #clear:hover { background: var(--hover); }
+    #clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     input { width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 14px; outline: none; transition: box-shadow 200ms ease-out, background-color 200ms ease-out; }
     input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 0 0 4px var(--ring); }
     h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 28px 0 6px; text-transform: none; }
@@ -35,7 +39,10 @@
 </head>
 <body>
   <main>
-    <h1 data-i18n="historyPage.title">History</h1>
+    <header>
+      <h1 data-i18n="historyPage.title">History</h1>
+      <button id="clear" type="button" data-i18n="historyPage.clear">Clear browsing data…</button>
+    </header>
     <input id="q" type="search" placeholder="Search history" aria-label="Search history" data-i18n-placeholder="historyPage.search" data-i18n-aria-label="historyPage.search" autocomplete="off" />
     <div id="list"></div>
   </main>
