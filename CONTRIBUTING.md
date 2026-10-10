@@ -43,6 +43,7 @@ New UI text goes into `src/locales/en.json`: use `t('key')` in `src/main.js` and
 - One topic per pull request, branched from `main`.
 - Keep commits focused, with messages that say what changed and why.
 - Describe what you tested in the pull request.
+- Bring the docs along: a CHANGELOG bullet, the README or a `docs/` page for anything users see, and a `docs/settings.md` row for a new setting. `node scripts/check-docs.js` checks the branch; the full list is in `CLAUDE.md` under "Docs".
 - Match the style of the surrounding code: plain CommonJS, no build step, comments only where the reason isn't obvious.
 
 ## License
