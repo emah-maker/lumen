@@ -3817,6 +3817,7 @@ ipcMain.handle('history:list', async (event) => {
   await historyReady;
   return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last }) => ({ url, title, last }));
 });
+ipcMain.handle('history:manage', (event) => { if (fromHistoryPage(event)) openSettingsPage('privacy'); });
 ipcMain.handle('history:remove', async (event, url) => {
   await historyReady;
   if (!fromHistoryPage(event) || typeof url !== 'string' || !history.delete(url)) return false;

@@ -8,5 +8,6 @@ if (location.protocol === 'file:' && /\/renderer\/history\.html$/.test(location.
   contextBridge.exposeInMainWorld('lumenHistory', {
     list: () => ipcRenderer.invoke('history:list'),
     remove: (url) => ipcRenderer.invoke('history:remove', url),
+    manage: () => ipcRenderer.invoke('history:manage'), // opens Settings → Privacy and security, where Clear browsing data is
   });
 }
