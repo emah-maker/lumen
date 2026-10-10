@@ -299,6 +299,34 @@ const fakeClient = (app) => app.evaluate(() => {
   check('the restored page works: it loads the saved chat', await waitFor(async () => /first from the sidebar/.test(await inPage("document.getElementById('messages').textContent")), 10000), await inPage("document.getElementById('messages').textContent"));
   check('and has its API (the preload came along)', await inPage("typeof window.assistant?.state") === 'function', 'no preload');
 
+  // ---- 14. A chat whose saved file is gone or unreadable never turns the page into an empty chat
+  // (the list still named the chat, "Done" and "This tab" on its row, but the page showed the empty state: a chat that
+  // finished while the page was away was opened as an empty one under its id, and the conversation on screen was wiped)
+  await fakeClient(app);
+  const pageNow = await chatTab();
+  await inPage("document.getElementById('new-chat').click()");
+  await sleep(400);
+  await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'about to vanish'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
+  await waitFor(async () => /about to vanish/.test(await pageText()) && /Reply d+./.test(await pageText()));
+  await sleep(1200);
+  const goneId = await app.evaluate((_e, id) => global.__tabChats.bindings.chatOf(id), pageNow.id);
+  const away = (await tabs()).find((t) => !t.chat);
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), away.id);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === away.id);
+  await sleep(500);
+  fs.rmSync(path.join(profile, 'chats', `${goneId}.json`), { force: true }); // (what the list still names, the disk no longer has)
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), pageNow.id);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === pageNow.id);
+  await sleep(1200);
+  const afterGone = await inPage(`({ msgs: document.querySelectorAll('#messages .msg').length, text: document.getElementById('messages').textContent, empty: !document.getElementById('empty').hidden })`);
+  const boundNow = await app.evaluate((_e, id) => global.__tabChats.bindings.chatOf(id), pageNow.id);
+  check('a chat whose file is gone is not shown as an empty chat on the page', afterGone.msgs > 0 && !afterGone.empty, JSON.stringify(afterGone).slice(0, 300));
+  check('the page no longer holds the chat that is gone, and shows the chat it follows now', boundNow && boundNow !== goneId && !/about to vanish/.test(afterGone.text), JSON.stringify({ boundNow, goneId }));
+  await inPage('location.reload()');
+  await waitFor(async () => (await inPage("document.readyState")) === 'complete');
+  await sleep(1500);
+  check('and a reload of the page shows that chat too, not an empty one', await waitFor(async () => (await inPage("document.querySelectorAll('#messages .msg').length")) > 0), await pageText());
+
   // (last: it starts a fresh chat, so the restore checks above still see the saved one)
   // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
   await ui.click('#toggle-sidebar');
