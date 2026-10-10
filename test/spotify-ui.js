@@ -126,10 +126,10 @@ async function partApi(fake, base, scratch, shots) {
   const D = 'wdefault1';
 
   check('now playing: the card shows title, artist and album', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Night Shift'`) && (await text(D, '.sp-artist')) === 'Ann, Bo' && (await text(D, '.sp-album')) === 'Quiet Hours', await text(D, '.sp-title'));
-  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
+  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].filter((b) => !b.closest('[hidden]')).map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
   check('now playing: every control has a name (previous, pause, next, refresh, open)', ['Previous track', 'Pause', 'Next track'].every((n) => names.includes(n)) && names.every(Boolean) && names.some((n) => /^Open in Spotify/.test(n)), JSON.stringify(names));
   const bar = await page(`(() => { const b = ${card(D)}.querySelector('.sp-bar'); return b && { role: b.getAttribute('role'), label: b.getAttribute('aria-label'), now: b.getAttribute('aria-valuenow'), elapsed: ${card(D)}.querySelector('.sp-elapsed').textContent, total: ${card(D)}.querySelector('.sp-total').textContent }; })()`);
-  check('now playing: the progress bar is a labelled progressbar with elapsed and total time', bar && bar.role === 'progressbar' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20' && Number(bar.now) >= 15, JSON.stringify(bar));
+  check('now playing: the progress bar is a labelled slider (seekable) with elapsed and total time', bar && bar.role === 'slider' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20' && Number(bar.now) >= 15, JSON.stringify(bar));
   await sleep(2200);
   check('now playing: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 31, await text(D, '.sp-elapsed'));
 
@@ -178,7 +178,7 @@ async function partApi(fake, base, scratch, shots) {
   fake.world.playback = { is_playing: true, progress_ms: 4000, currently_playing_type: 'ad', device: { name: 'Kitchen speaker' }, item: null };
   await sleep(300);
   await refresh();
-  const ad = await page(`({ title: ${card(D)}.querySelector('.sp-title')?.textContent, prev: ${card(D)}.querySelector('[aria-label^="Previous track"]')?.disabled, next: ${card(D)}.querySelector('[aria-label^="Next track"]')?.disabled, bar: Boolean(${card(D)}.querySelector('.sp-bar')) })`);
+  const ad = await page(`({ title: ${card(D)}.querySelector('.sp-title')?.textContent, prev: ${card(D)}.querySelector('[aria-label^="Previous track"]')?.disabled, next: ${card(D)}.querySelector('[aria-label^="Next track"]')?.disabled, bar: Boolean(${card(D)}.querySelector('.sp-bar') && !${card(D)}.querySelector('.sp-bar').closest('[hidden]')) })`); // (the bar is part of the card; an ad has no length, so it is hidden)
   check('an ad: it says Advertisement, skip buttons are disabled, no fake progress bar', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Advertisement'`) && ad.prev === true && ad.next === true && ad.bar === false, JSON.stringify(ad));
   fake.world.playback = { is_playing: true, progress_ms: 5000, currently_playing_type: 'episode', device: { name: 'Phone' }, item: { type: 'episode', name: 'Episode 12: Sleep', duration_ms: 1800000, show: { name: 'The Show', publisher: 'Show Co', images: [] }, external_urls: { spotify: 'https://open.spotify.com/episode/e12' } } };
   await sleep(300);
