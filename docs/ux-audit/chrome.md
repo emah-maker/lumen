@@ -1,7 +1,7 @@
 # UX audit: the browser chrome
 
 Scope: tab strip (tabs, groups, Organize, pinned, sleeping, audio), toolbar (Back / Forward / Reload, address bar, site
-chip, star, reader, AI shield, extension and download icons, the AI button, the ⋯ menu), omnibox suggestions, context
+chip, star, reader, the AI read-only button, extension and download icons, the AI button, the ⋯ menu), omnibox suggestions, context
 menus, find bar, shortcuts. Walked in a hidden window with a throwaway profile and local fixture pages (12 to 17 tabs, a
 group, pinned, sleeping and muted tabs), light and dark, at 1280, 1100, 900 and 700 px wide. Native menus can't be
 screenshotted, so their templates were dumped and read. Screenshots are in `docs/ux-audit/chrome/`.
@@ -52,33 +52,55 @@ touch). Fix: both now form one section, with separators, above Close.
 Where: page menu with selected text. The sidebar can run Claude, GPT, Gemini, Grok, Codex and others, but the item named
 one of them. Now "Ask AI About Selection" (README updated).
 
-## Left for later (ranked)
+## Round 2: the "left for later" list (items 1 to 8 fixed, 9 and 10 left)
 
-1. **The AI shield in the address bar looks like a security or tracker-blocking shield** and is on every page
-   (`before-dark-1280.png`, right of the address). Its job is "keep the AI from acting on this tab"; a security-minded
-   user reads it as site protection. Suggest a sparkle-with-slash icon (matching the Organize and AI-opened marks), or
-   showing it only when the AI is in use or the tab is already kept off.
-2. **Many tabs read as a row of identical globes** (`before-states-light.png`): below about 70 px a tab shows only its icon,
-   and pages without a favicon all show the same globe. The hover card names them, but keyboard users get nothing until they
-   focus one. Consider a letter-avatar fallback (first letter of the site) instead of the globe. A muted or playing tab shrinks
-   its title to one letter ("P") because the speaker button reserves room even when the tab is too narrow for it.
-3. **Tab state isn't in the accessible name** of pinned, sleeping, muted and playing tabs (only the AI states are), and the speaker
-   button is a Tab stop between the toolbar and the strip rather than inside the strip's roving focus.
-4. **The tab menu shows "Merge All Windows (only one window open)" and a dead "Merge Window Into"** when there is one window.
-   A deliberate choice (a missing item looks like a missing feature), but in the right-click menu they are two dead rows; the ⋯
-   menu is the better place to keep the explanation.
-5. **Menu labels are Title Case; tooltips, buttons and settings are sentence case** ("New Tab" vs "New tab"). Consistent within
-   each kind, so it is a house-style decision (Windows Chrome and Edge use sentence case); it touches about 150 strings and the
-   tests that match them, so it deserves its own change.
-6. **The omnibox's first suggestion isn't pre-selected** (`before-suggest.png`): typing `alp` and Enter searches the web for
-   "alp" even though "Page alpha" is the first row; Chrome treats the top row as the default match. Arrow Down then Enter works.
-7. **Private windows have their own address-bar chip**, which still says "Not secure" for localhost (`private.js`).
-8. **The AI button shows the selected model's vendor mark**, and a plain circle when no model is connected; with nothing set up
-   the toolbar's rightmost icon says nothing about what it does until you hover. Its tooltip is the model's name, not "AI".
-9. **The toast sits in the tab strip's row** and pushes Organize and tab search along while it is up (the existing organize
-   note behaves the same).
-10. **The ⋯ menu is long** (about 40 entries at full height, folded into submenus on short windows). The sections are sensible
-    and destructive items are separated, but "Tabs and Files", "AI Chat and Tasks" and "More Tools" are only named when it folds.
+Tests: `test/chrome-ux-units.js` (default match, address check, sentence-case guard, wiring), `test/chrome-ux.js`, `test/aitaboff.js`,
+`test/tabmenu.js`, `test/tabui.js`, `test/private.js`, `test/security-ui.js`, `test/a11y.js`.
+
+1. **The AI shield looked like a security shield and was on every page. FIXED.** The button is now a sparkle (the mark Lumen
+   uses for AI everywhere: Organize, the AI-opened tab mark), slashed while the tab is read-only, and when it is on it carries
+   a small "AI read-only" chip (hidden below 860 px, where the sparkle and tooltip remain). Its tooltip says what it does:
+   "Make this tab read-only for the AI" (on: "The AI can read this tab but not act on it, click to allow"). It shows only
+   when it means something: the AI panel is open on the tab, an agent or MCP client is working, or the tab is already kept
+   off. On a page you are just reading it is gone, like any other chrome that has nothing to say. The tab-strip mark is the
+   same slashed sparkle instead of a shield. The tab menu's "Keep the AI from acting on this tab" is always there, so the
+   control is never out of reach.
+2. **Tabs without a favicon read as identical globes; a muted tab squeezed its title to one letter. FIXED.** A web page with
+   no icon (or whose icon failed) now shows a monogram: the first letter of its site on a color taken from the site (all
+   subdomains of a site share it), at the same 16 px as a favicon; Lumen's own pages and the new-tab page keep their icons.
+   A tab with a speaker button now collapses to icon-only below 96 px (as ordinary tabs do below 72 px) instead of letting the
+   reserved room for speaker and close button shrink the title to one letter.
+3. **Tab state missing from the accessible name. FIXED.** The name now reads, for example, "Docs, pinned, muted, chat finished,
+   not viewed yet" (pinned, asleep, muted or playing audio, then the chat and AI notes). The speaker button is no longer a Tab
+   stop between the toolbar and the strip: it is `tabindex=-1`, and **M** on a focused tab mutes or unmutes it (advertised
+   through `aria-keyshortcuts`), so the strip stays one roving stop.
+4. **Dead "Merge All Windows (only one window open)" and "Merge Window Into" rows in the tab menu. FIXED.** With nothing to
+   merge, the tab's right-click menu leaves both out. The ⋯ and Window menus keep them with the reason ("only one window
+   open"), as before: a missing item there would look like a missing feature, and the explanation belongs in the menu you open
+   on purpose.
+5. **Menu labels were Title Case, tooltips and buttons sentence case. FIXED, in favor of sentence case** (what Windows Chrome and
+   Edge use, and what the rest of Lumen already used). About 140 strings: the app menus (⋯, File/Edit/View/Window, menu bar), the
+   tab, group, page, link, image, video and address-bar context menus, the private window's menus, the macros and spelling items,
+   the ad-blocker items. Proper nouns and "AI" keep their capitals ("Lumen on GitHub", "Ask AI about selection",
+   "Translate with Google Translate…"). Top-level names that are one word are unchanged. `test/chrome-ux-units.js` now
+   fails on any new Title Case menu label, and the tests that matched labels were updated. Not changed: macOS system menu items
+   that come from the OS, and dialog titles ("Keyboard Shortcuts" is a window title).
+6. **The omnibox's top suggestion wasn't pre-selected. FIXED.** When what you typed is plain words and the first row is a
+   page from history, that row is selected and Enter goes to it (Arrow Up goes back to what you typed, Esc reverts, as
+   before). It is deliberately not selected when you typed something that is an address (a scheme, `localhost:3000`,
+   `example.com/path`, an IP, `host:port`, `lumen://`), when the field already holds an inline completion (Enter goes to that
+   host as before), or when the first row is only "search for ...": Enter on typed text still goes exactly where it did.
+   Logic and tests: `chrome-helpers.js` `looksLikeAddress` / `defaultSuggestion`.
+7. **Private windows said "Not secure" for localhost. FIXED.** The private window's address-bar chip uses the same rule as a
+   normal window: an `http` address on this computer shows the neutral "i" chip, "This page is on your own computer".
+8. **The AI button was a plain circle until a model was connected. FIXED.** With nothing connected it shows an accent-colored
+   sparkle with a plus, its tooltip and name read "Set up AI (Ctrl+J)", and it turns into the connected model's mark
+   (Claude, ChatGPT, Gemini, ...) as before. The sidebar behind it already opens on its welcome and set-up steps.
+9. **The toast sits in the tab strip's row and pushes Organize and tab search along while it is up.** Not changed: it needs a
+   design decision about where transient messages live (a floating toast over the page would cover content), and it is brief.
+10. **The ⋯ menu is long.** Not changed: the sections are sensible and destructive items are set apart; naming the folded
+    sections only when they fold is the intended behavior, and a rework of the menu is bigger than this pass. Sentence case
+    makes it a little easier to scan.
 
 ## Checked and fine
 
