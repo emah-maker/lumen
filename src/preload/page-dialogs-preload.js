@@ -74,6 +74,29 @@ try {
   console.error('page dialogs: could not install alert/confirm/prompt overrides:', err.message);
 }
 
+// A site's notification clicked (Gmail, Slack, a calendar): Chrome brings that site's tab to the front, Electron only tells the
+// page. Each `new Notification` gets a click listener that asks main to show this tab. Only a real click counts (isTrusted): a page
+// dispatching its own 'click' can't pull its tab forward. The page's own onclick still runs as before.
+const NOTIFY_KEY = '__lumenNotifyBridge_7c2e91';
+if (!onGoogleAccounts) contextBridge.exposeInMainWorld(NOTIFY_KEY, { clicked: () => ipcRenderer.send('page-notification:click') });
+function wrapNotifications(bridgeKey) {
+  const bridge = window[bridgeKey];
+  delete window[bridgeKey];
+  const Native = window.Notification;
+  if (typeof Native !== 'function' || !bridge) return;
+  const Wrapped = new Proxy(Native, {
+    construct(target, args, newTarget) {
+      const n = Reflect.construct(target, args, newTarget === Wrapped ? target : newTarget);
+      n.addEventListener('click', (e) => { if (e.isTrusted) bridge.clicked(); });
+      return n;
+    },
+  });
+  Object.defineProperty(window, 'Notification', { value: Wrapped, writable: true, configurable: true, enumerable: false });
+}
+try {
+  if (!onGoogleAccounts) contextBridge.executeInMainWorld({ func: wrapNotifications, args: [NOTIFY_KEY] });
+} catch { /* the page keeps the plain Notification */ }
+
 // FedCM: Electron has none, so a page that sees its API (IdentityCredential) waits for a sign-in prompt that never
 // comes. main.js turns the feature off; if a Chromium version ever ignores that switch, the API is removed here too,
 // and Google's sign-in scripts use their iframe prompt instead.

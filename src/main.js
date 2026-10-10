@@ -873,6 +873,15 @@ ipcMain.on('page-dialog', (event, req) => {
     }).then(({ checkboxChecked }) => finish(undefined, checkboxChecked));
   }
 });
+// A site's notification clicked (page-dialogs-preload.js): its tab comes to the front, in whichever window holds it, like Chrome.
+ipcMain.on('page-notification:click', (event) => {
+  const wc = event.sender;
+  for (const rec of winRecs) {
+    const t = rcAlive(rec) ? tabsOf(rec).find((x) => !x.closing && x.view?.webContents === wc) : null;
+    if (t) { showTab(rec, t.id); return; }
+  }
+});
+if (TEST) global.__notifyClick = { open: (url) => openTab(url).id, switchTab: (id) => switchTab(id), activeId: () => activeId, contentsOf: (id) => tabs.find((t) => t.id === id)?.view?.webContents.id ?? null };
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
 app.whenReady().then(() => {
@@ -4624,11 +4633,13 @@ function tellUser(run, kind) {
   try {
     const n = new Notification({ title: text.title, body: text.body, silent: false });
     n.on('click', () => {
-      const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+      // Back to the page the chat worked on (or was asked from), in whichever window holds it now; else the run's window.
+      const home = [run.tabId, run.homeTab, ...chatBind.tabsHomeFirst(run.chatId)].filter((id) => id != null).map(tabAnywhere).find(Boolean);
+      const rec = home?.rec || (run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec);
       const w = rec === curRec ? win : rec?.win;
       if (!w || w.isDestroyed()) return;
-      if (w.isMinimized()) w.restore();
-      w.focus();
+      if (home) showTab(home.rec, home.t.id);
+      else { if (w.isMinimized()) w.restore(); w.focus(); }
       w.webContents.send('agent:open-chat', { id: run.chatId });
     });
     n.show();
@@ -5326,6 +5337,16 @@ function recOfSender(sender) {
 }
 const tabsOf = (rec) => (rec === curRec ? tabs : rec.tabs);
 const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
+// A clicked notification: that tab's window forward, and the tab in front.
+function showTab(rec, id) {
+  const w = rec === curRec ? win : rec.win;
+  if (!w || w.isDestroyed()) return false;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
+  withWindow(rec, () => switchTab(id));
+  return true;
+}
 
 // ---- moving tabs between windows (tab strip drag, the tab menu)
 // The tab's WebContentsView is re-parented, never recreated: the page keeps its state, scroll,
