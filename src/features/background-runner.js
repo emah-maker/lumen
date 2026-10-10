@@ -6,7 +6,8 @@
 // the work tab only, switch_tab / close_tab / tab groups do nothing to the user's tabs, open_tab loads in
 // the work tab. Safety, on top of the agent's own gate (ensureAllowed / tainted-run rules):
 // - the run counts as tainted from the start, so every site outside the task's allowed sites asks;
-// - nothing auto-approves (autoApprove is off, MCP "always allow" is ignored) and there is nobody to ask
+// - nothing auto-approves (autoApprove is off, MCP "always allow" is ignored; Bypass permissions only with the
+//   separate bypassBackground setting on, then every card below is answered Allow) and there is nobody to ask
 //   in the moment: a question becomes a card in the Tasks panel and the task waits ('waiting-approval');
 // - purchase / send / submit steps ask every time, even on allowed sites;
 // - a page's own jump to a site that isn't allowed is stopped;
@@ -441,7 +442,9 @@ function create(deps) {
       anthropicAuth: () => deps.anthropicAuth?.(),
       aiOff: (url) => deps.aiOff?.(url),
       autoApprove: () => false, // never, whatever the sidebar's switch says
-      bypassPermissions: () => false, // [bypass permissions] nor this: nobody is there to watch an unattended task
+      // [bypass permissions] Off unless the user also chose "Bypass in background tasks and routines" (bypassBackground): nobody is
+      // there to watch an unattended task, so Bypass alone never reaches it.
+      bypassPermissions: () => { const s = deps.readSettings(); return s.bypassPermissions === true && s.bypassBackground === true; },
       maxSteps: () => (rt.kind === 'judge' ? 8 : bg.backgroundStepLimit(deps.maxSteps?.())),
     };
   }
