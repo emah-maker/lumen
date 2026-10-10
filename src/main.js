@@ -3938,7 +3938,9 @@ function homeAssistant() {
 function askFromHome(event, url, tabId) {
   if (!isNewTab(url)) return false;
   let text;
-  try { text = new URL(url).searchParams.get('ask'); } catch { return false; }
+  let params;
+  try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
+  if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
   text = text.trim().slice(0, 20000);

@@ -852,7 +852,7 @@ const WIDGET_RENDERERS = {
       const oneClick = d.oneClick === true;
       const fix = el('button', 'w-btn primary', google ? 'Sign in to Gmail' : oneClick ? 'Sign in with Google' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', google ? `Sign in to Gmail for ${text(w.title, 60)}` : oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.setAttribute('aria-label', google ? `Sign in to Gmail${w.title && text(w.title, 60) !== 'Gmail' ? ` (${text(w.title, 60)})` : ''}` : oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
       fix.addEventListener('click', () => widgetAct(w.id, oneClick ? 'signin' : 'configure'));
       const wrap = el('div');
       wrap.append(fix);
@@ -1580,7 +1580,10 @@ function buildCard(w) {
     // again can't fix it: it says what is missing, and its one button goes to where that is set.
     const missing = errorNeedsSetup(w.error);
     const note = el('p', 'w-note');
-    note.append(el('strong', null, missing ? 'Needs setup' : 'Couldn’t update'), text(w.error, 200));
+    // A message that already begins "Couldn't ..." is its own heading: "Couldn't update" above "Couldn't connect" said it twice.
+    const selfTitled = !missing && /^(Couldn’t|Couldn't|Can’t|Can't)/.test(w.error);
+    if (selfTitled) note.append(el('strong', null, text(w.error, 200)));
+    else note.append(el('strong', null, missing ? 'Needs setup' : 'Couldn’t update'), text(w.error, 200));
     body.append(note);
     const wrap = el('div', 'w-actions');
     const editable = Boolean(w.setup && window.widgetSetup?.can(w.type));
