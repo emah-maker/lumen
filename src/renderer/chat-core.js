@@ -214,8 +214,9 @@ const ASSISTANTS = {
   // Nothing connected: no provider to privilege, so a neutral mark instead of defaulting to Claude's.
   AI: {
     name: 'AI',
-    tint: 'currentColor',
-    svg: '<svg viewBox="0 0 16 16" class="mark"><circle cx="8" cy="8" r="5.25"/></svg>',
+    setup: true, // the toolbar button reads "Set up AI" (app.js identity) until a model is connected
+    tint: 'var(--accent)',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
   },
   Claude: {
     name: 'Claude',

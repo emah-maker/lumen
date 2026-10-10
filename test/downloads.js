@@ -96,7 +96,7 @@ const os = require('os');
   const texts = same.map((f) => fs.readFileSync(path.join(dlDir, f), 'utf8')).sort();
   check('same-named downloads at once get different names', same.length === 2 && same[0] !== same[1] && texts[0] === 'copy /same?a' && texts[1] === 'copy /same?b', `${same.join(',')} ${texts.join('|')}`);
 
-  const open = await app.evaluate(() => global.__downloads.menu().some((m) => m.label === 'Open Downloads Folder'));
+  const open = await app.evaluate(() => global.__downloads.menu().some((m) => m.label === 'Open downloads folder'));
   check('the menu keeps Open Downloads Folder', open, 'missing');
 
   // ---- the downloads panel (toolbar button)

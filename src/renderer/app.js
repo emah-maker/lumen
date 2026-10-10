@@ -75,6 +75,7 @@ let currentUrl = '';
 let currentError = false;
 let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
 let currentLumenPage = false; // Reader mode / View Source: Lumen's own page for a web address
+let aiOffTabCtx = { page: false, kept: false }; // [ai off-tab] the tab in front: a web page the AI could act on, and whether it is kept off
 let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
@@ -99,6 +100,22 @@ function globeIcon(page = null) {
   svg.setAttribute('class', `tab-favicon globe${PAGE_ICONS[page] ? ' page-icon' : ''}`);
   svg.innerHTML = PAGE_ICONS[page] || GLOBE;
   return svg;
+}
+
+// A page with no icon of its own: a monogram (the first letter of its site on a color taken from the site), so a row of
+// tabs without favicons doesn't read as a row of identical globes. Not for Lumen's own pages (they have their own icons).
+function siteHostOf(url) {
+  try { const u = new URL(String(url || '')); return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./i, '') : ''; } catch { return ''; }
+}
+function monogramIcon(host) {
+  const span = document.createElement('span');
+  span.className = 'tab-favicon monogram';
+  span.setAttribute('aria-hidden', 'true');
+  span.textContent = (host.match(/[\p{L}\p{N}]/u)?.[0] || '?').toUpperCase();
+  let hash = 0;
+  for (const c of host.split('.').slice(-2).join('.')) hash = (hash * 31 + c.charCodeAt(0)) >>> 0; // subdomains share their site's color
+  span.style.setProperty('--mono-hue', String(hash % 360));
+  return span;
 }
 
 // Unfocused address bar shows a trimmed URL; the full URL returns on focus.
@@ -1141,10 +1158,10 @@ function createTabEl(id) {
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
-  // [ai off-tab] a tab the user keeps the AI from acting on: a small shield after the title (styles.css .tab-off-mark)
+  // [ai off-tab] a tab the user keeps the AI from acting on: a small slashed sparkle after the title (styles.css .tab-off-mark)
   const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
   offMark.setAttribute('aria-hidden', 'true');
-  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 2 2.5v3c0 2.4 1.7 4.1 4 5.5 2.3-1.4 4-3.1 4-5.5v-3Z"/></svg>';
+  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/><path class="off-slash" d="M1.5 10.5 10.5 1.5"/></svg>';
   inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
@@ -1164,19 +1181,19 @@ function createTabEl(id) {
 // icons are tried once more a little later, since a failure may be a passing one (a server error,
 // the network dropping for a moment); an <img> that failed would otherwise stay a globe for good.
 const FAVICON_RETRY_MS = 3000;
-function faviconImg(el, key, urls, retried = false) {
+function faviconImg(el, key, urls, retried = false, fallback = globeIcon) {
   const img = document.createElement('img');
   img.className = 'tab-favicon';
   let i = 0;
   img.onerror = () => {
     if (++i < urls.length) { img.src = urls[i]; return; }
-    const globe = globeIcon();
+    const globe = fallback();
     img.replaceWith(globe);
     if (retried) return;
     setTimeout(() => {
       // Only if the tab still wants these icons and still shows the globe that replaced them.
       if (el.dataset.icon !== key || !globe.isConnected) return;
-      const again = faviconImg(el, key, urls, true);
+      const again = faviconImg(el, key, urls, true, fallback);
       // Swapped in only once it has loaded, so a second failure doesn't flash an empty image.
       again.addEventListener('load', () => { if (el.dataset.icon === key && globe.isConnected) globe.replaceWith(again); }, { once: true });
     }, FAVICON_RETRY_MS);
@@ -1201,7 +1218,10 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.dataset.chat = tab.chat || '';
@@ -1213,7 +1233,9 @@ function updateTabEl(el, tab, group, activeId) {
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
+  const monoHost = tab.page ? '' : siteHostOf(tab.url);
+  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page));
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}:${monoHost}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
@@ -1221,9 +1243,9 @@ function updateTabEl(el, tab, group, activeId) {
       icon = document.createElement('span');
       icon.className = 'tab-favicon spinner';
     } else if (favicons.length && !tab.error) {
-      icon = faviconImg(el, iconKey, favicons);
+      icon = faviconImg(el, iconKey, favicons, false, fallbackIcon);
     } else {
-      icon = globeIcon(tab.page);
+      icon = fallbackIcon();
     }
     el.querySelector('.tab-favicon').replaceWith(icon);
   }
@@ -1391,6 +1413,7 @@ $('tabs').addEventListener('keydown', (e) => {
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
+  else if (isTab && (e.key === 'm' || e.key === 'M') && el.querySelector('.tab-audio')) window.browser.toggleMute(id); // the speaker button isn't a stop of its own
   else if (isTab && e.key === 'Delete') {
     const next = items[i + 1] || items[i - 1];
     if (next) focusStripItem(next);
@@ -1883,10 +1906,12 @@ function finishTabsRender(state, before, container, switched) {
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
   reader.title = t(active?.page === 'reader' ? 'toolbar.reader.leave' : 'toolbar.reader.title');
-  // [ai off-tab] The shield: keeps the AI from acting on this tab (read-only for every AI path, main.js setKeepOff). Shown on pages, like the star.
+  // [ai off-tab] The AI control (a sparkle, slashed once on): makes this tab read-only for every AI path (main.js setKeepOff). Shown on a page
+  // while the AI is in play (its panel is open or it is working) or the tab is already kept off, not on every page: syncAiOffTab.
   const offTab = $('ai-off-tab');
   const kept = Boolean(active?.aiKeepOff);
-  offTab.hidden = !active?.url || currentError || lumenPage;
+  aiOffTabCtx = { page: Boolean(active?.url) && !currentError && !lumenPage, kept };
+  syncAiOffTab();
   offTab.setAttribute('aria-pressed', String(kept));
   offTab.title = t(kept ? 'toolbar.aiOffTab.on' : 'toolbar.aiOffTab.off');
   offTab.setAttribute('aria-label', offTab.title);
@@ -1992,7 +2017,9 @@ async function updateSuggestions(typed, deleting) {
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
-  suggest = { items: /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search], selected: -1, typed };
+  const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
+  // The top page from history is pre-selected (Enter goes to it, as in Chrome), unless what is typed is an address or was completed in place.
+  suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
   renderSuggestions();
 }
 
@@ -2134,6 +2161,14 @@ $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
+function syncAiOffTab() {
+  const body = document.body;
+  const inPlay = !body.classList.contains('sidebar-hidden') || body.classList.contains('agent-active') || body.classList.contains('mcp-active');
+  const wasHidden = $('ai-off-tab').hidden;
+  $('ai-off-tab').hidden = !(aiOffTabCtx.page && (aiOffTabCtx.kept || inPlay));
+  if (wasHidden !== $('ai-off-tab').hidden) $('omnibox').style.setProperty('--omnibox-end-w', `${Math.ceil($('omnibox').querySelector('.omnibox-end').offsetWidth)}px`);
+}
+new MutationObserver(syncAiOffTab).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 $('ai-off-tab').onclick = () => { if (lastTabState?.activeId != null) window.browser.toggleAiOffTab?.(lastTabState.activeId); }; // [ai off-tab]
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 // The lock (or "Not secure") opens the site's page info under it.
@@ -2774,9 +2809,11 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
+  const name = who.setup ? t('toolbar.aiSetup') : who.name; // nothing connected: the button says what it is for
+  button.title = `${name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
-  button.setAttribute('aria-label', who.name);
+  button.classList.toggle('needs-setup', Boolean(who.setup));
+  button.setAttribute('aria-label', name);
   button.style.setProperty('--assistant-tint', who.tint);
   const swap = () => {
     button.querySelector('svg')?.remove();
