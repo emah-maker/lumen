@@ -8,6 +8,7 @@
 // failures still come.
 const bg = require('./background-agents');
 const { plainScripts } = require('../renderer/markdown.js');
+const { plainMath } = require('./plain-math'); // LaTeX as text: a notification can't render math
 
 // The default cap on sidebar runs at once (Settings > AI: Chats working at once; one chat per tab, each
 // driving its own tab). The next one waits its turn (features/tab-chats.js createRunSlots).
@@ -21,7 +22,7 @@ function canStart({ busy = 0, sameChatRunning = false, max = MAX_RUNS } = {}) {
 
 // The first line of a reply, without markdown marks, cut to `max` characters.
 function firstLine(text, max = 90) {
-  const line = plainScripts(String(text || '')).split('\n').map((l) => l.trim()).find((l) => l && !/^[-*_=`]{3,}$/.test(l)) || '';
+  const line = plainMath(plainScripts(String(text || ''))).split('\n').map((l) => l.trim()).find((l) => l && !/^[-*_=`]{3,}$/.test(l)) || '';
   const plain = line.replace(/^#{1,6}\s+/, '').replace(/^[-*+]\s+/, '').replace(/\*\*|__|`/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
   return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
 }
