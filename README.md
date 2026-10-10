@@ -151,7 +151,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | Every shortcut, in a sheet | `Ctrl+Shift+/` (or ⋯ → Keyboard Shortcuts) |
 | Print | `Ctrl+P` |
 | Full screen | `F11` (Windows, Linux) |
-| Ask the AI about selected text | right-click → Ask Claude About Selection |
+| Ask the AI about selected text | right-click → Ask AI About Selection |
 | Site information (connection, permissions, cookies) | click the lock next to the address |
 | Tab devtools | `F12` |
 
