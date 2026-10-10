@@ -39,6 +39,11 @@ module.exports = async function widgetResilienceUnits(check) {
       fetch, getSecret: () => secret, setSecret: () => {}, onUpdate: () => { state.updates++; }, endpoints: () => ({}), rateMax: () => 100000,
       now: () => state.now,
       resetNetwork: () => { state.resets = (state.resets || 0) + 1; if (state.healOnReset) state.fail = null; },
+      freshFetch: async (url, init, opts) => {
+        state.freshLog = (state.freshLog || []).concat({ url: String(url), renew: Boolean(opts?.renew) });
+        if (!state.fresh) throw state.fail || new Error('no fresh session in this test');
+        return new Response(state.body, { status: 200, headers: { 'content-type': 'text/calendar' } });
+      },
       setTimer: (fn, ms) => { const t = { fn, ms, live: true }; state.timers.push(t); return t; },
       clearTimer: (t) => { if (t) t.live = false; },
     });
@@ -103,6 +108,37 @@ module.exports = async function widgetResilienceUnits(check) {
     refused.state.now += 10e3;
     await settle(refused, 'wcal00002');
     check('…a refused address (bad certificate) never resets the network', !refused.state.resets && /refused/.test(refused.card('wcal00002').error || ''), JSON.stringify({ n: refused.state.resets, e: refused.card('wcal00002').error }));
+  }
+
+  // ---- the browser's session stuck (every request fails at once with net::ERR_FAILED until a restart): the request goes
+  // again through a fresh session, the cards stay on it for 5 minutes, then try the browser's session again ----
+  {
+    const r = rig({ widgets: [{ id: 'wcal00001', type: 'calendar', title: '', span: 3, url: URL1, name: 'School', count: 5 }] });
+    r.state.fail = Object.assign(new Error('net::ERR_FAILED'), {});
+    r.state.fresh = true;
+    await settle(r, 'wcal00001');
+    let c = r.card('wcal00001');
+    check('stuck session: a request that fails with net::ERR_FAILED loads through a fresh session', c.data && !c.error && r.state.freshLog?.length === 1 && r.state.log.length === 1, JSON.stringify({ e: c.error, fresh: r.state.freshLog, asks: r.state.log.length }));
+    r.state.now += 60e3; r.state.log = []; r.state.freshLog = [];
+    await settle(r, 'wcal00001');
+    check('…the next requests go straight to the fresh session (no failing first try)', r.state.log.length === 0 && r.state.freshLog.length === 1, JSON.stringify({ asks: r.state.log.length, fresh: r.state.freshLog.length }));
+    r.state.fail = null; r.state.now += 5 * 60e3; r.state.log = []; r.state.freshLog = [];
+    await settle(r, 'wcal00001');
+    check('…after 5 minutes the browser\'s own session is tried again', r.state.log.length === 1 && r.state.freshLog.length === 0, JSON.stringify({ asks: r.state.log.length, fresh: r.state.freshLog.length }));
+    const t = rig({ widgets: [{ id: 'wcal00002', type: 'calendar', title: '', span: 3, url: URL1, name: 'Slow', count: 5 }] });
+    t.state.fail = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    t.state.fresh = true;
+    await settle(t, 'wcal00002');
+    check('…a timeout is not sent again through the fresh session (it already waited its full time)', !t.state.freshLog?.length && /too long/.test(t.card('wcal00002').error || ''), JSON.stringify({ fresh: t.state.freshLog, e: t.card('wcal00002').error }));
+    const bad = rig({ widgets: [{ id: 'wcal00003', type: 'calendar', title: '', span: 3, url: URL1, name: 'Cert', count: 5 }] });
+    bad.state.fail = netFail('ERR_CERT_AUTHORITY_INVALID');
+    bad.state.fresh = true;
+    await settle(bad, 'wcal00003');
+    check('…a refused address (bad certificate) is not retried through the fresh session', !bad.state.freshLog?.length && /refused/.test(bad.card('wcal00003').error || ''), JSON.stringify({ fresh: bad.state.freshLog }));
+    const off = rig({ widgets: [{ id: 'wcal00004', type: 'calendar', title: '', span: 3, url: URL1, name: 'Off', count: 5 }] });
+    off.state.fail = netFail('ENOTFOUND');
+    await settle(off, 'wcal00004');
+    check('…really offline (the fresh session fails too): the card says it keeps trying, not "check your internet"', /Couldn’t connect/.test(off.card('wcal00004').error || '') && /keeps trying/.test(off.card('wcal00004').error) && !/internet/i.test(off.card('wcal00004').error), off.card('wcal00004').error);
   }
 
   // ---- a Web player's Try again (Spotify, Apple Music in their own view) also drops dead connections before it reloads ----
@@ -185,7 +221,7 @@ module.exports = async function widgetResilienceUnits(check) {
     const n = rig({ widgets: [{ id: 'wcal00001', type: 'calendar', url: URL1, name: 'S', count: 5 }] });
     n.state.fail = netFail('ENOTFOUND');
     await settle(n, 'wcal00001');
-    check('messages: a timeout says it took too long; a certificate refusal does not blame the internet; DNS does', /too long/.test(a.card('wcal00001').error) && /securely/.test(b.card('wcal00001').error) && !/internet/.test(b.card('wcal00001').error) && /Check your internet/.test(n.card('wcal00001').error), JSON.stringify([a.card('wcal00001').error, b.card('wcal00001').error, n.card('wcal00001').error]));
+    check('messages: a timeout says it took too long; a certificate refusal says it was refused; DNS says Lumen keeps trying', /too long/.test(a.card('wcal00001').error) && /securely/.test(b.card('wcal00001').error) && !/internet/.test(b.card('wcal00001').error) && /Couldn’t connect\. Lumen keeps trying/.test(n.card('wcal00001').error), JSON.stringify([a.card('wcal00001').error, b.card('wcal00001').error, n.card('wcal00001').error]));
   }
 
   // ---- editing the card cancels its retries; the page's "retry" action ----

@@ -209,9 +209,11 @@ function netError(err) {
   const bits = [err?.code, err?.cause?.code, err?.cause?.message, err?.message].filter((v) => typeof v === 'string' && v).join(' ');
   if (err?.name === 'AbortError') return Object.assign(new Error('The server took too long to answer.'), { transient: true, why: 'timeout' });
   if (REFUSED_NET.test(bits)) return Object.assign(new Error('Couldn’t connect securely. The address was refused.'), { transient: false, why: bits.slice(0, 80) });
-  return Object.assign(new Error('Couldn’t connect. Check your internet connection.'), { transient: true, why: bits.slice(0, 80) });
+  // (Not "check your internet": the connection is often fine and the trouble is on the way; the card keeps trying by itself.)
+  return Object.assign(new Error('Couldn’t connect. Lumen keeps trying in the background.'), { transient: true, why: bits.slice(0, 80) });
 }
 const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
+const FRESH_NET_MS = 5 * 60e3; // after the browser's session failed and a fresh one worked: the cards stay on the fresh one this long
 const NET_RESET_MS = 5e3; // dead sockets and the DNS cache are dropped before a retry at most this often
 // One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
 // last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
@@ -1576,17 +1578,31 @@ function createWidgets(deps) {
     if (bucket.length >= (budget === 'search' ? Number(deps.searchRateMax?.()) || SEARCH_RATE.max : Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
     bucket.push(t);
   }
+  let freshUntil = 0; // while now() < this, the cards' requests go through deps.freshFetch (see request())
   async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
     spend(budget);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
+    const init = { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' };
+    // After some network glitches the browser's own session stays broken (every request fails at once with net::ERR_FAILED
+    // until Lumen restarts; dropping its sockets and DNS cache is not enough). A request that fails that way is sent once
+    // more through a fresh session of its own (deps.freshFetch: the cards send no cookies, so nothing is lost), and the
+    // cards keep using that one for FRESH_NET_MS before trying the browser's session again.
+    const viaFresh = deps.freshFetch && now() < freshUntil;
     try {
-      res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
+      res = await (viaFresh ? deps.freshFetch(url, init, { renew: false }) : deps.fetch(url, init));
     } catch (err) {
-      clearTimeout(timer);
-      throw netError(err);
+      const why = netError(err);
+      if (!deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
+      try {
+        res = await deps.freshFetch(url, init, { renew: viaFresh }); // already on it and it failed too: a new one
+        freshUntil = now() + FRESH_NET_MS;
+      } catch (err2) {
+        clearTimeout(timer);
+        throw netError(err2);
+      }
     }
     try {
       if (res.url && !/^https:\/\//.test(res.url)) throw new Error('The address redirected away from https.');
