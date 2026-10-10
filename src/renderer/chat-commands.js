@@ -59,9 +59,9 @@
   // The message goes on as typed ("/think why is the sky blue"); main takes the command off and, with Auto picked, chooses the
   // strongest ("/think", "/deep") or the quickest ("/fast") model for it. With a model picked by hand they say so and send nothing.
   for (const [name, label, description] of [
-    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Ask Auto for its strongest model for this message. Type your question after it.')],
-    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Ask Auto for its strongest model for a thorough answer to this message.')],
-    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Ask Auto for its quickest model for this message.')],
+    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Strongest model for this message. Needs Auto; type your question after it.')],
+    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Strongest model, thorough answer. Needs Auto.')],
+    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Quickest model for this message. Needs Auto.')],
   ]) {
     slash.register({
       name, label, description,

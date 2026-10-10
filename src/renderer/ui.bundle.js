@@ -3500,7 +3500,10 @@ window.assistant.onEvent((event) => {
       break;
     case 'notice': {
       if (event.stopped) turn.stopped = true;
+      // A chain of "couldn't reach X, switched to Y" lines in a row says one thing: keep the newest only.
+      if (event.fallback) for (const old of [...messages.querySelectorAll('.notice[data-fallback]')]) if (old.nextElementSibling === turn.working || old.nextElementSibling?.matches?.('.notice[data-fallback]')) old.remove();
       const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t(turn.interrupted ? 'chat.interrupted' : 'chat.stopped') : event.text }));
+      if (event.fallback) notice.dataset.fallback = '1';
       if (event.fallback) retireFallbackButtons(); // an older "Switch back" would undo whatever is answering now
       if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
       if (event.fallback && event.fallback.kind !== 'back' && event.fallback.from !== event.fallback.to) {
@@ -5183,6 +5186,25 @@ function startChat() {
   else root.omniboxDraft = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
+// ---- chrome-helpers.js
+// Small pure helpers for the browser chrome (app.js), kept apart so test/chrome-ux-units.js can load them with require().
+(function (root) {
+  // An address on this computer itself (localhost, 127.x.x.x, [::1], name.localhost). Browsers treat it as safe to talk to
+  // without encryption: nothing crosses a network, so "Not secure" would be a false alarm on a developer's own server.
+  function isLoopbackUrl(url) {
+    let host;
+    try { host = new URL(String(url)).hostname.toLowerCase(); } catch { return false; }
+    if (host === 'localhost' || host.endsWith('.localhost')) return true;
+    if (host === '[::1]' || host === '::1') return true;
+    const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    return Boolean(m) && [m[1], m[2], m[3]].every((n) => Number(n) <= 255);
+  }
+
+  const api = { isLoopbackUrl };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.chromeHelpers = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- app.js
 // ($ and the chat itself live in chat-core.js, loaded before this file.)
 /* global snapshotArrival, freezeKeepAlive */ // renderer/snapshot-arrival.js and freeze-keepalive.js, loaded before this file
@@ -5265,6 +5287,7 @@ let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
 const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.25" width="7" height="5" rx="1"/><path d="M4 5.25V4a2 2 0 0 1 4 0v1.25"/></svg>';
+const INFO = '<svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.75"/><path d="M6 5.4v2.9M6 3.7v.01"/></svg>'; // a page on this computer (http://localhost): neither lock nor warning
 const WARN = '<svg viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 5v2.25M6 8.75v.01"/></svg>';
 
 // Lumen's own pages: a gear for Settings, a clock for History.
@@ -5331,6 +5354,11 @@ function showAddress(keepText = false) { // keepText: refresh the lock only, the
     security.className = 'security';
     setMarkup(security, LOCK);
     setSecurityName(security, t('security.secure'));
+    security.hidden = false;
+  } else if (currentUrl.startsWith('http:') && window.chromeHelpers.isLoopbackUrl(currentUrl)) {
+    security.className = 'security';
+    setMarkup(security, INFO);
+    setSecurityName(security, t('security.local'));
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
@@ -6458,7 +6486,28 @@ $('tabs').addEventListener('wheel', (e) => {
   e.preventDefault();
   strip.scrollLeft += e.deltaMode === 1 ? delta * 40 : delta; // line-based wheels report lines, not pixels
 }, { passive: false });
-new ResizeObserver(updateOverflow).observe($('tabs'));
+// A strip that gets narrower (the window shrinks, a button appears beside it) can leave the tab in front scrolled out
+// of sight, with nothing to show where it went; it comes back into view, but only when it was visible before, so a strip
+// the user scrolled away on purpose stays put.
+let stripWidth = 0;
+let activeWasVisible = true;
+$('tabs').addEventListener('scroll', () => { activeWasVisible = activeTabVisible(); }, { passive: true });
+function activeTabVisible() {
+  const strip = $('tabs');
+  const el = strip.querySelector('.tab.active');
+  if (!el) return true;
+  const s = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.left >= s.left - 1 && r.right <= s.right + 1;
+}
+new ResizeObserver(() => {
+  updateOverflow();
+  const width = $('tabs').clientWidth;
+  const shrank = stripWidth && width < stripWidth - 1;
+  stripWidth = width;
+  if (shrank && activeWasVisible && !activeTabVisible()) $('tabs').querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  activeWasVisible = activeTabVisible();
+}).observe($('tabs'));
 
 function startRename(groupId) {
   const label = $('tabs').querySelector(`.group-label[data-group="${groupId}"]`);
@@ -7280,6 +7329,15 @@ $('omnibox').addEventListener('submit', (e) => {
 
 $('back').onclick = () => window.browser.back();
 $('forward').onclick = () => window.browser.forward();
+// Right-click (or the menu key) on Back / Forward: the pages behind / ahead, as in Chrome and Edge.
+for (const dir of ['back', 'forward']) {
+  $(dir).addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if ($(dir).disabled) return;
+    const r = $(dir).getBoundingClientRect();
+    window.browser.navMenu?.(dir, { x: r.left, y: r.bottom + 2 });
+  });
+}
 $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
@@ -10346,9 +10404,9 @@ $('agent-stop')?.addEventListener('click', () => {
   // The message goes on as typed ("/think why is the sky blue"); main takes the command off and, with Auto picked, chooses the
   // strongest ("/think", "/deep") or the quickest ("/fast") model for it. With a model picked by hand they say so and send nothing.
   for (const [name, label, description] of [
-    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Ask Auto for its strongest model for this message. Type your question after it.')],
-    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Ask Auto for its strongest model for a thorough answer to this message.')],
-    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Ask Auto for its quickest model for this message.')],
+    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Strongest model for this message. Needs Auto; type your question after it.')],
+    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Strongest model, thorough answer. Needs Auto.')],
+    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Quickest model for this message. Needs Auto.')],
   ]) {
     slash.register({
       name, label, description,
