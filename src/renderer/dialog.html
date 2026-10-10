@@ -72,6 +72,19 @@
       box-shadow: 0 0 0 0 transparent; transition: background-color 140ms ease-out, box-shadow 140ms ease-out;
     }
     .field input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+    /* The device chooser (kind "devices", features/device-chooser.js): a list to pick one from, live as devices come and go. */
+    #devices { margin: 14px 0 0; max-height: 232px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-radius: 10px; background: var(--field); outline: none; }
+    #devices:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+    #devices[hidden], #devices-empty[hidden] { display: none; }
+    .device { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: default; }
+    .device + .device { margin-top: 2px; }
+    .device:hover { background: var(--hover); }
+    .device[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
+    .device .d-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .device .d-id { flex: none; color: var(--muted); font: 11px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; letter-spacing: 0; }
+    .device[aria-selected="true"] .d-id { color: rgba(255, 255, 255, 0.78); }
+    #devices-empty { margin: 14px 0 0; padding: 22px 12px; border-radius: 10px; background: var(--field); color: var(--muted); text-align: center; }
+    .btn:disabled { opacity: 0.45; pointer-events: none; }
     #checkbox-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: var(--muted); font-size: 13px; cursor: default; }
     #checkbox-row[hidden] { display: none; }
     #checkbox-row input { accent-color: var(--accent); width: 14px; height: 14px; }
@@ -120,6 +133,8 @@
           <p id="message"></p>
           <p id="detail" hidden></p>
           <div id="fields" hidden></div>
+          <div id="devices" role="listbox" tabindex="0" hidden></div>
+          <p id="devices-empty" hidden></p>
           <div id="notes" hidden></div>
           <p id="more" hidden></p>
           <a id="notes-link" hidden target="_blank" rel="noopener noreferrer"></a>

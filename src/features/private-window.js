@@ -25,6 +25,7 @@ const PROMPTABLE = new Set(['media', 'geolocation', 'notifications', 'clipboard-
 // As main.js (browser/site-permissions.js): protected video plays, screen sharing's own picker is the consent, wake lock
 // and sensors are never asked, and decisions are read under the canonical origin.
 const SITE_PERMISSIONS = require('../browser/site-permissions');
+const DEVICE_PERMISSIONS = require('../browser/device-permissions'); // hid, usb, serial
 const { createBurstLimit } = require('./popup-guard'); // a page opening windows or tabs in a loop
 const { RISKY_TYPES } = require('./downloads'); // programs and scripts: never saved without the user choosing to
 const FAVICON_MAX = 256 * 1024;
@@ -144,7 +145,11 @@ function createPrivateWindows(deps) {
       callback(response === 1);
       SITE_PERMISSIONS.notify(ses);
     });
-    ses.setPermissionCheckHandler((_wc, permission, origin, details) =>
+    // [devices] WebHID, WebUSB and Web Serial (features/device-chooser.js): the same chooser, over this window; what the
+    // user picks is remembered in memory for this window only (no store: nothing reaches settings.json).
+    const devices = deps.deviceChooser?.();
+    if (devices) devices.install(ses, { store: DEVICE_PERMISSIONS.createGrantStore(), windowOf: () => rec.win });
+    ses.setPermissionCheckHandler((wc, permission, origin, details) => DEVICE_PERMISSIONS.TYPES.includes(permission) ? devices?.check(wc, permission, origin, details) === true :
       SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) }) || rec.decisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
     SITE_PERMISSIONS.register(ses, { decisions: rec.decisions, isBlocked: (permission) => deps.permissionDefault?.(permission) === 'block' });
     if (deps.pickScreen) ses.setDisplayMediaRequestHandler((request, callback) => deps.pickScreen(request, callback, rec.win));

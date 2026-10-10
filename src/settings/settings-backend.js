@@ -536,6 +536,11 @@ function create(deps) {
   function savePermissions(decisions) {
     writeSettings({ ...readSettings(), sitePermissions: Object.fromEntries(decisions) });
   }
+  // The devices the user picked for sites (WebHID, WebUSB, Web Serial: features/device-chooser.js), a plain array.
+  const loadDeviceGrants = () => (Array.isArray(readSettings().deviceGrants) ? readSettings().deviceGrants : []);
+  function saveDeviceGrants(rows) {
+    writeSettings({ ...readSettings(), deviceGrants: rows });
+  }
   const permissionDefault = (permission) => prefs().permissionDefaults[permission] || 'ask';
 
   // ---- HTTPS-only ----
@@ -882,9 +887,10 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
+    deps.deviceGrants?.clear();
     userZoomed.clear();
     httpAllowed.clear();
     for (const key of Object.keys(DEFAULTS)) await apply(key);
@@ -974,6 +980,9 @@ function create(deps) {
       const i = key.lastIndexOf('|');
       return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
+    // [devices] What each site may use: the devices picked in the chooser (WebHID, WebUSB, Web Serial), and removing one.
+    handle('prefs:device-grants', () => (deps.deviceGrants ? deps.deviceGrants.list() : []));
+    handle('prefs:remove-device-grant', (origin, key) => (deps.deviceGrants ? deps.deviceGrants.remove(String(origin), String(key)) : false));
     // Site data (features/site-data.js): the sites with cookies, and removing one of them.
     handle('prefs:site-data', async () => siteData.groupCookies(await ses().cookies.get({}), registrableDomain));
     handle('prefs:clear-site', async (site) => ({ removed: await siteData.clearSite(ses(), String(site || '')), list: siteData.groupCookies(await ses().cookies.get({}), registrableDomain) }));
@@ -1048,7 +1057,7 @@ function create(deps) {
 
   return {
     prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }

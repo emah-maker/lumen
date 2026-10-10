@@ -13,6 +13,8 @@ const textEl = document.getElementById('text');
 const notesEl = document.getElementById('notes');
 const moreEl = document.getElementById('more');
 const linkEl = document.getElementById('notes-link');
+const devicesEl = document.getElementById('devices');
+const devicesEmptyEl = document.getElementById('devices-empty');
 
 // A line of release notes: `code` and **bold** become elements, everything else stays text.
 function inline(parent, text) {
@@ -69,9 +71,63 @@ const DESTRUCTIVE = /^(remove|clear|delete|leave)$/i;
 let current = null; // { id, defaultId, cancelId, kind }
 let fieldInputs = [];
 
-function respond(index) {
+// ---- the device chooser (kind "devices"): one row picked, Connect enabled once there is one ----
+let deviceItems = [];
+let selectedDevice = '';
+let connectButton = null;
+
+function renderDevices() {
+  if (!deviceItems.some((d) => d.id === selectedDevice)) selectedDevice = '';
+  devicesEl.replaceChildren(...deviceItems.map((d, i) => {
+    const row = document.createElement('div');
+    row.className = 'device';
+    row.id = 'device-' + i;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(d.id === selectedDevice));
+    row.dataset.id = d.id;
+    row.append(Object.assign(document.createElement('span'), { className: 'd-name', textContent: d.name }));
+    if (d.detail) row.append(Object.assign(document.createElement('span'), { className: 'd-id', textContent: d.detail }));
+    return row;
+  }));
+  const selected = devicesEl.querySelector('[aria-selected="true"]');
+  if (selected) devicesEl.setAttribute('aria-activedescendant', selected.id); else devicesEl.removeAttribute('aria-activedescendant');
+  devicesEl.hidden = deviceItems.length === 0;
+  devicesEmptyEl.hidden = deviceItems.length !== 0;
+  if (connectButton) connectButton.disabled = !selectedDevice;
+}
+
+function pickDevice(id, event) {
+  if (!event.isTrusted) return; // only a real click or key chooses: never an event a script made
+  selectedDevice = id;
+  renderDevices();
+  devicesEl.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+}
+
+devicesEl.addEventListener('click', (e) => { const row = e.target.closest?.('.device'); if (row) pickDevice(row.dataset.id, e); });
+devicesEl.addEventListener('dblclick', (e) => { const row = e.target.closest?.('.device'); if (row && e.isTrusted && current?.kind === 'devices') { pickDevice(row.dataset.id, e); respond(current.defaultId, e); } });
+devicesEl.addEventListener('keydown', (e) => {
+  if (current?.kind !== 'devices' || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+  e.preventDefault();
+  if (!deviceItems.length) return;
+  const at = deviceItems.findIndex((d) => d.id === selectedDevice);
+  const next = e.key === 'ArrowDown' ? Math.min(deviceItems.length - 1, at + 1) : Math.max(0, at === -1 ? 0 : at - 1);
+  pickDevice(deviceItems[next].id, e);
+});
+
+window.dialogHost.onUpdate?.((payload) => {
+  if (!current || current.kind !== 'devices' || payload.id !== current.id) return;
+  deviceItems = payload.items || [];
+  renderDevices();
+});
+
+function respond(index, event) {
   if (!current) return;
   const result = { id: current.id, response: index, checkboxChecked: checkboxInput.checked };
+  if (current.kind === 'devices') {
+    result.choice = index === current.cancelId ? '' : selectedDevice;
+    result.trusted = Boolean(event && event.isTrusted); // a click or key the browser made, not a script's dispatchEvent
+    if (index !== current.cancelId && (!result.choice || !result.trusted)) return; // Connect: only with a choice and a real click or key (the main process checks again)
+  }
   if (current.kind === 'ask') {
     result.values = index === current.cancelId ? null : Object.fromEntries(fieldInputs.map((el) => [el.dataset.name, el.value]));
   }
@@ -112,6 +168,13 @@ window.dialogHost.onShow((payload) => {
 
   renderNotes(payload);
 
+  const devices = payload.kind === 'devices';
+  deviceItems = devices ? payload.items || [] : [];
+  selectedDevice = '';
+  connectButton = null;
+  devicesEmptyEl.textContent = payload.emptyText || '';
+  if (devices) renderDevices(); else { devicesEl.hidden = true; devicesEmptyEl.hidden = true; }
+
   checkboxRow.hidden = !payload.checkboxLabel;
   checkboxLabelEl.textContent = payload.checkboxLabel || '';
   checkboxInput.checked = Boolean(payload.checkboxChecked);
@@ -124,7 +187,8 @@ window.dialogHost.onShow((payload) => {
     if (DESTRUCTIVE.test(label)) btn.classList.add('danger');
     else if (index === payload.defaultId) btn.classList.add('primary');
     btn.textContent = label;
-    btn.addEventListener('click', () => respond(index));
+    btn.addEventListener('click', (e) => respond(index, e));
+    if (devices && index === payload.defaultId) { connectButton = btn; btn.disabled = !selectedDevice; }
     buttonsEl.append(btn);
   });
 
@@ -132,13 +196,13 @@ window.dialogHost.onShow((payload) => {
   card.classList.remove('entering');
   void card.offsetWidth; // restart the entrance animation for every new dialog
   card.classList.add('entering');
-  const focusTarget = fieldInputs[0] || buttonsEl.querySelector('.primary') || buttonsEl.lastElementChild;
+  const focusTarget = (devices && devicesEl) || fieldInputs[0] || buttonsEl.querySelector('.primary') || buttonsEl.lastElementChild;
   focusTarget?.focus();
   if (focusTarget && focusTarget.tagName === 'INPUT') focusTarget.select();
 });
 
 document.addEventListener('keydown', (e) => {
   if (!current) return;
-  if (e.key === 'Enter' && e.target?.tagName !== 'BUTTON') { e.preventDefault(); respond(current.defaultId); }
-  else if (e.key === 'Escape') { e.preventDefault(); respond(current.cancelId); }
+  if (e.key === 'Enter' && e.target?.tagName !== 'BUTTON') { e.preventDefault(); respond(current.defaultId, e); }
+  else if (e.key === 'Escape') { e.preventDefault(); respond(current.cancelId, e); }
 });

@@ -2088,10 +2088,23 @@ async function buildPrivacy(card) {
       h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.revokePermission(p.origin, p.permission); renderGranted(); } })))
       : [h('span', { class: 'note', text: 'No sites have asked yet.' })]));
   };
-  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke');
+  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke devices hid usb serial keyboard');
   permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
   permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
+  // [devices] The hardware picked in a site's chooser (WebHID, WebUSB, Web Serial), with Remove (features/device-chooser.js).
+  const devices = h('div', { class: 'list', id: 'device-grants' });
+  const renderDevices = async () => {
+    const list = await S.deviceGrants();
+    devices.replaceChildren(...(list.length ? list.map((g) => {
+      const name = g.name || tr('device.unknown', 'Unknown device');
+      return h('div', { class: 'item', 'data-origin': g.origin, 'data-key': g.key },
+        h('span', { class: 'grow' }, g.origin, h('span', { class: 'note', text: ` · ${name} (${tr(`settings.devices.type.${g.type}`, g.type.toUpperCase())})` })),
+        h('button', { text: tr('settings.devices.remove', 'Remove'), class: 'revoke', 'aria-label': tr('settings.devices.removeFor', 'Remove {device} for {site}', { device: name, site: g.origin }), onclick: async () => { await S.removeDeviceGrant(g.origin, g.key); renderDevices(); } }));
+    }) : [h('span', { class: 'note', text: tr('settings.devices.none', 'No devices yet.') })]));
+  };
+  permissions.append(stackRow(tr('settings.devices.label', 'Devices sites can use'), tr('settings.devices.desc', 'Keyboards and other hardware you let a site connect to. Remove to be asked again.'), devices));
+  renderDevices();
 
   // [site data] Every site that keeps cookies, with Remove (features/site-data.js).
   const sites = h('div', { class: 'list', id: 'site-data' });
