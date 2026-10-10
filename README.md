@@ -103,7 +103,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ![Tabs about several topics, grouped automatically into named, coloured groups](docs/media/tab-groups.gif)
 
-⋯ → Tab Groups → Group Automatically **Off / By Site / By Topic**. By topic finds related tabs (recipes, one trip, a library's docs) on your computer from titles and addresses. Turn on **Use AI to name and group topics** in Settings to send tab titles and site names (hostnames only) to the cheapest model of your chat's provider instead. **Organize Tabs by Topic** (tab menu or ⋯ → Tab Groups) regroups on demand, with **Undo Organize**. Groups you made and tabs you moved by hand are left alone.
+⋯ → Tab groups → Group automatically **Off / By site / By topic**. By topic finds related tabs (recipes, one trip, a library's docs) on your computer from titles and addresses. Turn on **Use AI to name and group topics** in Settings to send tab titles and site names (hostnames only) to the cheapest model of your chat's provider instead. **Organize Tabs by Topic** (tab menu or ⋯ → Tab Groups) regroups on demand, with **Undo Organize**. Groups you made and tabs you moved by hand are left alone.
 
 ## A real browser underneath
 
@@ -118,10 +118,10 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
   - **See-through cards:** **Settings → Appearance → Widget cards** is Solid, Frosted glass or Clear (as transparent as possible while the text stays readable, best on a gradient or your own picture).
 - **Usage** (Settings → Usage, and a meter under the sidebar's composer while a Claude Code model is picked): your Claude plan's 5-hour and weekly limits with reset times, read with the free `claude /usage` and live from each turn, and how much of them Lumen uses: tokens per engine (Claude Code, Grok Build, API key) and roughly how far each Claude Code turn moved the 5-hour meter. Claude Code driving Lumen over MCP shows as its share of this computer's Claude Code use.
 - **Downloads panel** (the toolbar's download button): progress with speed and time left, pause, resume, cancel, retry, show in folder, remove. Drag a finished file out of the panel into Finder, Explorer, mail or chat. The list is kept across restarts.
-- **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad Blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed.
-- **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. The ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work; content blockers that rely on static declarativeNetRequest rulesets are refused at install.
-- **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search Engine).
-- **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
+- **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed.
+- **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. The ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work; content blockers that rely on static declarativeNetRequest rulesets are refused at install.
+- **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search engine).
+- **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import bookmarks and history). Passwords and cookies are never read.
 - **Permissions:** sites must ask before using your camera, microphone, location, or notifications. Click the lock next to the address for the site's page info: its connection, Ask / Allow / Block for each permission, its cookies (with **Clear Cookies and Site Data…** for that site), and its remembered zoom. **Settings → Privacy and security → Site data** lists every site that keeps cookies, with **Remove** for each.
 - **Zoom** is remembered per site, across restarts; `Ctrl+0` goes back to the default from Settings.
 - **Safe Browsing (optional, off by default):** with your own Google API key (Settings → Privacy), pages listed by Google Safe Browsing as suspected phishing or malware show a warning instead of loading. Pages are checked against lists kept on your computer; Google only ever sees partial hashes. Only you can choose to visit a flagged page; the AI can't. Like any list, it can miss unsafe sites and flag safe ones by mistake.
@@ -148,7 +148,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | History | `Ctrl+H` (macOS: `Cmd+Y`) |
 | Settings | `Ctrl+,` |
 | Clear browsing data | `Ctrl+Shift+Delete` (macOS: `Shift+Cmd+Backspace`) |
-| Every shortcut, in a sheet | `Ctrl+Shift+/` (or ⋯ → Keyboard Shortcuts) |
+| Every shortcut, in a sheet | `Ctrl+Shift+/` (or ⋯ → Keyboard shortcuts) |
 | Print | `Ctrl+P` |
 | Full screen | `F11` (Windows, Linux) |
 | Ask the AI about selected text | right-click → Ask AI About Selection |

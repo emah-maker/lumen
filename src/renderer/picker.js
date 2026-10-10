@@ -211,10 +211,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     h.classList.add('has-ubar');
     h.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: h.firstChild.textContent }) }));
   }
-  function heading(textContent, count) {
+  function heading(textContent, count, needsSignIn = false) {
     const h = Object.assign(document.createElement('div'), { className: 'picker-group' });
     h.setAttribute('role', 'presentation');
     h.append(Object.assign(document.createElement('span'), { textContent }));
+    // A whole provider that is not signed in says so at its heading, not only on each row (or only when hovering a row).
+    if (needsSignIn) h.append(Object.assign(document.createElement('span'), { className: 'picker-badge warn picker-group-signin', textContent: badgeText('sign in') }));
     if (count) h.append(Object.assign(document.createElement('span'), { className: 'picker-count', textContent: String(count) }));
     return h;
   }
@@ -291,7 +293,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
       usageRows = !(g && (headings || words.length || ordered.length > 1 || out.length)); // no heading to carry the provider's bar: each row does
-      if (!usageRows) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
+      if (!usageRows) { const needsSignIn = members.length > 0 && members.every((m) => (m.o.dataset.badges || '').split(',').includes('sign in'));
+        const h = heading(g, headings || members.length > SHOWN ? members.length : 0, needsSignIn); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {

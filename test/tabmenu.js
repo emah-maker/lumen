@@ -75,15 +75,15 @@ const os = require('os');
   const c = await open(`${base}/c`);
 
   // ---- 1. the items, in Chrome's order ----
-  const want = ['New Tab to the Right', 'Add to New Group', 'Reload', 'Duplicate', 'Pin Tab', 'Mute Site', 'Copy Link', 'Bookmark Tab', 'Bookmark All Tabs', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right', 'Reopen Closed Tab'];
+  const want = ['New tab to the right', 'Add to new group', 'Reload', 'Duplicate', 'Pin tab', 'Mute site', 'Copy link', 'Bookmark tab', 'Bookmark all tabs', 'Close tab', 'Close other tabs', 'Close tabs to the right', 'Reopen closed tab'];
   const got = await labels(a);
   const positions = want.map((l) => got.indexOf(l));
   check("the tab menu has Chrome's items, in Chrome's order", positions.every((p, i) => p !== -1 && (i === 0 || p > positions[i - 1])), JSON.stringify(got));
-  check('Close Tabs to the Right is off on the last tab', (await enabled(c, 'Close Tabs to the Right')) === false && (await enabled(a, 'Close Tabs to the Right')) === true, 'enabled states');
-  check('Copy Link and Bookmark Tab are off on the new-tab page', (await enabled(first, 'Copy Link')) === false && (await enabled(first, 'Bookmark Tab')) === false, 'enabled on the new-tab page');
+  check('Close Tabs to the Right is off on the last tab', (await enabled(c, 'Close tabs to the right')) === false && (await enabled(a, 'Close tabs to the right')) === true, 'enabled states');
+  check('Copy Link and Bookmark Tab are off on the new-tab page', (await enabled(first, 'Copy link')) === false && (await enabled(first, 'Bookmark tab')) === false, 'enabled on the new-tab page');
 
   // ---- 2. New Tab to the Right ----
-  await menu(a, 'New Tab to the Right');
+  await menu(a, 'New tab to the right');
   let order = await ids();
   const fresh = order[order.indexOf(a) + 1];
   check('New Tab to the Right opens right after the tab', ![first, a, b, c].includes(fresh) && order.length === 5, JSON.stringify(order));
@@ -92,7 +92,7 @@ const os = require('os');
 
   // In a group, the new tab joins the group.
   const group = await app.evaluate((_e, ids) => { const g = global.__tabGroups.create('G', ids); global.__tabGroups.arrange(); return g.id; }, [a, b]);
-  await menu(a, 'New Tab to the Right');
+  await menu(a, 'New tab to the right');
   let tabs = await strip();
   const inGroup = tabs[tabs.findIndex((t) => t.id === a) + 1];
   check('New Tab to the Right from a grouped tab joins its group', inGroup && ![a, b].includes(inGroup.id) && inGroup.groupId === group, JSON.stringify(tabs));
@@ -135,15 +135,15 @@ const os = require('os');
   await closeAllBut([first, a, b, c]);
 
   // ---- 4. Pin, and a pinned tab's menu ----
-  await menu(c, 'Pin Tab');
+  await menu(c, 'Pin tab');
   tabs = await strip();
   check('Pin Tab pins it (first in the strip)', tabs[0].id === c && tabs[0].pinned, JSON.stringify(tabs));
-  check('a pinned tab offers Unpin Tab and no group items', (await labels(c)).includes('Unpin Tab') && !(await labels(c)).includes('Add to New Group'), JSON.stringify(await labels(c)));
+  check('a pinned tab offers Unpin Tab and no group items', (await labels(c)).includes('Unpin tab') && !(await labels(c)).includes('Add to new group'), JSON.stringify(await labels(c)));
   await menu(c, 'Duplicate');
   tabs = await strip();
   check('Duplicate of a pinned tab is pinned, right after it', tabs[1]?.pinned && tabs[1].id !== c && tabs[0].id === c, JSON.stringify(tabs));
   await closeAllBut([first, a, b, c]);
-  await menu(c, 'New Tab to the Right');
+  await menu(c, 'New tab to the right');
   tabs = await strip();
   check('New Tab to the Right from a pinned tab goes after the pinned tabs, unpinned', tabs[1] && !tabs[1].pinned && ![first, a, b].includes(tabs[1].id), JSON.stringify(tabs));
   await closeAllBut([first, a, b, c]);
@@ -166,27 +166,27 @@ const os = require('os');
 
   // ---- 6. Mute Site: every tab of the site, now and opened later, until unmuted ----
   const muted = (id) => app.evaluate((_e, id) => global.__pageTools.tab(id).view.webContents.isAudioMuted(), id);
-  await menu(a, 'Mute Site');
+  await menu(a, 'Mute site');
   check('Mute Site mutes the tabs of that site', (await muted(a)) && (await muted(b)), 'not muted');
   const later = await open(`${base}/later`, true);
   const elsewhere = await open(`${other}/x`, true);
   check('…and a tab of that site opened later', await muted(later), 'not muted');
   check('…but not another site', !(await muted(elsewhere)), 'muted');
-  check('the menu then offers Unmute Site', (await labels(b)).includes('Unmute Site'), JSON.stringify(await labels(b)));
-  await menu(b, 'Unmute Site');
+  check('the menu then offers Unmute Site', (await labels(b)).includes('Unmute site'), JSON.stringify(await labels(b)));
+  await menu(b, 'Unmute site');
   check('Unmute Site unmutes them', !(await muted(a)) && !(await muted(later)), 'still muted');
   await closeAllBut([first, a, b, c]);
 
   // ---- 7. Copy Link, Bookmark Tab, Bookmark All Tabs ----
-  await menu(b, 'Copy Link');
+  await menu(b, 'Copy link');
   check("Copy Link copies the tab's URL", (await app.evaluate(() => global.__copied)) === `${base}/b2`, await app.evaluate(() => global.__copied));
   const saved = () => app.evaluate(() => global.__managers.managers.list());
-  await menu(a, 'Bookmark Tab');
+  await menu(a, 'Bookmark tab');
   check('Bookmark Tab bookmarks that tab (not the one in front)', (await saved()).some((x) => x.url === `${base}/a` && !x.folder), JSON.stringify(await saved()));
-  check('…and the menu then offers Remove Bookmark', (await labels(a)).includes('Remove Bookmark'), JSON.stringify(await labels(a)));
-  await menu(a, 'Remove Bookmark');
+  check('…and the menu then offers Remove Bookmark', (await labels(a)).includes('Remove bookmark'), JSON.stringify(await labels(a)));
+  await menu(a, 'Remove bookmark');
   check('Remove Bookmark removes it', !(await saved()).some((x) => x.url === `${base}/a`), JSON.stringify(await saved()));
-  await menu(a, 'Bookmark All Tabs');
+  await menu(a, 'Bookmark all tabs');
   let folders = [...new Set((await saved()).map((x) => x.folder).filter(Boolean))];
   const inFolder = (await saved()).filter((x) => x.folder === folders[0]).map((x) => x.url);
   check('Bookmark All Tabs puts every web tab in a new folder', folders.length === 1 && /^Saved Tabs /.test(folders[0]) && inFolder.join() === [`${base}/c`, `${base}/a`, `${base}/b2`].join(), `${JSON.stringify(folders)} ${JSON.stringify(inFolder)}`);
@@ -198,26 +198,26 @@ const os = require('os');
   // Strip now: c (pinned), first, a, b.
   const r1 = await open(`${base}/r1`, true);
   const r2 = await open(`${base}/r2`);
-  await menu(a, 'Close Tabs to the Right');
+  await menu(a, 'Close tabs to the right');
   await waitFor(async () => (await ids()).length === 4);
   check('Close Tabs to the Right closes the tabs after it', (await ids()).join() === [c, first, a].join(), JSON.stringify(await ids()));
   check('…and the tab it was opened on comes to the front', (await activeId()) === a, `active ${await activeId()}`);
   const closed = await app.evaluate(() => global.__closedTabs());
   check('…and they can be reopened', [`${base}/b2`, `${base}/r1`, `${base}/r2`].every((u) => closed.includes(u)), JSON.stringify(closed));
-  await menu(a, 'Reopen Closed Tab');
+  await menu(a, 'Reopen closed tab');
   check('Reopen Closed Tab reopens the last one closed', await waitFor(async () => (await list()).some((t) => t.url === closed.at(-1) && t.active)), JSON.stringify(await list()));
   check('(r1, r2 were distinct tabs)', r1 !== r2, 'same');
 
   const leave = await open(`${base}/leave`, true);
   await app.evaluate((_e, id) => global.__pageTools.tab(id).view.webContents.executeJavaScript('1', true), leave); // a user gesture
   const keepA = await open(`${base}/keep`, true);
-  await menu(keepA, 'Close Other Tabs');
+  await menu(keepA, 'Close other tabs');
   check('Close Other Tabs keeps pinned tabs', await waitFor(async () => (await ids()).join() === [c, leave, keepA].join() || (await ids()).join() === [c, keepA].join()), JSON.stringify(await ids()));
   check('…and asks "Leave site?" for a page that objects', await waitFor(async () => (await ids()).includes(leave) && app.evaluate(() => Boolean(global.__dialogs.currentId())), 3000), JSON.stringify(await ids()));
   await app.evaluate(() => { const d = global.__dialogs; d.respond({ id: d.currentId(), response: 1 }); });
   check('…and closes it on Leave', await waitFor(async () => (await ids()).join() === [c, keepA].join(), 4000), JSON.stringify(await ids()));
   check('…and the kept tab is in front', (await activeId()) === keepA, `active ${await activeId()}`);
-  check('Close Other Tabs is off when only pinned tabs are left', (await enabled(keepA, 'Close Other Tabs')) === false, 'enabled');
+  check('Close Other Tabs is off when only pinned tabs are left', (await enabled(keepA, 'Close other tabs')) === false, 'enabled');
 
   // ---- 9. shortcuts ----
   const t1 = await open(`${base}/t1`, true);
@@ -263,9 +263,9 @@ const os = require('os');
   if (mac) {
     const bar = await app.evaluate(() => global.__macMenuLabels());
     const sub = (label) => bar.find((m) => m.label === label)?.items || [];
-    check('the menu bar has a Tab menu with Select Next/Previous Tab and Duplicate Tab', ['Select Next Tab', 'Select Previous Tab', 'New Tab to the Right', 'Duplicate Tab'].every((l) => sub('Tab').includes(l)), JSON.stringify(sub('Tab')));
-    check('View has Force Reload This Page', sub('View').includes('Force Reload This Page'), JSON.stringify(sub('View')));
-    check('Bookmarks has Bookmark All Tabs', sub('Bookmarks').includes('Bookmark All Tabs'), JSON.stringify(sub('Bookmarks')));
+    check('the menu bar has a Tab menu with Select Next/Previous Tab and Duplicate Tab', ['Select next tab', 'Select previous tab', 'New tab to the right', 'Duplicate tab'].every((l) => sub('Tab').includes(l)), JSON.stringify(sub('Tab')));
+    check('View has Force Reload This Page', sub('View').includes('Force reload this page'), JSON.stringify(sub('View')));
+    check('Bookmarks has Bookmark All Tabs', sub('Bookmarks').includes('Bookmark all tabs'), JSON.stringify(sub('Bookmarks')));
   }
 
   check('no renderer errors', errors.length === 0, errors.join('; '));

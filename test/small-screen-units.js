@@ -13,7 +13,7 @@ module.exports = function smallScreenUnits(check) {
     [chunk([item('Find', 'CmdOrCtrl+F')]), chunk(n('zoom', 4), 'zoom', 3), chunk(n('page', 7), 'page', 2)],
     [chunk([{ label: 'Bookmarks', submenu: [item('b')] }, { label: 'History', submenu: [item('h')] }])],
     [chunk(n('more', 5), 'more', 1), chunk([item('Settings', 'CmdOrCtrl+,')])],
-    [chunk([item('Developer Tools', 'F12')], 'more', 1)],
+    [chunk([item('Developer tools', 'F12')], 'more', 1)],
   ];
   const leaves = (template) => template.flatMap((i) => (i.submenu ? [i.label, ...leaves(i.submenu)] : i.type === 'separator' ? [] : [i.label]));
   const commands = (template) => leaves(template).filter((l) => !/^\[/.test(l)).sort();
@@ -32,7 +32,7 @@ module.exports = function smallScreenUnits(check) {
   check('app menu: folding keeps every command reachable', JSON.stringify(commands(short.template)) === JSON.stringify(everything), JSON.stringify(commands(short.template)));
   const more = short.template.find((i) => i.label === '[more]');
   check('app menu: chunks of one id merge into one submenu, separated, where the first one was',
-    more && more.submenu.length === 7 && more.submenu[5].type === 'separator' && more.submenu[6].label === 'Developer Tools'
+    more && more.submenu.length === 7 && more.submenu[5].type === 'separator' && more.submenu[6].label === 'Developer tools'
       && short.template.indexOf(more) < short.template.findIndex((i) => i.label === 'Settings'), JSON.stringify(more));
   check('app menu: a folded group left empty leaves no stray separator', short.template.at(-1).type !== 'separator'
     && !short.template.some((i, k) => i.type === 'separator' && short.template[k + 1]?.type === 'separator'));
@@ -47,7 +47,7 @@ module.exports = function smallScreenUnits(check) {
   check('app menu: empty sections (e.g. background tasks off) disappear', L.toTemplate([[chunk([])], [chunk([item('a')])]]).length === 1);
 
   // Width and anchor.
-  const w = L.estimateWidth([item('Make Lumen Your Default Browser…'), item('New Tab', 'CmdOrCtrl+Shift+N'), { label: 'Bookmarks', submenu: [] }]);
+  const w = L.estimateWidth([item('Make Lumen your default browser…'), item('New Tab', 'CmdOrCtrl+Shift+N'), { label: 'Bookmarks', submenu: [] }]);
   check('app menu: width estimate grows with the longest label and accelerator', w > L.estimateWidth([item('New Tab')]) && w > 300 && w < 600, String(w));
   check('app menu: a right-side button right-aligns the menu to it', L.anchorX({ left: 1380, right: 1410, contentWidth: 1440, menuWidth: 300 }) === 1110);
   check('app menu: the menu never starts left of the window', L.anchorX({ left: 700, right: 730, contentWidth: 800, menuWidth: 900 }) === 0);

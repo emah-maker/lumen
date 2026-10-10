@@ -28,6 +28,7 @@ const tr = (key, fallback, vars) => { const out = t(key, vars); return out === k
 const svg = (paths) => `<svg viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`;
 const GLOBE = svg('<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.6 1.6 2.3 3.5 2.3 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.7 6 5.7 8s.7 3.9 2.3 5.5"/>');
 const LOCK = svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/>');
+const INFO = svg('<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.4M8 5.1v.1"/>'); // a page on this computer (http://localhost): neither lock nor warning, as in a normal window
 const WARN = svg('<path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3M8 11.3v.1"/>');
 const SPEAKER = svg('<path d="M3 6.5h2.2L8.5 4v8L5.2 9.5H3z"/><path d="M10.7 6a2.8 2.8 0 0 1 0 4M12.3 4.5a5 5 0 0 1 0 7"/>');
 const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
@@ -116,15 +117,17 @@ function markNarrow() {
 new ResizeObserver(markNarrow).observe(tabsEl);
 
 function renderSecurity(state) {
-  const kind = state.security || '';
+  // An address on this computer is not "Not secure": nothing crosses a network (the same rule as a normal window).
+  const kind = state.security === 'insecure' && window.chromeHelpers?.isLoopbackUrl(state.url) ? 'local' : state.security || '';
   security.className = `security ${kind}`;
   const label = {
     secure: tr('private.security.secure', 'Connection is secure'),
     mixed: tr('private.security.mixed', 'Parts of this page are not secure'),
     insecure: tr('private.security.notSecure', 'Not secure'),
     broken: tr('private.security.notSecure', 'Not secure'),
+    local: tr('private.security.local', 'This page is on your own computer'),
   }[kind] || '';
-  security.innerHTML = kind === 'secure' || kind === 'mixed' ? LOCK : kind ? `${WARN}<span>${label}</span>` : '';
+  security.innerHTML = kind === 'secure' || kind === 'mixed' ? LOCK : kind === 'local' ? INFO : kind ? `${WARN}<span>${label}</span>` : '';
   security.title = label;
   security.setAttribute('aria-label', label);
   security.setAttribute('aria-hidden', String(!kind));

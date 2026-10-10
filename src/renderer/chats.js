@@ -11,7 +11,10 @@
   const usageLine = $('chat-usage');
 
   function refreshUsage(text) {
-    usageLine.textContent = text || '';
+    // The one usage line under the header: this chat's tokens and cost, said as such ("This chat: 1.5k tokens · ~$0.01").
+    // Today's total is not a second line: it is in the context meter's tooltip and Settings → Usage.
+    usageLine.dataset.usage = text || '';
+    usageLine.textContent = text ? window.chatTr('chats.usage.line', 'This chat: {usage}').replace('{usage}', text) : '';
     usageLine.hidden = !text;
     usageLine.title = text ? window.chatTr('chats.usage.title', 'Tokens and estimated cost of this chat') : '';
   }

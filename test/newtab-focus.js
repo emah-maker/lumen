@@ -133,7 +133,7 @@ const os = require('os');
   const opens = {
     'Ctrl+T (keyboard in the UI)': async (from) => ctrl('t', from === 'ui' || from === 'page' ? from : 'ui'),
     'the + button': async () => ui.click('#new-tab'),
-    'tab context menu: New tab to the right': async () => { const id = await activeId(); await app.evaluate((_e, id) => global.__tabMenu(id, 'New Tab to the Right'), id); },
+    'tab context menu: New tab to the right': async () => { const id = await activeId(); await app.evaluate((_e, id) => global.__tabMenu(id, 'New tab to the right'), id); },
     'Ctrl+Shift+T (reopen closed tab)': async () => { await app.evaluate(async () => { const b = global.__agent.browser; const t = b.openTab(global.__ntBase + '/closed', { background: true }); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 3000); }); global.__closeTabInteractive(t.id); }); await sleep(300); await ctrl('t', 'ui', true); },
   };
 

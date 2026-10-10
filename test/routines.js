@@ -85,6 +85,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
   // ---- 1. The Routines tab, and a routine made with the editor.
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
+  await ui.click('#more-actions'); // Background tasks is a row of the More menu
   await ui.click('#tasks-btn');
   await ui.waitForSelector('.task-tabs');
   await ui.click('#task-tab-routines');

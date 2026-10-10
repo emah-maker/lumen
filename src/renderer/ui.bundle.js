@@ -1263,10 +1263,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     h.classList.add('has-ubar');
     h.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: h.firstChild.textContent }) }));
   }
-  function heading(textContent, count) {
+  function heading(textContent, count, needsSignIn = false) {
     const h = Object.assign(document.createElement('div'), { className: 'picker-group' });
     h.setAttribute('role', 'presentation');
     h.append(Object.assign(document.createElement('span'), { textContent }));
+    // A whole provider that is not signed in says so at its heading, not only on each row (or only when hovering a row).
+    if (needsSignIn) h.append(Object.assign(document.createElement('span'), { className: 'picker-badge warn picker-group-signin', textContent: badgeText('sign in') }));
     if (count) h.append(Object.assign(document.createElement('span'), { className: 'picker-count', textContent: String(count) }));
     return h;
   }
@@ -1343,7 +1345,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
       usageRows = !(g && (headings || words.length || ordered.length > 1 || out.length)); // no heading to carry the provider's bar: each row does
-      if (!usageRows) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
+      if (!usageRows) { const needsSignIn = members.length > 0 && members.every((m) => (m.o.dataset.badges || '').split(',').includes('sign in'));
+        const h = heading(g, headings || members.length > SHOWN ? members.length : 0, needsSignIn); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {
@@ -1978,6 +1981,25 @@ explain describe list find give compare difference summarize summary write rewri
   else root.runState = api;
 })(this);
 ;
+// ---- step-time.js
+// How long a step of the AI's work took, as the short text shown at the end of its row in the chat ("2.4s", "1m 05s").
+// Under a second shows nothing: most clicks and reads are that fast, and a "0.2s" on every row would only be noise.
+// Plain script in the UI; test/sidebar-ux2-units.js loads it with require().
+(function (root) {
+  function format(ms) {
+    if (!Number.isFinite(ms) || ms < 1000) return '';
+    const s = ms / 1000;
+    if (s < 10) return `${s.toFixed(1)}s`;
+    if (s < 60) return `${Math.round(s)}s`;
+    const m = Math.floor(s / 60);
+    const rest = Math.round(s - m * 60);
+    return rest === 60 ? `${m + 1}m 00s` : `${m}m ${String(rest).padStart(2, '0')}s`;
+  }
+  const api = { format };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.stepTime = api;
+})(this);
+;
 // ---- ../ai/screen-intent.js
 // Does this message point at what the user is looking at? ("what is this", "explain this error", "is this a scam",
 // "solve this", "on my screen") When it does, the sidebar attaches a screenshot of the active tab, so the user does not
@@ -2351,8 +2373,9 @@ const ASSISTANTS = {
   // Nothing connected: no provider to privilege, so a neutral mark instead of defaulting to Claude's.
   AI: {
     name: 'AI',
-    tint: 'currentColor',
-    svg: '<svg viewBox="0 0 16 16" class="mark"><circle cx="8" cy="8" r="5.25"/></svg>',
+    setup: true, // the toolbar button reads "Set up AI" (app.js identity) until a model is connected
+    tint: 'var(--accent)',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
   },
   Claude: {
     name: 'Claude',
@@ -2404,7 +2427,9 @@ function setAssistantIdentity(group) {
   assistantIdentity = who;
   chatHost.identity?.(who, first); // the sidebar's toolbar button follows the model's company (app.js)
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
+  // "Ask anything, or give <name> a task": the connected assistant's name; with Auto (or nothing known) it is Lumen, not "AI" or one provider.
+  const emptyName = who === ASSISTANTS.AI ? 'Lumen' : who.name;
+  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
   if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
@@ -2461,7 +2486,7 @@ async function loadModels() {
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
-  setAssistantIdentity(current?.group);
+  setAssistantIdentity(current?.auto && !current.autoScope ? '' : current?.group); // Auto across providers is nobody's name: the neutral mark, not the provider it last used
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
@@ -2626,6 +2651,7 @@ function setRunning(value) {
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value; // (main never edits a chat mid-run)
   send.classList.toggle('stop', value);
+  send.dataset.label = value ? t('composer.stop.short') : ''; // a word beside the square: "Stop"
   send.title = value ? t('composer.stop') : t('composer.send.title');
   send.setAttribute('aria-label', value ? t('composer.stop') : t('composer.send'));
   updateSend();
@@ -3237,6 +3263,27 @@ function appendToTurn(el) {
   return el;
 }
 
+// A step's elapsed time, at the end of its row: ticking from 3 s while it runs, final once it is done (renderer/step-time.js says
+// nothing under a second). One timer for all running steps, off when none is.
+let stepClock = 0;
+function showStepTime(step, final = false) {
+  const slot = step.querySelector('.step-time');
+  const t0 = Number(step.dataset.t0);
+  if (!slot || !t0) return;
+  const ms = Date.now() - t0;
+  const text = window.stepTime ? window.stepTime.format(ms) : '';
+  slot.textContent = !final && ms < 3000 ? '' : text;
+  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
+}
+function startStepClock() {
+  if (stepClock) return;
+  stepClock = setInterval(() => {
+    const running = messages.querySelectorAll('.step.running[data-t0]');
+    if (!running.length) { clearInterval(stepClock); stepClock = 0; return; }
+    for (const step of running) showStepTime(step);
+  }, 1000);
+}
+
 // [annotate] A finished annotate step: "Drew N marks on the page" with Show again / Clear (the drawing is in the tab itself).
 function annotateChip(step) {
   const count = Number(step.dataset.marks) || 0;
@@ -3454,6 +3501,7 @@ window.assistant.onEvent((event) => {
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
       step.title = label;
+      if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); startStepClock(); } // how long it has been going / took
       appendToTurn(step);
       endStream();
       turn.text = null;
@@ -3473,6 +3521,7 @@ window.assistant.onEvent((event) => {
       const step = turn.steps.get(event.id);
       if (!step) break;
       step.className = event.ok ? 'step done' : event.stopped ? 'step stopped' : 'step failed';
+      showStepTime(step, true);
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
       if (!event.ok && event.error) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -3754,8 +3803,10 @@ const helpersButton = $('helpers-btn');
 let helpersOn = true;
 function renderHelpers() {
   if (!helpersButton) return;
-  helpersButton.setAttribute('aria-pressed', String(helpersOn));
+  helpersButton.setAttribute('aria-checked', String(helpersOn)); // a labelled row in the More menu: "Helpers  On"
   helpersButton.title = t(helpersOn ? 'sidebar.helpers.on' : 'sidebar.helpers.off');
+  const state = $('helpers-state');
+  if (state) state.textContent = t(helpersOn ? 'sidebar.state.on' : 'sidebar.state.off');
 }
 if (helpersButton) {
   helpersButton.onclick = async () => {
@@ -3788,6 +3839,14 @@ function renderPerm() {
   permButton.dataset.mode = permMode;
   permButton.setAttribute('aria-pressed', String(permMode !== 'ask'));
   permButton.title = t(`sidebar.perm.btn.${permMode}`);
+  permButton.setAttribute('aria-label', t('sidebar.perm.label', { mode: t(`sidebar.perm.${permMode}`) })); // the name says the state, not only the feature
+  // Visible state: the bolt alone is easy to miss, so Auto and Bypass say their name beside it ("Ask" shows nothing).
+  let stateLabel = permButton.querySelector('.perm-state');
+  if (permMode === 'ask') stateLabel?.remove();
+  else {
+    if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
+    stateLabel.textContent = t(`sidebar.perm.short.${permMode}`);
+  }
   permBadge.hidden = permMode !== 'bypass';
   for (const [mode, item] of permItems) {
     const armed = permArmed?.mode === mode;
@@ -5200,7 +5259,24 @@ function startChat() {
     return Boolean(m) && [m[1], m[2], m[3]].every((n) => Number(n) <= 255);
   }
 
-  const api = { isLoopbackUrl };
+  // Text that is an address, not a search: a scheme, a host with a dot, localhost, an IP or host:port (no spaces). Typing one of
+  // these and pressing Enter goes to exactly that address, whatever the suggestions say.
+  function looksLikeAddress(text) {
+    const s = String(text || '').trim();
+    if (!s || /\s/.test(s)) return false;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^(about|chrome|lumen|file|data|javascript|view-source|mailto):/i.test(s)) return true;
+    return /^(localhost|\[[0-9a-f:]+\]|(\d{1,3}\.){3}\d{1,3}|([a-z0-9-]+\.)+[a-z][a-z0-9-]*|[a-z0-9-]+(?=:\d))(:\d+)?([/?#].*)?$/i.test(s);
+  }
+
+  // The row the address bar's Enter goes to before an arrow key moves it (Chrome's default match): the first row when it is a
+  // page from history and what was typed is plain words. -1 means what was typed: it is an address, the field already holds an
+  // inline completion (Enter goes to that), or the first row is only "search for ...", which Enter does anyway.
+  function defaultSuggestion(typed, items, { completed = false } = {}) {
+    if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
+    return items[0].kind === 'history' ? 0 : -1;
+  }
+
+  const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.chromeHelpers = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -5283,6 +5359,7 @@ let currentUrl = '';
 let currentError = false;
 let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
 let currentLumenPage = false; // Reader mode / View Source: Lumen's own page for a web address
+let aiOffTabCtx = { page: false, kept: false }; // [ai off-tab] the tab in front: a web page the AI could act on, and whether it is kept off
 let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
@@ -5307,6 +5384,22 @@ function globeIcon(page = null) {
   svg.setAttribute('class', `tab-favicon globe${PAGE_ICONS[page] ? ' page-icon' : ''}`);
   svg.innerHTML = PAGE_ICONS[page] || GLOBE;
   return svg;
+}
+
+// A page with no icon of its own: a monogram (the first letter of its site on a color taken from the site), so a row of
+// tabs without favicons doesn't read as a row of identical globes. Not for Lumen's own pages (they have their own icons).
+function siteHostOf(url) {
+  try { const u = new URL(String(url || '')); return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./i, '') : ''; } catch { return ''; }
+}
+function monogramIcon(host) {
+  const span = document.createElement('span');
+  span.className = 'tab-favicon monogram';
+  span.setAttribute('aria-hidden', 'true');
+  span.textContent = (host.match(/[\p{L}\p{N}]/u)?.[0] || '?').toUpperCase();
+  let hash = 0;
+  for (const c of host.split('.').slice(-2).join('.')) hash = (hash * 31 + c.charCodeAt(0)) >>> 0; // subdomains share their site's color
+  span.style.setProperty('--mono-hue', String(hash % 360));
+  return span;
 }
 
 // Unfocused address bar shows a trimmed URL; the full URL returns on focus.
@@ -6349,10 +6442,10 @@ function createTabEl(id) {
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
-  // [ai off-tab] a tab the user keeps the AI from acting on: a small shield after the title (styles.css .tab-off-mark)
+  // [ai off-tab] a tab the user keeps the AI from acting on: a small slashed sparkle after the title (styles.css .tab-off-mark)
   const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
   offMark.setAttribute('aria-hidden', 'true');
-  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 2 2.5v3c0 2.4 1.7 4.1 4 5.5 2.3-1.4 4-3.1 4-5.5v-3Z"/></svg>';
+  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/><path class="off-slash" d="M1.5 10.5 10.5 1.5"/></svg>';
   inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
@@ -6372,19 +6465,19 @@ function createTabEl(id) {
 // icons are tried once more a little later, since a failure may be a passing one (a server error,
 // the network dropping for a moment); an <img> that failed would otherwise stay a globe for good.
 const FAVICON_RETRY_MS = 3000;
-function faviconImg(el, key, urls, retried = false) {
+function faviconImg(el, key, urls, retried = false, fallback = globeIcon) {
   const img = document.createElement('img');
   img.className = 'tab-favicon';
   let i = 0;
   img.onerror = () => {
     if (++i < urls.length) { img.src = urls[i]; return; }
-    const globe = globeIcon();
+    const globe = fallback();
     img.replaceWith(globe);
     if (retried) return;
     setTimeout(() => {
       // Only if the tab still wants these icons and still shows the globe that replaced them.
       if (el.dataset.icon !== key || !globe.isConnected) return;
-      const again = faviconImg(el, key, urls, true);
+      const again = faviconImg(el, key, urls, true, fallback);
       // Swapped in only once it has loaded, so a second failure doesn't flash an empty image.
       again.addEventListener('load', () => { if (el.dataset.icon === key && globe.isConnected) globe.replaceWith(again); }, { once: true });
     }, FAVICON_RETRY_MS);
@@ -6409,7 +6502,10 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.dataset.chat = tab.chat || '';
@@ -6421,7 +6517,9 @@ function updateTabEl(el, tab, group, activeId) {
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
+  const monoHost = tab.page ? '' : siteHostOf(tab.url);
+  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page));
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}:${monoHost}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
@@ -6429,9 +6527,9 @@ function updateTabEl(el, tab, group, activeId) {
       icon = document.createElement('span');
       icon.className = 'tab-favicon spinner';
     } else if (favicons.length && !tab.error) {
-      icon = faviconImg(el, iconKey, favicons);
+      icon = faviconImg(el, iconKey, favicons, false, fallbackIcon);
     } else {
-      icon = globeIcon(tab.page);
+      icon = fallbackIcon();
     }
     el.querySelector('.tab-favicon').replaceWith(icon);
   }
@@ -6599,6 +6697,7 @@ $('tabs').addEventListener('keydown', (e) => {
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
+  else if (isTab && (e.key === 'm' || e.key === 'M') && el.querySelector('.tab-audio')) window.browser.toggleMute(id); // the speaker button isn't a stop of its own
   else if (isTab && e.key === 'Delete') {
     const next = items[i + 1] || items[i - 1];
     if (next) focusStripItem(next);
@@ -7091,10 +7190,12 @@ function finishTabsRender(state, before, container, switched) {
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
   reader.title = t(active?.page === 'reader' ? 'toolbar.reader.leave' : 'toolbar.reader.title');
-  // [ai off-tab] The shield: keeps the AI from acting on this tab (read-only for every AI path, main.js setKeepOff). Shown on pages, like the star.
+  // [ai off-tab] The AI control (a sparkle, slashed once on): makes this tab read-only for every AI path (main.js setKeepOff). Shown on a page
+  // while the AI is in play (its panel is open or it is working) or the tab is already kept off, not on every page: syncAiOffTab.
   const offTab = $('ai-off-tab');
   const kept = Boolean(active?.aiKeepOff);
-  offTab.hidden = !active?.url || currentError || lumenPage;
+  aiOffTabCtx = { page: Boolean(active?.url) && !currentError && !lumenPage, kept };
+  syncAiOffTab();
   offTab.setAttribute('aria-pressed', String(kept));
   offTab.title = t(kept ? 'toolbar.aiOffTab.on' : 'toolbar.aiOffTab.off');
   offTab.setAttribute('aria-label', offTab.title);
@@ -7200,7 +7301,9 @@ async function updateSuggestions(typed, deleting) {
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
-  suggest = { items: /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search], selected: -1, typed };
+  const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
+  // The top page from history is pre-selected (Enter goes to it, as in Chrome), unless what is typed is an address or was completed in place.
+  suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
   renderSuggestions();
 }
 
@@ -7342,6 +7445,14 @@ $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
+function syncAiOffTab() {
+  const body = document.body;
+  const inPlay = !body.classList.contains('sidebar-hidden') || body.classList.contains('agent-active') || body.classList.contains('mcp-active');
+  const wasHidden = $('ai-off-tab').hidden;
+  $('ai-off-tab').hidden = !(aiOffTabCtx.page && (aiOffTabCtx.kept || inPlay));
+  if (wasHidden !== $('ai-off-tab').hidden) $('omnibox').style.setProperty('--omnibox-end-w', `${Math.ceil($('omnibox').querySelector('.omnibox-end').offsetWidth)}px`);
+}
+new MutationObserver(syncAiOffTab).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 $('ai-off-tab').onclick = () => { if (lastTabState?.activeId != null) window.browser.toggleAiOffTab?.(lastTabState.activeId); }; // [ai off-tab]
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 // The lock (or "Not secure") opens the site's page info under it.
@@ -7982,9 +8093,11 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
+  const name = who.setup ? t('toolbar.aiSetup') : who.name; // nothing connected: the button says what it is for
+  button.title = `${name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
-  button.setAttribute('aria-label', who.name);
+  button.classList.toggle('needs-setup', Boolean(who.setup));
+  button.setAttribute('aria-label', name);
   button.style.setProperty('--assistant-tint', who.tint);
   const swap = () => {
     button.querySelector('svg')?.remove();
@@ -8141,7 +8254,10 @@ $('agent-stop')?.addEventListener('click', () => {
   const usageLine = $('chat-usage');
 
   function refreshUsage(text) {
-    usageLine.textContent = text || '';
+    // The one usage line under the header: this chat's tokens and cost, said as such ("This chat: 1.5k tokens · ~$0.01").
+    // Today's total is not a second line: it is in the context meter's tooltip and Settings → Usage.
+    usageLine.dataset.usage = text || '';
+    usageLine.textContent = text ? window.chatTr('chats.usage.line', 'This chat: {usage}').replace('{usage}', text) : '';
     usageLine.hidden = !text;
     usageLine.title = text ? window.chatTr('chats.usage.title', 'Tokens and estimated cost of this chat') : '';
   }
@@ -8334,6 +8450,14 @@ $('agent-stop')?.addEventListener('click', () => {
     badge.classList.toggle('waiting', waiting > 0);
     button.setAttribute('aria-label', count ? `${T('tasks.button')}: ${T('tasks.button.badge', { running, waiting })}` : T('tasks.button'));
     byId('toggle-sidebar').classList.toggle('has-task-attention', waiting > 0);
+    // The tasks button lives in the More menu: its count shows as a dot on More (accent while running, amber when one waits for you).
+    const more = byId('more-actions');
+    if (more) {
+      more.classList.toggle('has-attention', count > 0 || state.unseen > 0);
+      more.classList.toggle('waiting', waiting > 0);
+      more.title = count ? `${T('sidebar.more')}: ${T('tasks.button.badge', { running, waiting })}` : state.unseen > 0 ? `${T('sidebar.more')}: ${T('tasks.button.unseen', { count: state.unseen })}` : T('sidebar.more');
+      more.setAttribute('aria-label', more.title);
+    }
     button.classList.toggle('has-unseen', !count && state.unseen > 0); // finished while you were elsewhere
     if (!count && state.unseen > 0) button.setAttribute('aria-label', `${T('tasks.button')}: ${T('tasks.button.unseen', { count: state.unseen })}`);
     const enabled = state.settings.enabled;
@@ -8382,7 +8506,7 @@ $('agent-stop')?.addEventListener('click', () => {
     open = null;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
 
   async function render() {
@@ -8911,6 +9035,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const head = h('div', { className: 'chat-list-head' }, h('h2', { textContent: `${T('research.title')} · ${T('research.count', { n: state.count })}` }), close);
     const select = h('select', { className: 'rs-style' }, ...(state.styles || []).map((s) => h('option', { value: s.id, textContent: s.name, selected: s.id === style })));
     select.setAttribute('aria-label', T('research.style'));
+    select.title = T('research.style'); // no visible label: hovering says what the menu is
     select.onchange = () => { style = select.value; try { localStorage.setItem('lumen.research.style', style); } catch { /* fine */ } };
     const bar = h('div', { className: 'rs-bar' },
       h('button', { type: 'button', className: 'btn rs-add', textContent: T('research.addPage'), disabled: busy === 'add', onclick: addPage }),
@@ -8956,7 +9081,7 @@ $('agent-stop')?.addEventListener('click', () => {
     panel.hidden = true;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
   button.onclick = () => (panel.hidden ? openPanel() : closePanel(true));
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closePanel(true); } });
@@ -9203,8 +9328,15 @@ $('agent-stop')?.addEventListener('click', () => {
         title.push(window.t('usage.context.title', { percent: Math.round(bar.percent), used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
         if (bar.compactPercent) title.push(window.t('usage.grok.compact.title', { percent: bar.compactPercent }));
       }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
-      if (bar.costUSD > 0) text.push(window.t('usage.grok.cost', { cost: money(bar.costUSD) }));
+      // This chat's own tokens and cost are the one line under the header (chats.js). Today's total shows here only
+      // when there is no context percent to show; otherwise it sits in the tooltip, so two lines never read alike.
+      const todayParts = [];
+      if (bar.tokens) todayParts.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
+      if (bar.costUSD > 0) todayParts.push(money(bar.costUSD));
+      if (todayParts.length) {
+        if (bar.percent == null) text.push(window.t('usage.todayTotal', { usage: todayParts.join(' · ') }));
+        else title.push(`${window.t('usage.todayTotal', { usage: todayParts.join(' · ') })}.`);
+      }
     }
     const w = bar.windows;
     if (w && w.d7?.turns) {
@@ -10537,7 +10669,7 @@ $('agent-stop')?.addEventListener('click', () => {
     takesInput: false,
     run() {
       const line = document.getElementById('chat-usage');
-      const used = line && !line.hidden ? line.textContent.trim() : '';
+      const used = line && !line.hidden ? (line.dataset.usage || line.textContent).trim() : '';
       const box = notice(used ? tr('slash.cost.line', 'This chat: {usage}.', { usage: used }) : tr('slash.cost.none', 'Nothing used yet in this chat.'));
       if (box && extras.openUsage) {
         const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.cost.open', 'Open Usage') });
@@ -10723,13 +10855,14 @@ function updateTabAudio(el, tab) {
     button = Object.assign(document.createElement('button'), { className: 'tab-audio', type: 'button', innerHTML: SPEAKER });
     button.addEventListener('pointerdown', (e) => e.stopPropagation()); // not a tab drag or ✕ press
     button.addEventListener('mousedown', (e) => e.preventDefault()); // a click doesn't take focus (or leave a ring)
+    button.tabIndex = -1; // keyboard: the focused tab's M key (app.js) mutes it; one stop per tab, none for the speaker
     button.onclick = (e) => { e.stopPropagation(); window.browser.toggleMute(Number(el.dataset.id)); };
     el.querySelector('.tab-title').after(button); // after the title, beside the ✕ (Chrome)
   }
   button.classList.toggle('muted', Boolean(tab.muted));
   // The context menu's strings (locales/en.json); the English stands in without a table.
   const key = tab.muted ? 'menu.unmuteTab' : 'menu.muteTab';
-  const label = window.t?.(key) && window.t(key) !== key ? window.t(key) : tab.muted ? 'Unmute Tab' : 'Mute Tab';
+  const label = window.t?.(key) && window.t(key) !== key ? window.t(key) : tab.muted ? 'Unmute tab' : 'Mute tab';
   button.title = label;
   button.setAttribute('aria-label', `${label}: ${tab.title}`);
 }

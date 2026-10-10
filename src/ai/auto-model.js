@@ -349,19 +349,24 @@ function routableOf(options, scope, { exclude = [], denied = null } = {}) {
 // The picker's list with each provider's own Auto first in that provider's group. `pick`: the open chat's pick (its Auto row is kept
 // even when the provider has since shrunk to one model, so the picker never shows nothing selected); `last`: the chat's latest
 // decision ({ label, reason, scope }), shown on the row of the Auto the chat is on.
-function withProviderAutos(options, { pick = null, last = null, exclude = [], describe = () => '' } = {}) {
+function withProviderAutos(options, { pick = null, last = null, exclude = [], describe = () => '', dedupe = false } = {}) {
   const out = [];
   const done = new Set();
+  // `dedupe`: with models from one provider only, the picker's own Auto already chooses between exactly those, so a second
+  // "Auto" under the provider's heading would be the same row twice (unless the chat is on it: then it stays, selected).
+  const usableScopes = new Set((options || []).filter((o) => o?.id && !isAuto(o.id) && !o.more && !String(o.id).endsWith(':__more') && o.signedIn !== false && !(o.badges || []).includes('sign in')).map((o) => providerOf(o.id)));
   for (const o of options || []) {
     const scope = providerOf(o.id);
     if (!done.has(scope) && SCOPES.includes(scope) && !isAuto(o.id) && !o.more) {
       done.add(scope);
       const here = scopeOf(pick) === scope;
-      if (here || routableOf(options, scope, { exclude }).length >= 2) {
+      if (here || (routableOf(options, scope, { exclude }).length >= 2 && !(dedupe && usableScopes.size < 2))) {
         const mine = here && last && last.scope === scope ? last : null;
         const text = mine?.reason || describe(scope) || `Lumen picks between ${scopeName(scope)}'s models for each message`;
+        // Named for its provider ("Auto · OpenAI"), so it never reads as the picker's own Auto (any provider) at the top.
+        const own = fallback.isEngine(o.id) ? `${scopeName(scope)} · Auto` : `Auto · ${scopeName(scope)}`;
         out.push({
-          id: autoIdOf(scope), label: fallback.isEngine(o.id) ? `${scopeName(scope)} · Auto` : 'Auto', name: mine?.label || 'Auto', provider: o.provider || scopeName(scope), group: o.group || scopeName(scope),
+          id: autoIdOf(scope), label: own, name: mine?.label || own, provider: o.provider || scopeName(scope), group: o.group || scopeName(scope),
           auto: true, autoScope: scope, signedIn: o.signedIn, detail: text, title: text,
         });
       }

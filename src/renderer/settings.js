@@ -118,11 +118,14 @@ function stackRow(label, desc, ...content) {
   el.append(...content);
   return el;
 }
-function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false } = {}) {
+// `invert`: the setting is stored the other way round (aiHandsOff is true when the AI is *kept off* the pages), so the switch shows the
+// positive wording ("Let the AI act on my pages") and the stored key and its meaning stay as they were.
+function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false, invert = false } = {}) {
   const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
-  input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]);
-  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key]); });
-  input.addEventListener('change', async () => { await save(key, input.checked); after?.(input.checked); });
+  const shown = () => (st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key])) !== invert;
+  input.checked = shown();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = shown(); });
+  input.addEventListener('change', async () => { await save(key, input.checked !== invert); after?.(input.checked); });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
@@ -382,11 +385,11 @@ async function buildAi(card) {
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
+    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Never switch away from my tab'), tr('settings.ai.stayOnMyTabDesc', 'The AI keeps working in background tabs and never brings one to the front, even when it would show you a page. The tab you are on stays in view.')),
+    toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Let the AI bring its tabs to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
   );
@@ -549,7 +552,7 @@ async function buildAi(card) {
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
   agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
-  agents.append(toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Agents in their own window don’t ask'), tr('settings.ai.agentsNoAskDesc', 'A connected agent clicks, types and opens sites in its own Lumen window without asking you first, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach. Turn this off to approve each new site.'), null, { fallback: true }));
+  agents.append(toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Ask before agents act in their own window'), tr('settings.ai.agentsNoAskDesc', 'On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.'), null, { fallback: true, invert: true }));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
@@ -656,6 +659,7 @@ async function buildAi(card) {
 
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
+  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -2034,6 +2038,7 @@ async function buildPrivacy(card) {
         flash(result, parts.length ? `Cleared ${parts.join(', ')}.` : 'Nothing selected.');
       }, 'primary', 'clear-go'))));
 
+  card.group(tr('settings.private.group', 'Private windows')).append(withKeywords(row(tr('settings.private.label', 'Private windows (incognito)'), tr('settings.private.desc', 'Press Ctrl+Shift+N, or use New Private Window in the menu. A private window doesn’t save history, cookies, passwords or its tabs, and forgets everything when you close it. Downloads stay in your Downloads folder, and sites and your network can still see you.')), 'incognito inprivate private browsing window shortcut ctrl+shift+n'));
   card.group('Tracking and connections').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
@@ -2322,6 +2327,7 @@ async function buildDownloads(card) {
   card.append(
     locationRow,
     toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
+    withKeywords(row(tr('settings.print.label', 'Printing'), tr('settings.print.desc', 'Lumen has no print settings. Press Ctrl+P on any page to preview it, then print it or save it as a PDF.')), 'print printer printing pdf paper page ctrl+p save as pdf'),
     select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
   );
   const list = h('div', { class: 'list', id: 'downloads-list' });
@@ -2679,7 +2685,7 @@ function tabSleepRows() {
     C.keepRecent.map((n) => [n, n ? String(n) : tr('settings.sleep.keepRecent.off', 'None')]), { number: true });
   applicable.push([recent, (m) => m !== 'off']);
 
-  const pinned = toggle('tabSleepKeepPinned', tr('settings.sleep.keepPinned', 'Never put pinned tabs to sleep'), '');
+  const pinned = toggle('tabSleepKeepPinned', tr('settings.sleep.keepPinned', 'Keep pinned tabs awake'), '');
   applicable.push([pinned, (m) => m !== 'off']);
 
   const list = h('div', { class: 'list', id: 'sleep-never' });
@@ -2932,9 +2938,15 @@ function show() {
     } else badge?.remove();
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
-  for (const slot of slots.values()) if (slot.isSub) slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id;
+  for (const slot of slots.values()) if (slot.isSub) { slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id; slot.pane.style.order = searching ? String(-(slot.best || 0)) : ''; } // (a page shown in place ranks with its best row)
   syncNavStop();
   $('no-results').hidden = !searching || any;
+  const suggest = $('no-results-suggest');
+  if (!suggest.children.length) {
+    for (const [word, text] of [['privacy', tr('settings.suggest.privacy', 'Privacy')], ['theme', tr('settings.suggest.theme', 'Theme')], ['download', tr('settings.suggest.download', 'Downloads')], ['password', tr('settings.suggest.password', 'Passwords')], ['search engine', tr('settings.suggest.searchEngine', 'Search engine')]]) {
+      suggest.append(h('button', { type: 'button', class: 'chip', text, onclick: () => { $('search').value = word; show(); $('search').focus(); } }));
+    }
+  }
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
   highlight(words);
   requestAnimationFrame(fitDescs);

@@ -164,7 +164,7 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
     const wc = global.__pageTools.tab(i).view.webContents;
     return global.__pageTools.contextMenuItems(wc, { mediaType: 'video', mediaFlags: { canShowPictureInPicture: true }, x: 50, y: 50, srcURL: '', frame: wc.mainFrame }).map((m) => m.label || m.type);
   }, videoTab);
-  check('the video context menu has Picture in Picture', items.includes('Picture in Picture'), items);
+  check('the video context menu has Picture in Picture', items.includes('Picture in picture'), items);
   const pip = await app.evaluate((_e, i) => { const wc = global.__pageTools.tab(i).view.webContents; return global.__pageTools.tools.togglePictureInPicture(wc.mainFrame, 50, 50).catch((e) => `error: ${e.message}`); }, videoTab);
   const inPip = await waitFor(() => inTab(videoTab, "document.pictureInPictureElement?.id === 'v'"));
   check('Picture in Picture opens for the video', pip === 'entered' && inPip === true, `${pip} / ${inPip}`);

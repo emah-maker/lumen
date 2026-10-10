@@ -91,7 +91,7 @@ function toneWav() {
   check('it shows crossed out', await waitFor(() => ui.evaluate((sel) => Boolean(document.querySelector(`${sel} .tab-audio.muted`)), tabSel(soundId))), 'not muted in the strip');
   check('and the click did not switch to the tab', (await activeId()) === beforeActive, `${await activeId()} vs ${beforeActive}`);
   const label = await ui.evaluate((sel) => document.querySelector(`${sel} .tab-audio`).getAttribute('aria-label'), tabSel(soundId));
-  check('its label says what a click does', /^Unmute Tab: Sound page$/.test(label), label);
+  check('its label says what a click does', /^Unmute tab: Sound page$/.test(label), label);
   if (shots) {
     for (const scheme of ['light', 'dark']) {
       await ui.emulateMedia({ colorScheme: scheme });

@@ -268,17 +268,19 @@ button:active:not(:disabled) { transform: scale(0.94); }
 :root[data-theme="dark"] img.tab-favicon { filter: drop-shadow(0 0 0.75px rgb(255 255 255 / 0.55)); }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
+/* A page with no icon: its site's first letter on a color taken from the site (app.js monogramIcon). */
+.tab-favicon.monogram { display: grid; place-items: center; font-size: 10px; font-weight: 600; line-height: 1; border-radius: 4px; color: #fff; background: hsl(var(--mono-hue, 210) 42% 40%); user-select: none; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
 /* [ai manners] A tab the AI opened: a 10px sparkle after its title. No motion. It goes when the tab becomes yours (you click or type in it, pin it, move it). */
 .tab-ai-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
 .tab.ai-opened .tab-ai-mark { display: block; }
 .tab-ai-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
-/* [ai off-tab] a tab the AI is kept off: a small shield after the title */
+/* [ai off-tab] a tab the AI is kept off: a small slashed sparkle after the title */
 .tab-off-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
 .tab.ai-kept-off .tab-off-mark { display: block; }
 .tab.ai-kept-off:hover .tab-off-mark, .tab.ai-kept-off.active .tab-off-mark { margin-right: 18px; } /* (the close button is laid over the title's end) */
-.tab-off-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
+.tab-off-mark svg { display: block; width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; } /* an outlined sparkle, slashed */
 @container tab (max-width: 60px) { .tab-off-mark { display: none !important; } }
 .tab.pinned .tab-ai-mark, .tab.sleeping .tab-ai-mark { opacity: 0.6; }
 @container tab (max-width: 60px) { .tab-ai-mark { display: none !important; } }
@@ -368,6 +370,16 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-audio { margin-right: 18px; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
 .tab-inner:has(.tab-audio) .tab-title { --title-cut: 0px; }
 .tab.pinned .tab-audio { margin-right: 0; }
+/* A tab with a speaker needs room for icon, speaker and ✕ before any title fits: below about 96px it is icon-only like a narrow tab,
+   so the title isn't squeezed down to a single letter beside the speaker. */
+@container tab (max-width: 96px) {
+  .tab-inner:has(.tab-audio) { justify-content: center; gap: 2px; padding: 0 4px; }
+  .tab-inner:has(.tab-audio) .tab-title { display: none; }
+  .tab:not(.active) .tab-inner:has(.tab-audio) .tab-close { display: none; }
+  .tab.active .tab-inner:has(.tab-audio) .tab-close { position: static; margin: 0; }
+  .tab .tab-audio { margin-right: 0; }
+  .tab.active .tab-inner:has(.tab-audio) .tab-favicon { display: none; }
+}
 @container tab (max-width: 72px) {
   .tab .tab-audio { margin-right: 0; } /* the ✕ is in the row here (active) or hidden */
   .tab.active .tab-inner:has(.tab-audio) .tab-favicon { display: none; } /* no room for all three */
@@ -463,12 +475,16 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 .omnibox-action:hover { color: var(--text); background: var(--hover); }
 .reader svg { stroke-width: 1.3; }
 .reader[aria-pressed="true"] { color: var(--accent); }
-/* [ai off-tab] the shield in the address bar: an outline while the AI may use the tab, tinted and accented (with a slash) once it is kept off */
+/* [ai off-tab] the AI button in the address bar (a sparkle): an outline while the AI may use the tab, tinted and accented (with a slash) once it is kept off */
 .ai-off-tab svg { stroke-width: 1.3; fill: none; }
 .ai-off-tab .ai-off-slash { display: none; }
 .ai-off-tab[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .ai-off-tab[aria-pressed="true"] svg { fill: color-mix(in srgb, var(--accent) 28%, transparent); }
 .ai-off-tab[aria-pressed="true"] .ai-off-slash { display: block; }
+.ai-off-label { display: none; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.ai-off-tab[aria-pressed="true"] { width: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 6px; }
+.ai-off-tab[aria-pressed="true"] .ai-off-label { display: inline; }
+@media (max-width: 860px) { .ai-off-tab[aria-pressed="true"] .ai-off-label { display: none; } .ai-off-tab[aria-pressed="true"] { padding: 0 6px; } } /* the sparkle alone, and its tooltip, on a narrow window */
 .star svg { stroke-width: 1.3; transition: fill var(--t-fast) ease-out; }
 .passwords-btn svg { stroke-width: 1.3; } /* [passwords] renderer/passwords.js */
 .star[aria-pressed="true"] { color: var(--accent); }
@@ -682,6 +698,23 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .more-menu .menu-item[data-shortcut]::before { content: attr(data-shortcut); order: 3; margin-left: auto; font-size: 11px; color: var(--muted); }
 .more-menu .menu-item:hover, .more-menu .menu-item:focus-visible { background: var(--hover, rgba(127,127,127,.12)); outline: none; }
 body:not(.chat-full) .more-menu #dock-to-side { display: none !important; }
+/* Labelled rows in the More menu (Helpers, Background tasks, Research board): the name is real text, with the state or a count at the right. */
+.more-menu .menu-item.labeled::after { content: none; }
+.more-menu .menu-label { font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.more-menu .menu-state { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.more-menu .menu-item[aria-checked="true"] .menu-state { color: var(--accent); }
+.more-menu #helpers-btn svg circle { fill: none; }
+.more-menu #helpers-btn[aria-checked="true"] svg circle { fill: currentColor; }
+.more-menu .task-badge { position: static; margin-left: auto; flex: none; }
+.more-menu .tasks-btn.has-unseen::after { content: ""; position: static; margin-left: auto; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: none; }
+.more-menu .menu-sep { height: 1px; margin: 4px 6px; background: var(--hairline, var(--border)); }
+/* Something in the menu needs you (a task running or waiting, or finished unseen): a dot on the More button, so the tasks button's old badge is not lost. */
+#more-actions { position: relative; }
+#more-actions.has-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+#more-actions.has-attention.waiting::after { background: var(--warning); }
+/* The permission bolt names its level while it is not "Ask". */
+.icon-btn.auto-allow:has(.perm-state) { display: inline-flex; align-items: center; justify-content: center; width: auto; padding: 0 8px 0 6px; gap: 4px; }
+.perm-state { font-size: 11px; font-weight: 600; line-height: 1; }
 .queue-btn { margin-left: 4px; height: 20px; padding: 0 6px; border: none; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
 .queue-btn:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 .msg.assistant .reply-regen.armed { opacity: 1; color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
@@ -776,6 +809,8 @@ body.chat-full .setup { text-align: left; }
 .step.failed { color: var(--danger); }
 .step.stopped::before { background: var(--faint); }
 .step .step-detail { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.step .step-time { flex: none; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.step .step-time:empty { display: none; }
 .step .step-action { flex: none; margin: 0; padding: 0 2px; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .step .step-action:disabled { opacity: .5; cursor: default; }
 .step .step-error { flex-basis: 100%; min-width: 0; padding-left: 14px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; animation: fade-in var(--t-base) ease-out; }
@@ -840,6 +875,8 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .send svg { width: 14px; height: 14px; stroke-width: 1.75; transition: transform var(--t-snappy) var(--spring-snappy), opacity var(--t-fast) ease-out; }
 .send:not(:disabled):hover { background: var(--accent-deep); }
 .send:disabled { background: var(--field); color: var(--faint); box-shadow: none; transform: scale(0.92); }
+.send.stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; min-width: 26px; padding: 0 10px 0 9px; border-radius: 13px; font-size: 12px; font-weight: 500; }
+.send.stop::after { content: attr(data-label); }
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
 /* Send now: beside Stop while a reply runs and something is typed (it stops the reply and sends this next). */

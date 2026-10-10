@@ -214,8 +214,9 @@ const ASSISTANTS = {
   // Nothing connected: no provider to privilege, so a neutral mark instead of defaulting to Claude's.
   AI: {
     name: 'AI',
-    tint: 'currentColor',
-    svg: '<svg viewBox="0 0 16 16" class="mark"><circle cx="8" cy="8" r="5.25"/></svg>',
+    setup: true, // the toolbar button reads "Set up AI" (app.js identity) until a model is connected
+    tint: 'var(--accent)',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
   },
   Claude: {
     name: 'Claude',
@@ -267,7 +268,9 @@ function setAssistantIdentity(group) {
   assistantIdentity = who;
   chatHost.identity?.(who, first); // the sidebar's toolbar button follows the model's company (app.js)
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
+  // "Ask anything, or give <name> a task": the connected assistant's name; with Auto (or nothing known) it is Lumen, not "AI" or one provider.
+  const emptyName = who === ASSISTANTS.AI ? 'Lumen' : who.name;
+  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
   if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
@@ -324,7 +327,7 @@ async function loadModels() {
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
-  setAssistantIdentity(current?.group);
+  setAssistantIdentity(current?.auto && !current.autoScope ? '' : current?.group); // Auto across providers is nobody's name: the neutral mark, not the provider it last used
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
@@ -489,6 +492,7 @@ function setRunning(value) {
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value; // (main never edits a chat mid-run)
   send.classList.toggle('stop', value);
+  send.dataset.label = value ? t('composer.stop.short') : ''; // a word beside the square: "Stop"
   send.title = value ? t('composer.stop') : t('composer.send.title');
   send.setAttribute('aria-label', value ? t('composer.stop') : t('composer.send'));
   updateSend();
@@ -1100,6 +1104,27 @@ function appendToTurn(el) {
   return el;
 }
 
+// A step's elapsed time, at the end of its row: ticking from 3 s while it runs, final once it is done (renderer/step-time.js says
+// nothing under a second). One timer for all running steps, off when none is.
+let stepClock = 0;
+function showStepTime(step, final = false) {
+  const slot = step.querySelector('.step-time');
+  const t0 = Number(step.dataset.t0);
+  if (!slot || !t0) return;
+  const ms = Date.now() - t0;
+  const text = window.stepTime ? window.stepTime.format(ms) : '';
+  slot.textContent = !final && ms < 3000 ? '' : text;
+  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
+}
+function startStepClock() {
+  if (stepClock) return;
+  stepClock = setInterval(() => {
+    const running = messages.querySelectorAll('.step.running[data-t0]');
+    if (!running.length) { clearInterval(stepClock); stepClock = 0; return; }
+    for (const step of running) showStepTime(step);
+  }, 1000);
+}
+
 // [annotate] A finished annotate step: "Drew N marks on the page" with Show again / Clear (the drawing is in the tab itself).
 function annotateChip(step) {
   const count = Number(step.dataset.marks) || 0;
@@ -1317,6 +1342,7 @@ window.assistant.onEvent((event) => {
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
       step.title = label;
+      if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); startStepClock(); } // how long it has been going / took
       appendToTurn(step);
       endStream();
       turn.text = null;
@@ -1336,6 +1362,7 @@ window.assistant.onEvent((event) => {
       const step = turn.steps.get(event.id);
       if (!step) break;
       step.className = event.ok ? 'step done' : event.stopped ? 'step stopped' : 'step failed';
+      showStepTime(step, true);
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
       if (!event.ok && event.error) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -1617,8 +1644,10 @@ const helpersButton = $('helpers-btn');
 let helpersOn = true;
 function renderHelpers() {
   if (!helpersButton) return;
-  helpersButton.setAttribute('aria-pressed', String(helpersOn));
+  helpersButton.setAttribute('aria-checked', String(helpersOn)); // a labelled row in the More menu: "Helpers  On"
   helpersButton.title = t(helpersOn ? 'sidebar.helpers.on' : 'sidebar.helpers.off');
+  const state = $('helpers-state');
+  if (state) state.textContent = t(helpersOn ? 'sidebar.state.on' : 'sidebar.state.off');
 }
 if (helpersButton) {
   helpersButton.onclick = async () => {
@@ -1651,6 +1680,14 @@ function renderPerm() {
   permButton.dataset.mode = permMode;
   permButton.setAttribute('aria-pressed', String(permMode !== 'ask'));
   permButton.title = t(`sidebar.perm.btn.${permMode}`);
+  permButton.setAttribute('aria-label', t('sidebar.perm.label', { mode: t(`sidebar.perm.${permMode}`) })); // the name says the state, not only the feature
+  // Visible state: the bolt alone is easy to miss, so Auto and Bypass say their name beside it ("Ask" shows nothing).
+  let stateLabel = permButton.querySelector('.perm-state');
+  if (permMode === 'ask') stateLabel?.remove();
+  else {
+    if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
+    stateLabel.textContent = t(`sidebar.perm.short.${permMode}`);
+  }
   permBadge.hidden = permMode !== 'bypass';
   for (const [mode, item] of permItems) {
     const armed = permArmed?.mode === mode;
