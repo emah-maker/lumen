@@ -72,6 +72,7 @@ const organizeLearn = require('./features/organize-learn'); // what Organize lea
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
+const navHistory = require('./browser/nav-history'); // Back / Forward's right-click list
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
@@ -216,7 +217,7 @@ const UI_ONLY_IPC = new Set([
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
-  'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
+  'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
@@ -3222,9 +3223,13 @@ async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_
 // A short line about what just happened, with an Undo button (the tab strip shows it as a toast).
 // `merge`: the note is the merge's own (its Undo wording; it keeps the merge's undo). Any other note that takes the
 // Undo button (`undo: true`) is the organize's, so an older merge can no longer be undone from it.
-function organizeNote(text, { undo = false, merge = false } = {}) {
+// A plain one-line confirmation in the strip's toast ("Link copied"): no Undo.
+const toast = (text) => organizeNote(text, { ttl: 2600 });
+// A shortcut shown beside a menu item without being registered a second time (handleShortcut owns the keys).
+const shortcutHint = (accelerator) => ({ accelerator, registerAccelerator: false });
+function organizeNote(text, { undo = false, merge = false, ttl = windowMerge.NOTE_MS } = {}) {
   if (undo && !merge) mergeUndo = null;
-  ui()?.send('tabs:organize-note', { text, undo, ttl: windowMerge.NOTE_MS, ...(merge && undo ? { undoLabel: t('merge.undo'), undoTitle: t('merge.undoTitle') } : {}) });
+  ui()?.send('tabs:organize-note', { text, undo, ttl, ...(merge && undo ? { undoLabel: t('merge.undo'), undoTitle: t('merge.undoTitle') } : {}) });
 }
 
 // "Organize Tabs with AI": the local organizer groups the tabs at once (one step of undo); the model then only
@@ -3498,25 +3503,24 @@ function tabMenuTemplate(id) {
   }
   items.push(
     { type: 'separator' },
-    { label: t('menu.reload'), click: () => reloadTab(tab, { always: true }) },
+    { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => reloadTab(tab, { always: true }) },
     ...(tab.settings ? [] : sleepMenuItems(tab)),
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
     ...audioMenuItems(tab),
-    ...offTabMenu(tab),
     ...moveWindowItems(id),
     { type: 'separator' },
-    { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => clipboard.writeText(url) },
-    { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
-    { label: t('menu.bookmarkAllTabs'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+    { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
+    { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
+    { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { type: 'separator' },
-    ...aiSiteMenu(tab),
-    { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
+    ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
+    { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
     { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiClosingNote(rec); aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
-    { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
+    { label: t('menu.reopenTab'), ...shortcutHint('CmdOrCtrl+Shift+T'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
   return items;
 }
@@ -3648,6 +3652,14 @@ function setKeepOff(tab, on) {
   sendTabs(); // (also schedules the session save)
 }
 const offTabMenu = (tab) => (tab.settings ? [] : [{ label: manners.isKeptOff(tab) ? t('menu.allowAiTab') : t('menu.keepAiOffTab'), click: () => setKeepOff(tab, !manners.isKeptOff(tab)) }]);
+
+// "Keep the AI from acting on this tab" and "Turn off AI on <site>" are one question (what may the AI touch), so they sit
+// together in one section instead of one among the tab's own commands and the other down by Close.
+function aiMenuSection(tab) {
+  const items = [...offTabMenu(tab), ...aiSiteMenu(tab)]; // (aiSiteMenu ends with its own separator)
+  if (items.length && items[items.length - 1].type !== 'separator') items.push({ type: 'separator' });
+  return items;
+}
 
 function aiSiteMenu(tab) {
   const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
@@ -3973,6 +3985,7 @@ function toggleBookmarkFor(tab) {
   writeSettings({ ...readSettings(), bookmarks: list });
   sendTabs();
   managers.pushBookmarks(); // an open Bookmarks page
+  toast(t(index >= 0 ? 'bookmark.removedNote' : 'bookmark.addedNote')); // the star shows it for the tab in front; a background tab (tab menu) and Ctrl+D showed nothing else
 }
 
 // Bookmark All Tabs (tab menu, Cmd+Shift+D): every web tab, in strip order, into a new folder named
@@ -4248,7 +4261,7 @@ function showContextMenu(wc, p) {
       ...link.open, // Open Link in New Window, … in Private Window
       { type: 'separator' },
       ...link.save, // Save Link As…
-      { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
+      { label: t('menu.copyLink'), click: () => { clipboard.writeText(p.linkURL); toast(t('menu.linkCopied')); } },
       { type: 'separator' },
     );
   }
@@ -4274,17 +4287,17 @@ function showContextMenu(wc, p) {
   }
   if (items.length === 0) {
     items.push(
-      { label: t('menu.back'), enabled: canGoBack(wc), click: () => goBack(wc) },
-      { label: t('menu.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
-      { label: t('menu.reload'), click: () => wc.reload() },
+      { label: t('menu.back'), ...shortcutHint(process.platform === 'darwin' ? 'Cmd+[' : 'Alt+Left'), enabled: canGoBack(wc), click: () => goBack(wc) },
+      { label: t('menu.forward'), ...shortcutHint(process.platform === 'darwin' ? 'Cmd+]' : 'Alt+Right'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
+      { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => wc.reload() },
       { type: 'separator' },
     );
     if (isWebUrl(wc.getURL())) {
       items.push(
-        { label: t('menu.savePageAs'), click: () => pageTools.savePage(wc).catch(() => {}) },
-        { label: t('menu.print'), click: () => printTab(wc) },
-        { label: t('menu.viewSource'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
-        { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
+        { label: t('menu.savePageAs'), ...shortcutHint('CmdOrCtrl+S'), click: () => pageTools.savePage(wc).catch(() => {}) },
+        { label: t('menu.print'), ...shortcutHint('CmdOrCtrl+P'), click: () => printTab(wc) },
+        { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
         ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
@@ -7187,6 +7200,7 @@ if (TEST) {
     if (label) items.find((i) => i.label === label)?.click();
     return items.map((i) => ({ label: i.label, enabled: i.enabled !== false }));
   };
+  global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
 }
@@ -7898,6 +7912,26 @@ if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => { userTookOver(tabs.find((t) => t.id === activeId)); goBack(activeTab()?.webContents); });
 ipcMain.on('nav:forward', () => { userTookOver(tabs.find((t) => t.id === activeId)); activeTab()?.webContents.navigationHistory.goForward(); });
+// Right-click on Back / Forward: the pages behind / ahead, nearest first (browser/nav-history.js), then Show All History.
+function navHistoryTemplate(direction) {
+  const tab = tabs.find((x) => x.id === activeId && alive(x));
+  const wc = tab?.view.webContents;
+  if (!wc || wc.isDestroyed() || (direction !== 'back' && direction !== 'forward')) return [];
+  const nav = wc.navigationHistory;
+  const entries = navHistory.items(nav.getAllEntries(), nav.getActiveIndex(), direction);
+  const items = entries.map((e) => ({ label: e.label, click: () => { userTookOver(tab); nav.goToIndex(e.index); } }));
+  if (direction === 'back' && !items.length && tab.backToNewTab) items.push({ label: t('menu.newTabPage'), click: () => { userTookOver(tab); goBack(wc); } }); // (the one step Back still has)
+  if (items.length) items.push({ type: 'separator' }, { label: t('menu.showAllHistory'), ...shortcutHint(process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H'), click: openHistoryPage });
+  return items;
+}
+ipcMain.on('nav:history-menu', (e, direction, point) => {
+  const w = BrowserWindow.fromWebContents(e.sender) || win;
+  const items = navHistoryTemplate(direction);
+  if (!w || w.isDestroyed() || !items.length) return;
+  const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
+  Menu.buildFromTemplate(items).popup({ window: w, x: n(point?.x), y: n(point?.y) });
+});
+if (TEST) global.__navHistoryMenu = (direction) => navHistoryTemplate(direction).map((i) => ({ label: i.label || '---', click: i.click }));
 ipcMain.on('nav:reload', reloadActive);
 
 ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
