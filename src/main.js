@@ -7409,9 +7409,20 @@ function resetNetwork() {
   const ses = session.defaultSession;
   return Promise.all([ses.closeAllConnections?.(), ses.clearHostResolverCache?.()]).catch(() => {});
 }
+// The cards' own session for when the browser's is stuck (widgets.js request()): in memory, no cookies kept, the profile's
+// proxy and privacy headers mirrored. `renew`: it failed too, so a new one.
+let cardNet = null;
+function cardFetch(url, options, { renew = false } = {}) {
+  if (!cardNet || renew) {
+    cardNet = session.fromPartition(`lumen-cards-${Date.now()}`);
+    try { settingsBackend.mirrorSession(cardNet); } catch { /* the defaults are fine */ }
+  }
+  return cardNet.fetch(url, options);
+}
 const widgets = createWidgets({
   readSettings, writeSettings,
   fetch: (url, options) => net.fetch(url, options),
+  freshFetch: cardFetch, // a request the browser's session fails at once (net::ERR_FAILED) is sent again through this
   resetNetwork, // a card that got no answer from the network drops these before it asks again (Try again, its retries)
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
