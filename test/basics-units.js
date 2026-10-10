@@ -117,11 +117,11 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   // ---- link and image items, Save … As marks
   const deps = { t, openInNewWindow: () => {}, openInPrivateWindow: () => {}, saveAs: () => {}, copy: () => {} };
   const link = LM.linkItems({ linkURL: 'https://a.example/x' }, deps);
-  check('link menu: New Window and Private Window, then Save Link As', link.open.map((i) => i.label).join() === 'Open Link in New Window,Open Link in Private Window' && link.save[0].label === 'Save Link As…', JSON.stringify(link));
+  check('link menu: New Window and Private Window, then Save Link As', link.open.map((i) => i.label).join() === 'Open link in new window,Open link in private window' && link.save[0].label === 'Save link as…', JSON.stringify(link));
   check('link menu: no private item where private windows are not offered', LM.linkItems({ linkURL: 'https://a.example/x' }, { ...deps, openInPrivateWindow: null }).open.length === 1, '');
   check('link menu: nothing for a javascript: link', LM.linkItems({ linkURL: 'javascript:alert(1)' }, deps).open.length === 0, '');
   const img = LM.imageItems({ mediaType: 'image', srcURL: 'https://a.example/i.png' }, deps);
-  check('image menu: Save Image As and Copy Image Address', img.save[0].label === 'Save Image As…' && img.copy[0].label === 'Copy Image Address', JSON.stringify(img));
+  check('image menu: Save Image As and Copy Image Address', img.save[0].label === 'Save image as…' && img.copy[0].label === 'Copy image address', JSON.stringify(img));
   const dataImg = LM.imageItems({ mediaType: 'image', srcURL: 'data:image/png;base64,AAAA' }, deps);
   check('image menu: a data: image can be saved but has no address to copy', dataImg.save.length === 1 && dataImg.copy.length === 0, JSON.stringify(dataImg));
   check('image menu: never a file: image', LM.imageItems({ mediaType: 'image', srcURL: 'file:///etc/x.png' }, deps).save.length === 0, '');
@@ -203,8 +203,8 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   check(`locale keys: the ${keys.size} keys used are all in en.json`, keys.size > 80 && missing.length === 0, missing.join(', '));
   // The strings that used to be written in English in the code go through t() now.
   const mainSrc = main;
-  check('strings: the page menu\'s Save Page As and View Page Source are localized', !/label: 'Save Page As…'|label: 'View Page Source'/.test(mainSrc), '');
-  check('strings: the video menu and spelling items are localized', !/'Picture in Picture'|'Open Video in New Tab'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/features/page-tools.js'), 'utf8')) && !/'No spelling suggestions'|'Add to Dictionary'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/settings/settings-backend.js'), 'utf8')), '');
+  check('strings: the page menu\'s Save Page As and View Page Source are localized', !/label: 'Save page as…'|label: 'View page source'/.test(mainSrc), '');
+  check('strings: the video menu and spelling items are localized', !/'Picture in picture'|'Open video in new tab'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/features/page-tools.js'), 'utf8')) && !/'No spelling suggestions'|'Add to dictionary'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/settings/settings-backend.js'), 'utf8')), '');
 
   console.log(failures ? `\n${failures} failed` : '\nall basics-units passed');
   process.exit(failures ? 1 : 0);

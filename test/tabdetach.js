@@ -79,8 +79,8 @@ const http = require('http');
 
     // ---- the tab menu: a second entry for a window's tabs only when there is somewhere to go
     const menu1 = await app.evaluate((_e, [w, id]) => global.__windows.tabMenu(w, id), [win1, a.id]);
-    check('the tab menu offers Move Tab to New Window', menu1.some((i) => i.label === 'Move Tab to New Window' && i.enabled), JSON.stringify(menu1.map((i) => i.label)));
-    check('...and no "to Window" entry while there is one window', !menu1.some((i) => i.label === 'Move Tab to Window'), JSON.stringify(menu1.map((i) => i.label)));
+    check('the tab menu offers Move Tab to New Window', menu1.some((i) => i.label === 'Move tab to new window' && i.enabled), JSON.stringify(menu1.map((i) => i.label)));
+    check('...and no "to Window" entry while there is one window', !menu1.some((i) => i.label === 'Move tab to window'), JSON.stringify(menu1.map((i) => i.label)));
 
     // ---- the menu's tear-off: a pinned tab stays pinned, the same WebContents, no reload
     await app.evaluate((_e, id) => global.__pinTab(id, true), a.id);
@@ -93,7 +93,7 @@ const http = require('http');
     check('the source keeps its other tabs', winOf(two, win1).tabs.some((t) => t.id === b.id) && !winOf(two, win1).tabs.some((t) => t.id === a.id), JSON.stringify(two));
     check('the page was not reloaded: script state, typed text, scroll and title survive', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     const menu2 = await app.evaluate((_e, [w, id]) => global.__windows.tabMenu(w, id), [win1, b.id]);
-    const sub = menu2.find((i) => i.label === 'Move Tab to Window');
+    const sub = menu2.find((i) => i.label === 'Move tab to window');
     check('with two windows the menu lists the other one under Move Tab to Window', sub && sub.sub.length === 1 && /Page a/.test(sub.sub[0]), JSON.stringify(sub));
     await app.evaluate((_e, [from, id, to]) => global.__windows.moveTo(from, id, to), [menuW2.windowId, a.id, win1]);
     const one = await waitFor(async () => { const l = await windows(); return l.length === 1 && l[0].tabs.some((t) => t.id === a.id) ? l : null; });

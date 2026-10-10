@@ -1,5 +1,5 @@
 // "Keep the AI from acting on this tab" in the real app (features/ai-manners.js keepOff, main.js "[ai off-tab]", the address bar's button and the
-// tab strip), with a temp profile and no network: the shield button shows on a page and toggles per tab; the tab carries a mark in the
+// tab strip), with a temp profile and no network: the AI button (a sparkle) shows on a page while the AI panel is open or the tab is kept off, and toggles per tab; the tab carries a mark in the
 // strip; reading it still works, every tool that acts is refused on it, in the tool layer; it stays through navigation and a restart.
 // Run with LUMEN_TEST_BACKGROUND=1 so the windows stay invisible and never take focus. SHOTS=<dir> saves screenshots of the button.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -48,9 +48,13 @@ const launch = (profile) => electron.launch({
   const first = await active();
   check('the button is not shown on the new tab page (no page to keep the AI off)', (await btn()).hidden === true, JSON.stringify(await btn()));
   await goto(`${base}/one`);
+  await sleep(600);
+  check('on a web page with the AI panel closed it is not shown (it would read as page chrome on every page)', (await btn()).hidden === true, JSON.stringify(await btn()));
+  await ui.$eval('#toggle-sidebar', (b) => b.click()); // the AI panel opens: now the control is meaningful
   await waitFor(async () => (await btn()).hidden === false);
   const off = await btn();
-  check('on a web page it shows, off: pressed false, the tooltip offers it', off.hidden === false && off.pressed === 'false' && off.title === 'Keep the AI from acting on this tab' && off.label === off.title, JSON.stringify(off));
+  check('with the AI panel open it shows, off: pressed false, the tooltip offers read-only', off.hidden === false && off.pressed === 'false' && off.title === 'Make this tab read-only for the AI' && off.label === off.title, JSON.stringify(off));
+  check('it is a sparkle with a "read-only" chip, not a security shield', await ui.evaluate(() => { const b = document.getElementById('ai-off-tab'); return b.querySelector('.ai-off-label')?.textContent === 'AI read-only' && !/M8 1\.8/.test(b.innerHTML); }), '');
   check('the page works for the AI at first', (await run(first, 'read_page')).ok === true);
   await shot('ai-off-tab-off.png');
 
@@ -58,7 +62,7 @@ const launch = (profile) => electron.launch({
   const on = await waitFor(async () => { const b = await btn(); return b.pressed === 'true' && b; });
   check('clicking it turns it on: pressed, and the tooltip says the AI can read but not act', on && /can read this tab but not act on it/.test(on.title), JSON.stringify(on));
   const m = await waitFor(async () => (await mark(first))?.kept && (await mark(first)));
-  check('the tab strip marks the tab (a shield after the title, and a spoken note)', m?.kept && m.shown && /AI read-only/.test(m.label || ''), JSON.stringify(m));
+  check('the tab strip marks the tab (a slashed sparkle after the title, and a spoken note)', m?.kept && m.shown && /AI read-only/.test(m.label || ''), JSON.stringify(m));
   await shot('ai-off-tab-on.png');
 
   for (const [name, input] of [['read_page', {}], ['find', { query: 'Go' }], ['screenshot', {}]]) {

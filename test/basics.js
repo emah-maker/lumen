@@ -100,15 +100,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }, [linksTab, params]);
     const onLink = await menuFor({ linkURL: `${base}/target` });
     check('link menu: Open Link in New Tab, New Window, Private Window, Save Link As, Copy Link',
-      ['Open Link in New Tab', 'Open Link in New Window', 'Open Link in Private Window', 'Save Link As…', 'Copy Link'].every((l) => onLink.includes(l)), onLink.join(' | '));
+      ['Open link in new tab', 'Open link in new window', 'Open link in private window', 'Save link as…', 'Copy link'].every((l) => onLink.includes(l)), onLink.join(' | '));
     const onImage = await menuFor({ mediaType: 'image', srcURL: `${base}/pic.svg` });
-    check('image menu: Save Image As, Copy Image, Copy Image Address', ['Save Image As…', 'Copy Image', 'Copy Image Address'].every((l) => onImage.includes(l)), onImage.join(' | '));
+    check('image menu: Save Image As, Copy Image, Copy Image Address', ['Save image as…', 'Copy image', 'Copy image address'].every((l) => onImage.includes(l)), onImage.join(' | '));
     const onPage = await menuFor({});
-    check('page menu: Save Page As, Print and View Page Source, all localized', ['Save Page As…', 'Print…', 'View Page Source'].every((l) => onPage.includes(l)), onPage.join(' | '));
+    check('page menu: Save Page As, Print and View Page Source, all localized', ['Save page as…', 'Print…', 'View page source'].every((l) => onPage.includes(l)), onPage.join(' | '));
     await app.evaluate((_e, [id, url]) => {
       const wc = global.__settings.contents(id);
       wc.emit('context-menu', { preventDefault() {} }, { x: 5, y: 5, selectionText: '', isEditable: false, mediaType: 'none', srcURL: '', linkURL: url, mediaFlags: {}, editFlags: {}, dictionarySuggestions: [], misspelledWord: '', frame: null });
-      global.__menu.find((i) => i.label === 'Open Link in New Window').click();
+      global.__menu.find((i) => i.label === 'Open link in new window').click();
     }, [linksTab, `${base}/target`]);
     const withLink = await waitFor(async () => (await windows(app)).find((w) => w.tabs.some((t) => (t.url || '').endsWith('/target'))));
     check('Open Link in New Window opens the link in a new normal window', Boolean(withLink) && withLink.tabs.length === 1, JSON.stringify(await windows(app)));

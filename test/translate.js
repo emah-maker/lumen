@@ -92,7 +92,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   const labels = await app.evaluate((_e, i) => global.__translate.api.menuItems(global.__translate.tab(i)).map((m) => m.label).filter(Boolean), es);
   check('the page menu offers Translate to… and Translate with the AI (no on-device engine here)', labels.includes('Translate with FakeAI') && labels.includes('Translate to…') && !labels.includes('Translate on this device'), labels.join(' | '));
   const pageItem = await app.evaluate((_e, i) => global.__translate.api.pageMenuItem(global.__translate.tab(i)).map((m) => m.label), es);
-  check('the page menu item is "Translate Page…"', pageItem.join() === 'Translate Page…', pageItem.join());
+  check('the page menu item is "Translate page…"', pageItem.join() === 'Translate page…', pageItem.join());
 
   // ---- the consent card gates the first send ----
   await barClick('Translate');

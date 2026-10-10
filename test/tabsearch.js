@@ -159,10 +159,10 @@ function toneWav() {
 
   // Tab menu: Mute Tab / Mute Site
   const labels = await app.evaluate((_e, id) => global.__tabAudioMenu(id), soundId);
-  check('the tab menu offers Mute Tab and Mute Site', labels.includes('Mute Tab') && labels.includes('Mute Site'), JSON.stringify(labels));
+  check('the tab menu offers Mute Tab and Mute Site', labels.includes('Mute tab') && labels.includes('Mute site'), JSON.stringify(labels));
   const sameSiteId = await open(`${base}/beta?again`);
   const otherSiteId = await open(`${other}/beta`);
-  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Mute Site'), soundId);
+  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Mute site'), soundId);
   const siteState = async () => ({
     sound: (await mutedOf(`${base}/audio`))[0],
     same: (await mutedOf(`${base}/beta?again`))[0],
@@ -172,20 +172,20 @@ function toneWav() {
   check('but not tabs on another host', (await siteState()).other === false, JSON.stringify(await siteState()));
   await open(`${base}/alpha?later`);
   check('a page opened later on that host starts muted', await waitFor(async () => (await mutedOf(`${base}/alpha?later`))[0] === true), JSON.stringify(await mutedOf(`${base}/alpha?later`)));
-  check('the menu now offers Unmute Site', (await app.evaluate((_e, id) => global.__tabAudioMenu(id), sameSiteId)).includes('Unmute Site'), 'no Unmute Site');
+  check('the menu now offers Unmute Site', (await app.evaluate((_e, id) => global.__tabAudioMenu(id), sameSiteId)).includes('Unmute site'), 'no Unmute Site');
   // A site-muted tab that leaves the site is unmuted.
   await app.evaluate(async ({ webContents }, url) => {
     const wc = webContents.getAllWebContents().find((w) => w.getURL().endsWith('/beta?again'));
     await wc.loadURL(url);
   }, `${other}/zeta-path`);
   check('a site-muted tab that goes to another site is unmuted', await waitFor(async () => (await mutedOf(`${other}/zeta-path`))[0] === false), JSON.stringify(await mutedOf(`${other}/zeta-path`)));
-  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Unmute Site'), soundId);
+  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Unmute site'), soundId);
   check('Unmute Site unmutes them again', await waitFor(async () => (await mutedOf(`${base}/audio`))[0] === false && (await mutedOf(`${base}/alpha?later`))[0] === false), JSON.stringify(await siteState()));
   void otherSiteId;
   } else console.log('SKIP  speaker button, mute by click, Mute Site (the page never became audible: no usable audio output on this machine)');
 
   // Mute Tab from the menu.
-  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Mute Tab'), alphaId);
+  await app.evaluate((_e, id) => global.__tabAudioMenu(id, 'Mute tab'), alphaId);
   check('Mute Tab from the menu mutes it', await waitFor(async () => (await mutedOf(`${base}/alpha`))[0] === true), JSON.stringify(await mutedOf(`${base}/alpha`)));
 
   // Pages can't reach the mute or reopen calls (they're UI-only IPC).
