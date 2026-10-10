@@ -214,6 +214,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await closeTab(web);
   await inTab(sid, "location.hash = 'privacy'");
   await inTab(sid, "document.getElementById('clear-range').value = 'hour'; document.getElementById('clear-history').checked = true; document.getElementById('clear-cache').checked = false");
+  await clickEl('#clear-go'); // the first click only asks "Clear it? Click again" (nothing can be undone)
+  check('Clear data asks for a second click before it clears anything', (await app.evaluate(() => global.__settings.historyUrls())).includes(`${base}/visited-page`) && /Click again/.test(await inTab(sid, "document.getElementById('clear-go').textContent")), await inTab(sid, "document.getElementById('clear-go').textContent"));
   await clickEl('#clear-go');
   const gone = !(await app.evaluate(() => global.__settings.historyUrls())).includes(`${base}/visited-page`);
   check('clearing browsing data (last hour) removes the visit from history', had && gone, `had=${had} gone=${gone}`);
@@ -322,6 +324,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ui.evaluate((u) => window.browser.go(u), `${base}/typed`);
   const replaced = await waitFor(async () => { const t = await settingsTabs(); return !t.some((x) => x.settings) && t.some((x) => x.url === `${base}/typed`) ? t : null; });
   check('an address typed into the settings tab opens as a normal tab in its place', Boolean(replaced), JSON.stringify(await settingsTabs()));
+
+  // ---- the History page leads to Clear browsing data ----
+  await app.evaluate(() => { global.__openHistoryPage(); });
+  const inHistory = (code) => app.evaluate(async ({ webContents }, c) => { const wc = webContents.getAllWebContents().find((w) => !w.isDestroyed() && w.getURL().includes('history.html')); return wc ? wc.executeJavaScript(c, true) : '__nopage'; }, code);
+  check('the History page has a Clear browsing data button', await waitFor(async () => (await inHistory("document.getElementById('clear')?.textContent || ''")).startsWith('Clear browsing data')), await inHistory("document.body.innerText"));
+  await inHistory("document.getElementById('clear').click()");
+  check('…which opens Settings at Privacy and security', Boolean(await waitFor(async () => (await settingsTabs()).find((t) => t.settings && t.url.endsWith('#privacy')))), JSON.stringify(await settingsTabs()));
 
   check('no UI errors', errors.length === 0, errors.join(' | '));
   await app.close();

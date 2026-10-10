@@ -48,7 +48,7 @@
   content: ""; position: absolute; left: 11px; top: 13px; width: 8px; height: 4px;
   border-left: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent); transform: rotate(-45deg);
 }
-.picker-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: color-mix(in srgb, var(--text) 68%, transparent); font-size: 11.5px; }
+.picker-detail { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: color-mix(in srgb, var(--text) 68%, transparent); font-size: 11.5px; }
 .picker-badge {
   flex: none; padding: 0 6px; border-radius: 999px; line-height: 16px; font-size: 10.5px; font-weight: 500;
   background: rgb(127 127 127 / 0.16); color: color-mix(in srgb, var(--text) 78%, transparent);

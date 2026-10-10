@@ -33,6 +33,13 @@ check('score: no match is 0', S.score(q('zebra'), row) === 0);
 check('score: no words is 0', S.score([], row) === 0);
 check('ranking: label beats description', S.score(q('proxy'), { label: 'Proxy', titles: 'advanced', search: 'proxy' }) > S.score(q('proxy'), { label: 'Network', titles: 'advanced', search: 'network proxy rules' }));
 
+// Real-world searches that used to find nothing sensible.
+check("'dark mode' finds the Theme row (mode means theme, dark is one of its choices)", S.score(q('dark mode'), { label: 'Theme', titles: 'appearance', search: 'theme', keywords: 'system light dark' }) === 2);
+check("'default search' finds the search engine picker by its keywords", S.score(q('default search'), { label: 'Search engine used in the address bar', titles: 'search engine general', search: 'x', keywords: 'default search engine google bing duckduckgo' }) >= 2);
+check("'bluetooth' and 'pop-ups' find Site permissions through their keywords", S.score(q('bluetooth'), { label: 'Site permissions', titles: 'privacy', keywords: 'usb bluetooth hid' }) === 2 && S.score(q('popups'), { label: 'Site permissions', titles: 'privacy', keywords: 'popups pop-ups' }) === 2);
+check("'mic' finds a microphone row", S.matchesAll('camera and microphone', q('mic')) && S.matchesAll('camera and microphone', q('webcam')));
+check("'certificate' finds the secure-connections row through its keywords", S.score(q('certificate'), { label: 'Always use secure connections', titles: 'privacy', keywords: 'https only ssl tls certificate' }) === 2);
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);
 

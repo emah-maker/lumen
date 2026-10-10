@@ -94,6 +94,10 @@ const ARGS_FULL = [
   '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
   '--input-format', 'stream-json',
   '--permission-mode', 'bypassPermissions',
+  // The CLI's own web tools are off: Lumen is a browser, and its read_urls / read_pdf / open_tab read pages and PDFs (tables kept) with no
+  // local programs. With WebFetch a PDF link was saved to disk and then needed pdftoppm / Python, which a Windows PC does not have, and the
+  // answer was "look it up yourself" (v0.5.22). Bash, file tools and the user's own MCP servers stay.
+  '--disallowedTools', 'WebFetch,WebSearch',
 ];
 
 const SETTING_SOURCES_PROJECT = ['--setting-sources', 'project'];

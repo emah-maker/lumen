@@ -90,6 +90,28 @@ function row(label, desc, ...controls) {
   if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
   return el;
 }
+// Extra words a row is found by (scored like the names of its choices): "default search" finds the search engine picker.
+function withKeywords(el, words) {
+  el.dataset.keywords = `${el.dataset.keywords || ''} ${words}`.trim().toLowerCase();
+  return el;
+}
+// A button that asks twice: the first click changes its label to `confirmLabel` and the second click, within 4 seconds, runs `action`.
+// For actions that can't be undone. The button's name stays put; a live region says "click again" for screen readers.
+function armedButton(label, confirmLabel, action, cls = 'danger', id) {
+  const b = h('button', { class: cls, text: label, 'aria-label': label, ...(id ? { id } : {}) });
+  const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
+  const wrap = h('span', { class: 'confirm-delete' }, b, announce);
+  wrap.style.display = 'contents';
+  let timer = 0;
+  const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); announce.textContent = ''; };
+  b.addEventListener('click', () => {
+    if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; announce.textContent = confirmLabel; timer = setTimeout(reset, 4000); return; }
+    reset();
+    action();
+  });
+  wrap.button = b;
+  return wrap;
+}
 function stackRow(label, desc, ...content) {
   const el = row(label, desc);
   el.classList.add('stack');
@@ -1963,7 +1985,7 @@ async function buildSearch(card) {
   const ai = await S.ai.get();
   const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
-  card.append(row('Search engine used in the address bar', 'Also used by the new-tab page and “Search for…” in the context menu.', el));
+  card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));
 }
 
 function buildStartup(card) {
@@ -2001,9 +2023,8 @@ async function buildPrivacy(card) {
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
-    h('div', { class: 'controls' }, result, h('button', {
-      class: 'primary', id: 'clear-go', text: 'Clear data',
-      onclick: async () => {
+    h('div', { class: 'controls' }, result, armedButton(tr('settings.clear.go', 'Clear data'), tr('settings.clear.sure', 'Clear it? Click again'), async () => {
+        flash(result, '');
         const done = await S.clearData({ range: range.value, history: $('clear-history').checked, cookies: $('clear-cookies').checked, cache: $('clear-cache').checked, downloads: $('clear-downloads').checked });
         const parts = [];
         if (done.history !== undefined) parts.push(`${done.history} history entr${done.history === 1 ? 'y' : 'ies'}`);
@@ -2011,14 +2032,13 @@ async function buildPrivacy(card) {
         if (done.cache) parts.push('cache');
         if (done.downloads !== undefined) parts.push(`${done.downloads} download${done.downloads === 1 ? '' : 's'}`);
         flash(result, parts.length ? `Cleared ${parts.join(', ')}.` : 'Nothing selected.');
-      },
-    }))));
+      }, 'primary', 'clear-go'))));
 
   card.group('Tracking and connections').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
     toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
-    toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
+    withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
@@ -2088,9 +2108,10 @@ async function buildPrivacy(card) {
       h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.revokePermission(p.origin, p.permission); renderGranted(); } })))
       : [h('span', { class: 'note', text: 'No sites have asked yet.' })]));
   };
-  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke devices hid usb serial keyboard');
-  permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
-  permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
+  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission');
+  withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
+  permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
+  permissions.append(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
   // [devices] The hardware picked in a site's chooser (WebHID, WebUSB, Web Serial), with Remove (features/device-chooser.js).
   const devices = h('div', { class: 'list', id: 'device-grants' });
@@ -2103,7 +2124,7 @@ async function buildPrivacy(card) {
         h('button', { text: tr('settings.devices.remove', 'Remove'), class: 'revoke', 'aria-label': tr('settings.devices.removeFor', 'Remove {device} for {site}', { device: name, site: g.origin }), onclick: async () => { await S.removeDeviceGrant(g.origin, g.key); renderDevices(); } }));
     }) : [h('span', { class: 'note', text: tr('settings.devices.none', 'No devices yet.') })]));
   };
-  permissions.append(stackRow(tr('settings.devices.label', 'Devices sites can use'), tr('settings.devices.desc', 'Keyboards and other hardware you let a site connect to. Remove to be asked again.'), devices));
+  permissions.append(withKeywords(stackRow(tr('settings.devices.label', 'Devices sites can use'), tr('settings.devices.desc', 'Keyboards and other hardware you let a site connect to. Remove to be asked again.'), devices), 'usb hid serial bluetooth keyboard gamepad controller hardware'));
   renderDevices();
 
   // [site data] Every site that keeps cookies, with Remove (features/site-data.js).
@@ -2220,6 +2241,7 @@ async function buildPasswords(card) {
     if (reload) logins = await P.list().catch(() => []);
     const q = search.value.trim().toLowerCase();
     const shown = logins.filter((l) => !q || l.site.includes(q) || l.username.toLowerCase().includes(q));
+    deleteAll.button.disabled = logins.length === 0; // nothing to delete
     list.replaceChildren(...(shown.length ? shown.map(item) : [h('span', { class: 'note', text: logins.length ? 'No saved passwords match.' : 'No saved passwords.' })]));
     pw = await P.state();
     renderNote();
@@ -2236,7 +2258,8 @@ async function buildPasswords(card) {
     empty: 'That file is empty.', 'too-big': 'That file is too big for a passwords export.', unreadable: 'Lumen couldn’t read that file.',
     unavailable: 'Your system’s secure storage isn’t available, so nothing was imported.',
   };
-  page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask for Touch ID where the Mac has it, and for a confirmation otherwise.',
+  const deleteAll = armedButton(tr('settings.passwords.deleteAll', 'Delete all saved passwords'), tr('settings.passwords.deleteAllSure', 'Delete all? Click again'), async () => { pw = await P.removeAll(); renderLogins(); }, 'danger', 'passwords-delete-all');
+  page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask you to confirm first (Touch ID, Windows Hello or your system password).',
     h('div', { class: 'controls' }, search), list,
     h('div', { class: 'controls' }, result,
       h('button', { id: 'passwords-import', text: 'Import from CSV…', onclick: async () => {
@@ -2246,7 +2269,7 @@ async function buildPasswords(card) {
         else flash(result, `Imported ${r.added} new, ${r.updated} updated${r.unchanged ? `, ${r.unchanged} already saved` : ''}${r.skipped ? `, ${r.skipped} skipped (not a secure web site)` : ''}. Delete the CSV file now: it isn’t encrypted.`);
         renderLogins();
       } }),
-      h('button', { class: 'danger', id: 'passwords-delete-all', text: 'Delete all saved passwords', onclick: async () => { pw = await P.removeAll(); renderLogins(); } }))));
+      deleteAll)));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
   renderLogins();
 }
@@ -2529,20 +2552,7 @@ function buildTranslatePacks(card) {
   let busy = false;
   let downloadingCode = '';
   // Delete asks twice (a second click within 4 seconds): a pack is 20 to 55 MB of download.
-  const confirmDelete = (label, confirmLabel, action, cls = 'danger', id) => {
-    const b = h('button', { class: cls, text: label, 'aria-label': label, ...(id ? { id } : {}) }); // the name stays put; the live region says "Click again"
-    const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' }); // screen readers hear "Click again" (one region per button)
-    const wrap = h('span', { class: 'confirm-delete' }, b, announce);
-    wrap.style.display = 'contents';
-    let timer = 0;
-    const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); announce.textContent = ''; };
-    b.addEventListener('click', () => {
-      if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; announce.textContent = confirmLabel; timer = setTimeout(reset, 4000); return; }
-      reset();
-      action();
-    });
-    return wrap;
-  };
+  const confirmDelete = armedButton;
   const arrow = (a, b) => `${a === 'en' ? langName('en') : langName(a)} → ${b === 'en' ? langName('en') : langName(b)}`;
   const render = (data) => {
     list.replaceChildren(...(data.installed.length ? data.installed.map((p) => h('div', { class: 'item' },
@@ -3043,7 +3053,7 @@ async function init() {
     try {
       await build(slot);
     } catch (err) {
-      slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), String(err?.message || err)));
+      slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
     }
   }));
   refreshRestartNotes();
