@@ -99,7 +99,8 @@ function render() {
   for (const folder of folders) {
     const items = shown.filter((b) => b.folder === folder);
     if (!items.length) continue;
-    list.append(el('section', {}, el('h2', { textContent: folder || t('bookmarksPage.topLevel') }), ...items.map(row)));
+    // (no "Bookmarks" heading under the page's own title when nothing is in a folder)
+    list.append(el('section', {}, ...(folder || folders.length > 1 ? [el('h2', { textContent: folder || t('bookmarksPage.topLevel') })] : []), ...items.map(row)));
   }
 }
 

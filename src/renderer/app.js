@@ -79,6 +79,7 @@ let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
 const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.25" width="7" height="5" rx="1"/><path d="M4 5.25V4a2 2 0 0 1 4 0v1.25"/></svg>';
+const INFO = '<svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.75"/><path d="M6 5.4v2.9M6 3.7v.01"/></svg>'; // a page on this computer (http://localhost): neither lock nor warning
 const WARN = '<svg viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 5v2.25M6 8.75v.01"/></svg>';
 
 // Lumen's own pages: a gear for Settings, a clock for History.
@@ -145,6 +146,11 @@ function showAddress(keepText = false) { // keepText: refresh the lock only, the
     security.className = 'security';
     setMarkup(security, LOCK);
     setSecurityName(security, t('security.secure'));
+    security.hidden = false;
+  } else if (currentUrl.startsWith('http:') && window.chromeHelpers.isLoopbackUrl(currentUrl)) {
+    security.className = 'security';
+    setMarkup(security, INFO);
+    setSecurityName(security, t('security.local'));
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
@@ -1272,7 +1278,28 @@ $('tabs').addEventListener('wheel', (e) => {
   e.preventDefault();
   strip.scrollLeft += e.deltaMode === 1 ? delta * 40 : delta; // line-based wheels report lines, not pixels
 }, { passive: false });
-new ResizeObserver(updateOverflow).observe($('tabs'));
+// A strip that gets narrower (the window shrinks, a button appears beside it) can leave the tab in front scrolled out
+// of sight, with nothing to show where it went; it comes back into view, but only when it was visible before, so a strip
+// the user scrolled away on purpose stays put.
+let stripWidth = 0;
+let activeWasVisible = true;
+$('tabs').addEventListener('scroll', () => { activeWasVisible = activeTabVisible(); }, { passive: true });
+function activeTabVisible() {
+  const strip = $('tabs');
+  const el = strip.querySelector('.tab.active');
+  if (!el) return true;
+  const s = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.left >= s.left - 1 && r.right <= s.right + 1;
+}
+new ResizeObserver(() => {
+  updateOverflow();
+  const width = $('tabs').clientWidth;
+  const shrank = stripWidth && width < stripWidth - 1;
+  stripWidth = width;
+  if (shrank && activeWasVisible && !activeTabVisible()) $('tabs').querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  activeWasVisible = activeTabVisible();
+}).observe($('tabs'));
 
 function startRename(groupId) {
   const label = $('tabs').querySelector(`.group-label[data-group="${groupId}"]`);
@@ -2094,6 +2121,15 @@ $('omnibox').addEventListener('submit', (e) => {
 
 $('back').onclick = () => window.browser.back();
 $('forward').onclick = () => window.browser.forward();
+// Right-click (or the menu key) on Back / Forward: the pages behind / ahead, as in Chrome and Edge.
+for (const dir of ['back', 'forward']) {
+  $(dir).addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if ($(dir).disabled) return;
+    const r = $(dir).getBoundingClientRect();
+    window.browser.navMenu?.(dir, { x: r.left, y: r.bottom + 2 });
+  });
+}
 $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
