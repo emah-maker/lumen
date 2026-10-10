@@ -16,7 +16,7 @@
     h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 10px; }
     p { margin: 0 0 6px; color: var(--muted); overflow-wrap: anywhere; }
     .code { font-size: 12px; }
-    button { margin-top: 20px; height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: background-color 150ms ease-out, transform 90ms ease-out; }
+    button { margin-top: 20px; margin-right: 8px; height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: background-color 150ms ease-out, transform 90ms ease-out; }
     button:active { transform: scale(0.96); }
     button:hover { background: var(--hover); }
   </style>
@@ -28,6 +28,7 @@
     <p id="hint" hidden></p>
     <p class="code" id="code"></p>
     <button id="retry" type="button" data-i18n="errorPage.retry">Try again</button>
+    <button id="search" type="button" hidden></button>
   </main>
   <script src="i18n.js"></script>
   <script src="error-kinds.js"></script>

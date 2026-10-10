@@ -9,7 +9,7 @@
     mode: ['theme'], night: ['dark'], dim: ['dark'], appearance: ['theme'], colour: ['color'], colours: ['color'],
     adblock: ['tracker', 'trackers', 'ads'], adblocker: ['tracker', 'trackers', 'ads'], ads: ['tracker', 'trackers'], advert: ['ads', 'tracker'], tracking: ['tracker', 'trackers'],
     password: ['passwords', 'logins', 'sign-in'], login: ['logins', 'passwords', 'sign-in'],
-    history: ['browsing data', 'clear'], cache: ['browsing data', 'clear'], cookie: ['cookies', 'site data'],
+    history: ['browsing data'], cache: ['browsing data'], cookie: ['cookies', 'site data'],
     vpn: ['proxy'], network: ['proxy'], lag: ['performance', 'graphics'], slow: ['performance', 'sleep', 'memory'], speed: ['performance'],
     ram: ['memory'], battery: ['sleep', 'memory'], gpu: ['graphics', 'acceleration'],
     font: ['text size', 'zoom'], zoom: ['text size', 'page zoom'], big: ['zoom', 'text size'], bigger: ['zoom', 'text size'],

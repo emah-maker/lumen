@@ -105,6 +105,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'adblock'; s.dispatchEvent(new Event('input')); }");
   const adblock = await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent)");
   check('search “adblock” finds the blocker and not the Widgets page', adblock.includes('Block ads and trackers') && !adblock.includes('Widgets'), JSON.stringify(adblock));
+  // Searches that used to find nothing or rank the wrong row first (Round 2 of the Settings audit).
+  const searchRows = (q) => inTab(sid, `(() => { const s = document.getElementById('search'); s.value = ${JSON.stringify(q)}; s.dispatchEvent(new Event('input'));
+    const rows = []; for (const p of document.querySelectorAll('#sections > .pane')) { if (p.hidden) continue; for (const r of p.querySelectorAll('.row')) if (!r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')) rows.push({ pane: p.style.order, order: Number(p.style.order || 0), label: r.querySelector('.label')?.textContent.trim() }); }
+    return rows.sort((a, b) => a.order - b.order).map((r) => r.label); })()`);
+  const clearHist = await searchRows('clear history');
+  check('search “clear history” finds Clear browsing data and not Widget cards', clearHist[0] === 'Clear browsing data' && !clearHist.includes('Widget cards'), JSON.stringify(clearHist));
+  for (const q of ['camera', 'microphone']) { const r = await searchRows(q); check(`search “${q}” lists the permission defaults before Put unused tabs to sleep`, r.indexOf('Default for new sites') === 0 && r.includes('Put unused tabs to sleep'), JSON.stringify(r)); }
+  check('search “incognito” finds the Private windows row', (await searchRows('incognito'))[0] === 'Private windows (incognito)');
+  check('search “sync” says Lumen doesn’t sync', (await searchRows('sync'))[0] === 'Sync across devices' && /doesn’t sync/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
+  check('search “print” finds Printing and Ctrl+P', (await searchRows('print'))[0] === 'Printing' && /ctrl\+p/i.test(await inTab(sid, "[...document.querySelectorAll('.row')].find((r) => r.querySelector('.label')?.textContent === 'Printing')?.dataset.search || ''")));
+  await searchRows('zzqxv');
+  check('a search with no match offers suggestions that search when clicked', (await inTab(sid, "document.querySelectorAll('#no-results-suggest button').length")) >= 3 && (await inTab(sid, "(() => { document.querySelector('#no-results-suggest button').click(); return document.getElementById('no-results').hidden && document.getElementById('search').value.length > 0; })()")) === true);
+  // The AI switches read as positives; the stored keys keep their meaning (aiHandsOff true = the AI is kept off the pages).
+  await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");
+  await inTab(sid, "document.querySelector('#nav a[data-section=ai]').click()");
+  await waitFor(() => inTab(sid, "Boolean(document.getElementById('pref-aiHandsOff'))"));
+  const lbl = (key) => inTab(sid, `document.getElementById('pref-${key}')?.getAttribute('aria-label')`);
+  check('AI switches are phrased as positives', (await lbl('aiHandsOff')) === 'Let the AI act on my pages' && (await lbl('aiStayOnMyTab')) === 'Let the AI bring its tabs to the front' && (await lbl('agentsNoAsk')) === 'Ask before agents act in their own window', `${await lbl('aiHandsOff')} | ${await lbl('aiStayOnMyTab')} | ${await lbl('agentsNoAsk')}`);
+  const hands = () => inTab(sid, 'window.lumenSettings.get().then((s) => s.prefs.aiHandsOff)');
+  check('aiHandsOff: the default (false) shows the switch on', (await inTab(sid, "document.getElementById('pref-aiHandsOff').checked")) === true && !(await hands()));
+  await inTab(sid, "document.getElementById('pref-aiHandsOff').click()");
+  check('turning the switch off stores aiHandsOff = true', await waitFor(async () => (await hands()) === true), String(await hands()));
+  await inTab(sid, "document.getElementById('pref-aiHandsOff').click()");
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'steps'; s.dispatchEvent(new Event('input')); }");
   check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "document.querySelector('#cat-ai details.adv-rows')?.open === true"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");

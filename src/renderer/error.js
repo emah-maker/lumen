@@ -28,3 +28,12 @@ document.getElementById('code').textContent = desc ? `${desc}${params.get('code'
 const retry = document.getElementById('retry');
 if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);
 else retry.hidden = true;
+// A name that didn't resolve: main passes the default search engine's URL for the host, so the hint's
+// "search for the site instead" is one click (only an http(s) address is followed).
+const searchUrl = params.get('search') || '';
+const searchButton = document.getElementById('search');
+if (!crashed && host && /^https?:\/\//i.test(searchUrl)) {
+  searchButton.textContent = window.t('errorPage.searchFor', { site: host });
+  searchButton.hidden = false;
+  searchButton.onclick = () => location.replace(searchUrl);
+}
