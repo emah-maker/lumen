@@ -120,6 +120,7 @@
     const head = h('div', { className: 'chat-list-head' }, h('h2', { textContent: `${T('research.title')} · ${T('research.count', { n: state.count })}` }), close);
     const select = h('select', { className: 'rs-style' }, ...(state.styles || []).map((s) => h('option', { value: s.id, textContent: s.name, selected: s.id === style })));
     select.setAttribute('aria-label', T('research.style'));
+    select.title = T('research.style'); // no visible label: hovering says what the menu is
     select.onchange = () => { style = select.value; try { localStorage.setItem('lumen.research.style', style); } catch { /* fine */ } };
     const bar = h('div', { className: 'rs-bar' },
       h('button', { type: 'button', className: 'btn rs-add', textContent: T('research.addPage'), disabled: busy === 'add', onclick: addPage }),
@@ -165,7 +166,7 @@
     panel.hidden = true;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
   button.onclick = () => (panel.hidden ? openPanel() : closePanel(true));
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closePanel(true); } });

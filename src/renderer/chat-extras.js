@@ -87,8 +87,15 @@
         title.push(window.t('usage.context.title', { percent: Math.round(bar.percent), used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
         if (bar.compactPercent) title.push(window.t('usage.grok.compact.title', { percent: bar.compactPercent }));
       }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
-      if (bar.costUSD > 0) text.push(window.t('usage.grok.cost', { cost: money(bar.costUSD) }));
+      // This chat's own tokens and cost are the one line under the header (chats.js). Today's total shows here only
+      // when there is no context percent to show; otherwise it sits in the tooltip, so two lines never read alike.
+      const todayParts = [];
+      if (bar.tokens) todayParts.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
+      if (bar.costUSD > 0) todayParts.push(money(bar.costUSD));
+      if (todayParts.length) {
+        if (bar.percent == null) text.push(window.t('usage.todayTotal', { usage: todayParts.join(' · ') }));
+        else title.push(`${window.t('usage.todayTotal', { usage: todayParts.join(' · ') })}.`);
+      }
     }
     const w = bar.windows;
     if (w && w.d7?.turns) {

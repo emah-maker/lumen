@@ -553,7 +553,7 @@ function pickerOptions(options = modelOptions()) {
   const s = agent.messages?.settings;
   const last = s?.autoLast || null;
   const pick = chatModelPick() ?? readSettings().model ?? null;
-  const withOwn = autoModel.withProviderAutos(options, { pick, last, exclude: autoExcluded(), describe: (scope) => t('models.auto.providerDetail', { name: autoModel.scopeName(scope) }) });
+  const withOwn = autoModel.withProviderAutos(options, { pick, last, exclude: autoExcluded(), dedupe: true, describe: (scope) => t('models.auto.providerDetail', { name: autoModel.scopeName(scope) }) });
   return [autoModel.pickerEntry({ last: last && !last.scope ? last : null, describe: t('models.auto.detail') }), ...withOwn];
 }
 

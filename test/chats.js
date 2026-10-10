@@ -81,12 +81,12 @@ const fakeClient = (app) => app.evaluate(() => {
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => /Reply 1\./.test(document.getElementById('messages').textContent)));
   let usage = await waitFor(() => ui.evaluate(() => { const el = document.getElementById('chat-usage'); return !el.hidden && el.textContent; }));
-  check('usage line shows tokens and cost after a reply', usage === '1.2k tokens · ~$0.01', usage);
+  check('usage line shows tokens and cost after a reply', usage === 'This chat: 1.2k tokens · ~$0.01', usage);
   await ui.fill('#prompt', 'second follow-up');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => /Reply 2\./.test(document.getElementById('messages').textContent)));
   usage = await waitFor(() => ui.evaluate(() => { const t = document.getElementById('chat-usage').textContent; return /2\.4k/.test(t) && t; }));
-  check('usage adds up across replies', usage === '2.4k tokens · ~$0.02', usage);
+  check('usage adds up across replies', usage === 'This chat: 2.4k tokens · ~$0.02', usage);
   // [context] The ring left of Send: the last request's input against the model's window.
   const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
   const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
@@ -135,7 +135,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await rowAction(legacyId, '.chat-open');
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
-  check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === '2.4k tokens · ~$0.02', 'usage line');
+  check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === 'This chat: 2.4k tokens · ~$0.02', 'usage line');
   check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 200\.0k/.test(r.title); }), JSON.stringify(await ring()));
   const hostsBack = await app.evaluate(() => [...global.__agent.approvedHosts]);
   check('approved sites come back with their chat', hostsBack.includes('approved-in-legacy.test') && !hostsBack.includes('approved-in-new.test'), JSON.stringify(hostsBack));

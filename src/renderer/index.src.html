@@ -136,21 +136,10 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </div>
         <div class="sidebar-actions">
-          <button class="icon-btn helpers-btn" id="helpers-btn" type="button" title="Helpers: on" aria-label="Helpers" aria-pressed="true" data-i18n-aria-label="sidebar.helpers">
-            <svg viewBox="0 0 16 16"><circle cx="8" cy="3.5" r="1.6"/><circle cx="3.5" cy="12" r="1.6"/><circle cx="12.5" cy="12" r="1.6"/><path d="M7.2 5 4.3 10.5M8.8 5l2.9 5.5"/></svg>
-          </button>
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
-          <button class="icon-btn tasks-btn" id="tasks-btn" type="button" title="Background tasks" aria-label="Background tasks" aria-haspopup="dialog" aria-expanded="false" aria-controls="task-panel" data-i18n-title="tasks.button" data-i18n-aria-label="tasks.button">
-            <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
-            <span class="task-badge" id="tasks-badge" aria-hidden="true" hidden></span>
-          </button>
-          <button class="icon-btn" id="research-btn" type="button" title="Research board" aria-label="Research board" aria-haspopup="dialog" aria-expanded="false" aria-controls="research-panel" data-i18n-title="research.button" data-i18n-aria-label="research.button">
-            <svg viewBox="0 0 16 16"><path d="M3.5 2.5h7a2 2 0 0 1 2 2v9h-7a2 2 0 0 1-2-2zM3.5 11.5a2 2 0 0 1 2-2h7M6 5.5h4"/></svg>
-            <span class="task-badge research-badge" id="research-badge" aria-hidden="true" hidden></span>
-          </button>
-          <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
+          <button class="icon-btn" id="chat-history" title="Chat history" aria-label="Chat history" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
             <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
           </button>
           <button class="icon-btn" id="new-chat" title="New chat (Ctrl+Shift+K)" aria-keyshortcuts="Control+Shift+K Meta+Shift+K" aria-label="New chat" data-i18n-title="sidebar.newChat.title" data-i18n-aria-label="sidebar.newChat">
@@ -161,6 +150,19 @@
               <svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" class="knob"/><circle cx="8" cy="8" r="1" class="knob"/><circle cx="12.5" cy="8" r="1" class="knob"/></svg>
             </button>
             <div class="more-menu" id="more-menu" role="menu" hidden>
+            <button class="icon-btn menu-item labeled" role="menuitemcheckbox" id="helpers-btn" type="button" title="Helpers: on" aria-checked="true">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="3.5" r="1.6"/><circle cx="3.5" cy="12" r="1.6"/><circle cx="12.5" cy="12" r="1.6"/><path d="M7.2 5 4.3 10.5M8.8 5l2.9 5.5"/></svg>
+            <span class="menu-label" data-i18n="sidebar.helpers">Helpers</span><span class="menu-state" id="helpers-state" data-i18n="sidebar.state.on">On</span>
+          </button>
+            <button class="icon-btn menu-item labeled tasks-btn" role="menuitem" id="tasks-btn" type="button" title="Background tasks" aria-haspopup="dialog" aria-expanded="false" aria-controls="task-panel">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
+            <span class="menu-label" data-i18n="tasks.button">Background tasks</span><span class="task-badge" id="tasks-badge" aria-hidden="true" hidden></span>
+          </button>
+            <button class="icon-btn menu-item labeled" role="menuitem" id="research-btn" type="button" title="Research board" aria-haspopup="dialog" aria-expanded="false" aria-controls="research-panel">
+            <svg viewBox="0 0 16 16"><path d="M3.5 2.5h7a2 2 0 0 1 2 2v9h-7a2 2 0 0 1-2-2zM3.5 11.5a2 2 0 0 1 2-2h7M6 5.5h4"/></svg>
+            <span class="menu-label" data-i18n="research.button">Research board</span><span class="task-badge research-badge" id="research-badge" aria-hidden="true" hidden></span>
+          </button>
+            <div class="menu-sep" role="separator"></div>
             <button class="icon-btn menu-item" role="menuitem" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
             <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
           </button>
@@ -294,6 +296,7 @@
   <script src="highlight.js"></script>
   <script src="gen-images.js"></script>
   <script src="run-state.js"></script>
+  <script src="step-time.js"></script>
   <script src="../ai/screen-intent.js"></script>
   <script src="agent-pill.js"></script>
   <script src="chat-core.js"></script>

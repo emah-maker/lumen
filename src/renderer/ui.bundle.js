@@ -1263,10 +1263,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     h.classList.add('has-ubar');
     h.append(usageBars.element(desc, { label: tr('usage.bar.labelFor', '{name} usage', { name: h.firstChild.textContent }) }));
   }
-  function heading(textContent, count) {
+  function heading(textContent, count, needsSignIn = false) {
     const h = Object.assign(document.createElement('div'), { className: 'picker-group' });
     h.setAttribute('role', 'presentation');
     h.append(Object.assign(document.createElement('span'), { textContent }));
+    // A whole provider that is not signed in says so at its heading, not only on each row (or only when hovering a row).
+    if (needsSignIn) h.append(Object.assign(document.createElement('span'), { className: 'picker-badge warn picker-group-signin', textContent: badgeText('sign in') }));
     if (count) h.append(Object.assign(document.createElement('span'), { className: 'picker-count', textContent: String(count) }));
     return h;
   }
@@ -1343,7 +1345,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
       usageRows = !(g && (headings || words.length || ordered.length > 1 || out.length)); // no heading to carry the provider's bar: each row does
-      if (!usageRows) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
+      if (!usageRows) { const needsSignIn = members.length > 0 && members.every((m) => (m.o.dataset.badges || '').split(',').includes('sign in'));
+        const h = heading(g, headings || members.length > SHOWN ? members.length : 0, needsSignIn); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); decorateHeading(h, members[0] && members[0].o); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {
@@ -1978,6 +1981,25 @@ explain describe list find give compare difference summarize summary write rewri
   else root.runState = api;
 })(this);
 ;
+// ---- step-time.js
+// How long a step of the AI's work took, as the short text shown at the end of its row in the chat ("2.4s", "1m 05s").
+// Under a second shows nothing: most clicks and reads are that fast, and a "0.2s" on every row would only be noise.
+// Plain script in the UI; test/sidebar-ux2-units.js loads it with require().
+(function (root) {
+  function format(ms) {
+    if (!Number.isFinite(ms) || ms < 1000) return '';
+    const s = ms / 1000;
+    if (s < 10) return `${s.toFixed(1)}s`;
+    if (s < 60) return `${Math.round(s)}s`;
+    const m = Math.floor(s / 60);
+    const rest = Math.round(s - m * 60);
+    return rest === 60 ? `${m + 1}m 00s` : `${m}m ${String(rest).padStart(2, '0')}s`;
+  }
+  const api = { format };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.stepTime = api;
+})(this);
+;
 // ---- ../ai/screen-intent.js
 // Does this message point at what the user is looking at? ("what is this", "explain this error", "is this a scam",
 // "solve this", "on my screen") When it does, the sidebar attaches a screenshot of the active tab, so the user does not
@@ -2404,7 +2426,9 @@ function setAssistantIdentity(group) {
   assistantIdentity = who;
   chatHost.identity?.(who, first); // the sidebar's toolbar button follows the model's company (app.js)
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
+  // "Ask anything, or give <name> a task": the connected assistant's name; with Auto (or nothing known) it is Lumen, not "AI" or one provider.
+  const emptyName = who === ASSISTANTS.AI ? 'Lumen' : who.name;
+  if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
   if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
@@ -2461,7 +2485,7 @@ async function loadModels() {
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
-  setAssistantIdentity(current?.group);
+  setAssistantIdentity(current?.auto && !current.autoScope ? '' : current?.group); // Auto across providers is nobody's name: the neutral mark, not the provider it last used
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
@@ -2626,6 +2650,7 @@ function setRunning(value) {
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value; // (main never edits a chat mid-run)
   send.classList.toggle('stop', value);
+  send.dataset.label = value ? t('composer.stop.short') : ''; // a word beside the square: "Stop"
   send.title = value ? t('composer.stop') : t('composer.send.title');
   send.setAttribute('aria-label', value ? t('composer.stop') : t('composer.send'));
   updateSend();
@@ -3237,6 +3262,27 @@ function appendToTurn(el) {
   return el;
 }
 
+// A step's elapsed time, at the end of its row: ticking from 3 s while it runs, final once it is done (renderer/step-time.js says
+// nothing under a second). One timer for all running steps, off when none is.
+let stepClock = 0;
+function showStepTime(step, final = false) {
+  const slot = step.querySelector('.step-time');
+  const t0 = Number(step.dataset.t0);
+  if (!slot || !t0) return;
+  const ms = Date.now() - t0;
+  const text = window.stepTime ? window.stepTime.format(ms) : '';
+  slot.textContent = !final && ms < 3000 ? '' : text;
+  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
+}
+function startStepClock() {
+  if (stepClock) return;
+  stepClock = setInterval(() => {
+    const running = messages.querySelectorAll('.step.running[data-t0]');
+    if (!running.length) { clearInterval(stepClock); stepClock = 0; return; }
+    for (const step of running) showStepTime(step);
+  }, 1000);
+}
+
 // [annotate] A finished annotate step: "Drew N marks on the page" with Show again / Clear (the drawing is in the tab itself).
 function annotateChip(step) {
   const count = Number(step.dataset.marks) || 0;
@@ -3454,6 +3500,7 @@ window.assistant.onEvent((event) => {
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
       step.title = label;
+      if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); startStepClock(); } // how long it has been going / took
       appendToTurn(step);
       endStream();
       turn.text = null;
@@ -3473,6 +3520,7 @@ window.assistant.onEvent((event) => {
       const step = turn.steps.get(event.id);
       if (!step) break;
       step.className = event.ok ? 'step done' : event.stopped ? 'step stopped' : 'step failed';
+      showStepTime(step, true);
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
       if (!event.ok && event.error) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -3754,8 +3802,10 @@ const helpersButton = $('helpers-btn');
 let helpersOn = true;
 function renderHelpers() {
   if (!helpersButton) return;
-  helpersButton.setAttribute('aria-pressed', String(helpersOn));
+  helpersButton.setAttribute('aria-checked', String(helpersOn)); // a labelled row in the More menu: "Helpers  On"
   helpersButton.title = t(helpersOn ? 'sidebar.helpers.on' : 'sidebar.helpers.off');
+  const state = $('helpers-state');
+  if (state) state.textContent = t(helpersOn ? 'sidebar.state.on' : 'sidebar.state.off');
 }
 if (helpersButton) {
   helpersButton.onclick = async () => {
@@ -3788,6 +3838,14 @@ function renderPerm() {
   permButton.dataset.mode = permMode;
   permButton.setAttribute('aria-pressed', String(permMode !== 'ask'));
   permButton.title = t(`sidebar.perm.btn.${permMode}`);
+  permButton.setAttribute('aria-label', t('sidebar.perm.label', { mode: t(`sidebar.perm.${permMode}`) })); // the name says the state, not only the feature
+  // Visible state: the bolt alone is easy to miss, so Auto and Bypass say their name beside it ("Ask" shows nothing).
+  let stateLabel = permButton.querySelector('.perm-state');
+  if (permMode === 'ask') stateLabel?.remove();
+  else {
+    if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
+    stateLabel.textContent = t(`sidebar.perm.short.${permMode}`);
+  }
   permBadge.hidden = permMode !== 'bypass';
   for (const [mode, item] of permItems) {
     const armed = permArmed?.mode === mode;
@@ -8141,7 +8199,10 @@ $('agent-stop')?.addEventListener('click', () => {
   const usageLine = $('chat-usage');
 
   function refreshUsage(text) {
-    usageLine.textContent = text || '';
+    // The one usage line under the header: this chat's tokens and cost, said as such ("This chat: 1.5k tokens · ~$0.01").
+    // Today's total is not a second line: it is in the context meter's tooltip and Settings → Usage.
+    usageLine.dataset.usage = text || '';
+    usageLine.textContent = text ? window.chatTr('chats.usage.line', 'This chat: {usage}').replace('{usage}', text) : '';
     usageLine.hidden = !text;
     usageLine.title = text ? window.chatTr('chats.usage.title', 'Tokens and estimated cost of this chat') : '';
   }
@@ -8334,6 +8395,14 @@ $('agent-stop')?.addEventListener('click', () => {
     badge.classList.toggle('waiting', waiting > 0);
     button.setAttribute('aria-label', count ? `${T('tasks.button')}: ${T('tasks.button.badge', { running, waiting })}` : T('tasks.button'));
     byId('toggle-sidebar').classList.toggle('has-task-attention', waiting > 0);
+    // The tasks button lives in the More menu: its count shows as a dot on More (accent while running, amber when one waits for you).
+    const more = byId('more-actions');
+    if (more) {
+      more.classList.toggle('has-attention', count > 0 || state.unseen > 0);
+      more.classList.toggle('waiting', waiting > 0);
+      more.title = count ? `${T('sidebar.more')}: ${T('tasks.button.badge', { running, waiting })}` : state.unseen > 0 ? `${T('sidebar.more')}: ${T('tasks.button.unseen', { count: state.unseen })}` : T('sidebar.more');
+      more.setAttribute('aria-label', more.title);
+    }
     button.classList.toggle('has-unseen', !count && state.unseen > 0); // finished while you were elsewhere
     if (!count && state.unseen > 0) button.setAttribute('aria-label', `${T('tasks.button')}: ${T('tasks.button.unseen', { count: state.unseen })}`);
     const enabled = state.settings.enabled;
@@ -8382,7 +8451,7 @@ $('agent-stop')?.addEventListener('click', () => {
     open = null;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
 
   async function render() {
@@ -8911,6 +8980,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const head = h('div', { className: 'chat-list-head' }, h('h2', { textContent: `${T('research.title')} · ${T('research.count', { n: state.count })}` }), close);
     const select = h('select', { className: 'rs-style' }, ...(state.styles || []).map((s) => h('option', { value: s.id, textContent: s.name, selected: s.id === style })));
     select.setAttribute('aria-label', T('research.style'));
+    select.title = T('research.style'); // no visible label: hovering says what the menu is
     select.onchange = () => { style = select.value; try { localStorage.setItem('lumen.research.style', style); } catch { /* fine */ } };
     const bar = h('div', { className: 'rs-bar' },
       h('button', { type: 'button', className: 'btn rs-add', textContent: T('research.addPage'), disabled: busy === 'add', onclick: addPage }),
@@ -8956,7 +9026,7 @@ $('agent-stop')?.addEventListener('click', () => {
     panel.hidden = true;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
   button.onclick = () => (panel.hidden ? openPanel() : closePanel(true));
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closePanel(true); } });
@@ -9203,8 +9273,15 @@ $('agent-stop')?.addEventListener('click', () => {
         title.push(window.t('usage.context.title', { percent: Math.round(bar.percent), used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
         if (bar.compactPercent) title.push(window.t('usage.grok.compact.title', { percent: bar.compactPercent }));
       }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
-      if (bar.costUSD > 0) text.push(window.t('usage.grok.cost', { cost: money(bar.costUSD) }));
+      // This chat's own tokens and cost are the one line under the header (chats.js). Today's total shows here only
+      // when there is no context percent to show; otherwise it sits in the tooltip, so two lines never read alike.
+      const todayParts = [];
+      if (bar.tokens) todayParts.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
+      if (bar.costUSD > 0) todayParts.push(money(bar.costUSD));
+      if (todayParts.length) {
+        if (bar.percent == null) text.push(window.t('usage.todayTotal', { usage: todayParts.join(' · ') }));
+        else title.push(`${window.t('usage.todayTotal', { usage: todayParts.join(' · ') })}.`);
+      }
     }
     const w = bar.windows;
     if (w && w.d7?.turns) {
@@ -10537,7 +10614,7 @@ $('agent-stop')?.addEventListener('click', () => {
     takesInput: false,
     run() {
       const line = document.getElementById('chat-usage');
-      const used = line && !line.hidden ? line.textContent.trim() : '';
+      const used = line && !line.hidden ? (line.dataset.usage || line.textContent).trim() : '';
       const box = notice(used ? tr('slash.cost.line', 'This chat: {usage}.', { usage: used }) : tr('slash.cost.none', 'Nothing used yet in this chat.'));
       if (box && extras.openUsage) {
         const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.cost.open', 'Open Usage') });

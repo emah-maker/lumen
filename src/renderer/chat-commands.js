@@ -192,7 +192,7 @@
     takesInput: false,
     run() {
       const line = document.getElementById('chat-usage');
-      const used = line && !line.hidden ? line.textContent.trim() : '';
+      const used = line && !line.hidden ? (line.dataset.usage || line.textContent).trim() : '';
       const box = notice(used ? tr('slash.cost.line', 'This chat: {usage}.', { usage: used }) : tr('slash.cost.none', 'Nothing used yet in this chat.'));
       if (box && extras.openUsage) {
         const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.cost.open', 'Open Usage') });
