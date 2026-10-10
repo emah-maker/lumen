@@ -17,15 +17,22 @@ function appIcon() {
 // Electron's binary is "Electron". Windows takes a FriendlyAppName from the registry over it (per user,
 // no admin), and caches the description it read in MuiCache: set both to Lumen. Runs at startup,
 // in the background.
-function fixAppName(app) {
+// Notifications are named and drawn from the app ID's own registry entry (AppUserModelId\<id>: DisplayName, IconUri) when
+// there is one; without it Windows fell back to the exe's description, so a finished chat's notification said "Electron".
+function fixAppName(app, appId = 'com.lumen.browser') {
   if (process.platform !== 'win32' || !app.isPackaged) return;
-  const exe = process.execPath;
-  const values = [
-    [`HKCU\\Software\\Classes\\Applications\\${path.basename(exe)}`, 'FriendlyAppName'],
-    ['HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache', `${exe}.FriendlyAppName`],
-  ];
+  const values = appNameValues(process.execPath, appId, appIcon());
   const { execFile } = require('child_process');
-  for (const [key, name] of values) execFile('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', 'Lumen', '/f'], { windowsHide: true, timeout: 8000 }, () => {});
+  for (const [key, name, data] of values) execFile('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', data, '/f'], { windowsHide: true, timeout: 8000 }, () => {});
+}
+// [key, value name, data] for fixAppName: pure, for the tests.
+function appNameValues(exe, appId, icon) {
+  return [
+    [`HKCU\\Software\\Classes\\Applications\\${path.basename(exe)}`, 'FriendlyAppName', 'Lumen'],
+    ['HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache', `${exe}.FriendlyAppName`, 'Lumen'],
+    [`HKCU\\Software\\Classes\\AppUserModelId\\${appId}`, 'DisplayName', 'Lumen'],
+    [`HKCU\\Software\\Classes\\AppUserModelId\\${appId}`, 'IconUri', icon],
+  ];
 }
 
 // Per-user paths (what `--install-shortcuts` writes to) plus the all-users equivalents: a
@@ -155,4 +162,4 @@ function acquireInstanceLock(app) {
   return false;
 }
 
-module.exports = { appIcon, fixAppName, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };
+module.exports = { appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };

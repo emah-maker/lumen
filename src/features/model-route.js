@@ -66,7 +66,7 @@ const tierOf = (s, coding = false) => (s >= HEAVY_MIN ? 'heavy' : s <= (coding ?
 //   chat       everything else: the score decides              rewrite    translate, rephrase, proofread: small unless long
 //   page       a question about the page in view: small, the score may raise it
 //   browse     open / click / fill / buy: reliable tool use beats raw size; a multi-step or form task is never the smallest
-//   research   sources, literature, many tabs: synthesis over long context, never the smallest
+//   research   sources, literature, verifying a value against a source, many tabs: synthesis over long context, never the smallest
 //   compare    "compare", "versus", "pros and cons", "which should I buy": weighing options, never the smallest
 //   writing    new text (an email, a post, a cover letter, an essay): short pieces small, long-form or high-stakes pieces mid-size, deep long-form the strongest
 //   code       code and debugging: the score decides (Sonnet and up unless trivial)
@@ -91,6 +91,9 @@ const REWRITE = /\b(?:translate|translation|rewrite|rephrase|reword|paraphrase|p
 const MATH = /\b(?:prove|proof|theorem|lemma|derive|derivation|integral|derivative|eigen\w+|combinatori\w+|calculus|algebra|olympiad|solve (?:for|the equation)|equations?)\b/i;
 const MATH_HARD = /\b(?:prove|proof|theorem|lemma|olympiad)\b/i;
 const RESEARCH = /\b(?:research|literature review|find sources|peer-?reviewed|scholarly|citations?|bibliograph\w+|fact-?check|state of the art|systematic review|deep dive|what does the (?:research|evidence|literature) say|(?:sources?|references?) (?:on|for|about)|studies (?:on|about|show))\b/i;
+// Checking a claim, a table or a value against a source ("double check the tables", "is this right", "look it up"): the model has to find
+// the source, read it and compare, so it is research: never the smallest model, and the tools stay on.
+const VERIFY = /\b(?:double[- ]?check|re-?check|verify|verification|fact[- ]?check|check (?:the|this|that|these|those|my|if|whether) (?:\w+ ){0,2}(?:tables?|values?|numbers?|figures?|data|facts?|claims?|answers?|results?|sources?|steam|units?|properties)|look (?:it|this|that|them) up|look up (?:the |a )?(?:tables?|values?|numbers?|figures?|data|sources?|steam|propert(?:y|ies)|references?)|is (?:this|that|it) (?:right|correct|true|accurate)|are (?:these|those|they) (?:right|correct|accurate)|confirm (?:the |these |those |this |that |my )?(?:\w+ )?(?:values?|numbers?|figures?|data|facts?)|find (?:the|a) source|(?:what'?s|where'?s) the source)\b/i;
 const ACTION = /\b(?:open|go to|navigate to|visit|click|fill (?:in|out)|(?:sign (?:in|up|out)|log ?(?:in|out))(?!\s+(?:button|link|page|tab|form))|book|reserve|order|buy|purchase|add .{1,30} to (?:my |the )?cart|check ?out|submit|download|upload|scroll|unsubscribe|subscribe|search for|find me|bookmark|close (?:this|the|all)|switch to|rename|move it)\b/gi;
 const FORMISH = /\b(?:form|checkout|payment|password|credit card|book|reserve|apply|register|order|buy|purchase|cart)\b/i;
 const SEQUENCE = /\b(?:then|after that|afterwards|and then|finally|next)\b/i;
@@ -112,7 +115,7 @@ function situationOf(prompt, { imageCount = 0, tabCount = 0, page = false, unatt
   if (!imageCount && IMAGEGEN.test(t)) return { kind: 'imagegen', multi: false };
   if (CODE_WORDS.test(t)) return { kind: 'code', multi: false };
   if (MATH.test(t)) return { kind: 'reasoning', multi: false };
-  if (RESEARCH.test(t) || tabCount >= 3) return { kind: 'research', multi: false };
+  if (RESEARCH.test(t) || VERIFY.test(t) || tabCount >= 3) return { kind: 'research', multi: false };
   if (COMPARE.test(t)) return { kind: 'compare', multi: false };
   if (REWRITE.test(t) && !browsing) return { kind: 'rewrite', multi: false };
   const words = lengthAsked(t);

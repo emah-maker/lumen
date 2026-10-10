@@ -61,6 +61,7 @@ function render() {
   }
 }
 
+document.getElementById('clear').addEventListener('click', () => window.lumenHistory?.manage());
 query.addEventListener('input', render);
 query.focus();
 (async () => {

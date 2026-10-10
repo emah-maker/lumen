@@ -1535,6 +1535,8 @@ function dueText(t, today) {
 }
 
 // ---- the cards ----
+// An error that is really a missing key, token or sign-in ("Add your GitHub token in Settings.").
+const errorNeedsSetup = (message) => /^(Add|Paste|Log in|Sign in|Connect) /.test(String(message || '')) && /\bSettings\b/.test(String(message));
 const shownWidgets = new Map(); // id -> { key, el, title }
 function buildCard(w) {
   const title = text(w.title, 60) || 'Widget';
@@ -1574,21 +1576,33 @@ function buildCard(w) {
       editPencil(w, title, card, true);
     }
   } else if (typeof w.error === 'string' && w.error) {
+    // A card with nothing to connect with yet ("Add your Todoist API token in Settings.") is not broken and trying
+    // again can't fix it: it says what is missing, and its one button goes to where that is set.
+    const missing = errorNeedsSetup(w.error);
     const note = el('p', 'w-note');
-    note.append(el('strong', null, 'Couldn’t update'), text(w.error, 200));
-    const retry = el('button', 'w-btn', 'Try again');
-    retry.type = 'button';
-    retry.setAttribute('aria-label', `Try ${title} again`);
-    retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+    note.append(el('strong', null, missing ? 'Needs setup' : 'Couldn’t update'), text(w.error, 200));
     body.append(note);
     const wrap = el('div', 'w-actions');
-    wrap.append(retry);
-    // A card that can't load is often one whose address or place is wrong: fix it here, next to Try again.
-    if (w.setup && window.widgetSetup?.can(w.type)) {
-      const fix = el('button', 'w-btn', 'Edit settings');
+    const editable = Boolean(w.setup && window.widgetSetup?.can(w.type));
+    if (!missing) {
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${title} again`);
+      retry.addEventListener('click', () => {
+        // Say something happened: the card keeps its error until the answer arrives (a failure again looks the same).
+        retry.disabled = true;
+        retry.textContent = 'Trying…';
+        setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 4000);
+        widgetAct(w.id, 'refresh');
+      });
+      wrap.append(retry);
+    }
+    // A card that can't load is often one whose address, place or key is wrong: fix it here, next to Try again.
+    if (editable || /\bSettings\b/.test(w.error)) {
+      const fix = el('button', missing ? 'w-btn primary' : 'w-btn', editable ? 'Edit settings' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', `Edit ${title}`);
-      fix.addEventListener('click', () => openEditor(w));
+      fix.setAttribute('aria-label', editable ? `Edit ${title}` : `Open Settings for ${title}`);
+      fix.addEventListener('click', () => (editable ? openEditor(w) : widgetAct(w.id, 'configure')));
       wrap.append(fix);
     }
     body.append(wrap);
@@ -1608,7 +1622,9 @@ function updateFoot(cardEl, w) {
   const foot = cardEl.querySelector('.w-foot');
   if (!foot) return;
   const parts = [];
-  if (w.updated) parts.push(`Updated ${agoText(w.updated)}`);
+  // "Updated just now" under a sign-in prompt says nothing a person can use.
+  const signIn = w.data?.state === 'reconnect' || Boolean(cardEl.querySelector('.am-signin, .sp-web-signin'));
+  if (w.updated && !signIn) parts.push(`Updated ${agoText(w.updated)}`);
   if (typeof w.warning === 'string' && w.warning) parts.push(text(w.warning, 120));
   foot.textContent = parts.join(' · ');
   foot.classList.toggle('warn', Boolean(w.warning));

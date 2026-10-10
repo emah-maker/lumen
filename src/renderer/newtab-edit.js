@@ -48,7 +48,7 @@
     .w-dock-row { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
     .w-dock.editing .w-dock-row { padding: 6px; border-radius: 16px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 8px 28px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
     .w-dock-hint, .w-firstrun { margin: 0; padding: 6px 12px; border-radius: 12px; background: var(--bg); color: var(--muted); font-size: 12px; line-height: 1.4; box-shadow: 0 0 0 1px var(--border), 0 6px 20px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
-    .w-dock-hint[hidden], .w-firstrun[hidden] { display: none; }
+    .w-dock-hint[hidden], .w-firstrun[hidden], body.w-picking .w-dock-hint { display: none; }
     .w-stackhint { color: var(--text); }
     .w-firstrun { display: flex; align-items: center; gap: 8px; }
     .w-tb { appearance: none; position: static; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 13px; border: 0; border-radius: 999px; background: var(--card); color: var(--text);
@@ -64,7 +64,7 @@
     body.calm .w-tb, body.calm .w-add-tile { transition: none; }
     @media (prefers-reduced-motion: reduce) { .w-tb, .w-add-tile { transition: none; } }
     .w-tb.w-edit-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
-    .w-x { appearance: none; margin: 0; padding: 0 4px; border: 0; background: transparent; color: var(--muted); font: 500 16px/1 system-ui, sans-serif; cursor: default; outline: none; border-radius: 6px; }
+    .w-x { appearance: none; margin: 0; min-width: 24px; min-height: 24px; padding: 0 6px; border: 0; background: transparent; color: var(--muted); font: 500 16px/1 system-ui, sans-serif; cursor: default; outline: none; border-radius: 6px; }
     .w-x:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 
     .w-picker { position: fixed; right: 16px; bottom: 74px; z-index: 30; width: min(320px, calc(100vw - 32px)); max-height: min(70vh, 480px); overflow-y: auto; box-sizing: border-box; padding: 6px; border-radius: 16px;
@@ -244,6 +244,7 @@
     if (!picker) return;
     picker.remove();
     picker = null;
+    document.body.classList.remove('w-picking');
     addBtn.setAttribute('aria-expanded', 'false');
     tile.setAttribute('aria-expanded', 'false');
     if (refocus && opener?.isConnected) opener.focus();
@@ -257,6 +258,7 @@
     const types = window.widgetTypes?.() || []; // one entry for every kind newtab-widgets.js can draw
     const entries = WE.pickerEntries({ types: realCount() >= MAX_WIDGETS ? [] : types, hidden, table: strings, stack: realCount() + STARTER_COUNT <= MAX_WIDGETS });
     picker = el('div', 'w-picker w-ui');
+    document.body.classList.add('w-picking'); // the tip under the list would sit on top of it
     picker.setAttribute('role', 'dialog');
     picker.setAttribute('aria-label', T('newtab.edit.picker'));
     picker.append(el('h2', null, T('newtab.edit.picker')));
