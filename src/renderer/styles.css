@@ -706,11 +706,12 @@ body.chat-full .setup { text-align: left; }
 .messages:has(> .empty:not([hidden])) { display: flex; flex-direction: column; }
 .empty { margin-top: auto; padding-bottom: 4px; color: var(--muted); animation: rise var(--t-smooth) var(--spring-smooth); }
 .empty-title { margin: 0 0 12px; color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: -0.012em; line-height: 1.3; }
-.chips { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-left: -8px; }
-.chip { padding: 5px 8px; border: none; border-radius: 7px; background: transparent; color: var(--muted); text-align: left; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out, transform var(--t-press) ease-out; animation: rise var(--t-smooth) var(--spring-smooth) backwards; }
+.chips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.chip { padding: 5px 10px; border: 0.5px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out, transform var(--t-press) ease-out; animation: rise var(--t-smooth) var(--spring-smooth) backwards; }
 .chip:nth-child(2) { animation-delay: 40ms; }
 .chip:nth-child(3) { animation-delay: 80ms; }
 .chip:hover { background: var(--hover); color: var(--text); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Everything that joins the conversation rises into place. */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
