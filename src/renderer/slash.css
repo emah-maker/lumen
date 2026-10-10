@@ -13,7 +13,7 @@
 .slash-item[aria-selected="true"] { background: var(--hover); }
 .slash-item.unavailable .slash-name, .slash-item.unavailable .slash-text { opacity: 0.55; }
 .slash-name { font-weight: 600; flex: none; }
-.slash-text { color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 120px; }
+.slash-text { color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; flex: 1 1 120px; } /* two lines, not one cut-off line */
 .slash-flag { flex-basis: 100%; color: var(--warning, #b25000); font-size: 11.5px; }
 
 .slash-hint { flex: 1 1 100%; margin: 0 0 2px; padding: 4px 8px; border-radius: 8px; font-size: 12px; color: var(--warning, #b25000); background: color-mix(in srgb, var(--warning, #b25000) 12%, transparent); }
