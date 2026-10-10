@@ -26,6 +26,9 @@ function createDialogs(deps) {
   // alert() is drawn in the popup, where the user is looking, not behind it in the main window.
   let host = null;
   const hostFor = (item) => (item.owner && !item.owner.isDestroyed() && deps.windowFor?.(item.owner)) || deps.win();
+  // (A tab inside a private window is not a window of its own: windowFor() cannot find that window, so its
+  // device chooser names it, `item.window`.)
+  const hostOf = (item) => (item.window && !item.window.isDestroyed() ? item.window : hostFor(item));
 
   function ensureOverlay() {
     if (overlay && !overlay.webContents.isDestroyed()) return overlay;
@@ -93,7 +96,7 @@ function createDialogs(deps) {
   const inFront = (item) => !item.owner || item.owner.isDestroyed() || deps.isInFront?.(item.owner) !== false;
 
   function present(item) {
-    const win = hostFor(item);
+    const win = hostOf(item);
     if (!win || win.isDestroyed()) { finish(item, item.cancelledResult()); return; }
     const popup = win !== deps.win();
     const view = ensureOverlay();
@@ -161,7 +164,13 @@ function createDialogs(deps) {
     const item = showing;
     if (!item || !rawResult || rawResult.id !== item.payload.id) return; // stale response from a dialog already closed
     const checkboxChecked = Boolean(rawResult.checkboxChecked);
-    if (item.kind === 'ask') {
+    if (item.kind === 'devices') {
+      // Connect needs a real click or key in the card (`trusted` is sent only for an event the browser made itself,
+      // never one a script dispatched) and one of the devices on offer right now.
+      const choice = rawResult.response === item.payload.cancelId || rawResult.trusted !== true ? '' : String(rawResult.choice ?? '');
+      const valid = choice !== '' && item.payload.items.some((i) => i.id === choice);
+      finish(item, valid ? { response: rawResult.response, choice } : { response: item.payload.cancelId, choice: '' });
+    } else if (item.kind === 'ask') {
       finish(item, { response: rawResult.response, values: rawResult.response === item.payload.cancelId ? null : (rawResult.values || null), checkboxChecked });
     } else {
       finish(item, { response: rawResult.response, checkboxChecked });
@@ -278,8 +287,39 @@ function createDialogs(deps) {
     });
   }
 
+  // The device chooser (features/device-chooser.js): { message, emptyText, items: [{ id, name, detail }], buttons:
+  // [Cancel, Connect], owner, window } -> { done: Promise<{ choice }> (choice '' when cancelled), update(items), cancel() }.
+  // The list changes while the card is open as devices are plugged in or out. Only a real click or key in the card
+  // can choose: no script or AI tool answers it.
+  function chooseDevice(opts = {}) {
+    const clean = (list) => (Array.isArray(list) ? list : []).slice(0, 100).map((i) => ({ id: String(i.id), name: String(i.name || '').slice(0, 160), detail: String(i.detail || '').slice(0, 40) }));
+    let item;
+    const done = new Promise((resolve) => {
+      const buttons = opts.buttons && opts.buttons.length === 2 ? opts.buttons.map(String) : ['Cancel', 'Connect'];
+      item = {
+        kind: 'devices',
+        owner: opts.owner || null,
+        window: opts.window || null,
+        resolve,
+        payload: { id: ++seq, kind: 'devices', title: opts.title || '', message: String(opts.message || ''), detail: '', emptyText: String(opts.emptyText || ''), items: clean(opts.items), buttons, defaultId: 1, cancelId: 0, checkboxLabel: '', checkboxChecked: false },
+        cancelledResult: () => ({ response: 0, choice: '' }),
+      };
+      enqueue(item);
+    });
+    return {
+      done,
+      update(list) {
+        if (item._done) return;
+        item.payload.items = clean(list);
+        if (showing === item && overlay && !overlay.webContents.isDestroyed()) overlay.webContents.send('dialog:update', { id: item.payload.id, items: item.payload.items });
+      },
+      cancel() { cancel(item); },
+    };
+  }
+
   return {
     showMessageBox,
+    chooseDevice,
     ask,
     showNotes,
     currentKind: () => showing?.kind ?? null, // for tests

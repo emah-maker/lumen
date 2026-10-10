@@ -63,6 +63,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
+    deviceGrants: call('prefs:device-grants'),
+    removeDeviceGrant: call('prefs:remove-device-grant'),
     // Translation → language packs on this device (features/translate-local.js)
     translatePacks: {
       list: call('prefs:translate-packs'),

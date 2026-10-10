@@ -900,9 +900,22 @@ const PROMPTABLE = {
 };
 const permissionDecisions = new Map(); // `${origin}|${permission}` -> boolean
 
+// [devices] WebHID, WebUSB and Web Serial: the chooser, and the devices the user picked per site (features/device-chooser.js).
+// A tab the AI opened, an agent's window and the music cards never get the permission; Lumen's own pages are not http(s).
+const DEVICE_PERMISSIONS = require('./browser/device-permissions');
+const deviceGrants = DEVICE_PERMISSIONS.createGrantStore({ onChange: (store) => settingsBackend.saveDeviceGrants(store.toJSON()) });
+const deviceChooser = require('./features/device-chooser').createDeviceChooser({
+  dialogs,
+  t,
+  webContentsFromFrame: (frame) => webContentsModule.fromFrame(frame),
+  ordinary: (wc) => !(spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) || agentContents.has(wc) || dialogs.isOwnView(wc) || manners.isAiTab(tabByContents(wc))),
+});
+
 function setupPermissions() {
   const ses = session.defaultSession;
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
+  deviceGrants.load(settingsBackend.loadDeviceGrants());
+  deviceChooser.install(ses, { store: deviceGrants });
 
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
     // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
@@ -936,6 +949,7 @@ function setupPermissions() {
   });
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
+    DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
     spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
   SITE_PERMISSIONS.installIpc(ipcMain);
@@ -1095,6 +1109,7 @@ const adblock = createAdblock({
 const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl, Menu, clipboard, shell,
   resolveInput: (text) => resolveInput(text), iconPath: WINDOW_ICON,
+  deviceChooser: () => deviceChooser, // [devices] WebHID, WebUSB, Web Serial: the chooser over the private window, grants kept in memory
   t, strings: () => i18n().strings, locale: () => i18n().locale,
   print: (wc, host) => printTab(wc, host), // Print… in a private window: the same preview, over that window
   testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
@@ -7620,6 +7635,7 @@ const settingsBackend = settingsPage.create({
   downloads: downloads.list,
   sendDownloads: downloads.send,
   permissionDecisions,
+  deviceGrants, // [devices] declared with the permissions below (a getter would be needed if it were read before then)
   uninstallExtension,
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sites can connect to keyboards, USB devices and serial ports (WebHID, WebUSB, Web Serial).** Configurators such as the AULA keyboard's could never connect, because Lumen had no way to pick a device. Now a Chrome-style card asks "example.com wants to connect to a HID device" (or USB device, serial port) with the devices listed, Connect and Cancel (Esc cancels), "No compatible devices found" when there are none, and the list follows devices as you plug them in or out. Only a real click or key in the card can choose, so the AI can never connect a device, and tabs the AI opened and agent windows never get to ask. What you pick is remembered per site and device (kept in memory only in a private window), and Settings > Privacy and security > Site permissions lists the devices with Remove. Security keys are never offered, and Chromium's protected USB classes stay protected.
+
 ## 0.5.22 (2026-10-09)
 
 - **A saved chat that is briefly locked by the system no longer fails to open.** History opened a chat by reading its file once, and on Windows a file that was just written or replaced can be unreadable for a moment (a virus scanner or indexer holding it, or a rename swapping it in), which showed "Could not open this chat". A read that fails that way is now tried again a few times within about 120 ms. A chat whose file stays missing still shows the message but keeps its History entry, so it opens again if the file comes back. A damaged file is left as it is. New tests: `test/chat-open-race-units.js`.
