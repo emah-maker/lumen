@@ -185,7 +185,9 @@ if (!TEST) {
     }
   }
 }
-if (process.platform === 'win32') app.setAppUserModelId(APP_ID); // taskbar grouping, notifications
+// (A test run, electron.exe from a checkout, takes an ID of its own: it must not share the installed Lumen's taskbar
+// group or the name Windows shows on its notifications.)
+if (process.platform === 'win32') app.setAppUserModelId(TEST ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
 
 if (TEST) {
   app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
@@ -8983,7 +8985,7 @@ app.whenReady().then(async () => {
   instance.listenForSecondInstances(app, focusWindow);
   setupTaskbar();
   setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
-  instance.fixAppName(app); // Explorer says Lumen, not Electron
+  instance.fixAppName(app, APP_ID); // Explorer and notifications say Lumen, not Electron
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
