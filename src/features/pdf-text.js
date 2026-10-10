@@ -222,7 +222,12 @@ function pageText(content, fonts) {
   const operands = [];
   let i = 0;
   const newline = () => { if (out && !out.endsWith('\n')) out += '\n'; };
-  const show = (bytes) => { out += decodeBytes(bytes, font); };
+  // Table rows: a Word / LaTeX table puts every cell in its own text object (BT..ET) with a Tm, so the end of one is a line break only
+  // when the next one starts at another height. lastY is the height of the last Tm; etPending is an ET whose break is not decided yet.
+  let lastY = null;
+  let etPending = false;
+  const settle = (sameRow) => { if (!etPending) return; etPending = false; if (sameRow) { if (out && !/\s$/.test(out)) out += ' '; } else newline(); };
+  const show = (bytes) => { settle(false); out += decodeBytes(bytes, font); };
   while (i < s.length) {
     const c = s[i];
     if (WS.test(c)) { i++; continue; }
@@ -271,9 +276,16 @@ function pageText(content, fonts) {
             else if (item.num !== undefined && item.num < -200 && out && !/[\s]$/.test(out)) out += ' ';
           }
           break;
-        case 'Td': case 'TD': if (operands.at(-1)?.num) newline(); else if (out && !/\s$/.test(out)) out += ' '; break;
-        case 'T*': case 'ET': newline(); break;
-        case 'Tm': if (out && !/\s$/.test(out)) out += ' '; break;
+        case 'Td': case 'TD': settle(false); lastY = null; if (operands.at(-1)?.num) newline(); else if (out && !/\s$/.test(out)) out += ' '; break;
+        case 'T*': settle(false); lastY = null; newline(); break;
+        case 'ET': etPending = true; break;
+        case 'Tm': {
+          const y = operands.length >= 6 ? operands.at(-1)?.num : undefined;
+          const same = y !== undefined && lastY !== null && Math.abs(y - lastY) < 0.75;
+          if (etPending) settle(same); else if (y !== undefined && lastY !== null && !same) newline(); else if (out && !/\s$/.test(out)) out += ' ';
+          lastY = y === undefined ? null : y;
+          break;
+        }
         default: break;
       }
       operands.length = 0;

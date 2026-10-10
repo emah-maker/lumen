@@ -12,6 +12,7 @@ const { htmlToMarkdown } = require('./page-markdown');
 const { outlineDom, formatOutline } = require('./page-outline');
 const { PAGE_TEXT } = require('./page-scripts');
 
+const TABLES_CHARS = 20000; // the tables put back after an article that lost them
 const READER_WORLD = 1002; // the isolated world Readability runs in (features/page-tools.js); 1001 is the AI's page scripts
 const vendor = (name) => fs.readFileSync(path.join(__dirname, '..', 'vendor', 'readability', name), 'utf8');
 let readabilitySrc = null;
@@ -108,7 +109,10 @@ function backgroundReadScript() {
       };
       article = run();
     } catch {}
-    return { url: location.href, title: document.title, text: text.slice(0, 400000), textLen: text.length, article, probe: ${probeScript(true)} };
+    // Data tables (3+ rows, not nested): Readability often drops them from its article, so they are sent along to be put back as markdown.
+    let tablesHtml = '';
+    try { tablesHtml = [...document.querySelectorAll('table')].filter((t) => t.rows && t.rows.length >= 3 && !t.querySelector('table')).slice(0, 8).map((t) => t.outerHTML.slice(0, 60000)).join(''); } catch {}
+    return { url: location.href, title: document.title, text: text.slice(0, 400000), textLen: text.length, article, tablesHtml: tablesHtml.slice(0, 300000), probe: ${probeScript(true)} };
   })()`;
 }
 
@@ -136,8 +140,17 @@ function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
   if (raw.article?.content) {
     const md = htmlToMarkdown(raw.article.content, { baseUrl: raw.url });
     const by = raw.article.byline ? `By ${String(raw.article.byline).replace(/\s+/g, ' ').trim()}\n\n` : '';
-    if (md.length >= 400 && md.length >= text.length * 0.25) { body = by + md; article = true; }
+    if (md.length >= 400 && md.length >= text.length * 0.25) {
+      body = by + md; article = true;
+      // The article lost its tables (a steam table, a price list): they are put back, rows and columns kept, after the text.
+      if (raw.tablesHtml && !md.includes('| --- |')) {
+        const tables = htmlToMarkdown(raw.tablesHtml, { baseUrl: raw.url });
+        if (tables.includes('| --- |')) body += `\n\nTables on the page (rows and columns kept):\n\n${tables.slice(0, TABLES_CHARS)}`;
+      }
+    }
   }
+  // Plain text: a table's cells come out tab-separated; as " | " each row stays readable (`0.08 | 41.51 | ...`).
+  if (!article) body = body.split('\n').map((l) => (l.includes('\t') ? l.replace(/\t+/g, ' | ') : l)).join('\n');
   const verdict = health.classifyPage({ ...probe, title: raw.title, textHead: text.slice(0, 3000), textLen: raw.textLen ?? text.length, loginRedirect: Boolean(requested) && health.loginRedirect(requested, raw.url) });
   const first = !(Number(offset) > 0);
   const shell = verdict.kind === 'js_shell' || verdict.kind === 'data_shell';
