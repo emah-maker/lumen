@@ -22,7 +22,7 @@ const STRINGS = {
   'newtab.edit.reset': 'Reset layout',
   'newtab.edit.reset.title': 'Put the sections back in the center and every widget at its default size',
   'newtab.edit.bar': 'Edit layout',
-  'newtab.edit.hint': 'Drag a card to move it, or focus it and use the arrow keys. Shift and arrows resize it. Drag the clock’s corner or the search bar’s edges to size them; double-click one to reset it. Ctrl+Z undoes.',
+  'newtab.edit.hint': 'Drag a card to move it, or focus it and use the arrow keys. Shift and arrows resize. Ctrl+Z undoes.',
   'newtab.edit.tile': 'Add widget',
   'newtab.edit.tile.empty': 'Nothing here yet. Add the weather, your calendar, your tasks or any web page.',
   'newtab.edit.picker': 'Add to this page',
