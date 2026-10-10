@@ -736,7 +736,7 @@ function server(opts) {
   const oslo = (await W('list')).find((x) => x.type === 'weather' && x.wx.places[0].name.startsWith('Oslo'));
   for (let i = 0; i < 25 && !(await page(`document.querySelector('.w-card[data-id="${oslo.id}"] .w-note')?.textContent || ''`)); i++) await sleep(150);
   const note = await page(`document.querySelector('.w-card[data-id="${oslo.id}"] .w-note')?.textContent + '|' + document.querySelector('.w-card[data-id="${oslo.id}"] .w-btn')?.getAttribute('aria-label')`);
-  check('a new weather widget offline shows a calm message with Try again', /^Couldn’t update.*connect/.test(note) && /Try .* again/.test(note), note);
+  check('a new weather widget offline shows a calm message with Try again', /^Couldn’t connect/.test(note) && !/Couldn’t update/.test(note) && /Try .* again/.test(note), note);
   await app.evaluate((_e, b) => { global.__widgetEndpoints.forecast = `${b}/forecast`; }, base);
 
   // A tampered hash can't smuggle in a script address or markup.

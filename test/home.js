@@ -33,19 +33,19 @@ const path = require('path');
   await newTab();
   check('Search is the default mode', /^Search /.test(await placeholder()) && (await inTab("document.getElementById('mode-search').getAttribute('aria-checked')")) === 'true', await placeholder());
   await inTab("document.getElementById('mode-ask').click()");
-  // No key and no CLI profile here (see env above): nothing is connected, so the assistant name is
-  // the neutral 'AI', not Claude — no provider is privileged when there's nothing to back it.
-  check('Ask AI switches the placeholder to the assistant', (await placeholder()) === 'Ask AI…', await placeholder());
+  // No key and no CLI profile here (see env above): nothing is connected, so Ask AI is a setup
+  // prompt ("Connect an AI to ask questions", with a Connect an AI button), not a box that asks nobody.
+  check('Ask AI with nothing connected shows a setup prompt and a Connect an AI button', (await placeholder()) === 'Connect an AI to ask questions' && (await inTab("!document.getElementById('mode-connect').hidden")), await placeholder());
   await newTab();
-  check('the choice persists across new tabs', (await placeholder()) === 'Ask AI…', await placeholder());
+  check('the choice persists across new tabs', (await placeholder()) === 'Connect an AI to ask questions', await placeholder());
   await inTab("document.getElementById('q').dispatchEvent(new KeyboardEvent('keydown', { key: '/', ctrlKey: true, bubbles: true }))");
   check('Ctrl+/ toggles back to Search', /^Search /.test(await placeholder()), await placeholder());
   await inTab("document.getElementById('q').dispatchEvent(new KeyboardEvent('keydown', { key: 'a', altKey: true, bubbles: true }))");
-  check('Alt+A toggles to Ask AI', (await placeholder()) === 'Ask AI…', await placeholder());
+  check('Alt+A toggles to Ask AI', (await placeholder()) === 'Connect an AI to ask questions', await placeholder());
   await inTab("document.getElementById('mode').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
   const arrowed = await placeholder();
   await inTab("document.getElementById('mode').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
-  check('arrow keys move between the two options', /^Search /.test(arrowed) && (await placeholder()) === 'Ask AI…', `${arrowed} / ${await placeholder()}`);
+  check('arrow keys move between the two options', /^Search /.test(arrowed) && (await placeholder()) === 'Connect an AI to ask questions', `${arrowed} / ${await placeholder()}`);
 
   // With a key, Ask AI hands the prompt to the agent in the sidebar; the tab stays on the homepage.
   await app.evaluate(() => {
