@@ -166,7 +166,13 @@ Private windows: an unclicked offer never happens there; a click translates on t
 | Clear browsing data | — | — | History follows the chosen time range. Cookies, site data and the cache are cleared for all time. |
 | Block third-party cookies (best effort) | `blockThirdPartyCookies` | off | Stops sending cookies with requests to other sites embedded in a page. |
 | Send a "Do Not Track" request | `sendDoNotTrack` | off | Adds `DNT: 1` to every request. |
-| Send Global Privacy Control | `sendGpc` | off | Adds `Sec-GPC: 1` to every request. |
+| Send Global Privacy Control | `sendGpc` | on | Adds `Sec-GPC: 1` to every request, and pages see `navigator.globalPrivacyControl`. |
+| Hide when you leave the tab | `hideTabActivity` | on | Pages always read as the visible, focused tab: no `visibilitychange`, window blur/focus or pointer-leaving events. See [Privacy protections](privacy-protections.md). |
+| Hide your window size | `hideWindowSize` | on | `screen.*` and `screenX`/`screenY` match the window, so split screen or a small window looks full-screen. |
+| Protect against fingerprinting | `fingerprintProtection` | on | Canvas, WebGL and audio readouts change slightly, per site and per launch; bot checks get the real readings. |
+| Hide your IP address from WebRTC | `webrtcIpProtection` | on | WebRTC offers only the default route's public address (`default_public_interface_only`). |
+| Remove tracking from links | `stripTrackingParams` | on | `utm_`, `fbclid`, `gclid`, `msclkid`, share ids and similar come off an address before the page opens. |
+| Block tracking pings | `blockTrackingPings` | on | Cancels `<a ping>` and `navigator.sendBeacon` reports while the ad blocker is on. |
 | Always use secure connections | `httpsOnly` | off | Upgrades `http://` to `https://` and warns before loading a site with no secure version. Local addresses are left alone. |
 | Save passwords | `savePasswords` | off | Offers to save a password when you sign in on an https site (or `http://localhost`), and fills a saved one when you click the key in the address field (never by itself, never submitting). Not in private windows or the AI's research tabs. The logins are in `passwords.bin` in the profile, encrypted with the OS keychain (safeStorage), never in `settings.json`; without OS encryption it won't turn on. Turning it off asks whether to delete them (Keep is the default). Changed only from its switch, not with `prefs:set`. |
 | Saved passwords | — | — | Privacy and security → Saved passwords: site and username per login, Show and Copy (Touch ID where the Mac has it, a confirmation otherwise), Edit, Delete, Import from CSV (Chrome, Apple Passwords, Firefox, Bitwarden exports) and Delete all. |
