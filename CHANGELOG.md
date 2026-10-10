@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sidebar wording and clarity pass (UX audit).** Starter chips now look like buttons; the approval card says "Always allow, any site" (with "Click again to confirm") instead of "Allow on all sites"; the page chip button says "Turn off AI here" / "Turn on AI here" instead of reading like a status; the Stop button says "Stop (Esc)"; the clock button is "Chat history"; a run of "switched to another model" notices keeps only the newest; slash and model descriptions wrap to two lines instead of being cut off; /think, /deep and /fast say they need Auto. The audit and screenshots are in `docs/ux-audit/sidebar.md`. New test: `test/sidebar-ux-units.js`.
+
 - **Sites can connect to keyboards, USB devices and serial ports (WebHID, WebUSB, Web Serial).** Configurators such as the AULA keyboard's could never connect, because Lumen had no way to pick a device. Now a Chrome-style card asks "example.com wants to connect to a HID device" (or USB device, serial port) with the devices listed, Connect and Cancel (Esc cancels), "No compatible devices found" when there are none, and the list follows devices as you plug them in or out. Only a real click or key in the card can choose, so the AI can never connect a device, and tabs the AI opened and agent windows never get to ask. What you pick is remembered per site and device (kept in memory only in a private window), and Settings > Privacy and security > Site permissions lists the devices with Remove. Security keys are never offered, and Chromium's protected USB classes stay protected.
 
 ## 0.5.22 (2026-10-09)

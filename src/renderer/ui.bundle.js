@@ -3500,7 +3500,10 @@ window.assistant.onEvent((event) => {
       break;
     case 'notice': {
       if (event.stopped) turn.stopped = true;
+      // A chain of "couldn't reach X, switched to Y" lines in a row says one thing: keep the newest only.
+      if (event.fallback) for (const old of [...messages.querySelectorAll('.notice[data-fallback]')]) if (old.nextElementSibling === turn.working || old.nextElementSibling?.matches?.('.notice[data-fallback]')) old.remove();
       const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t(turn.interrupted ? 'chat.interrupted' : 'chat.stopped') : event.text }));
+      if (event.fallback) notice.dataset.fallback = '1';
       if (event.fallback) retireFallbackButtons(); // an older "Switch back" would undo whatever is answering now
       if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
       if (event.fallback && event.fallback.kind !== 'back' && event.fallback.from !== event.fallback.to) {
@@ -10346,9 +10349,9 @@ $('agent-stop')?.addEventListener('click', () => {
   // The message goes on as typed ("/think why is the sky blue"); main takes the command off and, with Auto picked, chooses the
   // strongest ("/think", "/deep") or the quickest ("/fast") model for it. With a model picked by hand they say so and send nothing.
   for (const [name, label, description] of [
-    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Ask Auto for its strongest model for this message. Type your question after it.')],
-    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Ask Auto for its strongest model for a thorough answer to this message.')],
-    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Ask Auto for its quickest model for this message.')],
+    ['think', tr('slash.think', 'Think harder'), tr('slash.think.description', 'Strongest model for this message. Needs Auto; type your question after it.')],
+    ['deep', tr('slash.deep', 'Deep research'), tr('slash.deep.description', 'Strongest model, thorough answer. Needs Auto.')],
+    ['fast', tr('slash.fast', 'Quick answer'), tr('slash.fast.description', 'Quickest model for this message. Needs Auto.')],
   ]) {
     slash.register({
       name, label, description,
