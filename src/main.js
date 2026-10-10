@@ -4159,6 +4159,10 @@ function tabFailPage(wc) {
     const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
     if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
     const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
+    // A name that doesn't resolve may be a search typed without spaces: the page offers to search for it (error.js).
+    if (/^ERR_NAME_(NOT_RESOLVED|RESOLUTION_FAILED)$/.test(String(description).replace(/^net::/, ''))) {
+      try { const host = new URL(failedUrl).hostname; if (host) params.set('search', searchUrlFor(readSettings().searchEngine, host)); } catch {}
+    }
     wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
   });
 }

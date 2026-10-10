@@ -93,6 +93,23 @@ check('the error page preload does nothing on other pages', /location\.protocol 
     };
     vm.runInNewContext(read('src/renderer/error.js'), sandbox);
     check('error.js: the crashed page uses the translated message and the Reload button', els.message.textContent === 'Problème avec “a.example”.' && h1.textContent === 'This page crashed' && els.retry.textContent === 'Reload', JSON.stringify({ m: els.message.textContent, h: h1.textContent, r: els.retry.textContent }));
+
+    // A name that doesn't resolve: main hands the error page the default engine's search URL and the page offers it.
+    const run = (qs) => {
+      const e = { retry: { textContent: '', hidden: false }, message: { textContent: '' }, hint: { textContent: '', hidden: true }, code: { textContent: '' }, search: { textContent: '', hidden: true, onclick: null } };
+      const go = [];
+      vm.runInNewContext(read('src/renderer/error.js'), { URLSearchParams, URL, location: { search: qs, replace: (u) => go.push(u) }, document: { title: '', getElementById: (id) => e[id], querySelector: () => ({ textContent: '' }) }, window: { t: xx.t, errorKinds: EK } });
+      return { e, go };
+    };
+    const dnsQs = `?url=${encodeURIComponent('http://lumenfoo/')}&desc=ERR_NAME_NOT_RESOLVED&search=${encodeURIComponent('https://duckduckgo.com/?q=lumenfoo')}`;
+    const dns = run(dnsQs);
+    check('error.js: a DNS failure shows a Search for the site button', dns.e.search.hidden === false && dns.e.search.textContent === 'Search for “lumenfoo”', dns.e.search.textContent);
+    dns.e.search.onclick();
+    check('error.js: the button goes to the search URL main gave', dns.go[0] === 'https://duckduckgo.com/?q=lumenfoo', JSON.stringify(dns.go));
+    check('error.js: no search button without a search URL, or for a non-http one', run(`?url=${encodeURIComponent('http://a.test/')}&desc=ERR_NAME_NOT_RESOLVED`).e.search.hidden === true && run(`?url=${encodeURIComponent('http://a.test/')}&search=${encodeURIComponent('javascript:alert(1)')}`).e.search.hidden === true);
+    check('error.js: a crashed page has no search button', run(`?kind=crashed&url=${encodeURIComponent('http://a.test/')}&search=${encodeURIComponent('https://x.test/?q=a')}`).e.search.hidden === true);
+    check('main passes a search URL (default engine) only for DNS failures', /ERR_NAME_\(NOT_RESOLVED\|RESOLUTION_FAILED\)[\s\S]{0,260}params\.set\('search', searchUrlFor\(readSettings\(\)\.searchEngine, host\)\)/.test(read('src/main.js')));
+    check('error.html has the search button and the string exists', /id="search"/.test(read('src/renderer/error.html')) && read('src/locales/en.json').includes('"errorPage.searchFor": "Search for “{site}”"'));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
