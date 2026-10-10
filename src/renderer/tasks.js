@@ -90,6 +90,14 @@
     badge.classList.toggle('waiting', waiting > 0);
     button.setAttribute('aria-label', count ? `${T('tasks.button')}: ${T('tasks.button.badge', { running, waiting })}` : T('tasks.button'));
     byId('toggle-sidebar').classList.toggle('has-task-attention', waiting > 0);
+    // The tasks button lives in the More menu: its count shows as a dot on More (accent while running, amber when one waits for you).
+    const more = byId('more-actions');
+    if (more) {
+      more.classList.toggle('has-attention', count > 0 || state.unseen > 0);
+      more.classList.toggle('waiting', waiting > 0);
+      more.title = count ? `${T('sidebar.more')}: ${T('tasks.button.badge', { running, waiting })}` : state.unseen > 0 ? `${T('sidebar.more')}: ${T('tasks.button.unseen', { count: state.unseen })}` : T('sidebar.more');
+      more.setAttribute('aria-label', more.title);
+    }
     button.classList.toggle('has-unseen', !count && state.unseen > 0); // finished while you were elsewhere
     if (!count && state.unseen > 0) button.setAttribute('aria-label', `${T('tasks.button')}: ${T('tasks.button.unseen', { count: state.unseen })}`);
     const enabled = state.settings.enabled;
@@ -138,7 +146,7 @@
     open = null;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
 
   async function render() {

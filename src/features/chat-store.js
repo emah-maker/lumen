@@ -12,30 +12,10 @@ const path = require('path');
 const crypto = require('crypto');
 const { plainScripts } = require('../renderer/markdown.js'); // <sub>/<sup> as clean text in exports
 
-const TITLE_CHARS = 60;
 const ID_RE = /^[a-f0-9]{16}$/;
 
-// The first thing the user said, without the browser state, page text or handed-over history that
-// Lumen adds to each message. Used as the chat's title until the user renames it.
-function autoTitle(snapshot) {
-  for (const m of snapshot?.messages || []) {
-    if (m.role !== 'user') continue;
-    const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
-    const text = blocks.filter((b) => b.type === 'text').map((b) => String(b.text)
-      .replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/g, '')
-      .replace(/<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g, '')
-      .replace(/<attached_files>[\s\S]*?<\/attached_files>\s*/g, '') // [uploads] the names and refs of attached files
-      .replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/g, '')
-      // A skill's message (features/skills.js) is titled by the skill and what was typed after it, not its prompt.
-      .replace(/<skill_request name="[^"]*" title="([^"]*)" input="([^"]*)">[\s\S]*?<\/skill_request>\s*/g, (_m, title, input) => `${title}${input ? `: ${input}` : ''} `)).join(' ').replace(/\s+/g, ' ').trim();
-    if (text && text !== 'The user attached the image(s) above without a message.' && text !== 'The user attached the file(s) listed below without a message.') {
-      return text.length > TITLE_CHARS ? `${text.slice(0, TITLE_CHARS - 1).trimEnd()}…` : text;
-    }
-    if (blocks.some((b) => b.type === 'image')) return 'Image';
-    if (blocks.some((b) => b.type === 'text' && /<attached_files>/.test(String(b.text)))) return 'File';
-  }
-  return 'New chat';
-}
+// The history list's title for a chat until the user renames it: features/chat-title.js (no model call).
+const { autoTitle, cleanSaved } = require('./chat-title');
 
 const cleanTitle = (title) => String(title ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 
@@ -110,7 +90,16 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // Newest first.
   function list() {
-    return [...readIndex().chats].sort((a, b) => b.updated - a.updated);
+    const chats = readIndex().chats;
+    // A title saved with a screen capture's markup in it (older chats) is made again from the chat's first real text, once,
+    // for display; the saved chat is untouched, and a rename always wins.
+    for (const c of chats) {
+      if (c.renamed || cleanSaved(c.title) === c.title) continue;
+      let fresh = '';
+      try { fresh = autoTitle(load(c.id)); } catch { /* unreadable: the cleaned saved title below */ }
+      c.title = fresh && fresh !== 'New chat' ? fresh : cleanSaved(c.title) || 'Screen capture';
+    }
+    return [...chats].sort((a, b) => b.updated - a.updated);
   }
 
   // A listed chat is read from disk, and on Windows a file that was just written or replaced can be unreadable for a
