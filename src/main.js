@@ -3558,7 +3558,7 @@ function moveWindowItems(id) {
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, ids, undefined, { active: id })) arrivedFromMenu(r, ids); } })) });
-  items.push(...mergeWindowItems(src));
+  items.push(...mergeWindowItems(src, { hideDisabled: true }));
   return items;
 }
 
@@ -4161,6 +4161,10 @@ function tabFailPage(wc) {
     const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
     if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
     const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
+    // A name that doesn't resolve may be a search typed without spaces: the page offers to search for it (error.js).
+    if (/^ERR_NAME_(NOT_RESOLVED|RESOLUTION_FAILED)$/.test(String(description).replace(/^net::/, ''))) {
+      try { const host = new URL(failedUrl).hostname; if (host) params.set('search', searchUrlFor(readSettings().searchEngine, host)); } catch {}
+    }
     wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
   });
 }
@@ -5690,10 +5694,12 @@ function undoMerge() {
 
 // "Merge All Windows" and "Merge Window Into ›" for the window `src`. With nothing to merge they stay in the menu,
 // greyed out, and say why ("only one window open", "restoring…"): a missing item looks like a missing feature.
-function mergeWindowItems(src) {
+// With hideDisabled (the tab's right-click menu) both rows are left out instead: two dead rows there are noise, and the ⋯ menu keeps the explanation.
+function mergeWindowItems(src, { hideDisabled = false } = {}) {
   if (!src || !rcAlive(src)) return [];
   const windows = describeWindows();
   const a = windowMerge.availability(windows, src.win.id);
+  if (hideDisabled && !a.enabled) return [];
   const others = a.enabled ? windowMerge.mergeIntoChoices(windows, src.win.id).map((w) => recByWindowId(w.id)).filter(Boolean) : [];
   return [
     { label: t(a.enabled ? 'menu.mergeAllWindows' : `menu.mergeAllWindows.${a.reason}`), accelerator: MERGE_ACCELERATOR, registerAccelerator: false, enabled: a.enabled, click: () => mergeWindows(src) },

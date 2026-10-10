@@ -79,8 +79,9 @@ function createPrintPreview(deps) {
     await fs.promises.writeFile(file, buffer);
     if (!sheet || sheet.closed) return;
     const view = ensurePdfView();
-    // The viewer without its own toolbar and side panel, the page fitted to the width.
-    view.webContents.loadURL(`${pathToFileURL(file).href}#toolbar=0&navpanes=0&view=FitH`).catch(() => {});
+    // The viewer without its own toolbar and side panel, the page fitted to the width. (#zoom=page-width, not #view=FitH: FitH sized the pages to the full width and
+    // the vertical scrollbar then pushed a horizontal one in.)
+    view.webContents.loadURL(`${pathToFileURL(file).href}#toolbar=0&navpanes=0&zoom=page-width`).catch(() => {});
     send('print:pdf-shown', {});
   }
 

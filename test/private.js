@@ -128,6 +128,12 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
     check('"Continue to site" goes through over http in the private tab', Boolean(through), (await tabUrls())[0]);
     await waitFor(() => pw.evaluate(() => document.getElementById('security').classList.contains('insecure')));
     check('an http page is marked Not secure in the address box', await pw.evaluate(() => document.getElementById('security').classList.contains('insecure') && document.getElementById('security').textContent.includes('Not secure')));
+    // a page on this computer is not "Not secure" in a private window either (as in a normal one)
+    await go(0, `http://127.0.0.1:${port}/`);
+    const localChip = await waitFor(() => pw.evaluate(() => { const s = document.getElementById('security'); return s.classList.contains('local') && { cls: s.className, label: s.getAttribute('aria-label'), text: s.textContent.trim() }; }), 8000);
+    check('a private tab on http://127.0.0.1 shows the neutral local chip, not "Not secure"', Boolean(localChip) && !/insecure/.test(localChip.cls) && localChip.label === EN['private.security.local'] && localChip.text === '', JSON.stringify(localChip));
+    await go(0, `http://plain.test:${port}/`);
+    await waitFor(() => pw.evaluate(() => document.getElementById('security').classList.contains('insecure')));
     await app.evaluate((_e, u) => { global.__agent.browser.activeTab().webContents.loadURL(u).catch(() => {}); }, `http://plain.test:${port}/normal`);
     const normalWarned = await waitFor(() => app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()).then((u) => u.includes('https-only.html') && u), 10000);
     check("the private window's \"Continue\" is not remembered for normal tabs", Boolean(normalWarned), await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()));

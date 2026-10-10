@@ -164,5 +164,10 @@ check('the preview page can only ask for settings and presses, and has a strict 
   assert.ok(!/path|file|shell/i.test(pre.replace(/\/\/.*$/gm, '')), 'the preload should not deal in paths');
 });
 
+check('the preview fits pages with #zoom=page-width (view=FitH left a horizontal scrollbar)', () => {
+  const src = read('src/features/print-preview.js');
+  assert.ok(/#toolbar=0&navpanes=0&zoom=page-width/.test(src) && !src.includes('view=FitH`'));
+});
+
 if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
 console.log('\nall passed');

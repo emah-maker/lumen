@@ -56,12 +56,12 @@ check('reload: an error page loads the failed address again', reloadAction({ err
   const went = [];
   const addressOf = (text, isSearch) => ({ text, isSearch, t: (k) => en[k], go: (v) => went.push(v) });
   const go = editMenuTemplate({ cut: true, copy: true, paste: true }, addressOf('example.com', false)).find((i) => i.label);
-  check('edit menu: the address bar offers Paste and Go for an address', go && go.label === 'Paste and Go', JSON.stringify(go));
+  check('edit menu: the address bar offers Paste and Go for an address', go && go.label === 'Paste and go', JSON.stringify(go));
   go.click();
   check('edit menu: Paste and Go opens the clipboard text', went.join() === 'example.com', went.join());
   const search = editMenuTemplate({ cut: false, copy: false, paste: true }, addressOf('best pizza\nnear me', true)).find((i) => i.label);
   search.click();
-  check('edit menu: Paste and Search for words, on one line', search.label === 'Paste and Search' && went[1] === 'best pizza near me', `${search.label} ${went[1]}`);
+  check('edit menu: Paste and Search for words, on one line', search.label === 'Paste and search' && went[1] === 'best pizza near me', `${search.label} ${went[1]}`);
   check('edit menu: an empty or blank clipboard offers no Paste and Go', !editMenuTemplate({ paste: false }, addressOf('  \n ', false)).some((i) => i.label), '');
   check('edit menu: oneLine trims and joins lines', oneLine('  a\r\n  b \n') === 'a b' && oneLine(null) === '', oneLine('  a\r\n  b \n'));
   check('edit menu: its labels are in en.json', Boolean(en['menu.pasteAndGo'] && en['menu.pasteAndSearch'] && en['toolbar.reader.leave']), '');
