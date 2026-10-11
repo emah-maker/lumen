@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- The canvas preview (chat-canvas.js): shown in <iframe sandbox="allow-scripts"> on lumen://chat, so this page has an opaque
+       origin and no way to the chat page, its preload or any IPC. It allows inline script and style (the AI's own page) and no
+       network at all: nothing to connect to, no frames, no forms. The document to show arrives by postMessage from the parent. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'" />
+  <title>Preview</title>
+  <style>html, body { margin: 0; background: #fff; }</style>
+  <script>
+    addEventListener('message', (e) => {
+      if (e.source !== parent || !e.data || typeof e.data.lumenCanvas !== 'string') return;
+      document.open();
+      document.write(e.data.lumenCanvas);
+      document.close();
+    });
+  </script>
+</head>
+<body></body>
+</html>

@@ -423,6 +423,7 @@ function create(deps) {
       setAlwaysAllowed: () => {},
     } : undefined;
     return {
+      background: true, // a task's own one-tab browser: agent.ownNavigationTab must not open the sidebar chat's background tab here
       externalTools: ext,
       activeTab: tab,
       tabById: (id) => (id === WORK_TAB ? tab() : null),

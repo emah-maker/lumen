@@ -416,6 +416,34 @@ let running = false;
 // are that chat's alone: an event or a queued message for another chat never touches them.
 let shownChatId = null;
 const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
+// ---------- drafts: each chat keeps its own unsent text ----------
+// What is typed (and the long pasted blocks waiting as chips) is saved per chat on every change (renderer/chat-drafts.js, localStorage), put
+// away when another chat opens and back when this one does, also after a restart. 'draftHold' keeps the box from saving while it is empty
+// between two chats (or before startChat).
+const drafts = (() => { try { return window.chatDrafts.create(window.localStorage); } catch { return null; } })();
+let pastes = []; // long pasted blocks shown as chips and sent with the message (strings)
+let draftHold = true;
+const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+function restoreDraft() {
+  draftHold = false;
+  const d = drafts?.get(shownChatId);
+  if (d) {
+    const carried = prompt.value.trim(); // (queued messages that came back to the box)
+    prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
+    pastes = d.pastes.slice();
+  }
+  autosize();
+  renderAttachments();
+  renderScreenBtn();
+}
+// The chat just started here got its id: a draft typed meanwhile moves to it.
+function nameChat(id) {
+  if (!id || shownChatId) return;
+  drafts?.rename(null, id);
+  shownChatId = id;
+  // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
+  if (!prompt.value && !pastes.length) restoreDraft();
+}
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
 
@@ -501,9 +529,10 @@ function setRunning(value) {
 // "Send now" (Ctrl+Enter while a reply runs): shown only while one runs and something is typed.
 const sendNowBtn = optional('send-now');
 function updateSend() {
-  const typed = Boolean(prompt.value.trim() || attachments.length);
+  const typed = Boolean(prompt.value.trim() || attachments.length || pastes.length);
   send.disabled = !running && !typed;
   sendNowBtn.hidden = !(running && typed);
+  saveDraft();
 }
 
 // ---------- screen context: "what is this?" sends a screenshot of the tab ----------
@@ -677,7 +706,7 @@ function showAttachNote(lines) {
   const el = $('attachment-note');
   if (!el) return;
   clearTimeout(attachNoteTimer);
-  el.replaceChildren(...lines.map((line) => Object.assign(document.createElement('div'), { textContent: line })));
+  el.replaceChildren(...lines.map((line) => (typeof line === 'string' ? Object.assign(document.createElement('div'), { textContent: line }) : line)));
   el.hidden = lines.length === 0;
   if (lines.length) attachNoteTimer = setTimeout(() => showAttachNote([]), 12000);
 }
@@ -726,7 +755,7 @@ async function addFiles(files) {
 function renderAttachments() {
   const strip = $('attachments');
   strip.replaceChildren();
-  strip.hidden = attachments.length === 0;
+  strip.hidden = attachments.length === 0 && pastes.length === 0;
   attachments.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = isFileItem(a) ? 'attachment attachment-file' : 'attachment';
@@ -755,6 +784,28 @@ function renderAttachments() {
     chip.append(remove);
     strip.append(chip);
   });
+  // A long pasted block: a chip like a file's, sent as part of the message (the model reads it; a file chip it would not).
+  pastes.forEach((text, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'attachment attachment-file attachment-paste';
+    chip.setAttribute('role', 'listitem');
+    chip.title = text.slice(0, 300);
+    const size = t('composer.paste.size', { n: text.length.toLocaleString() });
+    chip.setAttribute('aria-label', t('composer.paste.chip', { size }));
+    chip.append(
+      Object.assign(document.createElement('span'), { className: 'attachment-ext', textContent: 'TXT' }),
+      Object.assign(document.createElement('span'), { className: 'attachment-name', textContent: t('composer.paste.name') }),
+      Object.assign(document.createElement('span'), { className: 'attachment-size', textContent: size }),
+    );
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'attachment-remove';
+    remove.setAttribute('aria-label', t('composer.paste.remove'));
+    remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
+    remove.onclick = () => { pastes.splice(i, 1); renderAttachments(); prompt.focus(); };
+    chip.append(remove);
+    strip.append(chip);
+  });
   strip.setAttribute('role', 'list');
   strip.setAttribute('aria-label', t('composer.attachments'));
   const attachBtn = $('attach');
@@ -767,7 +818,7 @@ function renderAttachments() {
   document.dispatchEvent(new CustomEvent('lumen:attachments', { detail: { count: attachments.length } })); // (the background button can't carry images)
 }
 
-window.chatAttachments = { count: () => attachments.length, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
+window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
 
 // The attach button: a file picker (Tab to it, then Enter or Space).
 {
@@ -790,8 +841,31 @@ prompt.addEventListener('paste', async (e) => {
   if (files.length) {
     e.preventDefault(); // text paste stays untouched; only files (pictures included) are intercepted
     await addFiles(files);
+    return;
   }
+  // A long block of text goes into the box as usual; a line under it offers to move it to a chip instead (as Claude.ai does).
+  const text = (e.clipboardData?.getData('text/plain') || '').replace(/\r\n?/g, '\n');
+  if (window.chatDrafts.isLongPaste(text)) setTimeout(() => offerPasteChip(text));
 });
+function offerPasteChip(text) {
+  if (!prompt.value.includes(text)) return;
+  const line = document.createElement('div');
+  line.className = 'paste-offer';
+  const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('composer.paste.attach') });
+  line.append(Object.assign(document.createElement('span'), { textContent: t('composer.paste.offer', { n: text.length.toLocaleString() }) }), ' ', button);
+  button.onclick = () => {
+    const at = prompt.value.indexOf(text);
+    if (at === -1) { showAttachNote([]); return; } // (edited or removed since)
+    prompt.value = (prompt.value.slice(0, at) + prompt.value.slice(at + text.length)).replace(/\n{3,}/g, '\n\n');
+    pastes.push(text);
+    autosize();
+    renderAttachments();
+    renderScreenBtn();
+    showAttachNote([]);
+    prompt.focus();
+  };
+  showAttachNote([line]);
+}
 const sidebarEl = chatRoot;
 // Any file dropped on the chat joins the message (it no longer opens in a tab).
 const dragHasFiles = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file');
@@ -919,10 +993,18 @@ function settleThinking() {
 // Retry (after an error) and Regenerate (the latest reply): the last exchange is taken back in main and on screen,
 // then asked again, as if it had never been sent.
 let lastAsk = null;
-async function askAgain() {
+// [versions] The versions main kept when it took an exchange back: the next turn shows the switch (chat-actions.js). { at, n, cur, same }
+let pendingVersions = null;
+// `version`: a Regenerate, which keeps the reply it replaces as an earlier version (Retry after an error keeps nothing).
+async function askAgain(version = false) {
   if (running || !lastAsk) return false;
   const again = lastAsk;
-  const result = await window.assistant.rewind?.(again.text);
+  let result;
+  if (version && window.assistant.rewindUser) {
+    const out = await window.assistant.rewindUser(messages.querySelectorAll('.msg.user').length - 1, again.text);
+    result = out?.result;
+    pendingVersions = result === 'rewound' && out.versions ? { ...out.versions, same: true } : null;
+  } else result = await window.assistant.rewind?.(again.text);
   // 'absent': the message never reached the history (it failed first): nothing to take back there, so it is
   // simply asked again; anything else (a run going, no reply) changes nothing.
   if (result !== 'rewound' && result !== 'absent') return false;
@@ -947,10 +1029,15 @@ async function askAgain() {
 // Claude.ai and ChatGPT. Nothing is taken back until Send; Cancel or Esc leaves everything as it was. The composer
 // (and whatever is typed there) is untouched.
 function editLast() {
-  if (running || !lastAsk) return;
-  const bubble = [...messages.querySelectorAll('.msg.user')].pop();
-  if (!bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
-  const again = lastAsk;
+  editBubble([...messages.querySelectorAll('.msg.user')].pop());
+}
+// Any message of yours can be edited: what followed it is kept as another version (the ‹ 2/3 › switch), and the edited message
+// starts the branch the chat goes on from.
+function editBubble(bubble) {
+  if (running || !bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
+  const again = askOf(bubble) || (bubble === [...messages.querySelectorAll('.msg.user')].pop() ? lastAsk : null);
+  if (!again) return;
+  for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (one edit at a time)
   const kept = [...bubble.childNodes];
   const box = Object.assign(document.createElement('textarea'), { className: 'msg-edit-box', value: again.text, rows: 1 });
   box.setAttribute('aria-label', t('chat.editMessage.title'));
@@ -982,7 +1069,13 @@ function editLast() {
     if ((!text && !again.images?.length) || running) return;
     if (!modelReady) { restore(); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') })); return; }
     send.disabled = true;
-    const result = await window.assistant.rewind?.(again.text);
+    let result;
+    pendingVersions = null;
+    if (window.assistant.rewindUser) {
+      const out = await window.assistant.rewindUser([...messages.querySelectorAll('.msg.user')].indexOf(bubble), again.text);
+      result = out?.result;
+      if (result === 'rewound' && out.versions) pendingVersions = { ...out.versions, same: text === again.text.trim() };
+    } else result = await window.assistant.rewind?.(again.text);
     if (result !== 'rewound' && result !== 'absent') {
       restore();
       append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.editFailed') }));
@@ -999,16 +1092,10 @@ function editLast() {
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.onclick(); }
   });
 }
-// The latest message you sent: Edit, in a row under the bubble (not inside it, so it's no part of its text).
-function markEditable(bubble) {
-  for (const b of messages.querySelectorAll('.msg-user-actions')) b.remove(); // only the latest message
-  if (!bubble) return;
-  const row = Object.assign(document.createElement('div'), { className: 'msg-user-actions' });
-  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage') });
-  b.title = t('chat.editMessage.title');
-  b.onclick = () => editLast();
-  row.append(b);
-  bubble.after(row);
+// Each message you sent: the time, Copy and Edit in a row under the bubble (not inside it, so it's no part of its text), and the
+// version switch when it was asked again (chat-actions.js). info: { at, versions }
+function markEditable(bubble, info = {}) {
+  window.chatActions?.userRow(bubble, info);
 }
 // What a user bubble asked (for Regenerate and Edit after a restore or a chat switch).
 const bubbleAsks = new WeakMap();
@@ -1045,10 +1132,14 @@ function startTurn(text, images, tabs = null) {
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
   for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  for (const b of messages.querySelectorAll('.notice-continue')) b.remove(); // (a Continue left under an earlier reply)
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
-  markEditable(bubble);
+  const versions = pendingVersions;
+  pendingVersions = null;
+  markEditable(bubble, { at: Date.now(), versions });
   beginTurn();
+  turn.versions = versions; // (a Regenerate: the switch goes on its reply, see labelReply)
 }
 
 // The working line and turn state of a reply that is now running (its user bubble already shown).
@@ -1237,6 +1328,7 @@ function flushStreaming(el) {
 function decorateCode(root, { colour = false } = {}) {
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
+  window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -1248,8 +1340,10 @@ function decorateCode(root, { colour = false } = {}) {
       setTimeout(() => { b.textContent = t('chat.copyCode'); }, 1400);
     });
     head.append(b);
+    window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
+    window.codeExtras?.decorate(box, pre, { finished: colour || !root.classList?.contains('streaming') }); // Wrap button; ```mermaid as a diagram
     const code = pre.querySelector('code');
     if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }
@@ -1276,7 +1370,7 @@ window.assistant.onEvent((event) => {
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
-  if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
+  if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
@@ -1411,8 +1505,8 @@ window.assistant.onEvent((event) => {
         };
         notice.append(' ', button);
       }
-      if (event.action === 'continue') {
-        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
+      if (event.action === 'continue' || (event.stopped && lastAsk)) { // (after Stop too: the reply so far stays, and this asks it to go on)
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn notice-continue', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
         notice.append(' ', button);
       }
@@ -1461,7 +1555,7 @@ function finishTurn(event, { early }) {
     turn.working.before(row);
   }
   if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
-  labelReply(turn.text, event.model, event.auto || turn.auto);
+  labelReply(turn.text, event.model, event.auto || turn.auto, { at: Date.now(), versions: turn.versions });
   scrollToBottom(); // (the reply's copy button and label were added below its end)
   endStream();
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
@@ -1483,7 +1577,7 @@ function finishTurn(event, { early }) {
 function lateDone(event) {
   const { bubble } = earlyEnded;
   earlyEnded = null;
-  labelReply(bubble, event.model, event.auto);
+  labelReply(bubble, event.model, event.auto, { at: Date.now() });
   if (turn) return;
   if (event.undo) window.showRunUndo?.(append, event.undo);
   aiTabsRunId = event.runId;
@@ -1515,9 +1609,14 @@ function settledMarkdown(source) {
 }
 
 // Which model wrote a reply: a quiet label, since a chat can move between models.
-function labelReply(bubble, modelId, auto = null) {
+// `extra`: { at, feedback, versions }, for the strip under the reply (chat-actions.js: version switch, time, thumbs).
+function labelReply(bubble, modelId, auto = null, extra = {}) {
   flushStreaming(bubble);
-  if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
+  if (!bubble) return;
+  if (modelId && !bubble.querySelector('.reply-model')) addModelLabel(bubble, modelId, auto);
+  window.chatActions?.replyMeta(bubble, extra);
+}
+function addModelLabel(bubble, modelId, auto) {
   const option = [...$('model').options].find((o) => o.value === modelId);
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(modelId) ?? option?.parentElement?.label;
@@ -1570,7 +1669,7 @@ function regenButton() {
       setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
       return;
     }
-    askAgain();
+    askAgain(true);
   };
   return regen;
 }
@@ -1988,6 +2087,8 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
+  const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
+  const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
   for (const item of items) {
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -2004,6 +2105,7 @@ function showHistory(items) {
       if (item.text) bubble.append(document.createTextNode(item.text));
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
+      userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
       if (!item.text) { // only pictures
         bubble.className = 'msg assistant gen-pics restored';
@@ -2011,7 +2113,8 @@ function showHistory(items) {
         append(bubble);
         continue;
       }
-      if (item.steps) {
+      if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); } // its thinking (collapsed) and the steps it took
+      else if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
         summary.innerHTML = '<span class="step-detail"></span>';
@@ -2022,6 +2125,7 @@ function showHistory(items) {
       bubble.innerHTML = window.renderMarkdown(item.text);
       decorateCode(bubble);
       finishReply(bubble, item.text);
+      if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)
       if (item.generated?.length) { // the words, then the pictures under them
         bubble.classList.add('restored');
         append(bubble);
@@ -2054,17 +2158,34 @@ function showHistory(items) {
     if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
-    markEditable([...messages.querySelectorAll('.msg.user')].pop());
   } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length || items[lastIndex].files?.length)) {
     // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
     const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
     lastAsk = askOf(lastBubble);
     if (lastAsk) {
-      markEditable(lastBubble);
       const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only restored' });
       row.append(regenButton());
       append(row);
     }
+  }
+  // The Stop of a run that was cut off: the reply so far is there, and it can go on.
+  const lastItem = items[lastIndex];
+  if (lastAsk && lastItem?.role === 'assistant' && /\[This reply was interrupted\.\]\s*$/.test(lastItem.text || '')) {
+    const notice = Object.assign(document.createElement('div'), { className: 'notice stopped restored', textContent: t('chat.stopped') });
+    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn notice-continue', textContent: t('chat.continue') });
+    button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
+    notice.append(' ', button);
+    append(notice);
+  }
+  // Under each reply and message: model, time, thumbs, versions (chat-actions.js).
+  for (const { bubble, item } of replyEntries) labelReply(bubble, item.model, item.auto, { at: item.at, feedback: item.feedback });
+  for (const { bubble, item } of userEntries) {
+    let versions = item.versions && item.versions.n > 1 ? item.versions : null;
+    if (versions && versions.same !== false) { // asked again (Regenerate): the switch goes on its reply
+      const reply = window.chatActions?.finalReplyOf(bubble);
+      if (reply) { window.chatActions.replyMeta(reply, { versions }); versions = null; } else versions = { ...versions, same: false };
+    }
+    markEditable(bubble, { at: item.at, versions });
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -2074,7 +2195,7 @@ window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 // events follow, tagged with its run id.
 window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } = {}) => {
   if (running || forOtherChat(chat)) return; // (a turn of a chat this view has moved off is not this chat's running state)
-  if (chat && !shownChatId) shownChatId = chat;
+  if (chat && !shownChatId) nameChat(chat);
   const shown = [...(images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` })), ...restoredFiles(files)];
   lastAsk = { text: String(text || ''), images: shown, tabs: null }; // started in the other view: this is the chat's last message now
   startTurn(String(text || ''), shown);
@@ -2100,7 +2221,7 @@ async function reconcile() {
   if (!view || !view.id) return true;
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
-  if (action === 'adopt') { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
+  if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
@@ -2121,7 +2242,7 @@ new ResizeObserver(() => {
 
 function autosize() {
   prompt.style.height = 'auto';
-  prompt.style.height = `${Math.min(prompt.scrollHeight, 160)}px`;
+  prompt.style.height = `${Math.min(prompt.scrollHeight, 240)}px`;
 }
 // Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
 let prewarmAt = 0;
@@ -2171,6 +2292,9 @@ prompt.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation(); // (and doesn't also leave the full-page chat)
     window.assistant.stop(); // Esc in an empty composer stops the reply
+  } else if (e.key === 'ArrowUp' && !prompt.value && !running && !attachments.length && !pastes.length && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && messages.querySelector('.msg.user')) {
+    e.preventDefault();
+    editLast(); // Up in an empty composer edits the message you sent last (Claude.ai, ChatGPT)
   }
 });
 $('composer').addEventListener('submit', async (e) => {
@@ -2185,18 +2309,21 @@ $('composer').addEventListener('submit', async (e) => {
 });
 sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
-  const text = prompt.value.trim();
-  if (!text && attachments.length === 0) return;
+  const typed = prompt.value.trim();
+  if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  const text = window.chatDrafts.withPastes(typed, pastes);
+  const hadPastes = pastes.length > 0; // (a pasted block is the message's subject, not the words of a new topic)
   const images = attachments;
   attachments = [];
-  renderAttachments();
-  showAttachNote([]);
+  pastes = [];
   prompt.value = '';
+  renderAttachments(); // (saves the empty draft)
+  showAttachNote([]);
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
   const screen = takeScreenMode(); // [screen context] the camera button's choice for this message
   if (running) { const entry = ask(text, images, tabs, screen); if (now && entry) sendNow(entry); } // (queued for after the reply, or Send now)
-  else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs, screen);
+  else if (hadPastes || !(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs, screen);
   updateSend();
 }
 
@@ -2235,6 +2362,13 @@ document.querySelectorAll('.chip').forEach((chip) => {
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
 function clearChatView() {
+  saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+  draftHold = true;
+  prompt.value = '';
+  pastes = [];
+  autosize();
+  renderAttachments();
+  queueMicrotask(restoreDraft);
   runId++;
   shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
   lastAsk = null; // another chat: its last message isn't known here
@@ -2266,6 +2400,7 @@ $('new-chat').onclick = () => {
 
 // Called once by the page's script after it has set its chatHost hooks.
 function startChat() {
+  restoreDraft();
   refreshSetup();
   loadModels();
 }

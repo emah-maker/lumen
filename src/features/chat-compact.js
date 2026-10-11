@@ -8,6 +8,7 @@
 //    still show in the sidebar (settings.compactedItems), only the model sees the summary instead. Nothing is
 //    changed when the summary fails or comes back empty.
 
+const branches = require('./chat-branches'); // [versions]
 const COMMANDS = ['compact', 'context'];
 const SUMMARY_TAG = 'earlier_conversation_summary';
 const SUMMARY_BLOCK = new RegExp(`^<${SUMMARY_TAG}>[\\s\\S]*?</${SUMMARY_TAG}>\\s*`);
@@ -80,6 +81,7 @@ function applySummary(messages, cut, summary, items = []) {
   const text = String(summary || '').trim();
   if (!text || !(cut > 0) || cut >= messages.length) return false;
   messages.splice(0, cut);
+  branches.shiftForks(messages, cut); // [versions] other versions of the replaced turns go with them
   const first = messages[0];
   const rest = blocksOf(first).filter((b) => !summaryBlockOf({ role: 'user', content: [b] }));
   first.content = [{ type: 'text', text: `<${SUMMARY_TAG}>\n${text}\n</${SUMMARY_TAG}>\n\n` }, ...rest];

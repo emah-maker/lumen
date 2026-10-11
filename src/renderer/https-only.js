@@ -5,6 +5,7 @@ try { parsed = new URL(url); } catch {}
 if (parsed?.protocol === 'http:') {
   document.getElementById('host').textContent = parsed.host;
   document.getElementById('secure').textContent = `https://${parsed.host}`;
+  window.fill(document.getElementById('lead'), 'httpsOnly.lead', { secure: document.getElementById('secure'), host: document.getElementById('host') });
   document.getElementById('continue').href = parsed.href;
 } else {
   document.getElementById('continue').hidden = true;

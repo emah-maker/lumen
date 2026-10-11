@@ -18,7 +18,10 @@ const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modul
 // modules 250 -> 270 and uiKB 700 -> 750 (0.5.x, 2026-10-05): measured 258 modules and a 725 KB UI after the Gmail setup, file uploads, Bypass permissions and Codex/Grok engine work; each is a real feature, none an eager SDK or a stray bundle.
 // modules 270 -> 285 and uiKB 750 -> 775 (2026-10-07): main already measured 277 modules and a 759 KB UI before the start-up work (the budget had been failing); the queue, idle-reaper-free helpers and match patterns add three small modules.
 // idleIntervals 5 -> 6: the spare new-tab page's 60 s freshness check (newtab-speed, #321) is a sixth, cheap unref'd timer.
-const CEILING = { requireMs: 2500, modules: 285, preloadKB: 40, uiKB: 775, idleIntervals: 6 };
+// modules 285 -> 335 and uiKB 775 -> 870 (2026-10-10): the 0.5.22 release already measured 312 modules and 823 KB (the budget had been failing since the Codex/Grok, device-access and chrome work); today's UI round adds profile-guard, nav-history, device-permissions/chooser, chat-title, plain-math and remote-pdf (319 modules, 840 KB). Each is a real feature; no SDK or bundle is loaded eagerly (the LAZY check above still passes).
+// uiKB 870 -> 950 (0.5.23): the chat round (Markdown blocks and code extras, message versions and actions, the canvas, per-chat
+// drafts, the chat library's undo/pin/archive/search) measured 903 KB. Mermaid (3.5 MB) is not in it: it loads on the first diagram.
+const CEILING = { requireMs: 2500, modules: 335, preloadKB: 40, uiKB: 950, idleIntervals: 6 };
 
 (async () => {
   let failures = 0;

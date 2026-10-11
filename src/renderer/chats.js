@@ -29,8 +29,10 @@
   });
 
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let redraw = () => {};
+  const search = tools.searcher(api, () => redraw());
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
@@ -43,22 +45,27 @@
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
-    // A search once there are enough chats to need one; what was typed survives a redraw.
+    // The search box is there as soon as there is a chat; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
-    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
-    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
-    if (searchBox) searchBox.value = query;
+    searchBox = chats.length ? tools.search((q) => search.set(q)) : null;
+    if (!searchBox) search.clear(); // (no chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = search.query;
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
     const list = document.createElement('ul');
     list.className = 'chat-items';
     function drawList() {
-      const shown = chats.filter((c) => tools.matches(c, query));
+      const query = search.query;
+      const shown = tools.pick(chats, { query, view, hits: search.hits });
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);
-      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
     }
+    redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

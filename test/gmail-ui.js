@@ -43,7 +43,7 @@ const FEED = (who) => `<?xml version="1.0" encoding="UTF-8"?><feed version="0.3"
     let t = await waitCard(/Sign in to Gmail/);
     check('card signed out (live): the feed answered 401 and the card offers "Sign in to Gmail"', /Sign in to Gmail/.test(t) && !/\d+\s*unread/i.test(t), t);
     const btn = await page(`(() => { const b = [...document.querySelectorAll('.w-card[data-id="wgmail001"] button')].find((x) => /Sign in to Gmail/.test(x.textContent)); return b ? b.getAttribute('aria-label') : null; })()`);
-    check('card signed out: the button is labelled for assistive tech', /Sign in to Gmail for/.test(btn || ''), btn);
+    check('card signed out: the button is labelled for assistive tech', /^Sign in to Gmail( (.+))?$/.test(btn || '') && !/for Gmail/.test(btn || ''), btn);
     await shot('card-signed-out', 'global.__wtab.webContents');
     const before = await app.evaluate(() => global.__settings.tabs().length);
     await page(`[...document.querySelectorAll('.w-card[data-id="wgmail001"] button')].find((x) => /Sign in to Gmail/.test(x.textContent)).click()`);

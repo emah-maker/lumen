@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chat</title>
   <link rel="stylesheet" href="styles.css" />
@@ -11,7 +11,9 @@
   <link rel="stylesheet" href="prefs.css" />
   <link rel="stylesheet" href="extras.css" />
   <link rel="stylesheet" href="chat-page.css" />
+  <link rel="stylesheet" href="chat-actions.css" />
   <link rel="stylesheet" href="slash.css" />
+  <link rel="stylesheet" href="chat-canvas.css" />
 </head>
 <!-- lumen://chat: the sidebar's conversation as a full page. The conversation half is the sidebar's own
      markup and code (chat-core.js); "chat-full" is the sidebar stylesheet's wide layout. -->
@@ -112,12 +114,16 @@
   <script src="picker.js"></script>
   <script src="model-catalog.js"></script>
   <script src="highlight.js"></script>
+  <script src="code-extras.js"></script>
   <script src="gen-images.js"></script>
   <script src="run-state.js"></script>
   <script src="step-time.js"></script>
+  <script src="chat-drafts.js"></script>
   <script src="../ai/screen-intent.js"></script>
   <script src="agent-pill.js"></script>
+  <script src="chat-canvas.js"></script>
   <script src="chat-core.js"></script>
+  <script src="chat-actions.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>
   <script src="chat-items.js"></script>

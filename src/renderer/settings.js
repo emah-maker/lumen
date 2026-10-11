@@ -379,6 +379,18 @@ async function buildAi(card) {
     ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: showPermWarn });
   permissionRow.querySelector('.text').append(permWarn);
   showPermWarn(st.prefs.aiPermissionMode);
+  // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).
+  const instructionBox = (key, id, label, placeholder) => {
+    const box = h('textarea', { id, rows: 4, maxlength: 1500, spellcheck: 'true', 'aria-label': label, placeholder });
+    box.value = st.prefs[key] || '';
+    box.addEventListener('change', () => save(key, box.value));
+    return stackRow(label, '', box);
+  };
+  card.group(tr('settings.ai.groupInstructions', 'Custom instructions')).append(
+    toggle('aiInstructionsOn', tr('settings.ai.instructionsOn', 'Use custom instructions'), tr('settings.ai.instructionsOnDesc', 'Sent to the AI at the start of every new chat, as your preferences. Off keeps what you wrote but does not send it.'), undefined, { fallback: true }),
+    instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
+    instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
@@ -643,12 +655,15 @@ async function buildAi(card) {
   const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl);
   portRow.querySelector('.text').append(autoNote);
   const saveAuto = async () => {
-    const p = Number(port.value) || 9222;
-    await S.ai.setAutomation({ enabled: autoToggle.checked, port: p });
+    const asked = Number(port.value);
+    await S.ai.setAutomation({ enabled: autoToggle.checked, port: asked || 9222 });
+    const p = (await S.ai.automationInfo()).port; // as saved: a number outside 1024 to 65535 comes back corrected
+    port.value = String(p);
     portRow.hidden = !autoToggle.checked;
     if (!autoToggle.checked) running = null;
     token = (await S.ai.automationInfo()).token; // turning it off and on again makes a new one
     describe(autoToggle.checked, p);
+    if (autoToggle.checked && asked && asked !== p) autoNote.textContent = `Ports run from 1024 to 65535, so Lumen uses ${p}. ${autoNote.textContent}`;
   };
   autoToggle.addEventListener('change', saveAuto);
   port.addEventListener('change', saveAuto);
@@ -1891,6 +1906,8 @@ async function buildWidgets(card) {
       h('div', { class: 'widget-head' }, existing ? widgetIcon(existing.type) : null, h('div', { class: 'grow' },
         h('h2', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
         h('span', { class: 'note', text: existing ? `${WS.kindName(existing.type)} · ${WS.widgetSummary(existing, ws)}` : 'Pick what to show, then set it up.' }))),
+      // The new-tab page's Add widget sent us here for a kind that needs a key or a sign-in: say what to paste, and where to get it.
+      !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
       existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
       fields,
       section('Card', [
@@ -1994,7 +2011,7 @@ async function buildSearch(card) {
 
 function buildStartup(card) {
   const list = h('div', { class: 'list', id: 'startup-pages' });
-  const input = h('input', { type: 'url', class: 'grow', id: 'startup-add', placeholder: 'https://example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
+  const input = h('input', { type: 'text', inputmode: 'url', class: 'grow', id: 'startup-add', placeholder: 'example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
   const renderPages = () => list.replaceChildren(...st.prefs.startupPages.map((url, i) => h('div', { class: 'item' },
     h('span', { class: 'grow mono', text: url }),
     h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
@@ -2003,18 +2020,26 @@ function buildStartup(card) {
     return h('label', { class: 'check' }, r, text);
   });
   renderPages();
+  const addNote = h('span', { class: 'note', id: 'startup-add-status', role: 'status' });
+  // A bare "example.com" is fine (https:// is added); anything that isn't a web address says so instead of doing nothing.
+  const addPage = async () => {
+    let url = input.value.trim();
+    if (!url) { flash(addNote, 'Type the address of a page first.', 'err'); return; }
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = `https://${url}`;
+    let ok = false;
+    try { const u = new URL(url); ok = /^https?:$/.test(u.protocol) && (u.hostname.includes('.') || u.hostname === 'localhost'); } catch {}
+    if (!ok) { flash(addNote, 'That isn’t a web address. Try something like example.com.', 'err'); return; }
+    if (st.prefs.startupPages.includes(url)) { flash(addNote, 'That page is already in the list.', 'err'); return; }
+    await save('startupPages', [...st.prefs.startupPages, url]);
+    input.value = '';
+    addNote.textContent = '';
+    renderPages();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPage(); } });
+  input.addEventListener('input', () => { addNote.textContent = ''; });
   card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
-    h('div', { class: 'controls' }, input, h('button', {
-      text: 'Add page',
-      onclick: async () => {
-        const url = input.value.trim();
-        if (!/^https?:\/\//i.test(url)) return;
-        await save('startupPages', [...st.prefs.startupPages, url]);
-        input.value = '';
-        renderPages();
-      },
-    }))));
+    h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
 }
 
 async function buildPrivacy(card) {
@@ -2750,7 +2775,12 @@ function buildSystem(card) {
   card.append(stackRow('Proxy', 'Applies to every tab straight away.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
     h('div', { class: 'controls' }, note, h('button', {
       id: 'proxy-apply', text: 'Apply',
-      onclick: async () => { await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value }); flash(note, 'Applied.'); },
+      onclick: async () => {
+        if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
+        if (mode.value === 'pac_script' && !/^(https?|file):\/\//i.test(pac.value.trim())) { flash(note, 'Enter the address of the script, starting with https://.', 'err'); pac.focus(); return; }
+        await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
+        flash(note, 'Applied.');
+      },
     }))));
 }
 

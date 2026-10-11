@@ -105,7 +105,12 @@ function globeIcon(page = null) {
 // A page with no icon of its own: a monogram (the first letter of its site on a color taken from the site), so a row of
 // tabs without favicons doesn't read as a row of identical globes. Not for Lumen's own pages (they have their own icons).
 function siteHostOf(url) {
-  try { const u = new URL(String(url || '')); return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./i, '') : ''; } catch { return ''; }
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.replace(/^www\./i, '');
+    // An address of numbers (127.0.0.1, [::1]) has no site name to take a letter from: "1" on a green tile reads as a glitch, so it keeps the globe.
+    return /^https?:$/.test(u.protocol) && !/^[\d.]+$/.test(host) && !host.startsWith('[') ? host : '';
+  } catch { return ''; }
 }
 function monogramIcon(host) {
   const span = document.createElement('span');
@@ -1900,7 +1905,7 @@ function finishTabsRender(state, before, container, switched) {
   $('zoom').hidden = !zoomed;
   $('zoom').textContent = `${zoom}%`;
   document.body.classList.toggle('zoomed', zoomed);
-  const lumenPage = active?.page === 'reader' || active?.page === 'source'; // shows a web address, but is Lumen's own page
+  const lumenPage = Boolean(active?.page); // Lumen's own page (Reader, View Source, Settings, History, Bookmarks, Downloads): no connection to vouch for, nothing to bookmark
   currentLumenPage = lumenPage;
   const reader = $('reader');
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
