@@ -81,7 +81,8 @@ process.stdin.on('data', (d) => {
   const base = await runOnce({ fullAccess: false });
   check('off: the lockdown flags and an empty working folder', after(base.rec.argv, '--tools') === '' && after(base.rec.argv, '--permission-mode') === 'dontAsk' && base.rec.argv.includes('--strict-mcp-config') && after(base.rec.argv, '--system-prompt') === 'LUMEN' && fs.realpathSync(base.rec.cwd) !== fs.realpathSync(os.homedir()), base.rec.argv.join(' '));
 
-  const hung = await runOnce({ fullAccess: false, silenceMs: WATCHDOG * 3, watchdogMs: WATCHDOG }).catch((e) => ({ err: e }));
+  // (the fake's tool result has just gone back to the model, so the limit is 4x until it speaks: 6x is a real hang)
+  const hung = await runOnce({ fullAccess: false, silenceMs: WATCHDOG * 6, watchdogMs: WATCHDOG }).catch((e) => ({ err: e }));
   check('off: the watchdog still ends a CLI that goes quiet', hung.err || hung.out?.failed || hung.events?.some((e) => e.type === 'error') || hung.out?.text !== 'Done.', JSON.stringify(hung.out));
 
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });

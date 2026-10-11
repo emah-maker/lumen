@@ -51,7 +51,8 @@ function plan(kind, { settings, ...view } = {}) {
 }
 
 // The system notification's text. t(key, vars) is the UI language (locales/en.json agent.notify.*).
-function notification(kind, { reply = '', error = '', chat = '' } = {}, t = null) {
+// summary: an error's short line (an engine's error event carries one), so the title is not a long sentence cut short.
+function notification(kind, { reply = '', error = '', chat = '', summary = '' } = {}, t = null) {
   const tr = (key, vars, english) => {
     const text = t ? t(key, vars) : '';
     return text && text !== key ? text : english;
@@ -59,7 +60,10 @@ function notification(kind, { reply = '', error = '', chat = '' } = {}, t = null
   const line = firstLine(reply);
   const body = chat ? String(chat).slice(0, 120) : '';
   if (kind === 'approval') return { title: tr('agent.notify.approval', {}, 'Lumen needs your OK'), body: body || tr('agent.notify.approvalBody', {}, 'Open the sidebar to answer.') };
-  if (kind === 'failed') return { title: tr('agent.notify.failed', { error: firstLine(error, 80) }, `Lumen stopped: ${firstLine(error, 80)}`), body };
+  if (kind === 'failed') {
+    const what = summary ? firstLine(summary, 80) : firstLine(error, 80);
+    return { title: tr('agent.notify.failed', { error: what }, `Lumen stopped: ${what}`), body: [body, summary ? tr('agent.notify.failedHint', {}, 'Open the chat and press Retry.') : ''].filter(Boolean).join('\n') };
+  }
   return { title: line ? tr('agent.notify.done', { reply: line }, `Lumen finished: ${line}`) : tr('agent.notify.doneEmpty', {}, 'Lumen finished'), body };
 }
 
