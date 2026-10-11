@@ -379,6 +379,18 @@ async function buildAi(card) {
     ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: showPermWarn });
   permissionRow.querySelector('.text').append(permWarn);
   showPermWarn(st.prefs.aiPermissionMode);
+  // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).
+  const instructionBox = (key, id, label, placeholder) => {
+    const box = h('textarea', { id, rows: 4, maxlength: 1500, spellcheck: 'true', 'aria-label': label, placeholder });
+    box.value = st.prefs[key] || '';
+    box.addEventListener('change', () => save(key, box.value));
+    return stackRow(label, '', box);
+  };
+  card.group(tr('settings.ai.groupInstructions', 'Custom instructions')).append(
+    toggle('aiInstructionsOn', tr('settings.ai.instructionsOn', 'Use custom instructions'), tr('settings.ai.instructionsOnDesc', 'Sent to the AI at the start of every new chat, as your preferences. Off keeps what you wrote but does not send it.'), undefined, { fallback: true }),
+    instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
+    instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
