@@ -595,12 +595,21 @@ function createUpdates(deps) {
 
   function dismiss() { dismissed = dismissKey(); moveError = ''; publish(); return snapshot(); }
 
-  function start() {
+  // The Settings page and the toolbar ask for the state as soon as they open, which can be before the start-up queue gets to start():
+  // the handlers exist from the moment this is made (once), not from the first check.
+  let ipcRegistered = false;
+  function registerIpc() {
+    if (ipcRegistered || !deps.ipcMain?.handle) return;
+    ipcRegistered = true;
     const handle = (channel, fn) => deps.ipcMain.handle(channel, (_event, ...args) => fn(...args));
     handle('settings:updates-state', snapshot);
     handle('settings:updates-check', check);
     handle('settings:updates-apply', apply);
     handle('settings:updates-dismiss', dismiss);
+  }
+
+  function start() {
+    registerIpc();
     if (reason) return;
     // The last swap couldn't replace the files: the old version is what's running.
     let lastSwapFailed = false;
@@ -649,6 +658,7 @@ function createUpdates(deps) {
     reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
   } : undefined;
 
+  registerIpc();
   return { start, check, apply, applyOnQuit, state: snapshot, testHooks };
 }
 

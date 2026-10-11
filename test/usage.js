@@ -169,7 +169,7 @@ const USAGE_TEXT = [
   const readMeter = () => ui.evaluate(() => {
     const m = document.getElementById('usage-meter');
     const b = m.querySelector('.um-bar');
-    return { hidden: m.hidden, text: m.textContent, cls: m.className, kind: m.dataset.kind || '', barHidden: b.hidden, now: b.getAttribute('aria-valuenow'), role: b.getAttribute('role'), label: b.getAttribute('aria-label') };
+    return { hidden: m.hidden, title: m.title, text: m.textContent, cls: m.className, kind: m.dataset.kind || '', barHidden: b.hidden, now: b.getAttribute('aria-valuenow'), role: b.getAttribute('role'), label: b.getAttribute('aria-label') };
   });
   const pickGrok = () => ui.evaluate(() => {
     const sel = document.getElementById('model');
@@ -188,7 +188,8 @@ const USAGE_TEXT = [
 
   await grokTurn();
   m = await until((x) => /25% of context/.test(x.text));
-  check('Grok bar: default is the context fill (25%) with tokens and cost today', /25% of context · 50\.2k tokens · \$0\.40 today/.test(m.text) && m.kind === 'context' && !/high|warn/.test(m.cls), JSON.stringify(m));
+  // (one usage line, #384: the chat's own tokens and cost sit under the header; today's total moved into the bar's tooltip)
+  check('Grok bar: default is the context fill (25%), with tokens and cost today in its tooltip', /^25% of context$/.test(m.text.trim()) && /50\.2k tokens · \$0\.40 today/.test(m.title) && m.kind === 'context' && !/high|warn/.test(m.cls), JSON.stringify(m));
   check('Grok bar: a progressbar with the value, label and no plan wording', m.role === 'progressbar' && m.now === '25' && !m.barHidden && /Grok Build usage/.test(m.label) && !/Plan/.test(m.text), JSON.stringify(m));
 
   await stub({ use: grokUse(150000) });
@@ -216,7 +217,7 @@ const USAGE_TEXT = [
   await stub({ mode: 'limit', limit: { text: 'Usage limit reached. Resets at soon', resetsAt: limitAt } });
   await grokTurn();
   m = await until((x) => x.kind === 'limit');
-  check('Grok bar: a limit-reached turn makes it red: "Grok limit reached, resets at <time>"', /Grok limit reached, resets at \d/.test(m.text) && /high/.test(m.cls) && m.now === '100', JSON.stringify(m));
+  check('Grok bar: a limit-reached turn makes it red: "Grok limit reached, resets at <time>"', /Grok limit reached, resets at (\w{3} )?\d/.test(m.text) && /high/.test(m.cls) && m.now === '100', JSON.stringify(m));
   s = await summary(false);
   check('Grok limit: kept with its reset time in the usage log', s.grok.limit?.resetsAt === limitAt && s.bars.grokbuild.kind === 'limit', JSON.stringify(s.grok.limit));
   await stub({ limit: { text: 'Limit reached', resetsAt: null } });
