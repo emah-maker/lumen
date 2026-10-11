@@ -57,7 +57,7 @@ if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
 cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
 const { engineModel } = require('./ai/cli-utils');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
@@ -7943,6 +7943,8 @@ function goFromAddress(text) {
   const internal = settingsPage.parseSettingsInput(text);
   if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
   if (chatPage.parseChatInput(text)) { chatPageRt.open(); return; } // lumen://chat
+  const own = internalPageOf(text); // lumen://history, bookmarks, downloads, about
+  if (own) { if (own === 'history') openHistoryPage(); else if (own === 'updates') openSettingsPage('updates', { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); else managers.open(own); return; }
   if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
