@@ -134,6 +134,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 |---|---|
 | Open or close the AI sidebar | `Ctrl+J` or the toolbar's AI button |
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
+| On the full-page chat: fold or open the chat list / new chat | `Ctrl+Shift+S` / `Ctrl+Shift+O` |
 | Ask the AI from the address bar | type, then `Alt+Enter` |
 | New tab / close tab / focus address | `Ctrl+T` / `Ctrl+W` / `Ctrl+L` |
 | New window / close window | `Ctrl+N` / `Ctrl+Shift+W` |
