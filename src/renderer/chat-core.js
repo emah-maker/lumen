@@ -441,6 +441,8 @@ function nameChat(id) {
   if (!id || shownChatId) return;
   drafts?.rename(null, id);
   shownChatId = id;
+  // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
+  if (!prompt.value && !pastes.length) restoreDraft();
 }
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
