@@ -4549,10 +4549,13 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id) emptyChatSettings.delete(id);
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
-  unreadChats.delete(chatId);
+  const wasUnread = unreadChats.delete(chatId);
   if (id && (snapshot || live)) chats().setCurrent(id);
   else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
-  pushAttention();
+  // A quiet switch (a window's sidebar following its front tab's chat, from a call it made: syncToSender) changes no run's mark unless it
+  // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
+  // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
+  if (!quiet || wasUnread) pushAttention();
   announceModelIfChanged(); // each chat keeps its own model: the picker and the placeholders follow the chat now open
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);

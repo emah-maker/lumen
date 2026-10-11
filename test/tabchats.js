@@ -503,8 +503,8 @@ const fakeModel = (app) => app.evaluate(() => {
   const win1 = await tc(() => global.__windows.list()[0].windowId);
   await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 200, y: 200 }), [win1, mover]);
   await waitFor(() => tc(() => global.__windows.list().length === 2));
-  const ui2 = await waitFor(() => app.windows().find((p) => p !== ui && p.url().includes('index.html')));
-  await ui2.waitForSelector('.tab');
+  // (Not just any other index.html page: a spare window prepared for the next drag looks the same, and has no tabs; and no waitForSelector on it: a window that is never shown in background mode does not paint, so Playwright's visibility wait hangs.)
+  const ui2 = await waitFor(async () => { for (const p of app.windows()) { if (p !== ui && !p.isClosed() && p.url().includes('index.html') && await p.evaluate(() => document.querySelectorAll('.tab').length).catch(() => 0)) return p; } return null; });
   const text2 = () => ui2.evaluate(() => document.getElementById('messages').textContent);
   await waitFor(async () => /chat-M/.test(await text2()));
   check('the chat follows its tab into the new window and shows there', /chat-M/.test(await text2()), await text2());

@@ -120,7 +120,8 @@ const fakeModel = (app) => app.evaluate(() => {
     await readable();
     titles = await historyTitles();
     check('the working chat finished and is in History', titles.some((t) => /^slow/.test(t)), JSON.stringify(titles));
-    await ui.evaluate(() => [...document.querySelectorAll('#chat-list .chat-item .chat-open')].find((b) => /slow please/.test(b.textContent)).click());
+    // (The title leaves out the politeness: "slow please" is listed as "slow".)
+    await ui.evaluate(() => [...document.querySelectorAll('#chat-list .chat-item .chat-open')].find((b) => /^slow/.test(b.querySelector(".chat-title")?.textContent || "")).click());
     const kept = await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.msg.assistant')].some((e) => /Reply to slow/.test(e.textContent))));
     check('its whole reply was kept (closing did not cancel it)', kept === true, kept);
     await closeHistory();

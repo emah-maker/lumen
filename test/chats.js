@@ -90,8 +90,8 @@ const fakeClient = (app) => app.evaluate(() => {
   // [context] The ring left of Send: the last request's input against the model's window.
   const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
   const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
-  check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 200\.0k tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
-  check('context strip: above the textbox, reads "Context 1k / 200k" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 200k' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer') && Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
+  check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 1.0M tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
+  check('context strip: above the textbox, reads "Context 1k / 1M" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 1M' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer') && Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
   // [usage bars] A chat on a Claude API key has the context ring and the tokens line but no plan bar: there are no plan numbers to show.
   check('usage bars: an API-key chat shows its context ring and tokens, and no made-up plan bar', await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return (!m || m.hidden) && document.querySelectorAll('.model-picker .ubar, #composer .ubar').length === 0; }), 'a plan bar is showing');
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
@@ -136,7 +136,7 @@ const fakeClient = (app) => app.evaluate(() => {
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
   check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === 'This chat: 2.4k tokens · ~$0.02', 'usage line');
-  check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 200\.0k/.test(r.title); }), JSON.stringify(await ring()));
+  check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 1.0M/.test(r.title); }), JSON.stringify(await ring()));
   const hostsBack = await app.evaluate(() => [...global.__agent.approvedHosts]);
   check('approved sites come back with their chat', hostsBack.includes('approved-in-legacy.test') && !hostsBack.includes('approved-in-new.test'), JSON.stringify(hostsBack));
   check('a reopened chat counts as having read content', await app.evaluate(() => global.__agent.messages.tainted === true), 'not tainted');
@@ -206,7 +206,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await ui.fill('#prompt', '/context');
   await ui.press('#prompt', 'Enter');
   const report = await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.msg.assistant')].map((e) => e.textContent).find((t) => /Tokens:/.test(t))));
-  check('/context answers in the chat with the figure', report && /Tokens: 1\.0k \/ 200\.0k/.test(report), report);
+  check('/context answers in the chat with the figure', report && /Tokens: 1\.0k \/ 1.0M/.test(report), report);
   await waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active')));
   await ui.fill('#prompt', '/compact');
   await ui.press('#prompt', 'Enter');

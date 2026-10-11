@@ -4568,7 +4568,7 @@ ${out.text}${note}
     if (!current) return;
     const own = scope.chat.aiNavTabId != null && this.browser.tabById?.(scope.chat.aiNavTabId);
     const ownAlive = Boolean(own) && Boolean(this.browser.isAiTab?.(scope.chat.aiNavTabId));
-    const target = agentsQuiet.navTarget({ aboutPage: scope.aboutPage === true, onAiTab: Boolean(this.browser.isAiTab?.(current.id)), ownTabAlive: ownAlive, outside: typeof this.browser.openTab !== 'function' });
+    const target = agentsQuiet.navTarget({ aboutPage: scope.aboutPage === true, onAiTab: Boolean(this.browser.isAiTab?.(current.id)), ownTabAlive: ownAlive, outside: typeof this.browser.openTab !== 'function' || this.browser.background === true });
     if (target === 'own') { this.pinTab(own.id); return; }
     if (target !== 'new') return;
     const tab = this.browser.openTab(undefined, { ai: true, show: false }); // behind the user's tab, marked as the AI's
