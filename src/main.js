@@ -4368,6 +4368,8 @@ function handleShortcut(event, input) {
   if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
   const extra = extraShortcut(input);
   if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
+  // The full-page chat's own keys (renderer/chat-page.js listens): Ctrl+Shift+S folds or opens the chat list, Ctrl+Shift+O starts a new chat.
+  if (mod && input.shift && !input.alt && (key === 's' || key === 'o') && wc && activeTabIsChatPage()) { wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: '${key === 's' ? 'rail' : 'new'}' }))`).catch(() => {}); event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') reopenLastClosed();
   else if (mod && input.shift && key === 'a') openTabSearch();

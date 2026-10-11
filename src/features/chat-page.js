@@ -86,7 +86,7 @@ function createRunTracker() {
 }
 
 // deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId),
-//         managersOpen(), isPrivateSender(event), chatView(), tabInfo(tab), agentOffLimits(tab) }
+//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab) }
 function create(deps) {
   const runs = createRunTracker();
 
@@ -191,7 +191,7 @@ function create(deps) {
     const { ipcMain } = deps;
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
     ipcMain.on('chat:open-page', (event) => { if (!deps.isPrivateSender(event)) open(); });
-    ipcMain.handle('chatpage:state', (event) => { deps.followPage?.(event); return { view: deps.chatView(), run: runs.get(), target: targetInfo() }; });
+    ipcMain.handle('chatpage:state', (event) => { deps.followPage?.(event); return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '' }; });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
