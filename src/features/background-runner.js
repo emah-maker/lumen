@@ -24,7 +24,7 @@
 const crypto = require('crypto');
 const { WebContentsView, Notification, BrowserWindow } = require('electron');
 const { Agent, cliSystemPrompt } = require('../ai/agent');
-const { plainMath } = require('./plain-math');
+const { notifyText } = require('./chat-runs');
 const { engineModel } = require('../ai/cli-utils');
 const autoModel = require('../ai/auto-model');
 const quiet = require('./agents-quiet');
@@ -140,7 +140,7 @@ function create(deps) {
     const plan = quiet.taskToastPlan(bg.notifyPlan(kind, { settings: settings(), focused: appFocused() }));
     if (!plan.os || deps.test || !Notification.isSupported()) return;
     try {
-      const n = new Notification({ title: task.title, body: plainMath(text), silent: false }); // LaTeX as text: a notification can't render math
+      const n = new Notification({ title: notifyText(task.title, 120), body: notifyText(text, 240), silent: false }); // LaTeX as text, cut after: a notification can't render math
       n.on('click', () => { deps.focusApp?.(); ui()?.send('tasks:open', { id: task.id }); });
       n.show();
     } catch {}
