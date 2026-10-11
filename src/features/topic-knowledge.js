@@ -125,6 +125,7 @@ const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing', pediatrician: 
 // Phrases that say a concept where their words alone would not ("closing costs", "Western blot"), and the ones that must not be read as the words they
 // are made of. [pattern, concept]; the concept is added to the tab as if one of its words were in the title.
 const PHRASE_CONCEPTS = [
+  [/\b(w-?2|w-?4|w-?9|1099(-[a-z]+)?|1098(-[a-z]+)?|1040(-[a-z]+)?|schedule [cse]|tax (forms?|returns?|documents?|filing|withholding))\b/i, 'tax'], // the forms a tax year leaves in Downloads ("W-2_2025.pdf")
   [/\b(toast (pos|payroll|tab|go)|us foods|food cost|menu pricing|prime cost|health inspections?|health department|restaurant (depot|supply|owners?|managers?|week)|doordash merchant|uber eats (manager|merchant)|menu (editor|design)|walk-in coolers?|commercial kitchen|back of house|front of house|line cooks?)\b/i, 'restaurant'],
   [/(?i:\b(admissions|freshman applicants?|letters? of recommendation|common app|coalition app|css profile|college board|net price calculator|personal statement|early (action|decision)|college essays?|applying to college|college applications?|financial aid|chance me)\b)|\b(SAT|ACT)\b(?= (scores?|prep|practice|test|tests|exam|registration|dates?))|\bSAT Practice\b/, 'collegeapp'],
   [/\b(pacific crest|appalachian trail|continental divide trail|hiker trash|kickoff days|water filters?|bear canisters?|ultralight|water reports?|trail angels?|thru-?hik\w*|long-distance permit|zero day|trail names?)\b/i, 'thruhike'],

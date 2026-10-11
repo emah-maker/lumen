@@ -73,6 +73,7 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords, siteHint } = require('./browser/tab-groups');
 const taskbarTasks = require('./features/taskbar-tasks'); // the taskbar's "Close tabs the AI opened" (Jump List task / Dock menu)
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
+const fileTabs = require('./features/file-tabs'); // tabs that show a file (a PDF, a deck, a file from disk): what Organize and the strip's icons know of them
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
@@ -1079,6 +1080,9 @@ const tabGroups = createTabGroups({
   isWeb: (url) => isWebUrl(url),
   mode: () => groupingMode(),
   aiTopics: () => readSettings().topicAi === true,
+  // May a short snippet of a file's own text be described to a model (Organize with AI)? Not when AI is off for it (Turn off AI here: a site, or local files), and
+  // not for a file on this computer while the AI is kept hands-off. Its name and folder still group it here.
+  fileTextOk: (t) => { const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || ''; return !aiSites.isOff(url) && !(fileTabs.addressOf(url).startsWith('file:') && readSettings().aiHandsOff === true); },
 });
 // Automatic grouping: 'off' | 'site' | 'topic'. Before topics it was a switch (autoGroupTabs).
 function groupingMode() {
@@ -1090,9 +1094,29 @@ let autoGroupTimer = null;
 // and GitHub pages about one library). After a page loads, its meta description and first heading
 // join its words. Read in an isolated world, so the page can't see or tamper with the read.
 const PAGE_TEXT_WORLD = 1001;
+// A tab that shows a file gets the first words of its text too, so a lecture's PDF joins the course's other tabs: a PDF in Lumen's viewer reads its
+// first page (the viewer exposes it), a deck its first slide, a text or code file its first lines. Kept in memory with the tab, like a page's description.
+function readFileText(tab) {
+  const wc = tab.view.webContents;
+  const url = realUrl(wc);
+  const address = fileTabs.addressOf(url);
+  if (!address) return;
+  const apply = (text) => {
+    if (!alive(tab) || realUrl(tab.view.webContents) !== url) return;
+    const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (clean === (tab.pageText || '')) return;
+    tab.pageText = clean;
+    scheduleAutoGroup();
+  };
+  let read = Promise.resolve('');
+  if (pdfViewer.isViewerUrl(url)) read = wc.executeJavaScript('new Promise((done) => { let n = 0; const timer = setInterval(() => { if (window.lumenPdf && window.lumenPdf.firstPageText) { clearInterval(timer); done(window.lumenPdf.firstPageText()); } else if (++n > 100) { clearInterval(timer); done(""); } }, 100); })', true); // (the viewer's module may still be loading)
+  else if (slidesViewer.isViewerUrl(url)) { const deck = slidesViewer.deckUrlOf(url); if (deck) read = slidesViewer.loadSlideTexts(deck).then((slides) => slides[0] || ''); } else read = fileTabs.readTextHead(address);
+  read.then(apply).catch(() => apply(''));
+}
 function readPageText(tab) {
   const wc = tab.view.webContents;
-  if (groupingMode() !== 'topic' || !isWebUrl(realUrl(wc))) return;
+  if (groupingMode() !== 'topic') return;
+  if (!isWebUrl(realUrl(wc))) { readFileText(tab); return; }
   wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `[document.querySelector('meta[name="description"],meta[property="og:description"]')?.content || '', document.querySelector('meta[name="keywords"]')?.content || '', document.querySelector('meta[property="og:title"]')?.content || '', document.querySelector('h1')?.textContent || ''].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 300)` }])
     .then((text) => {
       if (!alive(tab) || typeof text !== 'string' || text === tab.pageText) return;
@@ -1685,6 +1709,7 @@ function tabState() {
           favicon: t.favicon || null,
           favicons: t.favicons || (t.favicon ? [t.favicon] : []),
           page: null,
+          fileKind: fileTabs.iconKind(url), // the strip's icon for a file (a PDF, a deck ...) when the page has none
           error: false,
           zoom: 100,
           zoomDefault: 100,
@@ -1711,6 +1736,7 @@ function tabState() {
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
         passwords: passwordsRt ? passwordsRt.stateOf(t) : null, // [passwords] the key button and the save bar: sites, usernames and counts only
+        fileKind: fileTabs.iconKind(url),
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -3522,7 +3548,7 @@ function tabMenuTemplate(id) {
         if (tab.groupId) tabGroups.remove(id, { byUser: true });
         // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
         const title = alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '';
-        const group = tabGroups.create(isWebUrl(url) ? siteName(url, title) : 'New Group', [id]);
+        const group = tabGroups.create(isWebUrl(url) ? siteName(url, title) : fileTabs.nameFor(url, title) || 'New Group', [id]);
         sendTabs();
         ui()?.send('group:rename-start', group.id);
       },

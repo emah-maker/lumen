@@ -8,7 +8,8 @@ const baseline = require('./_baseline-tab-groups');
 
 // ---------- harness: drive createTabGroups() with plain arrays, no accessors touching the DOM ----------
 
-function harness(mod, { aiTopics = false, withText = true } = {}) {
+// isWeb: which addresses count as web pages (default: all). Before file tabs were organized the app's was http(s) only (main.js isWebUrl).
+function harness(mod, { aiTopics = false, withText = true, isWeb = () => true } = {}) {
   let tabs = [];
   let nextId = 1;
   const tg = mod.createTabGroups({
@@ -17,7 +18,7 @@ function harness(mod, { aiTopics = false, withText = true } = {}) {
     urlOf: (t) => t.url,
     titleOf: (t) => t.title,
     textOf: (t) => (withText ? t.text || '' : ''),
-    isWeb: () => true,
+    isWeb,
     mode: () => 'topic',
     aiTopics: () => aiTopics,
     onChange: () => {},

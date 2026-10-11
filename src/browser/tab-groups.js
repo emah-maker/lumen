@@ -2,6 +2,7 @@
 // module works on the same array through the accessors passed to createTabGroups().
 const { getDomain } = require('tldts-experimental');
 const knowledge = require('../features/topic-knowledge');
+const fileTabs = require('../features/file-tabs');
 
 const GROUP_COLORS = ['blue', 'purple', 'pink', 'red', 'orange', 'yellow', 'green', 'gray'];
 // The order new groups are coloured in, and the colours that read as one another at a glance (red and pink, blue and purple ...): two groups side by side
@@ -599,6 +600,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
       if ((words.get(key)?.weight ?? 0) >= 0.8) { words.distinct.add(key); if (acronym || camel || words.proper.has(key)) words.solid.add(key); }
     }
   }
+  // A course or part number ("ME 2350", "CS3500") is a name that tabs of one course share: it links them on its own, as an acronym does.
+  for (const code of courseCodes(`${cleanTitle} ${text}`)) { words.distinct.add(code); words.solid.add(code); }
   return words;
 }
 
@@ -2335,7 +2338,8 @@ function mergeSimilarGroups(groups) {
 }
 
 // mode(): 'off' | 'site' | 'topic' (automatic grouping).
-function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange, learned = null }) {
+// fileTextOk(tab): may the snippet of a file's own text be described to a model? (false: AI is off for it; the file's name and folder still group it here)
+function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange, learned = null, fileTextOk = () => true }) {
   const groups = new Map(); // id -> { id, name, color, collapsed, domain, topic, auto }
   const isAuto = () => mode() !== 'off';
   let undoState = null; // the tabs and groups from before the last "Organize"
@@ -2403,7 +2407,20 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   const pinned = (t) => Boolean(t.pinned);
   // aiHint: what a model once said this tab's site is for (features/organize-learn.js aiHint); the fixed
   // table (siteHint) always wins over it, and a site the user filed under a group of their own has none.
-  const entry = (t) => { const url = urlOf(t); return { id: t.id, title: titleOf(t), url, text: textOf ? textOf(t) : '', hint: t.openerQuery || '', aiHint: learned?.aiHint?.(url) || '' }; };
+  // A tab that shows a file (a PDF in the viewer, a deck, a file from disk) is described by what the file is: its name (or a PDF's own title), its folders
+  // and the first words of its text, not by the viewer's address. `file` says what it is; `aiText` is the short snippet a model may be sent (never full text).
+  const entry = (t) => {
+    const url = urlOf(t);
+    const title = titleOf(t);
+    const text = textOf ? textOf(t) : '';
+    const hint = t.openerQuery || '';
+    const file = fileTabs.identify(url, { title, text });
+    if (!file) return { id: t.id, title, url, text, hint, aiHint: learned?.aiHint?.(url) || '' };
+    const { kind, label, typeName, name, folder, local, groupKey, groupName } = file;
+    return { id: t.id, title: file.title, url: file.topicUrl, text: file.topicText, hint, aiHint: local ? '' : learned?.aiHint?.(file.address) || '', file: { kind, label, typeName, name, folder, local, groupKey, groupName }, aiText: fileTextOk(t) ? file.snippet : '' };
+  };
+  // Web pages and files (on the web or on this computer) are what Organize works on.
+  const groupable = (url) => isWeb(url) || Boolean(fileTabs.addressOf(url));
   const keyOf = (t) => { const e = entry(t); return `${e.title}|${e.url}|${e.text.length}`; };
 
   function create(name, tabIds, { domain = null, color, topic = null, auto = false, cohesion } = {}) {
@@ -2484,17 +2501,17 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
 
   // Tabs automatic grouping may move: ungrouped web tabs the user hasn't taken out of a group,
   // dragged into place or put into a group themselves. Pinned tabs never.
-  const movable = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
+  const movable = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && groupable(urlOf(t));
   const loose = () => getTabs().filter((t) => !t.groupId && movable(t));
   // What an explicit Organize regroups: every loose web tab (a hand-drag, a restored session or a pin toggle only
   // stop AUTOMATIC grouping, not a request to organize) and every tab in an automatic group, hand-added ones too
   // (the user asked to organize: they are regrouped by topic, and Undo puts them back). Never pinned tabs, closing
   // tabs, or tabs in a group the user made or named.
-  const organizable = (t) => !pinned(t) && !t.closing && isWeb(urlOf(t))
+  const organizable = (t) => !pinned(t) && !t.closing && groupable(urlOf(t))
     && (!t.groupId || (Boolean(groups.get(t.groupId)?.auto) && !groups.get(t.groupId).userNamed));
   // Why there may be nothing to organize: { web, pinned, kept } (web tabs overall, pinned ones, ones in the user's own groups).
   const organizeCounts = () => {
-    const all = getTabs().filter((t) => !t.closing && isWeb(urlOf(t)));
+    const all = getTabs().filter((t) => !t.closing && groupable(urlOf(t)));
     return { web: all.length, pinned: all.filter(pinned).length, kept: all.filter((t) => !pinned(t) && !organizable(t)).length };
   };
 
@@ -2542,6 +2559,8 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return true;
   }
 
+  // A by-site group's name: the site's, or for a file on this computer its folder's or type's.
+  const siteLabel = (tab) => { const file = fileTabs.identify(urlOf(tab)); return file?.local ? file.groupName : siteName(file ? file.address : urlOf(tab), titleOf(tab)); };
   // Three or more ungrouped tabs from one site form a group; later tabs of that site join it.
   function autoGroup() {
     if (!isAuto()) return false;
@@ -2549,8 +2568,11 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     let changed = false;
     const bySite = new Map();
     for (const tab of getTabs()) {
-      if (tab.groupId || pinned(tab) || tab.userRemoved || tab.userMoved || tab.userPlaced || !isWeb(urlOf(tab))) continue;
-      const domain = siteKey(urlOf(tab));
+      if (tab.groupId || pinned(tab) || tab.userRemoved || tab.userMoved || tab.userPlaced || !groupable(urlOf(tab))) continue;
+      // A file on this computer is a "site" of its own: its folder, or (in Downloads, Documents, the desktop ...) its type: "Physics", "PDFs", "Files".
+      // A file on the web is its site's (a PDF in the viewer counts for the address it came from, not the viewer's).
+      const file = fileTabs.identify(urlOf(tab));
+      const domain = file?.local ? file.groupKey : siteKey(file ? file.address : urlOf(tab));
       if (!domain || SEARCH_DOMAINS.has(domain)) continue; // result pages from a search engine aren't a topic
       if (!bySite.has(domain)) bySite.set(domain, []);
       bySite.get(domain).push(tab);
@@ -2561,7 +2583,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
         for (const tab of list) tab.groupId = existing.id;
         changed = true;
       } else if (list.length >= 3) {
-        create(uniqueName(siteName(urlOf(list[0]), titleOf(list[0]))), list.map((t) => t.id), { domain, auto: true });
+        create(uniqueName(siteLabel(list[0])), list.map((t) => t.id), { domain, auto: true });
         changed = true;
       }
     }
@@ -2698,7 +2720,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // (userRemoved on every tab of a restored session, a hand-ungroup, a hand-drag) hide nothing, as in organizeByTopic.
   // organizeByTopic rolls back when it grouped nothing, which puts those marks back: the model must still see the tabs.
   function organizeView({ explicit = false } = {}) {
-    const isCandidate = explicit ? organizable : (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
+    const isCandidate = explicit ? organizable : (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && groupable(urlOf(t));
     const list = [];
     for (const g of groups.values()) {
       if (!g.auto || g.userNamed || g.domain) continue;

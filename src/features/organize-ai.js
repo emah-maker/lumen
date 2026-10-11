@@ -15,6 +15,15 @@ const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16
 const clip = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 const estimateTokens = (s) => Math.ceil(String(s).length / 3.6);
 
+// What a tab's "site" is in a request: its host, or for a file on this computer its folder's name ("Physics") or its type ("PDFs"): never a path.
+// A file on the web is on its site. The viewer's address never appears (tab-groups entry() has already unwrapped it).
+const siteOf = (e) => (e.file?.local ? `file:${clip(e.file.folder || e.file.label, 30)}` : hostOf(e.url));
+// A tab's short description: a page's meta description, or for a file its type and the first words of its text (aiText: tab-groups entry(); empty when AI is off for it).
+// Never more than DESC_MAX characters: a file's full text never leaves this computer.
+// Long numbers (an ID, an account or a card number a first page may carry) are left out of a file's snippet.
+const withoutNumbers = (s) => String(s).replace(/\d[ \d-]{6,}\d/g, '').replace(/ {2,}/g, ' ');
+const descOf = (e) => (e.file ? clip(`${e.file.typeName}${e.aiText ? `: ${withoutNumbers(e.aiText)}` : ''}`, DESC_MAX) : clip(e.text, DESC_MAX));
+
 const TITLE_MAX = 70; // characters of a title in a group's samples
 const DESC_MAX = 80; // characters of a leftover tab's description
 const MIN_COHESION = 0.25; // a group looser than this is worth a second opinion
@@ -58,7 +67,7 @@ function topWords(entries, k = 4) {
 
 function hostCounts(entries) {
   const count = new Map();
-  for (const e of entries) { const h = hostOf(e.url); if (h) count.set(h, (count.get(h) || 0) + 1); }
+  for (const e of entries) { const h = siteOf(e); if (h) count.set(h, (count.get(h) || 0) + 1); }
   return [...count].sort((a, b) => b[1] - a[1]).map(([h]) => h);
 }
 
@@ -95,9 +104,12 @@ function groupSummary(g) {
 // Never the page text beyond ~80 characters of its description, never an address or query string.
 function leftoverSummary(entries) {
   const byHost = {};
+  const folders = new Set();
   for (const e of entries) {
-    const host = hostOf(e.url) || '-';
-    const desc = clip(e.text, DESC_MAX);
+    const host = siteOf(e) || '-';
+    // Files count against the same per-request limit as sites asked about (MAX_HINT_HOSTS): the folders of at most that many are described.
+    if (e.file?.local && !folders.has(host)) { if (folders.size >= MAX_HINT_HOSTS) continue; folders.add(host); }
+    const desc = descOf(e);
     (byHost[host] ||= []).push(desc ? [e.id, cleanTitle(e), desc] : [e.id, cleanTitle(e)]);
   }
   return byHost;
@@ -328,7 +340,7 @@ function chunkView(view, { tabs = 0, maxChunks = MAX_PARALLEL, items = CHUNK_ITE
   const home = new Map();
   chunks.forEach((c, ci) => c.groups.forEach((g) => hostCounts(g.entries).forEach((h) => { if (!home.has(h)) home.set(h, ci); })));
   let rr = 0;
-  for (const e of view.leftovers) chunks[home.get(hostOf(e.url)) ?? (rr++ % n)].leftovers.push(e);
+  for (const e of view.leftovers) chunks[home.get(siteOf(e)) ?? (rr++ % n)].leftovers.push(e);
   return chunks.filter((c) => c.groups.length || c.leftovers.length);
 }
 
