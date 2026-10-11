@@ -258,7 +258,7 @@ function createDownloads(deps) {
   // The Downloads page: every remembered download, and what its buttons do.
   const summary = () => downloads.map((d) => ({
     id: d.id, name: d.name, path: d.path, state: d.state, received: d.received, total: d.total, paused: d.paused,
-    awaitingOk: Boolean(d.awaitingOk), started: d.started, url: d.url,
+    awaitingOk: Boolean(d.awaitingOk), started: d.started, endedAt: d.endedAt || null, url: d.url,
     canResume: d.state === 'interrupted' && Boolean(d.item?.canResume?.()),
     exists: d.state === 'completed' && Boolean(d.path) && fs.existsSync(d.path),
   }));

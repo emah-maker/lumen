@@ -3824,6 +3824,9 @@ function importMenu() {
 // The History page asks for its entries over IPC (history-preload.js). They used to be packed into
 // the page's URL, which a long history pushed past Chromium's URL length limit (a blank page).
 function openHistoryPage() {
+  // One History tab, like Bookmarks and Downloads: Ctrl+H again goes back to it (reloaded, so it lists what you visited since).
+  const existing = tabs.find((t) => alive(t) && t.view.webContents.getURL().startsWith(HISTORY_URL));
+  if (existing) { switchTab(existing.id); existing.view.webContents.reload(); return; }
   openTab(HISTORY_URL, { historyPage: true });
 }
 const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
@@ -4395,6 +4398,7 @@ function handleShortcut(event, input) {
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
+  else if (process.platform !== 'darwin' && mod && input.shift && !input.alt && key === 'i') wc?.toggleDevTools(); // Ctrl+Shift+I, as in Chrome (macOS has Cmd+Option+I in the View menu)
   else handled = false;
   if (handled) event.preventDefault();
 }

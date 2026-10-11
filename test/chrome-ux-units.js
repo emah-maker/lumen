@@ -71,4 +71,13 @@ check('tab strip: state notes join the accessible name; no-favicon pages get a m
 check('toolbar: the AI button says "Set up AI" until a model is connected', /who\.setup \? t\('toolbar\.aiSetup'\)/.test(appSrc) && /setup: true/.test(read('renderer/chat-core.js')), '');
 check('private window: a loopback http page is "local", not "Not secure"', /isLoopbackUrl\(state\.url\)/.test(read('renderer/private.js')) && /chrome-helpers\.js/.test(read('renderer/private.html')), '');
 
+// ---- polish pass: the suggestion list's selected row keeps its icon, History's time doesn't wrap, History reuses its tab, the Chrome DevTools key
+const suggestSrc = read('renderer/suggest.html');
+check("suggestions: --accent is defined in the list's own page (the selected row's icon uses it)", (suggestSrc.match(/--accent: #/g) || []).length === 2 && /li\.selected svg \{ stroke: var\(--accent\)/.test(suggestSrc), '');
+check('History: the time column fits "12:49 AM" on one line', /\.time \{[^}]*width: 68px;[^}]*white-space: nowrap/.test(read('renderer/history.html')), '');
+check('History: Ctrl+H goes back to the open History tab instead of opening another', /function openHistoryPage\(\) \{[\s\S]*?existing[\s\S]*?switchTab\(existing\.id\)/.test(mainSrc), '');
+check('DevTools: Ctrl+Shift+I opens them on Windows / Linux, and the shortcuts sheet lists it', /key === 'i'\) wc\?\.toggleDevTools\(\)/.test(mainSrc) && /\{ other: 'mod\+shift\+i' \}/.test(read('features/shortcuts-help.js')), '');
+check('tab strip: an address of numbers keeps the globe (no "1" tile)', /!\/\^\[\\d\.\]\+\$\/\.test\(host\)/.test(appSrc) && /!host\.startsWith\('\['\)/.test(appSrc), '');
+check('error hints name the menu the way the menu says it', !/Ad Blocker|Clear Cookies and Site Data/.test(EN['errorPage.kind.ERR_BLOCKED_BY_CLIENT.hint'] + EN['errorPage.kind.ERR_TOO_MANY_REDIRECTS.hint']), '');
+
 process.exit(failures ? 1 : 0);
