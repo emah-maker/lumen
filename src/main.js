@@ -2169,6 +2169,7 @@ const stuckLoad = require('./features/stuck-load');
 function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
+  wc.setMaxListeners(40); // each feature that watches a tab adds its own did-navigate/did-start-navigation/destroyed listener (11+ today): Node's default of 10 printed a "possible memory leak" warning for every tab, though the count is fixed per tab
   wc.once('did-stop-loading', () => setTimeout(markFirstTabLoaded, 200));
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
@@ -2424,7 +2425,10 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       if (!now || now === 'about:blank') wc.loadURL(url).catch(() => {});
     }, 10e3).unref?.();
   } else if (!loaded) { // an adopted page is already on its way to its address
-    wc.loadURL(url).catch(() => {});
+    // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
+    // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
+    const first = pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
+    wc.loadURL(first).catch(() => {});
   }
   return wc;
 }
@@ -4213,6 +4217,7 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
 function tabFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    if (failedUrl.startsWith(ERROR_URL)) return; // the error page itself failed: an error page for it would fail the same way, over and over
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
     if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
     if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
@@ -4229,7 +4234,7 @@ function tabFailPage(wc) {
 // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
 function popupFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3) return;
+    if (!isMainFrame || code === -3 || failedUrl.startsWith(ERROR_URL)) return;
     const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
     wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
   });
