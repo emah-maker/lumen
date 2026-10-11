@@ -8,7 +8,7 @@
 //  - a setting added to DEFAULTS (src/settings/settings-backend.js) with no row in docs/settings.md;
 //  - a new docs/*.md that the docs site (site/docs.js) doesn't list;
 //  - src/ changed but neither README.md nor anything in docs/ did (only a reminder: not every change is user-visible).
-// As a hook it blocks once for a given set of findings (remembered in .git/lumen-docs-check), so an answer like "this
+// As a hook it blocks once per session for a given list of findings (remembered in .git/lumen-docs-check), so an answer like "this
 // change is internal, no docs needed" ends the turn the second time. Plain Node, no dependencies.
 //
 // Options: --repo <dir> (default: this checkout), --hook (read the hook's JSON on stdin and answer in its format),
@@ -99,11 +99,12 @@ if (!result || !result.list.length) {
 const message = `Lumen docs check. This branch changes src/ (${[...result.changed].filter((f) => f.startsWith('src/')).length} files) and the docs may not cover it yet:\n- ${result.list.join('\n- ')}\nRules: CLAUDE.md, "Docs". Update them now, or say why a point doesn't apply.`;
 if (!hook) { console.log(message); process.exit(1); }
 
-// Once per set of findings: the same list a second time means it was already answered.
+// Once per session for a given list of findings: the same list a second time means it was already answered (more files
+// changed since does not reopen it, or a multi-turn task would be sent back after every turn).
 let gitDir;
 try { gitDir = path.resolve(repo, git('rev-parse', '--git-dir')); } catch { quiet(); }
 const stamp = path.join(gitDir, 'lumen-docs-check');
-const key = crypto.createHash('sha1').update(result.list.join('\n')).update([...result.changed].sort().join('\n')).digest('hex');
+const key = crypto.createHash('sha1').update(`${input.session_id || ''}\n${result.list.join('\n')}`).digest('hex');
 try { if (fs.readFileSync(stamp, 'utf8').trim() === key) quiet(); } catch { /* first time */ }
 try { fs.writeFileSync(stamp, key); } catch { /* read-only: it may ask again, which is fine */ }
 process.stdout.write(JSON.stringify({ decision: 'block', reason: message }));
