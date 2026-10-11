@@ -164,6 +164,54 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
   }
 
+  // ---- 5. the first start after an update: the new tab is never left under a blank sheet
+  // (a profile that last ran an older version restores its tabs, then the notes card comes up over them)
+  {
+    const first = makeProfile({ lastSeenVersion: '0.3.0' });
+    const { app, card, gotIt, kind } = await launch(first);
+    // Every view in the browser window: what it shows, where, and whether it is on screen.
+    const views = () => app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((w) => /index\.html$/.test(w.webContents.getURL()));
+      const out = [];
+      for (const v of win.contentView.children) {
+        const wc = v.webContents;
+        let alpha = null;
+        if (v.getVisible() && /dialog\.html$/.test(wc.getURL())) { const img = await wc.capturePage(); const s = img.getSize(); alpha = img.toBitmap()[(Math.floor(s.height / 2) * s.width + 5) * 4 + 3]; }
+        out.push({ page: wc.getURL().split('#')[0].split('/').pop(), visible: v.getVisible(), bounds: v.getBounds(), loading: wc.isLoading(), alpha, ready: /newtab\.html$/.test(wc.getURL().split('#')[0]) ? await wc.executeJavaScript("Boolean(document.getElementById('q')) && document.body.children.length > 0") : null });
+      }
+      return out;
+    });
+    try {
+      const c = await card();
+      check('after an update: the notes card is up over the restored tabs', Boolean(c) && (await kind()) === 'notes', JSON.stringify(c));
+      let v = await views();
+      const tab = v.find((x) => x.page === 'newtab.html');
+      check('after an update: the new tab is visible, below the toolbar, loaded, with its own page drawn', tab && tab.visible && tab.bounds.y > 0 && tab.bounds.width > 0 && tab.bounds.height > 0 && !tab.loading && tab.ready === true, JSON.stringify(v));
+      const dialogs = v.filter((x) => x.page === 'dialog.html' && x.visible);
+      check('after an update: one card view over it, and it is see-through (the page shows dimmed, not a white sheet)', dialogs.length === 1 && dialogs[0].alpha !== null && dialogs[0].alpha < 255, JSON.stringify(dialogs));
+      await gotIt();
+      v = await views();
+      const shown = v.filter((x) => x.visible);
+      check('after Got it: only the new tab is left on screen, nothing covers it', shown.length === 1 && shown[0].page === 'newtab.html', JSON.stringify(shown));
+
+      // The card's page dying (or failing to load) must not leave an empty sheet: it is dropped, and the next card works.
+      app.evaluate(() => { global.__whatsNew.open(); }); // resolves only once the card closes: don't wait for it
+      await card();
+      await app.evaluate(({ webContents }) => { webContents.getAllWebContents().find((w) => w.getURL().endsWith('dialog.html'))?.forcefullyCrashRenderer(); });
+      await waitFor(async () => (await kind()) === null);
+      v = await views();
+      check('card page crashed: it is dropped, nothing covers the new tab', (await kind()) === null && v.filter((x) => x.visible).length === 1 && v.find((x) => x.visible).page === 'newtab.html', JSON.stringify(v));
+      app.evaluate(() => { global.__whatsNew.open(); });
+      const again = await card();
+      check('card page crashed: the next card opens normally', Boolean(again) && again.versions.length > 0, JSON.stringify(again));
+      await gotIt();
+    } catch (err) {
+      check('first start after an update', false, err.stack);
+    } finally {
+      await app.close().catch(() => {});
+    }
+  }
+
   for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

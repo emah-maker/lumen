@@ -44,7 +44,20 @@ function createDialogs(deps) {
       if (/^https?:\/\//i.test(url)) deps.openUrl?.(url);
       return { action: 'deny' };
     });
-    overlay.webContents.loadFile(deps.paths.html);
+    // A page that fails to load (or whose renderer dies) must never stay on screen as a blank sheet over the tab:
+    // the overlay is dropped, whatever is showing is cancelled, and the next dialog builds a fresh one.
+    const view = overlay;
+    const drop = () => {
+      if (overlay !== view) return;
+      overlay = null;
+      try { if (host && !host.isDestroyed()) host.contentView.removeChildView(view); } catch {}
+      try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch {}
+      for (const item of [...queue]) if (item === showing) cancel(item);
+      if (!showing) presentNext({ afterDialog: false });
+    };
+    overlay.webContents.on('did-fail-load', (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) drop(); });
+    overlay.webContents.on('render-process-gone', drop);
+    overlay.webContents.loadFile(deps.paths.html).catch(() => {});
     return overlay;
   }
 
@@ -108,8 +121,8 @@ function createDialogs(deps) {
     host = win;
     win.contentView.addChildView(view); // re-adding raises it to the top, above the active tab
     layout();
-    view.setVisible(true);
-    const send = () => { if (!item._done) { view.webContents.send('dialog:show', item.payload); view.webContents.focus(); } };
+    // Not on screen until its page has loaded: a view that is still loading is an empty sheet over the tab.
+    const send = () => { if (!item._done && !view.webContents.isDestroyed()) { view.setVisible(true); view.webContents.send('dialog:show', item.payload); view.webContents.focus(); } };
     if (view.webContents.isLoading()) view.webContents.once('did-finish-load', send);
     else send();
   }
