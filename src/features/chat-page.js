@@ -20,6 +20,8 @@ const PRELOAD = path.join(__dirname, 'chat-preload.js');
 // Local file URLs compare without case (Windows paths do) and ignore the query and hash.
 const bare = (url) => { try { const u = new URL(String(url)); u.search = ''; u.hash = ''; return u.protocol === 'file:' ? u.href.toLowerCase() : ''; } catch { return ''; } };
 const isChatUrl = (url) => typeof url === 'string' && bare(url) === CHAT_URL.toLowerCase();
+const CANVAS_FRAME_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'canvas-frame.html')).href;
+const isCanvasFrameUrl = (url) => typeof url === 'string' && bare(url) === CANVAS_FRAME_URL.toLowerCase();
 const displayUrl = () => 'lumen://chat';
 // lumen://chat (chrome://chat works too) typed in the address bar.
 const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(text || '').trim()) ? { page: 'chat' } : null);
@@ -27,9 +29,9 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // What the page may ask main for, beyond the chat channels main.js already serves the sidebar:
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
@@ -54,7 +56,8 @@ function pickTargetTab(tabs) {
 // moves to an ordinary tab (`leave(url)`) while this one closes, as Settings does.
 function guardTab(wc, leave) {
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  wc.on('will-frame-navigate', (event) => { if (!event.isMainFrame || !isChatUrl(event.url)) event.preventDefault(); });
+  // (a subframe may load only the canvas preview's own page, which the sandboxed <iframe> in chat-canvas.js shows)
+  wc.on('will-frame-navigate', (event) => { if (event.isMainFrame ? !isChatUrl(event.url) : !isCanvasFrameUrl(event.url)) event.preventDefault(); });
   wc.on('will-navigate', (event) => { if (!isChatUrl(event.url)) event.preventDefault(); });
   wc.on('will-redirect', (event) => event.preventDefault());
   wc.on('did-navigate', (_e, url) => { if (!isChatUrl(url)) setImmediate(() => leave(url)); });
@@ -185,4 +188,4 @@ function create(deps) {
   return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
-module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
+module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };

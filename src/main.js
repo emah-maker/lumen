@@ -6,6 +6,9 @@ try { require('module').enableCompileCache?.(require('path').join(require('os').
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
+// A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
+// throwaway folder. First, before anything reads userData ("--mcp" is only the stdio bridge and sets its own below).
+if (!process.argv.includes('--mcp')) require('./features/profile-guard').apply(app, { test: TEST });
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
@@ -56,7 +59,7 @@ if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
 cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
 const { engineModel } = require('./ai/cli-utils');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
@@ -74,6 +77,7 @@ const organizeLearn = require('./features/organize-learn'); // what Organize lea
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
+const { menuLabel } = require('./browser/menu-label'); // page titles and file names as menu labels (a literal & is written &&)
 const navHistory = require('./browser/nav-history'); // Back / Forward's right-click list
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
@@ -176,7 +180,7 @@ const APP_ID = 'com.lumen.browser';
 
 // Lumen was "Claude Browser": carry the old profile (settings, history, bookmarks, extensions,
 // saved chat) over to the new name once, before anything opens it.
-if (!TEST) {
+if (!TEST && (app.isPackaged || process.env.LUMEN_DEV_REAL_PROFILE === '1')) {
   const oldProfile = path.join(app.getPath('appData'), 'Claude Browser');
   const newProfile = app.getPath('userData');
   if (!fs.existsSync(newProfile) && fs.existsSync(oldProfile)) {
@@ -191,9 +195,7 @@ if (!TEST) {
 // group or the name Windows shows on its notifications.)
 if (process.platform === 'win32') app.setAppUserModelId(TEST ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
 
-if (TEST) {
-  app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
-}
+// (A test run's userData was set by the profile guard at the top: CLAUDE_BROWSER_PROFILE, else a temp folder, never the real profile.)
 
 
 // A stray error in the main process must not take the browser (and every open tab) down, or
@@ -224,10 +226,10 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -948,9 +950,11 @@ function setupPermissions() {
     const reason = PROMPTABLE[permission];
     const origin = SITE_PERMISSIONS.requestOrigin(wc, details); // '' unless http(s)
     if (!reason || !origin) return callback(false);
-    const key = `${origin}|${permission}`;
-    if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
-    if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
+    // What is still undecided (the camera and the microphone are decided separately): a device already refused refuses the request,
+    // and the prompt asks only about the ones with no answer yet.
+    const { deny, ask } = SITE_PERMISSIONS.plan(permissionDecisions, origin, permission, details, (p) => settingsBackend.permissionDefault(p) === 'block'); // [settings] default: Block
+    if (deny) return callback(false);
+    if (!ask.length) return callback(true);
     // Tied to the asking tab: it waits while that tab is in the background, and is dropped (not
     // remembered as a "no") if the tab navigates away or closes first.
     const { response, cancelled } = await dialog.showMessageBox(win, {
@@ -958,11 +962,11 @@ function setupPermissions() {
       buttons: [t('permission.deny'), t('permission.allow')],
       defaultId: 0,
       cancelId: 0,
-      message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }),
+      message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }),
       owner: wc,
     });
     if (cancelled) return callback(false);
-    permissionDecisions.set(key, response === 1);
+    for (const name of ask) permissionDecisions.set(`${origin}|${name}`, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
     SITE_PERMISSIONS.notify(ses); // open pages: PermissionStatus 'change'
@@ -970,7 +974,7 @@ function setupPermissions() {
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
-    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
   SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
@@ -1699,7 +1703,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -3513,7 +3517,7 @@ function tabMenuTemplate(id) {
         ui()?.send('group:rename-start', group.id);
       },
     });
-    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
+    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: menuLabel(g.name, 80), click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { manners.handOver(tab); tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
@@ -3829,6 +3833,9 @@ function importMenu() {
 // The History page asks for its entries over IPC (history-preload.js). They used to be packed into
 // the page's URL, which a long history pushed past Chromium's URL length limit (a blank page).
 function openHistoryPage() {
+  // One History tab, like Bookmarks and Downloads: Ctrl+H again goes back to it (reloaded, so it lists what you visited since).
+  const existing = tabs.find((t) => alive(t) && t.view.webContents.getURL().startsWith(HISTORY_URL));
+  if (existing) { switchTab(existing.id); existing.view.webContents.reload(); return; }
   openTab(HISTORY_URL, { historyPage: true });
 }
 const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
@@ -3851,7 +3858,7 @@ function historyMenu() {
   return [
     { label: t('menu.showAllHistory'), accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H', click: openHistoryPage },
     { type: 'separator' },
-    ...recent.map((h) => ({ label: (h.title || bareUrl(h.url)).slice(0, 60), click: () => openTab(h.url) })),
+    ...recent.map((h) => ({ label: menuLabel(h.title || bareUrl(h.url)), click: () => openTab(h.url) })),
     { type: 'separator' },
     {
       label: t('menu.clearHistory'),
@@ -3944,7 +3951,9 @@ function homeAssistant() {
 function askFromHome(event, url, tabId) {
   if (!isNewTab(url)) return false;
   let text;
-  try { text = new URL(url).searchParams.get('ask'); } catch { return false; }
+  let params;
+  try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
+  if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
   text = text.trim().slice(0, 20000);
@@ -4034,10 +4043,10 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
-    ...list.filter((b) => !b.folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
+    ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
-      label: folder,
-      submenu: list.filter((b) => b.folder === folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
+      label: menuLabel(folder, 80),
+      submenu: list.filter((b) => b.folder === folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     })),
   ];
 }
@@ -4400,6 +4409,7 @@ function handleShortcut(event, input) {
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
+  else if (process.platform !== 'darwin' && mod && input.shift && !input.alt && key === 'i') wc?.toggleDevTools(); // Ctrl+Shift+I, as in Chrome (macOS has Cmd+Option+I in the View menu)
   else handled = false;
   if (handled) event.preventDefault();
 }
@@ -4486,7 +4496,11 @@ function chatSnapshot(messages) {
     if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
     return b;
   };
-  snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+  const slim = (list) => list.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+  snapshot.messages = slim(snapshot.messages);
+  // [versions] the other versions of an exchange (regenerate, edit) are kept the same way, tool results and page text left out
+  const slimForks = (forks) => (forks || []).map((f) => ({ ...f, tails: f.tails.map((t) => (t ? { messages: slim(t.messages), forks: slimForks(t.forks) } : null)) }));
+  if (snapshot.forks) snapshot.forks = slimForks(snapshot.forks);
   return snapshot;
 }
 
@@ -4494,7 +4508,9 @@ function saveChat(generation = chatGeneration) {
   if (generation !== chatGeneration) return;
   clearTimeout(saveChatTimer);
   try {
-    if (!safeStorage.isEncryptionAvailable()) { chats().clearAll(); fs.rmSync(CHAT_FILE(), { force: true }); return; }
+    // No keychain (or not yet: Electron says so until the app is ready, which is where a copy of Lumen that quits because another
+    // one is running ends up): nothing is saved, and nothing already on disk is deleted.
+    if (!app.isReady() || !safeStorage.isEncryptionAvailable()) return;
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
@@ -4538,7 +4554,9 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
   const snapshot = id && !live ? chats().load(id) : null;
-  if (id && !snapshot && !live && !ensure) return null;
+  // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
+  // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
+  if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
   saveChat();
   chatGeneration++;
   clearTimeout(saveChatTimer);
@@ -4553,10 +4571,13 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id) emptyChatSettings.delete(id);
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
-  unreadChats.delete(chatId);
+  const wasUnread = unreadChats.delete(chatId);
   if (id && (snapshot || live)) chats().setCurrent(id);
   else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
-  pushAttention();
+  // A quiet switch (a window's sidebar following its front tab's chat, from a call it made: syncToSender) changes no run's mark unless it
+  // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
+  // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
+  if (!quiet || wasUnread) pushAttention();
   announceModelIfChanged(); // each chat keeps its own model: the picker and the placeholders follow the chat now open
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
@@ -4762,7 +4783,14 @@ function followTabChat(tab, { push = true } = {}) {
   if (plan.chat) {
     if (chatBind.chatOf(tab.id) !== plan.chat) chatBind.bind(tab.id, plan.chat); // (a tab already showing it stays as it is: coming to the front must not make it the home)
     const keep = unseen(plan.chat);
-    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
+    if (plan.chat !== chatId && !switchChat(plan.chat, { ensure: true, quiet: true })) { // its saved file can't be read (gone, or locked): the tab lets go of it and starts over, never an empty chat under its id
+      carriedTabs.delete(tab.id);
+      chatBind.unbindTab(tab.id);
+      followTabChat(tab, { push });
+      const page = tab.managerPage === 'chat' ? tab.view?.webContents : null;
+      if (page && !page.isDestroyed()) page.send('chat:sync', { view: chatView() }); // a chat page shows the chat it has now, not the one that is gone
+      return;
+    }
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.carry) {
@@ -7117,7 +7145,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -7491,6 +7519,7 @@ const widgets = createWidgets({
     clearTimeout(widgetRefreshTimer);
     widgetRefreshTimer = setTimeout(() => {
       refreshNewTabs();
+      spotifyWeb.sync(); appleMusicWeb.sync(); // a web card added, removed or switched to another mode: its view is placed, hidden or dropped now (the page only pushes a slot while it has one)
       for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
     }, 60);
   },
@@ -7935,6 +7964,8 @@ function goFromAddress(text) {
   const internal = settingsPage.parseSettingsInput(text);
   if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
   if (chatPage.parseChatInput(text)) { chatPageRt.open(); return; } // lumen://chat
+  const own = internalPageOf(text); // lumen://history, bookmarks, downloads, about
+  if (own) { if (own === 'history') openHistoryPage(); else if (own === 'updates') openSettingsPage('updates', { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); else managers.open(own); return; }
   if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
@@ -7961,7 +7992,7 @@ function navHistoryTemplate(direction) {
   if (!wc || wc.isDestroyed() || (direction !== 'back' && direction !== 'forward')) return [];
   const nav = wc.navigationHistory;
   const entries = navHistory.items(nav.getAllEntries(), nav.getActiveIndex(), direction);
-  const items = entries.map((e) => ({ label: e.label, click: () => { userTookOver(tab); nav.goToIndex(e.index); } }));
+  const items = entries.map((e) => ({ label: menuLabel(e.label), click: () => { userTookOver(tab); nav.goToIndex(e.index); } }));
   if (direction === 'back' && !items.length && tab.backToNewTab) items.push({ label: t('menu.newTabPage'), click: () => { userTookOver(tab); goBack(wc); } }); // (the one step Back still has)
   if (items.length) items.push({ type: 'separator' }, { label: t('menu.showAllHistory'), ...shortcutHint(process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H'), click: openHistoryPage });
   return items;
@@ -8012,6 +8043,34 @@ ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSele
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
+// [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
+function trackRunDetails(run, msg) {
+  const d = run.details;
+  if (msg.type === 'thinking') {
+    if (!d.thinkingSince) d.thinkingSince = Date.now();
+    if (d.thinking.length < 20000) d.thinking += msg.text || '';
+    return;
+  }
+  if (d.thinkingSince && ['text', 'text_block', 'tool', 'turn_start', 'done'].includes(msg.type)) { d.thinkingMs += Date.now() - d.thinkingSince; d.thinkingSince = 0; }
+  if (msg.type === 'retry') { d.thinking = ''; d.thinkingMs = 0; }
+  else if (msg.type === 'tool') {
+    if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: msg.input, ok: true });
+  } else if (msg.type === 'tool_update') {
+    const t = d.tools.find((x) => x.id && x.id === msg.id);
+    if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = msg.input; }
+  } else if (msg.type === 'tool_done') {
+    const t = d.tools.find((x) => x.id && x.id === msg.id);
+    if (t) t.ok = Boolean(msg.ok);
+  } else if (msg.type === 'auto') d.auto = { label: msg.label, reason: msg.reason };
+}
+function stampRun(run, done = null) {
+  try {
+    const d = run.details;
+    const info = { at: Date.now() };
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), auto: done.auto || d.auto });
+    agent.stampMessages(run.messages, run.startLen, info);
+  } catch (err) { console.error('Could not stamp chat messages:', err.message); }
+}
 ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
@@ -8032,7 +8091,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null };
+  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
@@ -8070,6 +8129,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
+    trackRunDetails(run, msg);
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
     else if (msg.type === 'error') run.error = msg.text || 'error';
@@ -8077,6 +8137,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
     if (msg.type === 'done') {
+      if (!run.deleted) stampRun(run, msg);
       const mine = chatRuns.get(runChat) === run;
       if (mine) chatRuns.delete(runChat);
       if (mine) runSlots.release(runChat); // the next chat in line may start
@@ -8090,7 +8151,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
         aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
       }
-    } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
+    } else if (msg.type === 'tool_done' && !run.deleted) (stampRun(run), isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; modelsChanged(); }
@@ -8156,6 +8217,35 @@ ipcMain.handle('agent:screen-drop', (_e, id) => {
   const n = screenContext.dropFrom(agent.messages, id);
   if (n) { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); }
   return n > 0;
+});
+// [versions] Regenerate / Edit of any user message (ordinal: its place among the sidebar's user messages): it and what followed are
+// taken back and kept as a version. Answers { result, versions }.
+ipcMain.handle('agent:rewind-user', (_e, ordinal, expected) => {
+  syncToSender(_e);
+  if (!Number.isInteger(ordinal) || ordinal < 0) return { result: 'absent' };
+  if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return { result: false }; // never mid-run
+  const out = agent.rewindUser(ordinal, typeof expected === 'string' ? expected : '');
+  if (out.result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); }
+  return out;
+});
+// [versions] The version switch: another version of an exchange becomes the chat. Answers the chat's new view (or null).
+ipcMain.handle('agent:version', (_e, at, target) => {
+  syncToSender(_e);
+  if (!Number.isInteger(at) || !Number.isInteger(target)) return null;
+  if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return null;
+  if (!agent.switchVersion(at, target)) return null;
+  saveChat();
+  const view = chatView();
+  chatPageRt.broadcast('chat:sync', { view }, _e.sender);
+  return view;
+});
+// [versions] The thumb under a reply, kept with the chat on this computer.
+ipcMain.handle('agent:feedback', (_e, ordinal, value) => {
+  syncToSender(_e);
+  if (!Number.isInteger(ordinal) || ordinal < 0 || !(value === null || value === 'up' || value === 'down')) return false;
+  const ok = agent.setFeedback(ordinal, value);
+  if (ok) saveChatSoon(chatGeneration);
+  return ok;
 });
 ipcMain.handle('agent:rewind', (_e, expected) => {
   syncToSender(_e);
@@ -8350,6 +8440,7 @@ ipcMain.handle('research:open', (event, url) => {
 
 ipcMain.handle('chats:list', (event) => {
   syncToSender(event);
+  sweepTrash();
   return {
     current: chatId,
     currentUsage: describeUsage(agent.messages.settings?.usage),
@@ -8357,11 +8448,11 @@ ipcMain.handle('chats:list', (event) => {
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
-      const saved = chats().list();
+      const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
+      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
 });
@@ -8407,7 +8498,28 @@ ipcMain.handle('chats:show-tab', (event, id) => {
   return true;
 });
 ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
-// Deleting the open chat leaves an empty one in its place.
+// Deleting the open chat leaves an empty one in its place. A saved chat is only hidden for UNDO_MS (the Undo toast); then it is
+// erased with its pictures, uploads and engine homes. If Lumen quits inside that time the chat stays hidden and is erased
+// on the next start (or by the store after a day), after the index on disk is read again; no delete ever runs before the app is ready.
+const UNDO_MS = 8000;
+const pendingDeletes = new Map(); // chat id -> timer
+function finishDelete(id) {
+  clearTimeout(pendingDeletes.get(id));
+  pendingDeletes.delete(id);
+  const waiting = chats().trashed().some((t) => t.id === id);
+  if (!waiting) return; // undone meanwhile
+  if (!chats().remove(id)) return; // (the index can't be read right now: it stays hidden and is tried again later)
+  imageStore().removeChat(id); // its pictures go with it
+  uploads().removeChat(id); // [uploads] and the files attached to it
+  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
+  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+}
+let trashSwept = false;
+function sweepTrash() { // chats hidden by a Lumen that quit inside the undo time
+  if (trashSwept || !app.isReady()) return;
+  trashSwept = true;
+  for (const t of chats().trashed()) if (!pendingDeletes.has(t.id) && Date.now() - t.at > UNDO_MS) finishDelete(t.id);
+}
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
@@ -8421,28 +8533,43 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
-  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
-  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+  const undoable = chats().trash(id); // false: nothing saved to bring back (a first reply still coming)
+  if (undoable) { clearTimeout(pendingDeletes.get(id)); const t = setTimeout(() => finishDelete(id), UNDO_MS); t.unref?.(); pendingDeletes.set(id, t); }
+  const eraseNow = () => {
+    if (undoable) return;
+    chats().remove(id);
+    imageStore().removeChat(id);
+    uploads().removeChat(id);
+    require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {});
+    require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {});
+  };
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
     agent.reset();
     chatId = chats().newId();
     chatBind.bind(pageTabOf(event.sender)?.id ?? activeId, chatId);
-    chats().remove(id);
-    imageStore().removeChat(id);
-    uploads().removeChat(id); // [uploads] the files attached to it
+    eraseNow();
     announceModelIfChanged();
     pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
-    return { cleared: true, view: chatView() };
+    return { cleared: true, view: chatView(), undo: undoable, undoMs: UNDO_MS };
   }
-  const removed = chats().remove(id);
-  imageStore().removeChat(id); // its pictures go with it
-  uploads().removeChat(id); // [uploads] and the files attached to it
+  eraseNow();
   pushAttention();
-  return { cleared: false, removed };
+  return { cleared: false, removed: undoable || !chats().has(id), undo: undoable, undoMs: UNDO_MS };
 });
+ipcMain.handle('chats:undo-delete', (_e, id) => {
+  id = String(id);
+  if (!pendingDeletes.has(id)) return false; // the time is up (or it was never hidden)
+  const ok = chats().restore(id);
+  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); pushAttention(); }
+  return ok;
+});
+ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
+ipcMain.handle('chats:archive', (_e, id, on) => { const ok = chats().setArchived(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
+// Chats whose title or messages contain the words typed: [{ id, snippet }] (the list shows them in its own order).
+ipcMain.handle('chats:search', (_e, query) => chats().search(String(query ?? '').slice(0, 200)));
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 // `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
 function chatMarkdown(id, folder = null) {

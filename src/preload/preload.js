@@ -148,6 +148,9 @@ contextBridge.exposeInMainWorld('assistant', {
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
   reset: () => ipcRenderer.send('agent:reset'),
   rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back
+  rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected), // Regenerate / Edit of any message, kept as a version
+  switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target), // the version switch
+  feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value), // thumbs up / down under a reply
   btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task (features/btw-side.js); streamed through onBtw
   btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
   onBtw: on('agent:btw-event'),
@@ -166,7 +169,11 @@ contextBridge.exposeInMainWorld('assistant', {
     share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
     stopChat: (id) => ipcRenderer.invoke('chats:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
-    remove: (id) => ipcRenderer.invoke('chats:delete', id),
+    remove: (id) => ipcRenderer.invoke('chats:delete', id), // hides the chat for a few seconds (undoRemove), then erases it
+    undoRemove: (id) => ipcRenderer.invoke('chats:undo-delete', id),
+    pin: (id, on) => ipcRenderer.invoke('chats:pin', id, on),
+    archive: (id, on) => ipcRenderer.invoke('chats:archive', id, on),
+    search: (query) => ipcRenderer.invoke('chats:search', query), // chats whose title or messages match: [{ id, snippet }]
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
     onUsage: on('chats:usage'),

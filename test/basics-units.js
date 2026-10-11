@@ -35,7 +35,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   check('shortcuts: every section and label is in en.json', missingLabels.length === 0, missingLabels.join(', '));
   // Every simple Ctrl/Cmd chord on the sheet is one handleShortcut() in main.js really handles.
   const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-  const handler = main.slice(main.indexOf('function handleShortcut('), main.indexOf('function newSidebarChat('));
+  const handler = main.slice(main.indexOf('function handleShortcut('), main.indexOf('function newSidebarChat(')) + fs.readFileSync(path.join(__dirname, '..', 'src', 'browser', 'shortcut-mod.js'), 'utf8'); // (F3 / Ctrl+G, F6 and Alt+D live in extraShortcut)
   const chords = SH.SECTIONS.flatMap((s) => s.entries.flatMap(([, keys]) => keys.flatMap((k) => (typeof k === 'string' ? [k] : [k.mac, k.other].filter(Boolean)))));
   const unhandled = chords.filter((c) => /^mod\+(shift\+)?[a-z,]$/.test(c)).filter((c) => {
     const key = c.slice(-1);
@@ -80,29 +80,29 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   // ---- page info
   check('page info: only http(s) pages are sites', PI.siteOf('https://a.example:8443/x?y').host === 'a.example:8443' && PI.siteOf('file:///etc/hosts') === null && PI.siteOf('lumen://settings') === null, '');
   check('page info: the connection line follows the scheme and the lock', PI.connectionOf('https', null) === 'secure' && PI.connectionOf('http', null) === 'insecure' && PI.connectionOf('https', 'mixed') === 'mixed' && PI.connectionOf('https', 'broken') === 'broken', '');
-  const decisions = new Map([['https://a.example|geolocation', true], ['https://a.example|notifications', false], ['https://other.example|media', true]]);
+  const decisions = new Map([['https://a.example|geolocation', true], ['https://a.example|notifications', false], ['https://other.example|camera', true]]);
   const acts = [];
   const act = { set: (p, v) => acts.push(['set', p, v]), clear: () => acts.push(['clear']), settings: () => acts.push(['settings']), resetZoom: () => acts.push(['zoom']) };
   const piDeps = { t, decisions, permissionDefault: (p) => (p === 'clipboard-read' ? 'block' : 'ask') };
   const tpl = PI.buildTemplate({ url: 'https://a.example/page', security: null, cookies: 3, zoom: 125 }, piDeps, act);
   const byLabel = (re) => tpl.find((i) => re.test(i.label || ''));
   check('page info: the site and a secure connection head the menu', tpl[0].label === 'a.example' && tpl[1].label === 'Connection is secure' && tpl[0].enabled === false, JSON.stringify(tpl.slice(0, 2)));
-  check('page info: each permission shows its state', /Location: Allow/.test(byLabel(/^Location/).label) && /Notifications: Block/.test(byLabel(/^Notifications/).label) && /Camera and microphone: Ask/.test(byLabel(/^Camera/).label), tpl.map((i) => i.label).join(' | '));
+  check('page info: each permission shows its state', /Location: Allow/.test(byLabel(/^Location/).label) && /Notifications: Block/.test(byLabel(/^Notifications/).label) && /Camera: Ask/.test(byLabel(/^Camera/).label) && /Microphone: Ask/.test(byLabel(/^Microphone/).label), tpl.map((i) => i.label).join(' | '));
   check('page info: a permission blocked by default reads "Block (default)"', /Clipboard: Block \(default\)/.test(byLabel(/^Clipboard/).label), byLabel(/^Clipboard/).label);
-  check('page info: another site\'s decision does not leak in', /Camera and microphone: Ask/.test(byLabel(/^Camera/).label), '');
+  check('page info: another site\'s decision does not leak in', /Camera: Ask/.test(byLabel(/^Camera/).label) && /Microphone: Ask/.test(byLabel(/^Microphone/).label), '');
   const loc = byLabel(/^Location/).submenu;
   check('page info: the submenu checks the current choice', loc.find((i) => i.checked).label === 'Allow' && loc.length === 3 && loc.every((i) => i.type === 'radio'), JSON.stringify(loc));
   loc[0].click(); loc[2].click();
   check('page info: Ask forgets, Block blocks', JSON.stringify(acts.slice(-2)) === JSON.stringify([['set', 'geolocation', null], ['set', 'geolocation', false]]), JSON.stringify(acts));
   check('page info: cookies are counted', Boolean(byLabel(/^3 cookies in use$/)), '');
-  check('page info: the remembered zoom is shown with a reset', Boolean(byLabel(/^Zoom: 125%/)) && (byLabel(/^Reset Zoom/).click(), acts.at(-1)[0] === 'zoom'), '');
-  byLabel(/^Clear Cookies/).click(); byLabel(/^Site Settings/).click();
+  check('page info: the remembered zoom is shown with a reset', Boolean(byLabel(/^Zoom: 125%/)) && (byLabel(/^Reset zoom/).click(), acts.at(-1)[0] === 'zoom'), '');
+  byLabel(/^Clear cookies/).click(); byLabel(/^Site settings/).click();
   check('page info: Clear and Site Settings call their actions', acts.slice(-2).map((a) => a[0]).join() === 'clear,settings', JSON.stringify(acts));
   const plain = PI.buildTemplate({ url: 'http://b.example/', cookies: 1 }, piDeps, act);
   check('page info: an http page says not secure, one cookie is singular, no zoom row without one', plain[1].label === 'Connection is not secure' && plain.some((i) => i.label === '1 cookie in use') && !plain.some((i) => /^Zoom/.test(i.label || '')), plain.map((i) => i.label).join(' | '));
   check('page info: Lumen\'s own pages get one disabled line', PI.buildTemplate({ url: 'file:///x/settings.html' }, piDeps, act).length === 1, '');
   const live = new Map();
-  check('page info: setDecision sets, reports a change, and forgets', PI.setDecision(live, 'https://a', 'media', true) && !PI.setDecision(live, 'https://a', 'media', true) && live.get('https://a|media') === true && PI.setDecision(live, 'https://a', 'media', null) && !live.size, '');
+  check('page info: setDecision sets, reports a change, and forgets', PI.setDecision(live, 'https://a', 'camera', true) && !PI.setDecision(live, 'https://a', 'camera', true) && live.get('https://a|camera') === true && PI.setDecision(live, 'https://a', 'camera', null) && !live.size, '');
   // open() reads the cookies of the tab's session and saves a changed decision.
   let saved = 0;
   let popped = null;
@@ -111,7 +111,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   await pi.open({ url: 'https://a.example/', ses: fakeSes, security: null });
   check('page info: open() counts the site\'s cookies and pops the menu', popped && popped.some((i) => i.label === '2 cookies in use'), popped && popped.map((i) => i.label).join(' | '));
   popped.find((i) => /^Camera/.test(i.label || '')).submenu[1].click();
-  check('page info: choosing Allow saves the decision', saved === 1 && decisions.get('https://a.example|media') === true, saved);
+  check('page info: choosing Allow saves the decision', saved === 1 && decisions.get('https://a.example|camera') === true, saved);
   check('page info: Clear asks first, and a refusal clears nothing', (await pi.clearSite(fakeSes, 'https://a.example/')) === null, '');
 
   // ---- link and image items, Save … As marks

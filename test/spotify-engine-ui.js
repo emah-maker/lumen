@@ -34,7 +34,7 @@ window.__sp = { signed: ${world.signedIn}, title: 'Night Shift', artist: 'Ann', 
 const sp = window.__sp;
 function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
 function mediaSession() {
-  if (!sp.local) { navigator.mediaSession.metadata = null; return; }
+  if (!sp.local || !sp.signed) { navigator.mediaSession.metadata = null; return; } // (a signed-out page has no player, so no media session)
   navigator.mediaSession.metadata = new MediaMetadata({ title: sp.title, artist: sp.artist, album: sp.album, artwork: [{ src: sp.art, sizes: '300x300' }] });
 }
 function drawFoot() {
@@ -109,6 +109,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   const status = () => app.evaluate(() => global.__spotifyEngine.status());
   const shot = async (name) => { if (shots) fs.writeFileSync(path.join(shots, name), Buffer.from(await app.evaluate(async () => (await global.__wtab.webContents.capturePage()).toPNG().toString('base64')), 'base64')); };
   const card = `(document.querySelector('.w-card.spotify') || document.createElement('i'))`;
+  const pressWhenShown = async (label) => { await waitFor(`Boolean(${card}.querySelector('[aria-label="${label}"]'))`, 60); await pageJs(`${card}.querySelector('[aria-label="${label}"]').click()`); }; // (a label can lag the title by a poll)
   const reloadNewTab = () => app.evaluate(() => global.__wtab.webContents.reload());
 
   check('spotify engine: nothing is loaded while there is no Spotify engine card (no page, no request)', (await app.evaluate(() => global.__spotifyWeb.view())) === null && world.hits === 0, String(world.hits));
@@ -133,12 +134,13 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   // ---- signed in, playing here ----
   check('spotify engine: signed in and playing here: the card shows title, artist and album from the page\'s mediaSession, a seekable bar and no preview note', await waitFor(`${card}.querySelector('.sp-title')?.textContent === 'Night Shift' && ${card}.querySelector('.sp-artist')?.textContent === 'Ann' && ${card}.querySelector('.sp-album')?.textContent === 'Quiet Hours' && ${card}.querySelector('.sp-bar')?.getAttribute('role') === 'slider' && !/Preview/.test(${card}.textContent)`, 120), await pageJs(`${card}.textContent.slice(0, 200)`));
   await shot('spotify-engine-playing.png');
-  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  await waitFor(`Boolean(${card}.querySelector('[aria-label="Pause"]'))`, 60); // (the title can arrive a poll before the playing state: wait for the card to show Pause)
+  await pressWhenShown('Pause');
   check('spotify engine: Pause presses the page\'s own button and the card shows Play', await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 60) && (await engine('__log')).includes('playpause'), JSON.stringify(await engine('__log')));
-  await pageJs(`${card}.querySelector('[aria-label="Play"]').click()`);
+  await pressWhenShown('Play');
   await waitFor(`Boolean(${card}.querySelector('[aria-label="Pause"]'))`, 60);
-  await pageJs(`${card}.querySelector('[aria-label="Next track"]').click()`);
-  await pageJs(`${card}.querySelector('[aria-label="Previous track"]').click()`);
+  await pressWhenShown('Next track');
+  await pressWhenShown('Previous track');
   await sleep(700);
   const log1 = await engine('__log');
   check('spotify engine: Next and Previous press the page\'s own skip buttons', log1.includes('next') && log1.includes('previous'), JSON.stringify(log1));
@@ -157,14 +159,14 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await sleep(700);
   check('spotify engine: a command with no user gesture (how it used to be delivered) is refused by an activation-guarded player: nothing happens (the bug)', (await engine('__log')).includes('blocked:playpause') && !(await engine('__log')).includes('playpause'), JSON.stringify(await engine('__log')));
   await engine('window.__log.length = 0');
-  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  await pressWhenShown('Pause');
   check('spotify engine: the same press from the card goes with a user gesture, so the guarded player does it', await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 60) && (await engine('__log')).includes('playpause') && !(await engine('__log')).includes('blocked:playpause'), JSON.stringify(await engine('__log')));
-  await pageJs(`${card}.querySelector('[aria-label="Play"]').click()`);
+  await pressWhenShown('Play');
   await waitFor(`Boolean(${card}.querySelector('[aria-label="Pause"]'))`, 60);
   // a player that ignores the button: the card says so and offers the player itself
   await app.evaluate(() => { global.__respondMs = 1500; });
   await engine('window.__sp.ignore = true');
-  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  await pressWhenShown('Pause');
   check('spotify engine: a button the player ignores: the card says Spotify did not respond, with an Open player button', await waitFor(`/didn.t respond/.test(${card}.querySelector('.am-warn')?.textContent || '') && Boolean(${card}.querySelector('.am-warn button'))`, 80), await pageJs(`${card}.textContent.slice(0, 200)`));
   await shot('spotify-engine-unresponsive.png');
   await pageJs(`${card}.querySelector('.am-warn button').click()`);
@@ -180,7 +182,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   check('spotify engine: playing on another device: the card names it and shows what the playbar says', await waitFor(`/On Kitchen speaker/.test(${card}.querySelector('.mk-badge')?.textContent || '') && ${card}.querySelector('.sp-title')?.textContent === 'Night Shift'`, 80), await pageJs(`${card}.textContent.slice(0, 160)`));
   await shot('spotify-engine-remote.png');
   await engine('window.__log.length = 0');
-  await pageJs(`${card}.querySelector('[aria-label="Pause"]').click()`);
+  await pressWhenShown('Pause');
   check('spotify engine: its buttons drive that device (they press the same playbar buttons)', await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 60) && (await engine('__log')).includes('playpause'), JSON.stringify(await engine('__log')));
   await engine('window.__sp.playing = true; window.__sp.setRemote("")');
   await waitFor(`!${card}.querySelector('.mk-badge')`, 60);
@@ -188,10 +190,10 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   // ---- search and play a result through the page's own router ----
   await pageJs(`${card}.querySelector('.am-searchbtn').click()`);
   await pageJs(`(() => { const i = ${card}.querySelector('.am-searchfield input'); i.value = 'shake'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  check('spotify engine: search goes to the page\'s own search route (no reload) and the results come back: songs with length, then the album and artist', await waitFor(`${card}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 4`, 80) && (await engine('__log')).includes('route:/search/shake'), await pageJs(`${card}.querySelector('.am-pop')?.textContent || ''`));
+  check('spotify engine: search goes to the page\'s own search route (no reload) and the results come back: songs with length, then the album and artist', await waitFor(`${card}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 4`, 80) && (await engine('__log')).includes('route:/search/shake'), await pageJs(`${card}.querySelector('.am-pop')?.textContent || ''`));
   const hits0 = world.hits;
   const groups = await pageJs(`[...${card}.querySelectorAll('.am-pop .am-heading')].map((h) => h.textContent)`);
-  check('spotify engine: the results are grouped Songs, Albums, Artists, and there is no Play next or Add to queue (Spotify has none here)', JSON.stringify(groups) === '["Songs","Albums","Artists"]' && (await pageJs(`${card}.querySelectorAll('.am-act').length`)) === 0, JSON.stringify(groups));
+  check('spotify engine: the results are grouped Songs, Albums, Artists, and Add to queue is there but Play next is not (Spotify has only the first)', JSON.stringify(groups) === '["Songs","Albums","Artists"]' && (await pageJs(`[...${card}.querySelectorAll('.am-pop .am-act')].every((a) => /^Add to queue/.test(a.getAttribute('aria-label'))) && ${card}.querySelectorAll('.am-pop .am-act').length > 0`)), JSON.stringify(groups));
   await shot('spotify-engine-search.png');
   await pageJs(`${card}.querySelector('.am-songs .am-opt').click()`);
   check('spotify engine: clicking a song goes to its page and presses its play button, and the card follows', await waitFor(`/Played AAAAAAAAAAAAAAAAAAAAA1/.test(${card}.querySelector('.sp-title')?.textContent || '')`, 80) && (await engine('__log')).some((l) => l.startsWith('play:/track/AAAAAAAAAAAAAAAAAAAAA1')), JSON.stringify(await engine('__log')));

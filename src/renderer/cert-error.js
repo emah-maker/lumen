@@ -7,8 +7,11 @@ let parsed = null;
 try { parsed = new URL(url); } catch {}
 const host = parsed?.host || url;
 const desc = params.get('desc') || '';
-document.getElementById('host').textContent = host;
+const hostEl = document.getElementById('host');
+hostEl.textContent = host;
 document.getElementById('host2').textContent = host;
+window.fill(document.getElementById('lead'), 'certError.lead', { host: hostEl });
+window.fill(document.getElementById('continue'), 'certError.continue', { host: document.getElementById('host2') });
 document.getElementById('reason').textContent = window.certReasons.reasonFor(desc, host);
 document.getElementById('code').textContent = desc;
 document.getElementById('back').addEventListener('click', () => {

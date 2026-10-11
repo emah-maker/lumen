@@ -6,7 +6,7 @@ Overall: the page is in good shape. Focus rings, reduce-motion, skeleton loading
 
 ## Findings, by user impact
 
-Status: FIXED here, or LATER (left for another change).
+Status: FIXED here (round 1, or round 2 for the items that were left for later).
 
 1. **A card with no key or token says "Couldn't update" and offers "Try again". FIXED.**
    Where: Todoist, GitHub, Stocks (and any card whose error starts "Add your ... in Settings"). Shots: `before-seeded-scroll700.png`.
@@ -29,23 +29,23 @@ Status: FIXED here, or LATER (left for another change).
 
 5. **The tip's dismiss x is about 15 px wide. FIXED.** Now at least 24x24.
 
-6. **Gmail's button is announced "Sign in to Gmail for Gmail".** Left as is: an existing test pins the label and it disambiguates two Gmail cards. LATER: use the account email as the suffix.
+6. **Gmail's button is announced "Sign in to Gmail for Gmail". FIXED (round 2).** The label is now "Sign in to Gmail", with the card's own title in brackets only when it differs from "Gmail" (so two Gmail cards stay apart). Pinned in `test/gmail-ui.js` and `test/newtab-states-ui.js`.
 
-7. **"Couldn't update" followed by "Couldn't connect. Check your internet connection."** on the same card repeats itself. LATER: owned by the network-error change in `widgets.js` (`request()` / `netError`); once that lands, drop the heading when the message already starts "Couldn't".
+7. **"Couldn't update" followed by "Couldn't connect. Check your internet connection." repeats itself. FIXED (round 2).** Presentation only (`request()` and `freshFetch` are untouched): a message that already starts "Couldn't" or "Can't" is shown as the card's heading on its own; other failures keep "Couldn't update" above the message.
 
-8. **Add widget is only visible in Edit layout once a page has cards.** A returning user who wants one more card has to find "Edit layout" first. The toggle's tooltip says "add", so it is discoverable but not obvious. LATER: show a quiet "+" beside Edit layout.
+8. **Add widget is only visible in Edit layout once a page has cards. FIXED (round 2).** The Add widget button now sits in the bottom-right dock all the time, beside Edit layout. It opens the same list; nothing else about Edit layout changed.
 
-9. **Todoist (and other kinds with no inline form) open Settings from the Add list with no visible message.** The announcement is for screen readers only. LATER: a short toast ("Opening Settings to set up Todoist").
+9. **Todoist (and other kinds with no inline form) open Settings from the Add list with no visible message. FIXED (round 2).** Choosing one now shows a note on the page ("Opening Settings to set up Todoist. Paste your personal API token. Find it in Todoist under Settings, Integrations, Developer.") for 12 seconds, and Settings opens on that widget's new-widget form with the same sentence at the top. The words live in one place (`SETUP_NOTES` in `widget-summary.js`) for Todoist, GitHub, Stocks, Muse, Gmail, Slack, Spotify and Crypto.
 
-10. **Add widget list has no search and mixes order** (Smart Stack, Weather, Apple Music, Spotify, GitHub, World clock, Todoist...). With 20+ kinds it is a long scroll. LATER: group (Time and weather, Music, Work) and add a filter.
+10. **Add widget list has no search and mixes order. FIXED (round 2).** The list is grouped (Time and weather, Work and mail, Music, News and markets, More, then Show again; the Smart Stack stays first with no heading) and has a filter field, focused when the list opens, once there are more than 8 rows. Every word typed must match a name, line or group; empty groups hide; Arrow Down moves from the field into the list.
 
-11. **Favorites come from bookmarks, but only an empty list says so.** Nothing on the page tells a new user how to change them (bookmark a page, Ctrl+D). LATER: a tooltip on the Favorites heading.
+11. **Nothing says where Favorites come from. FIXED (round 2).** The Favorites heading has a tooltip, the empty state reads "Favorites are your bookmarks. Press Ctrl+D on any page to add it here." (Cmd on a Mac), and a short list (under 4) shows the same line beneath it.
 
-12. **The greeting says "Good evening" from midnight to 5 am.** Minor; LATER.
+12. **The greeting says "Good evening" from midnight to 5 am. FIXED (round 2).** Midnight to 5 am now says "Good night"; evening is 6 pm onward.
 
-13. **Ask AI mode says "Ask Claude..." even before any AI is connected.** The first-run welcome sidebar is owned by the sidebar area; noted for them.
+13. **Ask AI mode says "Ask Claude..." even before any AI is connected. FIXED (round 2).** With nothing connected the box reads "Connect an AI to ask questions", the hint says "No AI is connected yet." and a "Connect an AI" button (also Enter) opens Settings, API keys and sign-ins. When one is connected it uses that assistant's name (the hard-coded "Claude" fallback is now "AI").
 
-14. **Small targets.** Card icon buttons (refresh, edit, move grip) are 22 px, resize handles 18 px. They are secondary and keyboard reachable, so left alone. LATER: 24 px minimum.
+14. **Small targets. FIXED (round 2).** Card icon buttons, the move grip, the gear, remove and stack buttons and the corner resize handle are 24 px (were 22 and 18); the card header grew 2 px and the grip's margins were adjusted so the title does not move.
 
 ## Checked and fine
 
@@ -56,5 +56,7 @@ Status: FIXED here, or LATER (left for another change).
 - The setup form (`before-setup-Weather-1280-light.png`): labelled fields, example placeholder, clear primary button, inline errors that keep the form open.
 
 ## Tests
+
+Round 2 added checks to `test/newtab-states-ui.js` (Gmail label, one clear error line, greeting hours, Favorites hint, Ask AI setup prompt, Add widget outside Edit layout with groups, filter and the Todoist note, 24 px targets), `test/widget-edit-units.js` (grouping, filter, setup notes) and updated `test/home.js`, `test/widgets.js` and `test/gmail-ui.js`.
 
 `test/newtab-states-ui.js` (added to `scripts/test-all.js`): needs-setup heading and single Open Settings button for Todoist and GitHub, no "Updated" under Gmail's sign-in, Try again shows "Trying...", the edit tip is short, steps aside for the list and returns, and the x is 24 px.

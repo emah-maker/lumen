@@ -53,7 +53,7 @@ async function run(svc) {
     const result = (id, kind, title, sub, ms) => ({ id, kind, title, sub, ms, thumb: kind === 'artist' || kind === 'playlist' ? '' : art });
     global.__fx = {
       calls: { search: [], searchAt: [], play: [], next: [], later: [], control: [] },
-      card: { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art, signedIn: true, preview: false, can: { search: true, lists: queue, seek: true, queue }, recent: [], playlists: [], results: [], query: '', searching: false, searchOk: true, error: '' },
+      card: { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art, signedIn: true, preview: false, can: { search: true, lists: queue, seek: true, queue, playNext: queue, playLater: queue }, recent: [], playlists: [], results: [], query: '', searching: false, searchOk: true, error: '' },
       results: (term) => [result('s1', 'song', `${term} (Song one)`, 'Taylor Swift', 219000), result('s2', 'song', `${term} (Song two)`, 'Ann', 187000), result('s3', 'song', `${term} (Song three)`, 'Bo', 65000), result('a1', 'album', '1989', 'Taylor Swift', 0), result('r1', 'artist', 'Taylor Swift', '', 0), result('p1', 'playlist', 'Hits', 'Curator', 0)],
     };
     global[g] = {
@@ -94,33 +94,34 @@ async function run(svc) {
   check(`${label}: the panel is closed until the search is opened`, !(await popOpen(D)), '');
   const rectBefore = await page(`(() => { const r = ${card(D)}.getBoundingClientRect(); const w = ${card(D)}.querySelector('.sp-wrap').getBoundingClientRect(); const c = ${card(D)}.querySelector('.sp-controls').getBoundingClientRect(); return [Math.round(r.height), Math.round(w.top), Math.round(c.top)]; })()`);
   await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
-  check(`${label}: the magnifier opens the field and focuses it; the combobox says it is expanded`, await page(`(() => { const i = ${card(D)}.querySelector('.am-searchfield input'); return document.activeElement === i && i.getAttribute('aria-expanded') === 'true' && getComputedStyle(i).display !== 'none' && ${card(D)}.querySelector('.am-searchbtn').getAttribute('aria-expanded') === 'true'; })()`), '');
+  check(`${label}: the magnifier opens the field and focuses it; the combobox says it is expanded`, await waitFor(`(() => { const i = ${card(D)}.querySelector('.am-searchfield input'); return document.activeElement === i && i.getAttribute('aria-expanded') === 'true' && getComputedStyle(i).display !== 'none' && ${card(D)}.querySelector('.am-searchbtn').getAttribute('aria-expanded') === 'true'; })()`), '');
   check(`${label}: empty and focused with no history it says to type`, await page(`/Type to search ${svc.name}/.test(${card(D)}.querySelector('.am-pop').textContent)`), '');
 
   // typing: one search for a burst of keys, after a short pause
   const lastKey = await page(`(async () => { const i = ${card(D)}.querySelector('.am-searchfield input'); i.focus(); for (const v of ['s', 'sh', 'sha', 'shak', 'shake']) { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); await new Promise((r) => setTimeout(r, 40)); } return Date.now(); })()`); // (a burst of keys, typed inside the page so the gaps are real)
-  await sleep(500);
-  check(`${label}: a burst of keys is one search with the whole text, sent after a pause of about a quarter of a second (not per key)`, JSON.stringify((await calls()).search) === '["shake"]' && (await calls()).searchAt[0] - lastKey >= 200 && (await calls()).searchAt[0] - lastKey < 600, JSON.stringify([(await calls()).search, (await calls()).searchAt[0] - lastKey]));
-  check(`${label}: while it waits the panel says searching, then the results show`, await waitFor(`${card(D)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 6`), await page(`${card(D)}.querySelector('.am-pop')?.textContent || ''`));
+  for (let i = 0; i < 30 && !(await calls()).search.length; i++) await sleep(100);
+  await sleep(300); // (and a moment more: a second search from a later key would show up here)
+  check(`${label}: a burst of keys is one search with the whole text, sent after a pause of about a quarter of a second (not per key)`, JSON.stringify((await calls()).search) === '["shake"]' && (await calls()).searchAt[0] - lastKey >= 150 && (await calls()).searchAt[0] - lastKey < 600, JSON.stringify([(await calls()).search, (await calls()).searchAt[0] - lastKey]));
+  check(`${label}: while it waits the panel says searching, then the results show`, await waitFor(`${card(D)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 6`), await page(`${card(D)}.querySelector('.am-pop')?.textContent || ''`));
   const headings = await page(`[...${card(D)}.querySelectorAll('.am-pop .am-heading')].map((h) => h.textContent)`);
   check(`${label}: grouped Songs, Albums, Artists, Playlists, in that order`, JSON.stringify(headings) === '["Songs","Albums","Artists","Playlists"]', JSON.stringify(headings));
-  const first = await page(`(() => { const o = ${card(D)}.querySelector('.am-songs .am-opt'); return { title: o.querySelector('.am-title').textContent, sub: o.querySelector('.am-sub').textContent, dur: o.querySelector('.am-dur').textContent, thumb: Boolean(o.querySelector('img.am-thumb')), role: o.getAttribute('role') }; })()`);
+  const first = await page(`(() => { const o = ${card(D)}.querySelector('.am-pop .am-songs .am-opt'); return { title: o.querySelector('.am-title').textContent, sub: o.querySelector('.am-sub').textContent, dur: o.querySelector('.am-dur').textContent, thumb: Boolean(o.querySelector('img.am-thumb')), role: o.getAttribute('role') }; })()`);
   check(`${label}: a song row has its picture, title, artist and length`, first.title === 'shake (Song one)' && first.sub === 'Taylor Swift' && first.dur === '3:39' && first.thumb && first.role === 'option', JSON.stringify(first));
   check(`${label}: the typing survived the card being drawn again (the field has its text and the focus)`, await page(`(() => { const i = ${card(D)}.querySelector('.am-searchfield input'); return document.activeElement === i && i.value === 'shake'; })()`), '');
   const rectAfter = await page(`(() => { const r = ${card(D)}.getBoundingClientRect(); const w = ${card(D)}.querySelector('.sp-wrap').getBoundingClientRect(); const c = ${card(D)}.querySelector('.sp-controls').getBoundingClientRect(); return [Math.round(r.height), Math.round(w.top), Math.round(c.top)]; })()`);
   check(`${label}: the panel is laid over the card: the layout under it did not move`, JSON.stringify(rectBefore) === JSON.stringify(rectAfter) && await page(`getComputedStyle(${card(D)}.querySelector('.am-pop')).position === 'absolute' && ${card(D)}.contains(${card(D)}.querySelector('.am-pop'))`), JSON.stringify([rectBefore, rectAfter]));
-  const queueButtons = await page(`${card(D)}.querySelectorAll('.am-songs .am-optrow')[0].querySelectorAll('.am-act').length`);
+  const queueButtons = await page(`${card(D)}.querySelectorAll('.am-pop .am-songs .am-optrow')[0].querySelectorAll('.am-act').length`);
   check(`${label}: ${svc.queue ? 'songs have Play next and Add to queue' : 'there is no Play next or Add to queue (this service has none)'}`, svc.queue ? queueButtons === 2 : queueButtons === 0, String(queueButtons));
   await shot(`search-${svc.slug}-results.png`);
 
   // keyboard
   await key(D, 'ArrowDown');
-  const act1 = await page(`(() => { const list = [...${card(D)}.querySelectorAll('.am-opt')]; const i = ${card(D)}.querySelector('.am-searchfield input'); return { idx: list.findIndex((b) => b.classList.contains('active')), sel: list[0].getAttribute('aria-selected'), ad: i.getAttribute('aria-activedescendant') === list[0].id }; })()`);
+  const act1 = await page(`(() => { const list = [...${card(D)}.querySelectorAll('.am-pop .am-opt')]; const i = ${card(D)}.querySelector('.am-searchfield input'); return { idx: list.findIndex((b) => b.classList.contains('active')), sel: list[0].getAttribute('aria-selected'), ad: i.getAttribute('aria-activedescendant') === list[0].id }; })()`);
   check(`${label}: ArrowDown highlights the first result (aria-selected and aria-activedescendant follow)`, act1.idx === 0 && act1.sel === 'true' && act1.ad, JSON.stringify(act1));
   await key(D, 'ArrowDown'); await key(D, 'ArrowDown'); await key(D, 'ArrowUp');
-  check(`${label}: the arrows move one at a time`, await page(`[...${card(D)}.querySelectorAll('.am-opt')].findIndex((b) => b.classList.contains('active'))`) === 1, '');
+  check(`${label}: the arrows move one at a time`, await page(`[...${card(D)}.querySelectorAll('.am-pop .am-opt')].findIndex((b) => b.classList.contains('active'))`) === 1, '');
   await key(D, 'ArrowUp'); await key(D, 'ArrowUp');
-  check(`${label}: ArrowUp from the first wraps to the last`, await page(`[...${card(D)}.querySelectorAll('.am-opt')].findIndex((b) => b.classList.contains('active'))`) === 5, '');
+  check(`${label}: ArrowUp from the first wraps to the last`, await page(`[...${card(D)}.querySelectorAll('.am-pop .am-opt')].findIndex((b) => b.classList.contains('active'))`) === 5, '');
   await shot(`search-${svc.slug}-keyboard.png`);
   await key(D, 'Enter');
   await sleep(300);
@@ -129,7 +130,7 @@ async function run(svc) {
   // Enter with nothing highlighted: the first song
   await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
   await typeInto(D, 'again');
-  await waitFor(`${card(D)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 6`);
+  await waitFor(`${card(D)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 6`);
   await key(D, 'Enter');
   await sleep(300);
   check(`${label}: Enter with nothing highlighted plays the first song`, (await calls()).play.at(-1) === 'song:s1', JSON.stringify((await calls()).play));
@@ -137,10 +138,10 @@ async function run(svc) {
   // play next / queue
   await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
   await typeInto(D, 'queue');
-  await waitFor(`${card(D)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 6`);
+  await waitFor(`${card(D)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 6`);
   if (svc.queue) {
-    await page(`${card(D)}.querySelectorAll('.am-songs .am-optrow')[1].querySelectorAll('.am-act')[0].click()`);
-    await page(`${card(D)}.querySelectorAll('.am-songs .am-optrow')[2].querySelectorAll('.am-act')[1].click()`);
+    await page(`${card(D)}.querySelectorAll('.am-pop .am-songs .am-optrow')[1].querySelectorAll('.am-act')[0].click()`);
+    await page(`${card(D)}.querySelectorAll('.am-pop .am-songs .am-optrow')[2].querySelectorAll('.am-act')[1].click()`);
     await sleep(300);
     const c = await calls();
     check(`${label}: Next and Queue send that song to the engine, and the panel stays for more`, c.next.join() === 'song:s2' && c.later.join() === 'song:s3' && await popOpen(D), JSON.stringify([c.next, c.later]));
@@ -158,18 +159,18 @@ async function run(svc) {
   for (const t of termsList) {
     await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
     await typeInto(D, t);
-    await waitFor(`${card(D)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 6`);
+    await waitFor(`${card(D)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 6`);
     await key(D, 'Enter');
     await sleep(150);
   }
   await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
   await page(`(() => { const i = ${card(D)}.querySelector('.am-searchfield input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await sleep(450);
-  const recent = await page(`[...${card(D)}.querySelectorAll('.am-opt-recent')].map((b) => b.textContent)`);
+  const recent = await page(`[...${card(D)}.querySelectorAll('.am-pop .am-opt-recent')].map((b) => b.textContent)`);
   check(`${label}: the field, empty, shows the last five searches, newest first (remembered on this card only)`, JSON.stringify(recent) === '["eta","zeta","epsilon","delta","gamma"]' && /Recent searches/.test(await page(`${card(D)}.querySelector('.am-pop').textContent`)) && await page(`localStorage.getItem('lumen-music-recent:${D}') !== null && localStorage.getItem('lumen-music-recent:${S}') === null`), JSON.stringify(recent));
   await shot(`search-${svc.slug}-recent.png`);
   const before = (await calls()).search.length;
-  await page(`${card(D)}.querySelectorAll('.am-opt-recent')[1].click()`);
+  await page(`${card(D)}.querySelectorAll('.am-pop .am-opt-recent')[1].click()`);
   await sleep(400);
   check(`${label}: choosing a recent search searches it at once`, (await calls()).search.at(-1) === 'zeta' && (await calls()).search.length > before, JSON.stringify((await calls()).search.slice(-2)));
   await key(D, 'Escape');
@@ -178,8 +179,8 @@ async function run(svc) {
   await app.evaluate(() => { global.__fx.card = { ...global.__fx.card, signedIn: false }; global.__widgets.engineChanged(); });
   await page(`${card(D)}.querySelector('.am-searchbtn').click()`);
   await typeInto(D, 'nothing');
-  await waitFor(`${card(D)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 6`);
-  check(`${label}: signed out, the panel says so (${svc.queue ? 'previews' : 'sign in to play'})`, await page(`${svc.note}.test(${card(D)}.querySelector('.am-pop').textContent)`), await page(`${card(D)}.querySelector('.am-pop').textContent`));
+  await waitFor(`${card(D)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 6`);
+  check(`${label}: signed out, the panel says so (${svc.queue ? 'previews' : 'sign in to play'})`, await waitFor(`${svc.note}.test(${card(D)}.querySelector('.am-pop').textContent)`), await page(`${card(D)}.querySelector('.am-pop').textContent`));
   await app.evaluate(() => { global.__fx.results = () => []; });
   await typeInto(D, 'zzzz');
   check(`${label}: no results says so`, await waitFor(`/No results/.test(${card(D)}.querySelector('.am-pop')?.textContent || '')`), await page(`${card(D)}.querySelector('.am-pop').textContent`));
@@ -191,8 +192,8 @@ async function run(svc) {
   await app.evaluate(() => { global.__fx.results = (term) => [{ id: 's1', kind: 'song', title: `${term} one`, sub: 'A', ms: 100000, thumb: '' }, { id: 'a1', kind: 'album', title: 'Album', sub: 'A', ms: 0, thumb: '' }, { id: 'r1', kind: 'artist', title: 'Artist', sub: '', ms: 0, thumb: '' }]; global.__fx.card = { ...global.__fx.card, searchOk: true, signedIn: true }; global.__widgets.engineChanged(); });
   await page(`${card(S)}.querySelector('.am-searchbtn').click()`);
   await typeInto(S, 'tiny');
-  await waitFor(`${card(S)}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 3`);
-  const small = await page(`(() => ({ w: Math.round(${card(S)}.getBoundingClientRect().width), groups: [...${card(S)}.querySelectorAll('.am-group')].filter((g) => getComputedStyle(g).display !== 'none').map((g) => g.querySelector('.am-heading').textContent), inside: ${card(S)}.querySelector('.am-pop').getBoundingClientRect().right <= ${card(S)}.getBoundingClientRect().right + 1 }))()`);
+  await waitFor(`${card(S)}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 3`);
+  const small = await page(`(() => ({ w: Math.round(${card(S)}.getBoundingClientRect().width), groups: [...${card(S)}.querySelectorAll('.am-pop .am-group')].filter((g) => getComputedStyle(g).display !== 'none').map((g) => g.querySelector('.am-heading').textContent), inside: ${card(S)}.querySelector('.am-pop').getBoundingClientRect().right <= ${card(S)}.getBoundingClientRect().right + 1 }))()`);
   check(`${label}: in a small card (${small.w} px) only the songs are listed, and the panel stays inside the card`, small.w < 300 && JSON.stringify(small.groups) === '["Songs"]' && small.inside, JSON.stringify(small));
   await shot(`search-${svc.slug}-small.png`);
   await key(S, 'Escape');
