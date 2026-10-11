@@ -330,7 +330,10 @@ let settingsGen = 0; // bumped by every write: an async write that is no longer 
 let settingsPending = false; // an async write not yet known to be on disk
 // [chat per tab] Set where the run slots exist: a changed cap acts at once (a higher one starts the chats waiting).
 let onSettingsWritten = null;
+// shownPick (below) is what every model picker shows; it is declared later, so this may run before it exists (start-up writes).
+function dropShownPick() { try { shownPick = null; } catch { /* not declared yet */ } }
 function writeSettings(settings) {
+  if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
   settingsCache = { ...settings };
   onSettingsWritten?.(settingsCache);
   settingsPending = true;
@@ -343,6 +346,7 @@ const writeSettingsAsync = writeSettings; // (the periodic session save)
 if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache) writeSettingsNow(settingsCache); };
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
+  if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
   settingsCache = { ...settings };
   onSettingsWritten?.(settingsCache);
   settingsPending = false;
@@ -2959,7 +2963,8 @@ function switchTab(id, { wake = true } = {}) {
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
-  if (!aiToolSwitch) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat. Only a run's own tool call (aiToolSwitch: agentOpenTab / agentSwitchTab) moves the run instead; any other switch is the user's, whatever async scope it happens to run in
+  if (!aiToolSwitch) { followTabChat(tab); shownPick = ownPickOfOpenChat(); announceModelIfChanged(); } // (the user went to this tab: the pickers show its chat's model; a window's refresh or focus does not change it)
+  // [chat per tab] the sidebar shows this tab's chat. Only a run's own tool call (aiToolSwitch: agentOpenTab / agentSwitchTab) moves the run instead; any other switch is the user's, whatever async scope it happens to run in
   sendTabs();
   schedulePreload(4000); // (the neighbours of the tab now in front, once things are quiet)
   return true;
@@ -4646,6 +4651,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
   // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
   if (!quiet || wasUnread) pushAttention();
+  if (!quiet) shownPick = ownPickOfOpenChat(); // (a chat the user opened or began: the pickers show its model)
   announceModelIfChanged(); // each chat keeps its own model: the picker and the placeholders follow the chat now open
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
@@ -4879,6 +4885,13 @@ function followTabChat(tab, { push = true } = {}) {
   }
   refreshTabMarks();
 }
+// The pickers everywhere show one model: the open chat's. A window or chat page whose own chat was left on another model (a pick made in
+// another window or page changed the open chat only) would show that model yet send with its own. So a message takes the shown model.
+function adoptShownModel(shown) {
+  const st = agent.messages?.settings;
+  if (!shown || (st && (st.autoFrom || st.fallbackFrom || st.model) === shown)) return;
+  agent.setModel(shown);
+}
 function followFront(opts) {
   followTabChat(tabs.find((x) => x.id === activeId), opts);
 }
@@ -4887,6 +4900,15 @@ function syncToSender(event) {
   const rec = recOfSender(event?.sender);
   if (rec) withWindow(rec, () => followFront({ push: false }));
   else followChatPage(event?.sender); // a chat page's own call: the open chat is the page's tab's chat
+}
+// A read-only call (the chat list, the research board) that needs the sender's chat to answer, but must not take the open chat from
+// whichever window the user is really using: with two windows or a chat page on different chats, each one's refresh used to flip the
+// open chat to its own and leave it there, so a model picked, or a chat opened, in one place was undone by the next refresh of another
+// (the pickers then showed, and the next message used, a different chat's model). The open chat is put back once the answer is read.
+function readForSender(event, read) {
+  const before = chatId;
+  syncToSender(event);
+  try { return read(); } finally { if (chatId !== before) switchChat(before, { ensure: true, quiet: true }); }
 }
 // A chat page (in a tab, any window) asked for something: the open chat becomes the chat its tab was left on, so what it sends or
 // resets is that chat's, whichever chat the sidebar or another tab has open now.
@@ -4902,11 +4924,13 @@ function followChatPage(wc) {
 ipcMain.handle('chat:resync', (event) => {
   const wc = event.sender;
   if (!wc || wc.isDestroyed() || chatPageRt.isChatSender(event)) return null;
-  syncToSender(event);
-  shownChat.set(wc, chatId);
-  const run = chatRuns.get(chatId);
-  if (runIsLive(run)) run.sender = wc;
-  return { view: chatView() };
+  // (a window's refresh answers for its own chat but must not take the open chat from the window in use: see readForSender)
+  return readForSender(event, () => {
+    shownChat.set(wc, chatId);
+    const run = chatRuns.get(chatId);
+    if (runIsLive(run)) run.sender = wc;
+    return { view: chatView() };
+  });
 });
 // Every other window's sidebar follows its own tab again (a chat moved away from a tab it was showing in).
 function refreshSidebars() {
@@ -8153,7 +8177,10 @@ function stampRun(run, done = null) {
 }
 ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
+  let shownPick = null; // what every picker shows right now (the open chat's model, or the saved pick while it has none), before the sender's own chat is brought up
+  try { shownPick = shownModel().pick || null; } catch { /* not set up yet */ }
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
+  adoptShownModel(shownPick); // the message goes to the model the picker showed, even when this window's or page's chat was left on another
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
   // another tab, another window, a closed sidebar or another chat (switchChat leaves it running).
   const runChat = chatId;
@@ -8430,7 +8457,7 @@ function researchFrontTab() {
   const wc = tab?.view?.webContents;
   return wc && !wc.isDestroyed() ? wc : null;
 }
-ipcMain.handle('research:get', (event) => { syncToSender(event); return researchState(); });
+ipcMain.handle('research:get', (event) => readForSender(event, researchState));
 ipcMain.handle('research:add-page', async (event) => {
   syncToSender(event);
   const wc = researchFrontTab();
@@ -8523,8 +8550,7 @@ ipcMain.handle('research:open', (event, url) => {
   return true;
 });
 
-ipcMain.handle('chats:list', (event) => {
-  syncToSender(event);
+ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   sweepTrash();
   return {
     current: chatId,
@@ -8541,7 +8567,7 @@ ipcMain.handle('chats:list', (event) => {
       return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), ...(c.project ? { project: c.project } : {}), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
-});
+}));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
 ipcMain.handle('chats:open', (event, id) => {
   syncToSender(event);
@@ -8934,9 +8960,19 @@ function effectiveModel(preferred = readSettings().model) {
 // The sidebar and the chat page show the OPEN chat's model (each chat keeps its own; a pick made mid-reply is the
 // next message's), so what the picker says is what the next message there uses. A new chat, and so the new-tab
 // page's Ask AI, starts on the saved default (forChat: false).
+// What the pickers show is one value (shownPick), set when the user does something: picks a model, opens a chat, starts one, or
+// switches tab. A window's or page's background refresh (it brings the open chat to its own chat for a moment: syncToSender) must not
+// change it, or two windows on different chats flipped what every picker showed, and what the next message used, back and forth.
+let shownPick = null;
+function ownPickOfOpenChat() {
+  const s = agent.messages?.settings;
+  let pick = s ? s.autoFrom || s.fallbackFrom || s.model : null;
+  if (!pick) { try { pick = effectiveModel(undefined); } catch { pick = null; } } // (a chat with no message yet: the saved default)
+  return pick || null;
+}
 function chatModelPick() {
   const s = agent.messages?.settings;
-  return agent.nextModel || (s ? s.autoFrom || s.fallbackFrom || s.model : null) || undefined; // (autoFrom: the chat's pick is Auto, whichever model answered last)
+  return shownPick || agent.nextModel || (s ? s.autoFrom || s.fallbackFrom || s.model : null) || undefined; // (autoFrom: the chat's pick is Auto, whichever model answered last)
 }
 function shownModel(options = modelOptions(), { forChat = true } = {}) {
   const model = effectiveModel(forChat ? chatModelPick() : undefined);
@@ -9191,6 +9227,7 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   // [auto model] The provider the user was on before choosing Auto is the one Auto prefers when two would do.
   const autoHome = autoModel.isAuto(id) && s.model && !autoModel.isAuto(s.model) ? s.model : s.autoHome;
   writeSettings({ ...s, model: id, ...(autoHome ? { autoHome } : {}), ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  shownPick = id; // (every picker shows it, and the next message, wherever it is sent from, uses it)
   aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   try { setTimeout(() => { try { agent.prewarm(''); } catch { /* not set up yet */ } }, 0); } catch { /* quitting */ } // (the new pick's process starts now, not at the first message)

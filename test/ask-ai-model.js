@@ -220,8 +220,9 @@ const LIMIT_MS = 200;
 
   // ---- a pick made while a reply is streaming ------------------------------------------------
   await hold();
+  const usedBefore = (await used()).length;
   await typeAndSend(ui, 'a long one');
-  await waitFor(async () => (await used()).length && (await ui.evaluate(() => document.getElementById('send').classList.contains('stop'))));
+  await waitFor(async () => (await used()).length > usedBefore && (await ui.evaluate(() => document.getElementById('send').classList.contains('stop'))));
   const midBefore = (await used()).slice();
   await changes['Settings picker'](HAIKU);
   await followed(HAIKU, OPUS, 'mid-reply (Settings picker)');
