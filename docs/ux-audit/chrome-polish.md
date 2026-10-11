@@ -53,14 +53,13 @@ be screenshotted). Shots in `docs/ux-audit/shots/` (gitignored).
 2. New `renderer/managers-toast.js` (the organize note's look: a pill with an accent Undo, about 8 s, Ctrl+Z outside a text field). Bookmarks restore through `bookmarks:restore` at the old index; downloads through a `restore` action that puts the row back where it was (the file was never deleted).
 3. `KEEP` is 1000. The page shows 100 and a "Show more N" button; the toolbar panel and the taskbar still get only the latest 50 / 10, and the page's "file still there" check is cached for 3 s so 1000 rows are not stat()ed on every progress tick.
 4. `locales/en.json` has `certError.*`, `httpsOnly.*`, `safeBrowsing.*`; the three pages load `i18n.js` and a small `interstitial.js` (fills `{host}` with an element); `error-preload.js` hands them the table. `cert-reasons.js` now maps errors to keys and takes the translate function.
-5. Wording only: `permission.media.video` / `.audio` from Electron's `details.mediaTypes`. The decision is still stored once (`origin|media`).
+5. Camera and microphone are decided separately (keys `origin|camera`, `origin|microphone`; `browser/site-permissions.js` `plan`, `allowedNow`, `migrate`). A prompt asks only about devices with no decision (`permission.media.video` / `.audio` / both), a device already refused refuses the request, and allowing one never covers the other. Old `origin|media` entries are migrated to both on load. Settings > Site permissions and the site information menu list and reset each device; the Block/Ask default stays one "Camera and microphone" setting.
 6. `browser/menu-label.js` (`&` becomes `&&`, 60-character ellipsis) used by the History, Bookmarks, Downloads, Back / Forward and Add to group menus.
 7. The status line is used only when the note is missing.
 
 Tests: `test/chrome-ux-units.js`, `test/page-i18n-units.js`, `test/core-browsing-units.js`, `test/managers.js` (address, Undo for both pages).
 
 ### Left
-- **Camera-only or microphone-only Allow also covers the other**, because the decision is one entry; a later request for the other device is not asked again. Splitting the stored decision is a larger change.
 - **The `&&` fix is untested on screen** (native menus can't be captured here); it follows Electron's rule for Windows and Linux labels.
 - **The toolbar download panel could not be screenshotted** (an off-screen view); its text and list were read and are fine (long names clip, progress, speed and time left show).
 - **Tab hover card and tab menu** were fine: the card clips long titles with an ellipsis and shows the host (`lumen://...` for Lumen pages); disabled items stay in place for internal pages.
