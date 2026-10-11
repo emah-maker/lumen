@@ -666,7 +666,9 @@ function systemFor(settings) {
 
 ${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, like the answer style
   // Settings > AI > Custom instructions (ai/custom-instructions.js): the user's standing notes, delimited as preferences.
-  return settings.customInstructions ? `${withManners}\n\n${settings.customInstructions}` : withManners;
+  const withCustom = settings.customInstructions ? `${withManners}\n\n${settings.customInstructions}` : withManners;
+  // [projects] The chat's project instructions (ai/project-instructions.js), set by main from the chat's project.
+  return settings.projectInstructions ? `${withCustom}\n\n${settings.projectInstructions}` : withCustom;
 }
 
 // ---- [claude code engine] extra guidance when the user's own Claude Code CLI answers (claude-code.js).

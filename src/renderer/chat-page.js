@@ -12,6 +12,7 @@
   const rail = $('cp-rail');
   const body = document.body;
   const tr = window.chatTr;
+  const pageTools = window.chatPageTools;
   let userName = '';
 
   // ---- hooks into the shared chat
@@ -21,6 +22,7 @@
     if (!on) setTimeout(renderList, 400);
   };
   chatHost.chatChanged = () => renderList();
+  chatHost.synced = (view) => window.chatPageTools.setTemporary(view?.temporary); // another view started or left a temporary chat
   // The empty chat greets by the name set for the new-tab page ("Good evening, Sam"), or asks what it can help with.
   const greeting = () => {
     if (!userName) return t('chatpage.greeting.none');
@@ -101,32 +103,39 @@
     menu: true, // Rename / Pin / Archive / Export / Delete behind the row's ⋯
     rerender: () => renderList(),
     cleared: () => { clearChatView(); refreshUsage(''); },
+    extra: (chat) => [moveToProject(chat)],
   });
   const tools = window.chatListTools;
   let view = 'chats'; // or 'archived'
+  let projectView = null; // a project's id: the list shows only its chats (Projects, in the rail)
+  let lastProjects = [];
   let searchBox = null;
   const search = tools.searcher(api, () => drawItems());
   let lastChats = [];
   let lastCurrent = null;
   function drawItems() {
     const query = search.query;
-    const shown = tools.pick(lastChats, { query, view, hits: search.hits });
+    let shown = tools.pick(lastChats, { query, view, hits: search.hits });
+    if (projectView && !query && view !== 'archived') shown = shown.filter((c) => c.project === projectView);
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
-    if (!shown.length && (query || view === 'archived')) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : tr('chats.noArchived', 'No archived chats') }));
+    if (!shown.length && (query || view === 'archived' || projectView)) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : projectView ? tr('chatpage.project.empty', 'No chats in this project yet. Start one here, or move a chat in from its ⋯ menu.') : tr('chats.noArchived', 'No archived chats') }));
   }
   // The tab's title is the chat's.
   function showTitle() {
     const mine = lastChats.find((c) => c.id === (shownChatId || lastCurrent));
-    document.title = mine?.title || t('chatpage.title.new');
+    document.title = pageTools.isTemporary() ? tr('chatpage.temp', 'Temporary chat') : mine?.title || t('chatpage.title.new');
+    pageTools.setTitle(mine?.title || '');
   }
   async function renderList() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focused = focusedRow?.dataset.id;
     const focusedAt = focused ? [...items.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats } = await api.list();
+    const { current, chats, projects } = await api.list();
     lastChats = chats;
+    lastProjects = Array.isArray(projects) ? projects : [];
+    if (projectView && !lastProjects.some((p) => p.id === projectView)) projectView = null;
     lastCurrent = current;
     if (!searchBox) { searchBox = tools.search((q) => search.set(q)); items.before(searchBox); }
     searchBox.hidden = !chats.length;
@@ -138,6 +147,7 @@
     foot.hidden = !archivedCount && view !== 'archived';
     foot.setAttribute('aria-pressed', String(view === 'archived'));
     $('cp-archived-label').textContent = view === 'archived' ? t('chatpage.allChats') : t('chatpage.archived') + (archivedCount ? ` (${archivedCount})` : '');
+    drawProjects();
     drawItems();
     showTitle();
     empty.hidden = chats.length > 0;
@@ -147,11 +157,53 @@
       (row?.querySelector('.chat-open') || (searchBox && !searchBox.hidden ? searchBox : null) || prompt)?.focus();
     }
   }
+  // ---- projects (renderer/chat-projects.js): the rail's block, and "Move to project" in a row's menu
+  const pj = window.chatProjects;
+  function drawProjects() {
+    const host = $('cp-projects');
+    if (!lastProjects.length && !lastChats.length) { host.hidden = true; return; }
+    pj.render({
+      host, projects: lastProjects, chats: lastChats, active: projectView,
+      onSelect: (id) => { projectView = id; if (id) view = 'chats'; renderList(); },
+      onAdd: () => editProject(null),
+      onEdit: (p) => editProject(p),
+      onNewChat: async (p) => {
+        if (running) return;
+        const next = await api.newInProject(p.id).catch(() => null);
+        if (!next) return;
+        clearChatView();
+        pageTools.setTemporary(false);
+        shownChatId = next.id || null;
+        refreshUsage('');
+        await renderList();
+        if (narrowQuery.matches && drawerOpen) toggleRail(false);
+        prompt.focus();
+      },
+    });
+  }
+  function editProject(project, then) {
+    pj.editor({ api, project, onDone: async (r) => {
+      if (r.removed && projectView === r.removed) projectView = null;
+      if (r.saved && !project && !then) projectView = r.saved.id; // (made with +: its list opens; made from a chat's menu: the list stays)
+      await renderList();
+      if (r.saved && then) then(r.saved);
+    } });
+  }
+  function moveToProject(chat) {
+    const b = window.chatIconButton('project', tr('chatpage.project.move', 'Move to project'));
+    b.onclick = () => pj.picker({
+      api, chat, projects: lastProjects, anchor: b.closest('.chat-item') || b,
+      onDone: () => renderList(),
+      onNew: (c) => editProject(null, async (saved) => { await api.setProject(c.id, saved.id).catch(() => false); renderList(); }),
+    });
+    return b;
+  }
   $('cp-archived').onclick = () => { view = view === 'archived' ? 'chats' : 'archived'; renderList(); };
   async function openChat(id, { share = false } = {}) {
     const opened = await (share ? api.share(id) : api.open(id));
     if (!opened) return false; // gone: the row says so, then the list redraws (chat-items.js moveHere) (deleted, or unreadable on this machine)
     clearChatView();
+    pageTools.setTemporary(Boolean(opened.temporary));
     shownChatId = opened.id || null;
     showHistory(opened.items);
     resumeLive(opened.live); // still running: its reply goes on here
@@ -159,11 +211,12 @@
     await renderList();
     if (narrowQuery.matches && drawerOpen) toggleRail(false); // (a drawer closes on its choice; focus goes to the message box)
     prompt.focus();
+    if (search.query) setTimeout(() => pageTools.jump(search.query), 80); // a search hit opens at the message that matched
     return true;
   }
   tools.arrows(items); // Up/Down between chats, Home/End to the ends
   // New chat is the shared #new-chat button (chat-core.js resets the chat and empties the view).
-  $('new-chat').addEventListener('click', () => { setTimeout(renderList, 50); if (narrowQuery.matches && drawerOpen) toggleRail(false); });
+  $('new-chat').addEventListener('click', () => { pageTools.setTemporary(false); setTimeout(renderList, 50); if (narrowQuery.matches && drawerOpen) toggleRail(false); });
   api.onChanged?.(() => { if (!items.querySelector('.chat-rename-input')) renderList(); }); // running, needs an OK, finished unseen
 
   // ---- the tab the AI works in
@@ -194,6 +247,7 @@
     document.body.append(bar);
     setTimeout(() => bar.remove(), 2500);
   };
+  pageTools.init({ api, id: () => shownChatId || lastCurrent, refresh: () => renderList(), toast: (text) => toast(text) });
   $('cp-export').onclick = async () => {
     const id = shownChatId || lastCurrent;
     if (!id) { toast(t('chatpage.exportEmpty')); return; }
@@ -249,6 +303,7 @@
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
+    pageTools.setTemporary(Boolean(now?.temporary));
     showHistory(now?.items);
     refreshUsage(now?.usage || '');
     showTarget(target);
