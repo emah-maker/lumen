@@ -65,7 +65,7 @@ const os = require('os');
   check('no page errors', errors.length === 0, errors.join(' | '));
 
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {} // (Windows holds a closed app's profile for a moment; _tmp-cleanup removes what is left)
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -58,14 +58,14 @@ zone.addEventListener('drop',e=>{e.preventDefault();document.title='dropped:'+e.
     r = await run('drag', { from_x: dropFrom[0] / ratio, from_y: dropFrom[1] / ratio, to_x: dropTo[0] / ratio, to_y: dropTo[1] / ratio });
     check('drag does an HTML5 drag-and-drop with its data', (await title()) === 'dropped:Alpha' && /drag-and-drop/.test(r), `${await title()} | ${r}`);
 
-    // pinch: a synthesized trackpad pinch magnifies the page in place
+    // pinch: a synthesized trackpad pinch (gestureSourceType 'mouse' is how Chromium models a precision touchpad; a 'touch' pinch needs a composited, on-screen window and does nothing in the invisible LUMEN_TEST_BACKGROUND one) magnifies the page in place
     const before = await inPage('[visualViewport.scale, document.documentElement.clientWidth]');
     await app.evaluate(async () => {
       const wc = global.__agent.browser.activeTab().webContents;
       const dbg = wc.debugger;
       const mine = !dbg.isAttached();
       if (mine) dbg.attach('1.3');
-      try { await dbg.sendCommand('Input.synthesizePinchGesture', { x: 150, y: 150, scaleFactor: 2, gestureSourceType: 'touch' }); } finally { if (mine) dbg.detach(); }
+      try { await dbg.sendCommand('Input.synthesizePinchGesture', { x: 150, y: 150, scaleFactor: 2, gestureSourceType: 'mouse' }); } finally { if (mine) dbg.detach(); }
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
     const after = await inPage('[visualViewport.scale, document.documentElement.clientWidth]');
@@ -74,7 +74,7 @@ zone.addEventListener('drop',e=>{e.preventDefault();document.title='dropped:'+e.
     await app.evaluate(async () => {
       const wc = global.__agent.browser.activeTab().webContents;
       const dbg = wc.debugger; const mine = !dbg.isAttached(); if (mine) dbg.attach('1.3');
-      try { await dbg.sendCommand('Input.synthesizePinchGesture', { x: 150, y: 150, scaleFactor: 2, gestureSourceType: 'touch' }); } finally { if (mine) dbg.detach(); }
+      try { await dbg.sendCommand('Input.synthesizePinchGesture', { x: 150, y: 150, scaleFactor: 2, gestureSourceType: 'mouse' }); } finally { if (mine) dbg.detach(); }
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
     const again = await inPage('visualViewport.scale');
