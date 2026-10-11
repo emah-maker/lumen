@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
+const ALL = JSON.stringify(require('../src/features/feature-offers').OFFERS.map((o) => o.key)); // every offer is recorded as seen at once
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
@@ -44,7 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await waitFor(async () => (await kind()) === 'notes');
       check('update: the release notes come first', (await kind()) === 'notes', await kind());
       await waitFor(() => Array.isArray(settingsOf(updated).featureOffersSeen), 4000); // (the file is written off the main thread)
-      check('the seen list is saved before any offer shows', JSON.stringify(settingsOf(updated).featureOffersSeen) === '["aiDeviceAccess"]', JSON.stringify(settingsOf(updated)));
+      check('the seen list is saved before any offer shows', JSON.stringify(settingsOf(updated).featureOffersSeen) === ALL, JSON.stringify(settingsOf(updated)));
       await press('Got it');
       await waitFor(async () => (await kind()) === 'message');
       const c = await card();
@@ -68,7 +69,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const { app, kind } = await launch(fresh);
     try {
       await sleep(3000);
-      check('a fresh profile is never asked, and records the offer as seen', (await kind()) === null && JSON.stringify(settingsOf(fresh).featureOffersSeen) === '["aiDeviceAccess"]', `${await kind()} ${JSON.stringify(settingsOf(fresh))}`);
+      check('a fresh profile is never asked, and records the offer as seen', (await kind()) === null && JSON.stringify(settingsOf(fresh).featureOffersSeen) === ALL, `${await kind()} ${JSON.stringify(settingsOf(fresh))}`);
     } finally { await app.close().catch(() => {}); }
   }
   for (const dir of [updated, fresh]) fs.rmSync(dir, { recursive: true, force: true });

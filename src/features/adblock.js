@@ -227,7 +227,15 @@ function createAdblock(deps) {
     let engine = blocker;
     if (isTest) global.__adblockEngine = blocker;
     blocker.onBeforeRequest = (details, callback) => {
+      const prefs = (deps.peekSettings || deps.readSettings)();
+      // [tracking] utm_*, fbclid, gclid… off the address: the page loads at the clean one (which comes back through here).
+      if (details.resourceType === 'mainFrame' && prefs.stripTrackingParams !== false && details.method === 'GET') {
+        const clean = details.url.includes('?') ? require('./tracking-params').strip(details.url) : details.url; // (loaded at the first address with a query)
+        if (clean !== details.url) return callback({ redirectURL: clean });
+      }
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
+      // [tracking] <a ping> and sendBeacon reports (type 'ping'), on every site, the allowed ones too.
+      if (details.resourceType === 'ping' && prefs.blockTrackingPings !== false) return callback({ cancel: true });
       const page = details.webContents?.getURL() || details.referrer || '';
       // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.

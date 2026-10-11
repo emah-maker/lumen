@@ -47,14 +47,14 @@ const offers = [{ key: 'a', value: true, title: 'ta', detail: 'da', where: 'Sett
     };
     let r = await run([1]);
     check('"Turn on" sets the setting through the settings setter', J(r.on) === '["aiDeviceAccess"]' && J(r.sets) === '[["aiDeviceAccess",true]]' && r.file.aiDeviceAccess === true, J(r));
-    check('the seen list is written before any card shows', r.wroteBeforeCard && J(r.writes[0].featureOffersSeen) === '["aiDeviceAccess"]', J(r.writes));
+    check('the seen list is written before any card shows', r.wroteBeforeCard && J(r.writes[0].featureOffersSeen) === J(FO.OFFERS.map((o) => o.key)), J(r.writes));
     check('the card names the feature, says where it lives, and defaults to Turn on', r.cards[0].message === 'settings.ai.deviceAccess' && /Settings > AI/.test(r.cards[0].detail) && J(r.cards[0].buttons) === '["offers.notNow","offers.turnOn"]' && r.cards[0].defaultId === 1 && r.cards[0].cancelId === 0, J(r.cards[0]));
     r = await run([0]);
     check('"Not now" changes nothing', r.on.length === 0 && r.sets.length === 0 && !r.file.aiDeviceAccess, J(r));
-    r = await run([1], { lastSeenVersion: '0.5.19', featureOffersSeen: ['aiDeviceAccess'] });
+    r = await run([1], { lastSeenVersion: '0.5.19', featureOffersSeen: FO.OFFERS.map((o) => o.key) });
     check('the next start asks nothing', r.cards.length === 0, J(r.cards));
     r = await run([1], {});
-    check('a fresh install shows no card', r.cards.length === 0 && J(r.file.featureOffersSeen) === '["aiDeviceAccess"]', J(r));
+    check('a fresh install shows no card', r.cards.length === 0 && J(r.file.featureOffersSeen) === J(FO.OFFERS.map((o) => o.key)), J(r));
     const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19' }), writeSettings: () => { throw new Error('wrote'); }, setSetting: async () => {}, showMessageBox: async () => { throw new Error('showed'); }, t: (k) => k, test: true });
     let quiet = true;
     try { await fo.present(); } catch { quiet = false; }

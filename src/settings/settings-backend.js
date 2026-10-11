@@ -83,7 +83,13 @@ const DEFAULTS = {
   startupPages: [],
   blockThirdPartyCookies: false,
   sendDoNotTrack: false,
-  sendGpc: false,
+  sendGpc: true, // Sec-GPC: 1, and navigator.globalPrivacyControl (preload/activity-preload.js)
+  hideTabActivity: false, // [hide activity] pages always read as the visible, focused tab; off by default: chat apps would think you are watching (notifications, read receipts) and tab checks misfire (preload/activity-preload.js)
+  hideWindowSize: true, // [hide activity] the screen reads as the window's size: split screen or a small window doesn't show
+  stripTrackingParams: true, // utm_*, fbclid, gclid… are taken off the addresses pages open at (features/tracking-params.js)
+  fingerprintProtection: true, // canvas, WebGL and audio readouts vary per site; the battery reads as a desktop's (preload/activity-preload.js)
+  webrtcIpProtection: false, // off by default (Chromium already hides local IPs behind mDNS, and on it can stop some peer connections from opening): WebRTC uses only the default route's public address: no local or VPN-bypassing IPs (settings-backend.js attachTab)
+  blockTrackingPings: true, // hyperlink-auditing pings (<a ping>) and navigator.sendBeacon reports are not sent (features/adblock.js)
   httpsOnly: false,
   passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
@@ -134,6 +140,7 @@ const DEFAULTS = {
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
+  bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
@@ -593,8 +600,15 @@ function create(deps) {
   }
 
   // Every ordinary tab: default zoom, HTTPS-only.
+  // WebRTC (video calls, and pages that use it only to learn your addresses): with the setting on, only the public
+  // address of the default route is offered, so a page can't read your local network address or the real one behind
+  // a VPN that doesn't take all traffic. Calls still connect (through the default route, or a relay).
+  function webrtcPolicy(wc) {
+    try { wc.setWebRTCIPHandlingPolicy(prefs().webrtcIpProtection ? 'default_public_interface_only' : 'default'); } catch (err) { console.error('WebRTC policy:', err.message); }
+  }
   function attachTab(wc) {
     pinchZoom(wc);
+    webrtcPolicy(wc);
     wc.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) upgrade(wc, details.url);
     });
@@ -695,6 +709,8 @@ function create(deps) {
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': deps.onTabSleepChange?.(key); break;
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
+      case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));

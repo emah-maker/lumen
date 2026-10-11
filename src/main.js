@@ -51,6 +51,8 @@ const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOC
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
 const { createBurstLimit } = require('./features/popup-guard'); // caps windows/tabs one page opens in a burst
+const hideActivity = require('./features/hide-activity'); // [hide activity] leaving the tab, split screen
+const activityScripts = hideActivity.createFrameScripts(() => settingsBackend.prefs());
 const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
@@ -893,6 +895,9 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
+  // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
+  hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
+  session.defaultSession.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
@@ -1142,6 +1147,7 @@ const privateWindows = createPrivateWindows({
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD }); // [hide activity]
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
     adblock.attachSession(ses);
@@ -2040,11 +2046,12 @@ function finishLeaving(tab, keep = true) {
 // Back, and whether there is one: past the first page of a tab that left the new-tab page (above), a new-tab page.
 function goBack(wc) {
   if (!wc || wc.isDestroyed()) return;
-  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
   const tab = tabByContents(wc);
+  if (tab?.managerPage === 'chat') { chatPageRt?.back(); return; } // the full-page chat is locked to its page (no history of its own): back to where it was opened from, else the new-tab page
+  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
   if (tab?.backToNewTab) { tab.backToNewTab = false; wc.loadURL(newTabUrl()).catch(() => {}); }
 }
-const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
+const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab || tabByContents(wc)?.managerPage === 'chat'));
 if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
 
 // [agent window] The pages of an outside agent's own window (below, features/agent-windows.js). Nothing they do may reach the
@@ -4243,8 +4250,10 @@ function applyChromeIdentity(wc) {
   // (Google's sign-in hosts get the same identity as every other page: Google refuses a Firefox one, google-auth-identity.js.)
   // The Page domain is switched on first: with Chromium's debugging port open (automation, test drivers) a script added
   // to a session that never enabled Page is not run at document start, and window.chrome stayed Electron's empty {}.
-  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() =>
-    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}));
+  const script = (sessionId) => send('Page.enable', {}, sessionId).catch(() => {}).then(() => Promise.all([
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
+    activityScripts.add(wc, send, sessionId), // [hide activity] other sites' frames too (features/hide-activity.js)
+  ]));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
@@ -4396,6 +4405,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') goBack(wc);
+  else if (input.alt && !mod && key === 'home' && activeTabIsChatPage()) chatPageRt.home(activeId); // Chrome's Home shortcut, on the full-page chat
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5' && !input.shift && !input.control && slidesViewer.isViewerUrl(wc?.getURL())) slidesRt.present(wc); // F5 presents a deck, as in PowerPoint
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
@@ -4431,6 +4441,7 @@ function newSidebarChat() {
 }
 
 // Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
+const activeTabIsChatPage = () => tabs.find((t) => t.id === activeId)?.managerPage === 'chat';
 function toggleChatPage() {
   if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
   else chatPageRt.open();
@@ -7173,6 +7184,7 @@ chatPageRt = chatPage.create({
   openTab: (url, opts) => openTab(url, opts),
   switchTab: (id) => switchTab(id),
   requestCloseTab: (id) => requestCloseTab(id),
+  goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
   managersOpen: () => managers.open('chat'),
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -7185,7 +7197,7 @@ chatPageRt = chatPage.create({
   },
 });
 chatPageRt.register();
-if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
@@ -7731,6 +7743,7 @@ const settingsBackend = settingsPage.create({
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   onTabSleepChange: () => tabSleepSettingChanged(),
   onTabPreloadChange: () => schedulePreload(1500),
+  onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });

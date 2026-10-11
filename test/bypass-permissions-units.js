@@ -196,10 +196,10 @@ const CASES = [
     check('redirect guard: with bypass on it is not stopped', (await guard(true)) === false);
   }
 
-  // A background task never bypasses, whatever the sidebar's setting says
+  // A background task bypasses only with both switches on (Bypass permissions and bypassBackground; test/bypass-background-units.js)
   {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'background-runner.js'), 'utf8');
-    check('background tasks: their agent is given a bypassPermissions that is always false', /bypassPermissions: \(\) => false/.test(src));
+    check('background tasks: their agent bypasses only when bypassPermissions and bypassBackground are both true', /bypassPermissions: \(\) => \{ const s = deps\.readSettings\(\); return s\.bypassPermissions === true && s\.bypassBackground === true; \}/.test(src));
     const bare = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '' }, () => null, () => ({}));
     check('an agent whose browser has no bypass switch never bypasses', bare.bypassOn() === false);
   }
