@@ -10,7 +10,8 @@ const { Agent, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptF
 let failed = 0;
 const check = (name, ok, detail = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ` -> ${detail}`}`); };
 
-const root = fs.mkdtempSync(path.join(process.env.TEMP || os.tmpdir(), 'lumen-ai-files-'));
+// (realpath: on a Windows runner TEMP is the 8.3 short form, RUNNER~1, and the cards carry the real long path)
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(process.env.TEMP || os.tmpdir(), 'lumen-ai-files-')));
 const docs = path.join(root, 'My Docs');
 fs.mkdirSync(docs);
 fs.mkdirSync(path.join(root, 'folder.html')); // a folder with a file's name
