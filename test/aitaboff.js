@@ -1,5 +1,5 @@
 // "Keep the AI from acting on this tab" in the real app (features/ai-manners.js keepOff, main.js "[ai off-tab]", the address bar's button and the
-// tab strip), with a temp profile and no network: the AI button (a sparkle) shows on a page while the AI panel is open or the tab is kept off, and toggles per tab; the tab carries a mark in the
+// tab strip), with a temp profile and no network: the AI button (a shield with a sparkle) is always on a web page (not the new tab) and toggles per tab, with the setting to hide it; the tab carries a mark in the
 // strip; reading it still works, every tool that acts is refused on it, in the tool layer; it stays through navigation and a restart.
 // Run with LUMEN_TEST_BACKGROUND=1 so the windows stay invisible and never take focus. SHOTS=<dir> saves screenshots of the button.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -31,10 +31,11 @@ const launch = (profile) => electron.launch({
   await ui.waitForSelector('.tab');
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
-  const shot = async (name) => { await unfocus(); await sleep(400); if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await ui.screenshot({ path: path.join(process.env.SHOTS, name), clip: { x: 0, y: 0, width: 1100, height: 90 } }); } };
+  const shot = async (name) => { await unfocus(); await sleep(400); if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); for (const scheme of ['light', 'dark']) { await ui.emulateMedia({ colorScheme: scheme }); await sleep(250); await ui.screenshot({ path: path.join(process.env.SHOTS, name.replace('.png', `-${scheme}.png`)), clip: { x: 0, y: 0, width: 1100, height: 90 } }); } await ui.emulateMedia({ colorScheme: null }); } };
+  const prefsUi = (patch) => app.evaluate(({ BrowserWindow }, p) => { for (const w of BrowserWindow.getAllWindows()) if (/index\.html/.test(w.webContents.getURL())) w.webContents.send('prefs:ui', p); }, patch);
 
   const active = () => app.evaluate(() => global.__windows.list().find((w) => w.current)?.activeId ?? global.__windows.list()[0].activeId);
-  const btn = () => ui.evaluate(() => { const b = document.getElementById('ai-off-tab'); return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), title: b.title, label: b.getAttribute('aria-label') }; });
+  const btn = () => ui.evaluate(() => { const b = document.getElementById('ai-off-tab'); return { hidden: b.hidden || getComputedStyle(b).display === 'none', pressed: b.getAttribute('aria-pressed'), title: b.title, label: b.getAttribute('aria-label') }; });
   const mark = (id) => ui.evaluate((i) => { const el = document.querySelector(`#tabs .tab[data-id="${i}"]`); return el ? { kept: el.classList.contains('ai-kept-off'), shown: getComputedStyle(el.querySelector('.tab-off-mark')).display !== 'none', label: el.getAttribute('aria-label') } : null; }, id);
   const run = (id, name, input = {}) => app.evaluate(async (_e, a) => {
     const signal = new AbortController().signal;
@@ -46,23 +47,29 @@ const launch = (profile) => electron.launch({
   const goto = async (url) => { await app.evaluate(({ webContents }, u) => { webContents.fromId(global.__windows.list()[0].tabs[0].contentsId).loadURL(u); }, url); await waitFor(() => app.evaluate((_e, u) => global.__windows.list()[0].tabs[0].url === u, url)); };
 
   const first = await active();
-  check('the button is not shown on the new tab page (no page to keep the AI off)', (await btn()).hidden === true, JSON.stringify(await btn()));
+  check('the button is not shown on the new tab page (a Lumen page: nothing to keep the AI off)', (await btn()).hidden === true, JSON.stringify(await btn()));
   await goto(`${base}/one`);
-  await sleep(600);
-  check('on a web page with the AI panel closed it is not shown (it would read as page chrome on every page)', (await btn()).hidden === true, JSON.stringify(await btn()));
-  await ui.$eval('#toggle-sidebar', (b) => b.click()); // the AI panel opens: now the control is meaningful
   await waitFor(async () => (await btn()).hidden === false);
   const off = await btn();
-  check('with the AI panel open it shows, off: pressed false, the tooltip offers read-only', off.hidden === false && off.pressed === 'false' && off.title === 'Make this tab read-only for the AI' && off.label === off.title, JSON.stringify(off));
-  check('it is a sparkle with a "read-only" chip, not a security shield', await ui.evaluate(() => { const b = document.getElementById('ai-off-tab'); return b.querySelector('.ai-off-label')?.textContent === 'AI read-only' && !/M8 1\.8/.test(b.innerHTML); }), '');
+  check('on a web page it is always there, even with the AI panel closed: off, pressed false, "Keep the AI from acting on this tab"', off.hidden === false && off.pressed === 'false' && off.title === 'Keep the AI from acting on this tab' && off.label === off.title, JSON.stringify(off));
+  check('it is a shield with a sparkle inside and no text chip', await ui.evaluate(() => { const b = document.getElementById('ai-off-tab'); return Boolean(b.querySelector('.ai-off-shield') && b.querySelector('.ai-off-spark')) && !b.querySelector('.ai-off-label'); }), '');
+  check('it sits in the address bar with the other buttons, right end, inside the box', await ui.evaluate(() => { const b = document.getElementById('ai-off-tab').getBoundingClientRect(); const o = document.getElementById('omnibox').getBoundingClientRect(); const a = document.getElementById('address').getBoundingClientRect(); return b.width >= 20 && b.right <= o.right && b.left >= a.left && b.top >= o.top && b.bottom <= o.bottom; }), '');
   check('the page works for the AI at first', (await run(first, 'read_page')).ok === true);
   await shot('ai-off-tab-off.png');
+  await prefsUi({ showAiOffButton: false });
+  await waitFor(async () => (await btn()).hidden === true);
+  check('the setting "Show the AI read-only button in the address bar" off hides it', (await btn()).hidden === true, JSON.stringify(await btn()));
+  await prefsUi({ showAiOffButton: true });
+  await waitFor(async () => (await btn()).hidden === false);
+  check('and on shows it again', (await btn()).hidden === false);
+  check('no note yet (nothing turned on)', await ui.evaluate(() => !document.querySelector('.ai-off-hint')));
 
   await press();
   const on = await waitFor(async () => { const b = await btn(); return b.pressed === 'true' && b; });
-  check('clicking it turns it on: pressed, and the tooltip says the AI can read but not act', on && /can read this tab but not act on it/.test(on.title), JSON.stringify(on));
+  check('clicking it turns it on: pressed, "AI is read-only on this tab. Click to allow actions"', on && on.title === 'AI is read-only on this tab. Click to allow actions' && on.label === on.title, JSON.stringify(on));
+  check('the first time, a short note says the AI can read but not click, type or navigate', await ui.evaluate(() => /can read this tab but can't click, type or navigate/.test(document.querySelector('.ai-off-hint')?.textContent || '')), '');
   const m = await waitFor(async () => (await mark(first))?.kept && (await mark(first)));
-  check('the tab strip marks the tab (a slashed sparkle after the title, and a spoken note)', m?.kept && m.shown && /AI read-only/.test(m.label || ''), JSON.stringify(m));
+  check('the tab strip marks the tab (a shield after the title, and a spoken note)', m?.kept && m.shown && /AI read-only/.test(m.label || ''), JSON.stringify(m));
   await shot('ai-off-tab-on.png');
 
   for (const [name, input] of [['read_page', {}], ['find', { query: 'Go' }], ['screenshot', {}]]) {
@@ -103,6 +110,7 @@ const launch = (profile) => electron.launch({
   // turning it off again (the user's click) lets the AI back in
   await press();
   await waitFor(async () => (await btn()).pressed === 'false');
+  await press(); await waitFor(async () => (await btn()).pressed === 'true'); check('turning it on a second time shows no second note', await ui.evaluate(() => !document.querySelector('.ai-off-hint'))); await press(); await waitFor(async () => (await btn()).pressed === 'false');
   check('clicking again lets the AI act on the tab', !/keeps the AI from acting/.test((await run(restored, 'click', { text: 'Go' })).error || ''));
 
   check('no page errors', errors.length === 0, errors.join('; '));
