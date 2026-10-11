@@ -59,9 +59,9 @@ async function partFake() {
   const { app, page, waitFor, shot, close } = await launch(W);
   await app.evaluate((_e, art) => {
     global.__ART = art;
-    global.__am = { card: { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art, signedIn: true, preview: false }, pressed: [], sought: [], played: [], searched: [], signIns: 0, reloads: 0, lists: 0 };
+    global.__am = { card: { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 30000, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art, signedIn: true, preview: false, can: { seek: true } }, t0: Date.now(), pressed: [], sought: [], played: [], searched: [], signIns: 0, reloads: 0, lists: 0 };
     global.__appleMusicFake = {
-      read: async () => ({ ...global.__am.card, at: global.__am.card.state === 'idle' || global.__am.card.state === 'unavailable' ? 0 : Date.now() }),
+      read: async () => ({ ...global.__am.card, progressMs: global.__am.card.progressMs + (global.__am.card.state === 'playing' ? Date.now() - global.__am.t0 : 0), at: global.__am.card.state === 'idle' || global.__am.card.state === 'unavailable' ? 0 : Date.now() }),
       control: async (n) => { global.__am.pressed.push(n); if (n === 'pause') global.__am.card.state = 'paused'; if (n === 'play') global.__am.card.state = 'playing'; return true; },
       seek: (sec) => { global.__am.sought.push(sec); return true; },
       playItem: (kind, id) => { global.__am.played.push(`${kind}:${id}`); return true; },
@@ -80,7 +80,7 @@ async function partFake() {
   check('status: the card shows title, artist and album (the same markup as the Spotify card)', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Night Shift'`) && (await text(D, '.sp-artist')) === 'Ann' && (await text(D, '.sp-album')) === 'Quiet Hours', await text(D, '.sp-title'));
   check('status: the album art is shown', await page(`(() => { const i = ${card(D)}.querySelector('img.sp-art'); return Boolean(i) && i.src.startsWith('data:image/') && i.naturalWidth > 0; })()`), '');
   check('status: there is no web slot and no sign-in button in this mode', !(await page(`Boolean(${card(D)}.querySelector('.sp-web-slot, .sp-web-signin'))`)), '');
-  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
+  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].filter((b) => !b.hidden).map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
   check('status: every control has a name (previous, pause, next, refresh)', ['Previous track', 'Pause', 'Next track'].every((n) => names.includes(n)) && names.every(Boolean), JSON.stringify(names));
   const bar = await page(`(() => { const b = ${card(D)}.querySelector('.sp-bar'); return b && { role: b.getAttribute('role'), label: b.getAttribute('aria-label'), elapsed: ${card(D)}.querySelector('.sp-elapsed').textContent, total: ${card(D)}.querySelector('.sp-total').textContent }; })()`);
   check('status: the progress bar is a labelled slider with elapsed and total time', bar && bar.role === 'slider' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20', JSON.stringify(bar));
@@ -149,7 +149,7 @@ async function partFake() {
   await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ signedIn: true, drm: 'missing' }));
   check('status: Widevine missing is explained in the idle view when signed in', await waitFor(`/Widevine/.test(${card(D)}?.querySelector('.am-note')?.textContent || '')`, 40), '');
   await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ reason: 'loading', signedIn: null }));
-  check('status: while the engine starts the card says so and offers nothing yet', await waitFor(`/Starting Apple Music/.test(${card(D)}?.querySelector('.sp-artist')?.textContent || '') && !${card(D)}.querySelector('.am-searchbtn')`, 40), '');
+  check('status: while the engine starts the card says so and offers nothing yet', await waitFor(`/Starting Apple Music/.test(${card(D)}?.querySelector('.sp-artist')?.textContent || '') && !${card(D)}.querySelector('.am-searchbtn:not([hidden])')`, 40), '');
   await app.evaluate((_e, c) => { global.__am.card = c; global.__widgets.engineChanged(); }, idleCard({ pageChanged: true, signedIn: true }));
   check('status: when the service says its page changed, the card says so', await waitFor(`/changed its page/.test(${card(D)}?.querySelector('.am-changed')?.textContent || '')`, 40), '');
 

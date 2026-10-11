@@ -661,9 +661,11 @@ function systemFor(settings) {
     ? SYSTEM
     : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : onCodex ? 'You are the AI assistant built into Lumen, a web browser, running in OpenAI Codex.' : 'You are the AI assistant built into Lumen, a web browser.'); // web_search's own description covers what it returns
   const style = settings.adhdMode ? base + ADHD_STYLE : base;
-  return settings.handsOff ? `${style}
+  const withManners = settings.handsOff ? `${style}
 
 ${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, like the answer style
+  // Settings > AI > Custom instructions (ai/custom-instructions.js): the user's standing notes, delimited as preferences.
+  return settings.customInstructions ? `${withManners}\n\n${settings.customInstructions}` : withManners;
 }
 
 // ---- [claude code engine] extra guidance when the user's own Claude Code CLI answers (claude-code.js).
@@ -4871,6 +4873,9 @@ ${out.text}${note}
       throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use visible text.');
     }
     if (scope && (name === 'read_page' || name === 'find' || name === 'batch' || name === 'fill_form')) scope.idsFresh = true;
+    // navigate loads in a tab of the chat's own ([agents out of sight]): move there first, so the redirect guard watches the tab that
+    // actually loads the page, not the user's tab it is about to leave.
+    if (name === 'navigate') { try { await this.ownNavigationTab(); } catch {} }
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
