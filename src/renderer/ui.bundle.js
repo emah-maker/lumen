@@ -360,9 +360,22 @@
     }).join('');
   }
 
-  const emphasis = (s) => scripts(s)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  // ~~strike~~, ***both***, **bold**, *italic*, __bold__, _italic_; they nest (**bold *and italic* text**). Strong is
+  // taken first so an italic inside it is found by the pass after. A star next to a space ("2 * 3 * 4") is not a mark;
+  // an underscore inside a word (snake_case) is not one either.
+  const emphasis = (s) => scripts(s.replace(/~~(?=\S)([^\n]+?)(?<=\S)~~/g, '<del>$1</del>'))
+    .replace(/\*\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])__(?=\S)(.+?)(?<=\S)__(?!\w)/g, '$1<strong>$2</strong>')
+    .replace(/(^|[^\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)/g, '$1<em>$2</em>');
+
+  // Parsing state of the render in progress (render is synchronous): the reference links and footnotes the text defines.
+  let CTX = null; // { refs: id -> url, notes: { id -> text }, used: [id, ...] (footnotes in the order first cited) }
+  const refKey = (id) => id.trim().replace(/\s+/g, ' ').toLowerCase();
+  // Held pieces of finished HTML (code spans, links, pictures) while emphasis runs over the text around them, so
+  // "**a [link](u) and `code`**" is one bold run. A held piece is a private-use token.
+  const HELD = /(\d+)/g;
 
   // Reads a URL starting at `start` in escaped text. Parentheses are kept when balanced, so
   // https://en.wikipedia.org/wiki/Safari_(web_browser) stays whole. Returns '' if there is no URL.
@@ -416,11 +429,48 @@
     return url && s[start + url.length] === ')' ? { length: url.length, html: (alt) => `<span class="md-img-remote" data-src="${url}" data-alt="${alt}"></span>` } : null;
   }
 
-  // Links and emphasis for text outside code spans.
-  function formatText(s) {
-    let out = '';
+  // Backslash escapes: \* \_ \[ \ … show the character itself. An escaped & < > " arrives as \&amp; …
+  const ESCAPED = /\\(&(?:amp|lt|gt|quot);|[\\`*_{}[\]()#+\-.!|~^$])/g;
+
+  // A footnote marker: a number, with the note's text as its tooltip; the notes themselves are listed after the reply.
+  function footnoteMark(id) {
+    if (!CTX || !(id in CTX.notes)) return '';
+    if (!CTX.used.includes(id)) CTX.used.push(id);
+    const n = CTX.used.indexOf(id) + 1;
+    return `<sup class="fn-ref" data-fn="${n}" title="${CTX.notes[id].slice(0, 200)}">${n}</sup>`;
+  }
+  // [text][id], [id][] and [id] (a numbered citation like [1]) with a definition in the reply: a link.
+  function refLink(s, i, hold) {
+    if (!CTX) return null;
+    const close = s.indexOf(']', i + 1);
+    if (close < 0) return null;
+    const label = s.slice(i + 1, close);
+    if (!label || label.includes('[') || label.length > 300) return null;
+    if (label[0] === '^') {
+      const html = footnoteMark(refKey(label.slice(1)));
+      return html ? { end: close + 1, html: hold(html) } : null;
+    }
+    if (s[close + 1] === '(') return null;
+    let id = label;
+    let end = close + 1;
+    let text = label;
+    if (s[close + 1] === '[') {
+      const close2 = s.indexOf(']', close + 2);
+      const second = close2 < 0 ? null : s.slice(close + 2, close2);
+      // "[1][2]" is two citations side by side, not the text "1" linked to reference 2
+      if (second !== null && !second.includes('[') && !(/^\d+$/.test(label) && /^\d+$/.test(second))) { id = second || label; end = close2 + 1; }
+    }
+    const url = CTX.refs[refKey(id)];
+    if (!url) return null;
+    const cite = /^\d{1,3}$/.test(text) && end === close + 1;
+    if (cite) text = `[${text}]`;
+    return { end, html: hold(`<a${cite ? ' class="md-cite"' : ''} href="${url}">${cite ? text : emphasis(text)}</a>`) };
+  }
+
+  // Links and emphasis for text outside code spans. `hold` sets finished HTML aside (a token stands in for it).
+  function formatText(s, hold) {
+    s = s.replace(ESCAPED, (_m, c) => hold(c));
     let plain = '';
-    const flush = () => { out += emphasis(plain); plain = ''; };
     let i = 0;
     while (i < s.length) {
       if (s[i] === '!' && s[i + 1] === '[') {
@@ -429,8 +479,7 @@
         if (close > i && !alt.includes('[') && !alt.includes(']') && alt.length <= 300) {
           const image = imageAt(s, close + 2);
           if (image) {
-            flush();
-            out += image.html(alt);
+            plain += hold(image.html(alt));
             i = close + 3 + image.length;
             continue;
           }
@@ -443,18 +492,18 @@
         if (label && (/^\[\d{1,3}\]$/.test(label) || (!label.includes('[') && !label.includes(']')))) {
           const url = scanUrl(s, close + 2, true);
           if (url && s[close + 2 + url.length] === ')') {
-            flush();
-            out += link(url, emphasis(label));
+            plain += hold(link(url, emphasis(label)));
             i = close + 3 + url.length;
             continue;
           }
         }
+        const ref = refLink(s, i, hold);
+        if (ref) { plain += ref.html; i = ref.end; continue; }
       }
       if ((s.startsWith('http://', i) || s.startsWith('https://', i)) && (i === 0 || /[\s(>[]/.test(s[i - 1]))) {
         const url = scanUrl(s, i, false);
         if (url) {
-          flush();
-          out += link(url, url);
+          plain += hold(link(url, url));
           i += url.length;
           continue;
         }
@@ -462,18 +511,22 @@
       plain += s[i];
       i++;
     }
-    flush();
-    return out;
+    return emphasis(plain);
   }
 
   function inline(text) {
-    return text.split(/(`[^`]+`)/).map((part, i) => (i % 2 ? `<code>${part.slice(1, -1)}</code>` : formatText(part))).join('');
+    const held = [];
+    const hold = (html) => { held.push(html); return `${held.length - 1}`; };
+    const src = text.replace(/[]/g, '').replace(/`([^`]+)`/g, (_m, code) => hold(`<code>${code}</code>`));
+    let out = formatText(src, hold);
+    for (let pass = 0; pass < 4 && held.length && out.includes(''); pass++) out = out.replace(HELD, (_t, n) => held[n] ?? '');
+    return out;
   }
 
   // ---------- tables (GitHub style) ----------
 
   const isSeparator = (line) => line.includes('-') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line);
-  const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const cells = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
   // A body row looks like the header: it starts with | when the header does, and otherwise has the
   // header's number of cells. A sentence after the table that happens to contain a | stays text.
   const isTableRow = (line, header) => {
@@ -495,10 +548,102 @@
     return dropMath(renderText(text, maths), maths);
   }
 
+  const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+  const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])(\s+)(.*)$/;
+  const QUOTE = /^\s{0,3}&gt;\s?(.*)$/;
+  const FOOTNOTE_DEF = /^\s{0,3}\[\^([^\]\s]+)\]:\s*(.*)$/;
+  const REF_DEF = /^\s{0,3}\[([^\]^][^\]]*)\]:\s*(?:&lt;)?(https?:\/\/\S+?)(?:&gt;)?(?:\s+(?:&quot;.*?&quot;|'.*?'|\(.*?\)))?\s*$/;
+  const expandTabs = (line) => line.replace(/^[ \t]+/, (w) => w.replace(/\t/g, '    '));
+  const indentOf = (line) => line.length - line.trimStart().length;
+
+  // [1]: https://… (reference links, which also back [1] citations) and [^1]: … (footnotes) are read out of the text
+  // (outside code fences) and removed from it; the rest renders with them in CTX.
+  function takeDefinitions(lines) {
+    const refs = {};
+    const notes = {};
+    const keep = [];
+    let fenced = false;
+    for (let n = 0; n < lines.length; n++) {
+      const line = lines[n];
+      if (/^```/.test(line)) { fenced = !fenced; keep.push(line); continue; }
+      if (fenced) { keep.push(line); continue; }
+      const note = line.match(FOOTNOTE_DEF);
+      if (note) {
+        const body = [note[2]];
+        while (n + 1 < lines.length && /^\s+\S/.test(lines[n + 1])) body.push(lines[++n].trim());
+        notes[refKey(note[1])] = body.join(' ');
+        continue;
+      }
+      const def = line.match(REF_DEF);
+      const url = def ? scanUrl(def[2], 0, true) : '';
+      if (def && url) { refs[refKey(def[1])] ??= url; continue; }
+      keep.push(line);
+    }
+    return { refs, notes, lines: keep };
+  }
+
   function renderText(source, maths) {
-    const lines = escape(source).split('\n');
+    const outer = CTX;
+    const defs = takeDefinitions(escape(source).split('\n'));
+    CTX = { refs: defs.refs, notes: defs.notes, used: [] };
+    try {
+      let html = blocks(defs.lines, maths);
+      if (CTX.used.length) html += `<section class="footnotes"><ol>${CTX.used.map((id) => `<li>${inline(CTX.notes[id])}</li>`).join('')}</ol></section>`;
+      return html;
+    } finally { CTX = outer; }
+  }
+
+  // The list starting at lines[n] (an item line): nested lists, an item's own paragraphs and code, task boxes.
+  // Returns { html, next } (next: the first line after the list).
+  function listAt(lines, n, maths) {
+    const first = expandTabs(lines[n]).match(ITEM);
+    const base = first[1].length;
+    const type = /\d/.test(first[2][0]) ? 'ol' : 'ul';
+    const items = [];
+    let k = n;
+    let cur = null;
+    while (k < lines.length) {
+      const line = expandTabs(lines[k]);
+      if (line.trim() === '') {
+        let j = k + 1;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        const nextLine = j < lines.length ? expandTabs(lines[j]) : '';
+        const nm = nextLine.match(ITEM);
+        // after blank lines the list goes on with an item of this level or with an indented part of the item
+        if (!cur || j >= lines.length || !(nm ? (indentOf(nextLine) > base || (indentOf(nextLine) === base && (/\d/.test(nm[2][0]) ? 'ol' : 'ul') === type)) : indentOf(nextLine) >= cur.offset)) break;
+        for (let b = k; b < j; b++) cur.body.push('');
+        k = j;
+        continue;
+      }
+      const m = line.match(ITEM);
+      if (m && !HR.test(line) && indentOf(line) >= base && (!cur || indentOf(line) < cur.offset)) {
+        if ((/\d/.test(m[2][0]) ? 'ol' : 'ul') !== type) break; // another kind of list starts here
+        cur = { offset: m[1].length + m[2].length + (m[3].length > 4 ? 1 : m[3].length), first: m[4], body: [] };
+        items.push(cur);
+        k++;
+        continue;
+      }
+      if (!cur || indentOf(line) < cur.offset) break; // a line outside the item ends the list
+      cur.body.push(line.slice(Math.min(cur.offset, indentOf(line))));
+      k++;
+    }
+    const li = (item) => {
+      let head = item.first;
+      let cls = '';
+      let box = '';
+      const task = head.match(/^\[([ xX])\]\s+(.*)$/);
+      if (task) { head = task[2]; cls = ' class="task"'; box = `<input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> `; }
+      let inner = blocks([head, ...item.body], maths);
+      // an item with one paragraph (the rest nested lists, code) is not wrapped in <p>
+      if (!/<\/p>[^]*<p>/.test(inner)) inner = inner.replace(/^<p>(.*?)<\/p>/, '$1');
+      return `<li${cls}>${box}${inner}</li>`;
+    };
+    const start = type === 'ol' ? Number(first[2].slice(0, -1)) : 1;
+    return { html: `<${type}${type === 'ol' && start !== 1 ? ` start="${start}"` : ''}>${items.map(li).join('')}</${type}>`, next: k };
+  }
+
+  function blocks(lines, maths) {
     const out = [];
-    let list = null; // 'ul' | 'ol'
     let paragraph = [];
     let code = null;
     let codeLang = '';
@@ -506,10 +651,6 @@
     const flushParagraph = () => {
       if (paragraph.length) out.push(`<p>${inline(paragraph.join('<br>'))}</p>`);
       paragraph = [];
-    };
-    const closeList = () => {
-      if (list) out.push(`</${list}>`);
-      list = null;
     };
 
     for (let n = 0; n < lines.length; n++) {
@@ -521,10 +662,10 @@
         } else code.push(line);
         continue;
       }
-      if (/^```/.test(line)) { flushParagraph(); closeList(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
+      if (/^```/.test(line)) { flushParagraph(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
 
       if (line.includes('|') && n + 1 < lines.length && isSeparator(lines[n + 1])) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const rows = [];
         let k = n + 2;
         while (k < lines.length && lines[k].trim() !== '' && isTableRow(lines[k], line)) rows.push(lines[k++]);
@@ -533,56 +674,46 @@
         continue;
       }
 
-      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
-      const heading = line.match(/^(#{1,6})\s+(.*)$/);
-      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
-      const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
-
       // A display formula on a line of its own is a block of its own.
-      const block = line.match(/^(\s*)\uE000(\d+)\uE001\s*$/);
+      const block = line.match(/^(\s*)(\d+)\s*$/);
       if (block && maths[block[2]]?.display === true) {
-        const token = `\uE000${block[2]}\uE001`;
-        // Indented under a list item: part of that item (the list goes on after it).
-        const last = out.length - 1;
-        if (list && block[1] && /<\/li>$/.test(out[last] || '')) { flushParagraph(); out[last] = out[last].replace(/<\/li>$/, `${token}</li>`); continue; }
-        // The same after a blank line (which closed the list): the list opens again around it.
-        if (!list && block[1] && !paragraph.length && /^<\/(ol|ul)>$/.test(out[last] || '') && /<\/li>$/.test(out[last - 1] || '')) {
-          list = out[last].slice(2, 4);
-          out.pop();
-          out[last - 1] = out[last - 1].replace(/<\/li>$/, `${token}</li>`);
-          continue;
-        }
-        flushParagraph(); closeList();
-        out.push(token);
+        flushParagraph();
+        out.push(`${block[2]}`);
         continue;
       }
 
+      // A block quote: its lines (without the >) are read as blocks of their own, so quotes hold lists, code and quotes.
+      if (QUOTE.test(line)) {
+        flushParagraph();
+        const inner = [];
+        let k = n;
+        while (k < lines.length && QUOTE.test(lines[k])) inner.push(lines[k++].match(QUOTE)[1]);
+        out.push(`<blockquote>${blocks(inner, maths)}</blockquote>`);
+        n = k - 1;
+        continue;
+      }
+
+      if (HR.test(line)) { flushParagraph(); out.push('<hr>'); continue; }
+
+      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
       if (heading) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const level = Math.min(heading[1].length, 4);
         out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
-      } else if (bullet || numbered) {
+      } else if (ITEM.test(expandTabs(line))) {
         flushParagraph();
-        const type = bullet ? 'ul' : 'ol';
-        // The same kind of list again after only blank lines (or a formula it held): one list, not two.
-        if (!list && out[out.length - 1] === `</${type}>`) { out.pop(); list = type; }
-        if (list !== type) {
-          closeList();
-          // A numbered list split by a paragraph or code block keeps counting (3., 4., …) instead of restarting at 1.
-          const start = numbered ? Number(numbered[1]) : 1;
-          out.push(type === 'ol' && start !== 1 ? `<ol start="${start}">` : `<${type}>`);
-          list = type;
-        }
-        out.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
+        const list = listAt(lines, n, maths);
+        out.push(list.html);
+        n = list.next - 1;
       } else if (line.trim() === '') {
-        flushParagraph(); closeList();
+        flushParagraph();
       } else {
-        closeList();
         paragraph.push(line);
       }
     }
     if (code !== null) out.push(`<pre${codeLang ? ` data-lang="${codeLang}"` : ''}><code>${code.join('\n')}</code></pre>`);
-    flushParagraph(); closeList();
+    flushParagraph();
     return out.join('');
   }
 
@@ -1726,13 +1857,20 @@ explain describe list find give compare difference summarize summary write rewri
     sql: words('select from where and or not insert into values update set delete create table drop alter index join left right inner outer full on group by order having limit offset as distinct union all null is in like between case when then else end primary key foreign references default exists with returning'),
     css: words('important media supports keyframes import from to and not only'),
     json: words('true false null'),
+    rb: words('def end if elsif else unless while until for in do begin rescue ensure raise return yield class module self nil true false and or not then case when require require_relative include extend attr_accessor attr_reader attr_writer puts lambda proc super'),
+    php: words('function return if elseif else for foreach while do switch case default break continue new class extends implements interface trait abstract final public private protected static namespace use try catch finally throw echo print isset unset empty array null true false as instanceof const fn match enum readonly'),
+    kt: words('fun val var if else when for while do return class object interface enum data sealed open abstract override private public protected internal import package is as in try catch finally throw null true false this super companion init constructor suspend inline typealias by lateinit const'),
+    swift: words('func let var if else guard switch case default for while repeat return class struct enum protocol extension import init deinit self Self super try catch throw throws rethrows defer in is as nil true false public private internal fileprivate open static async await some any where inout mutating weak lazy'),
+    yaml: words('true false null yes no on off'),
+    toml: words('true false'),
   };
-  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'java', kt: 'java', scala: 'java', swift: 'java', dart: 'java', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
-  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb']);
+  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'kt', kts: 'kt', scala: 'java', dart: 'java', ruby: 'rb', yml: 'yaml', xml: 'html', xhtml: 'html', svg: 'html', vue: 'html', patch: 'diff', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
+  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb', 'yaml', 'toml']);
   // One pass, left to right: the first alternative that matches at a position wins.
   function tokenizer(lang) {
     const comment = lang === 'sql' ? '--[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : HASH_COMMENT.has(lang) ? '#[^\\n]*'
+      : lang === 'php' ? '//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : lang === 'json' ? '(?!)'
       : lang === 'css' ? '/\\*[\\s\\S]*?\\*/'
       : '//[^\\n]*|/\\*[\\s\\S]*?\\*/';
@@ -1742,10 +1880,39 @@ explain describe list find give compare difference summarize summary write rewri
   }
   const cache = new Map();
   const esc = (s) => s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  // HTML and XML: comments, tag names, attribute names and quoted values; text between tags stays plain.
+  const MARKUP = /(<!--[\s\S]*?-->)|(<\/?[A-Za-z][\w:.-]*)|([A-Za-z_:@][\w:.-]*)(?==)|("[^"]*"|'[^']*')|(\/?>)/g;
+  function markup(code) {
+    let out = '';
+    let at = 0;
+    let inTag = false;
+    MARKUP.lastIndex = 0;
+    for (let m; (m = MARKUP.exec(code));) {
+      const [text, com, tag, attr, , end] = m;
+      if (!com && !tag && !end && !inTag) continue; // attributes and quotes only count inside a tag
+      out += esc(code.slice(at, m.index));
+      at = m.index + text.length;
+      if (tag) inTag = true;
+      if (end) inTag = false;
+      const cls = com ? 'tk-com' : tag || end ? 'tk-kw' : attr ? 'tk-fn' : 'tk-str';
+      out += `<span class="${cls}">${esc(text)}</span>`;
+    }
+    return out + esc(code.slice(at));
+  }
+  // A diff: added and removed lines, hunk headers and file headers, by their first characters.
+  function diff(code) {
+    return code.split('\n').map((line) => {
+      const cls = /^(\+\+\+|---|diff |index )/.test(line) ? 'tk-meta' : line.startsWith('@@') ? 'tk-hunk' : line[0] === '+' ? 'tk-add' : line[0] === '-' ? 'tk-del' : '';
+      return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+    }).join('\n');
+  }
   function highlight(code, langName) {
     const lang = ALIAS[langName] || langName;
+    if (code.length > 60000) return null; // too big to be worth it: plain
+    if (lang === 'html') return markup(code);
+    if (lang === 'diff') return diff(code);
     const keys = KEYWORDS[lang];
-    if (!keys || code.length > 60000) return null; // unknown language, or too big to be worth it: plain
+    if (!keys) return null; // unknown language: plain
     let re = cache.get(lang);
     if (!re) cache.set(lang, (re = tokenizer(lang)));
     re.lastIndex = 0;
@@ -1757,7 +1924,9 @@ explain describe list find give compare difference summarize summary write rewri
       at = m.index + m[0].length;
       const [text, com, str, num, word] = m;
       const nextParen = word !== undefined && /^\s*\(/.test(code.slice(at, at + 8));
-      const cls = com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
+      // YAML and TOML keys: a word before ":" (YAML) or "=" (TOML)
+      const key = word !== undefined && ((lang === 'yaml' && /^:(\s|$)/.test(code.slice(at, at + 2))) || (lang === 'toml' && /^\s*=/.test(code.slice(at, at + 4))));
+      const cls = key ? 'tk-key' : com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
         : keys.has(text) || (lang === 'sql' && keys.has(text.toLowerCase())) ? 'tk-kw'
         : nextParen ? 'tk-fn'
         : /^[A-Z][a-z]\w*$/.test(text) && lang !== 'sql' ? 'tk-type' : '';
@@ -1774,6 +1943,155 @@ explain describe list find give compare difference summarize summary write rewri
     codeEl.dataset.hl = '1';
   };
   window.highlightCode.test = highlight; // (unit tests)
+})();
+;
+// ---- code-extras.js
+// Extras for code blocks in replies (chat-core.js decorateCode calls window.codeExtras.decorate for each new block):
+//  - a Wrap button (long lines wrap instead of scrolling sideways; the choice is remembered),
+//  - a ```mermaid block drawn as a diagram, with a Source/Diagram switch. Mermaid (renderer/vendor/mermaid.min.js, 3.5 MB)
+//    loads the first time a reply has such a block, never at start-up. Any failure (not loaded, bad syntax, too slow, too
+//    big) leaves the plain code block as it was. securityLevel is 'strict' (labels sanitised, no click handlers), and the
+//    SVG is scrubbed again here before it goes into the page.
+(() => {
+  const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
+  const MAX_SOURCE = 20000;
+  const TIMEOUT_MS = 8000;
+  const WRAP_KEY = 'lumen.codeWrap';
+
+  // ---------- the SVG that goes in the page ----------
+  // Drops scripts, foreign objects' event handlers, javascript: links and external loads from an SVG string. Returns '' if
+  // it is not an SVG at all.
+  function cleanSvg(svg, doc = document) {
+    const tpl = doc.createElement('template');
+    tpl.innerHTML = String(svg || '');
+    const root = tpl.content.firstElementChild;
+    if (!root || root.localName !== 'svg') return '';
+    for (const el of [...root.querySelectorAll('script, iframe, object, embed, link, meta, base, img')]) el.remove();
+    for (const style of root.querySelectorAll('style')) style.textContent = style.textContent.replace(/@import[^;]*;?/gi, '').replace(/url\(\s*['"]?\s*(?!#)[^)]*\)/gi, 'none');
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim().toLowerCase();
+        if (name.startsWith('on')) el.removeAttribute(attr.name);
+        else if ((name === 'href' || name === 'xlink:href' || name === 'src') && !value.startsWith('#')) el.removeAttribute(attr.name);
+      }
+    }
+    return root.outerHTML;
+  }
+
+  // ---------- mermaid ----------
+  const cache = new Map(); // theme|source -> svg (a finished reply redraws its blocks: the diagram comes back at once)
+  let loading = null; // Promise of window.mermaid
+  let queue = Promise.resolve(); // mermaid.render is one at a time
+
+  function loadMermaid() {
+    if (window.mermaid) return Promise.resolve(window.mermaid);
+    if (loading) return loading;
+    loading = new Promise((resolve, reject) => {
+      if (typeof document === 'undefined' || !here) { reject(new Error('no page')); return; }
+      const js = Object.assign(document.createElement('script'), { src: new URL('vendor/mermaid.min.js', here).href, async: true });
+      js.onload = () => (window.mermaid ? resolve(window.mermaid) : reject(new Error('mermaid missing')));
+      js.onerror = () => reject(new Error('mermaid did not load'));
+      document.head.append(js);
+    }).catch((e) => { loading = null; throw e; }); // (tried again with the next block)
+    return loading;
+  }
+
+  const isDark = () => {
+    const theme = document.documentElement.dataset.theme;
+    return theme === 'dark' || (theme !== 'light' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  };
+
+  let initedFor = null;
+  async function draw(source) {
+    const dark = isDark();
+    const key = `${dark ? 'd' : 'l'}|${source}`;
+    if (cache.has(key)) return cache.get(key);
+    const mermaid = await loadMermaid();
+    const job = queue.then(async () => {
+      if (initedFor !== dark) {
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: 'inherit', flowchart: { htmlLabels: false }, deterministicIds: true });
+        initedFor = dark;
+      }
+      const id = `mmd-${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        const out = await Promise.race([mermaid.render(id, source), new Promise((_r, rej) => setTimeout(() => rej(new Error('timeout')), TIMEOUT_MS))]);
+        return out.svg;
+      } finally {
+        // a failed render leaves its error drawing in the page body
+        document.getElementById(id)?.remove();
+        document.getElementById(`d${id}`)?.remove();
+      }
+    });
+    queue = job.catch(() => {});
+    const svg = cleanSvg(await job);
+    if (!svg) throw new Error('not an svg');
+    cache.set(key, svg);
+    if (cache.size > 40) cache.delete(cache.keys().next().value);
+    return svg;
+  }
+
+  function diagram(box, pre, source) {
+    if (source.trim() === '' || source.length > MAX_SOURCE || box.dataset.diagram) return;
+    box.dataset.diagram = 'pending';
+    draw(source).then((svg) => {
+      if (!box.isConnected) return;
+      const view = Object.assign(document.createElement('div'), { className: 'mermaid-view' });
+      view.innerHTML = svg;
+      pre.before(view);
+      box.classList.add('mermaid-ok');
+      box.dataset.diagram = 'done';
+      const head = box.querySelector('.code-head');
+      const toggle = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy code-source', textContent: window.t?.('chat.showSource') || 'Source' });
+      toggle.addEventListener('click', () => {
+        const showing = box.classList.toggle('show-source');
+        toggle.textContent = showing ? (window.t?.('chat.showDiagram') || 'Diagram') : (window.t?.('chat.showSource') || 'Source');
+      });
+      head?.insertBefore(toggle, head.querySelector('.code-copy'));
+    }).catch((e) => { box.dataset.diagram = 'failed'; }); // the code block stays as it is
+  }
+
+  // ---------- wrap ----------
+  const wrapped = () => { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } };
+  const remember = (on) => { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch { /* (no storage: per block only) */ } };
+  function wrapButton(box, head) {
+    const label = () => (box.classList.contains('wrap') ? (window.t?.('chat.noWrap') || 'No wrap') : (window.t?.('chat.wrap') || 'Wrap'));
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy code-wrap', textContent: '' });
+    box.classList.toggle('wrap', wrapped());
+    b.textContent = label();
+    b.setAttribute('aria-pressed', String(box.classList.contains('wrap')));
+    b.addEventListener('click', () => {
+      const on = box.classList.toggle('wrap');
+      remember(on);
+      b.textContent = label();
+      b.setAttribute('aria-pressed', String(on));
+    });
+    head.insertBefore(b, head.querySelector('.code-copy'));
+  }
+
+  // `finished`: the block is complete (not the last, still-streaming one), so a diagram can be drawn.
+  function decorate(box, pre, { finished = true } = {}) {
+    const head = box.querySelector('.code-head');
+    if (head && pre.dataset.lang !== 'mermaid') wrapButton(box, head);
+    if (pre.dataset.lang === 'mermaid' && finished) diagram(box, pre, pre.querySelector('code')?.textContent ?? '');
+  }
+
+  // A table of five or more columns gets a Fit / Scroll switch: scroll keeps each column readable (the table
+  // is as wide as its text, which scrolls sideways); fit squeezes it into the width of the reply.
+  function decorateTables(root) {
+    for (const wrap of root?.querySelectorAll?.('.table-wrap:not(.fit-ready)') || []) {
+      wrap.classList.add('fit-ready');
+      if (wrap.querySelectorAll('thead th').length < 5) continue;
+      const b = Object.assign(document.createElement('button'), { type: 'button', className: 'table-fit', textContent: window.t?.('chat.tableFit') || 'Fit to width' });
+      b.addEventListener('click', () => {
+        const on = wrap.classList.toggle('fit');
+        b.textContent = on ? (window.t?.('chat.tableScroll') || 'Scroll') : (window.t?.('chat.tableFit') || 'Fit to width');
+      });
+      wrap.before(b);
+    }
+  }
+
+  window.codeExtras = { decorate, decorateTables, cleanSvg, draw, _reset() { cache.clear(); loading = null; initedFor = null; queue = Promise.resolve(); } };
 })();
 ;
 // ---- gen-images.js
@@ -3413,6 +3731,7 @@ function flushStreaming(el) {
 function decorateCode(root, { colour = false } = {}) {
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
+  window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -3427,6 +3746,7 @@ function decorateCode(root, { colour = false } = {}) {
     window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
+    window.codeExtras?.decorate(box, pre, { finished: colour || !root.classList?.contains('streaming') }); // Wrap button; ```mermaid as a diagram
     const code = pre.querySelector('code');
     if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }
@@ -5072,6 +5392,10 @@ function startChat() {
     rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>',
     export: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>',
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
+    pin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5"/></svg>',
+    unpin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5M2.5 2.5l11 11"/></svg>',
+    archive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>',
+    unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
@@ -5094,6 +5418,8 @@ function startChat() {
   window.chatListTools = {
     // chats -> [{ label, chats }] in order; empty groups are left out.
     group(chats, now = Date.now()) {
+      const pinned = chats.filter((c) => c.pinned && !c.archived);
+      if (pinned.length) chats = chats.filter((c) => !pinned.includes(c));
       const day = new Date(now); day.setHours(0, 0, 0, 0);
       const start = day.getTime();
       const bands = [
@@ -5104,9 +5430,68 @@ function startChat() {
       ];
       const out = bands.map((b) => ({ label: b.label, chats: [] }));
       for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
-      return out.filter((g) => g.chats.length);
+      return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
-    matches: (chat, q) => !q || String(chat.title || '').toLowerCase().includes(q.toLowerCase()),
+    // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
+    // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
+    pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+      if (query) {
+        const q = query.toLowerCase();
+        return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
+      }
+      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+    },
+    // Chats / Archived switch (shown once something is archived or the Archived view is open).
+    views(view, archivedCount, onPick) {
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
+      bar.setAttribute('role', 'group');
+      for (const [id, label] of [['chats', window.chatTr('chats.viewAll', 'Chats')], ['archived', window.chatTr('chats.viewArchived', 'Archived') + (archivedCount ? ` (${archivedCount})` : '')]]) {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: `chat-view${view === id ? ' on' : ''}`, textContent: label });
+        b.setAttribute('aria-pressed', String(view === id));
+        b.onclick = () => onPick(id);
+        bar.append(b);
+      }
+      return bar;
+    },
+    // Search state shared by both lists: titles match at once, message text a moment later (main-side search over saved chats).
+    searcher(api, redraw) {
+      let query = '', hits = null, timer = null, seq = 0;
+      return {
+        get query() { return query; },
+        get hits() { return hits; },
+        set(q) {
+          query = q; hits = null; clearTimeout(timer); const mine = ++seq;
+          redraw();
+          if (!q || !api.search) return;
+          timer = setTimeout(async () => {
+            let found = null;
+            try { found = await api.search(q); } catch { /* titles only */ }
+            if (mine !== seq || !Array.isArray(found)) return;
+            hits = new Map(found.map((h) => [h.id, h.snippet || '']));
+            redraw();
+          }, 160);
+        },
+        clear() { query = ''; hits = null; seq++; clearTimeout(timer); },
+      };
+    },
+    // "Chat deleted. Undo" for a few seconds, fixed to the window so a redrawn list keeps it.
+    undoToast(text, ms, onUndo) {
+      document.querySelector('.chat-undo-toast')?.remove();
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-undo-toast' });
+      bar.setAttribute('role', 'status');
+      const undo = Object.assign(document.createElement('button'), { type: 'button', textContent: window.chatTr('chats.undo', 'Undo') });
+      const timer = setTimeout(() => bar.remove(), ms);
+      undo.onclick = async () => {
+        clearTimeout(timer);
+        undo.disabled = true;
+        let ok = false;
+        try { ok = await onUndo(); } catch { /* too late */ }
+        if (ok === false) { bar.firstChild.textContent = window.chatTr('chats.undoLate', 'Too late to undo'); setTimeout(() => bar.remove(), 2000); } else bar.remove();
+      };
+      bar.append(Object.assign(document.createElement('span'), { textContent: text }), undo);
+      document.body.append(bar);
+      return bar;
+    },
     heading(label) {
       const li = Object.assign(document.createElement('li'), { className: 'chat-group', textContent: label });
       li.setAttribute('role', 'presentation');
@@ -5196,7 +5581,10 @@ function startChat() {
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
+      if (chat.pinned) li.classList.add('pinned');
+      if (chat.archived) li.classList.add('archived');
       openBtn.append(name, meta);
+      if (chat.snippet) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-snippet', textContent: chat.snippet })); // where a search found the words in the messages
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
       const place = inTabs || inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
@@ -5259,27 +5647,33 @@ function startChat() {
           else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
         } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
+      const pinBtn = iconButton(chat.pinned ? 'unpin' : 'pin', chat.pinned ? tr('chats.unpin', 'Unpin') : tr('chats.pin', 'Pin to top'));
+      pinBtn.onclick = async () => {
+        pinBtn.disabled = true;
+        try { if ((await api.pin(chat.id, !chat.pinned)) === false) throw new Error('refused'); await rerender(); } catch { pinBtn.disabled = false; say(tr('chats.pinFailed', 'Could not pin')); }
+      };
+      const archiveBtn = iconButton(chat.archived ? 'unarchive' : 'archive', chat.archived ? tr('chats.unarchive', 'Unarchive') : tr('chats.archive', 'Archive'));
+      archiveBtn.onclick = async () => {
+        archiveBtn.disabled = true;
+        try { if ((await api.archive(chat.id, !chat.archived)) === false) throw new Error('refused'); await rerender(); } catch { archiveBtn.disabled = false; say(tr('chats.archiveFailed', 'Could not archive')); }
+      };
+      // Delete goes at once and says so with an Undo for a few seconds (nothing is erased until the time is up).
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
-      let armed = null;
       del.onclick = async () => {
-        if (!armed) { // two clicks: the first asks, the second deletes
-          const again = tr('chats.deleteAgain', 'Click again to delete');
-          del.classList.add('armed');
-          del.dataset.confirm = tr('chats.deleteConfirm', 'Delete?');
-          del.title = again;
-          del.setAttribute('aria-label', again);
-          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
-          return;
-        }
-        clearTimeout(armed);
         del.disabled = true; // pending: a second click cannot delete twice
         try {
           const out = await api.remove(chat.id);
           if (out?.cleared) cleared();
+          if (out?.undo) {
+            window.chatListTools.undoToast(tr('chats.deleted', 'Chat deleted'), out.undoMs || 8000, async () => {
+              const ok = await api.undoRemove(chat.id);
+              if (ok) { if (out.cleared) await onOpen?.(chat.id); await rerender(); }
+              return ok;
+            });
+          }
           await rerender();
         } catch {
           del.disabled = false;
-          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
           say(tr('chats.deleteFailed', 'Could not delete'));
         }
       };
@@ -5322,7 +5716,7 @@ function startChat() {
         };
         tabActions.push(closeTabs);
       }
-      actions.append(...tabActions, rename, exportBtn, del);
+      actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
@@ -8533,8 +8927,10 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let redraw = () => {};
+  const search = tools.searcher(api, () => redraw());
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
@@ -8547,22 +8943,27 @@ $('agent-stop')?.addEventListener('click', () => {
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
-    // A search once there are enough chats to need one; what was typed survives a redraw.
+    // The search box is there as soon as there is a chat; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
-    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
-    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
-    if (searchBox) searchBox.value = query;
+    searchBox = chats.length ? tools.search((q) => search.set(q)) : null;
+    if (!searchBox) search.clear(); // (no chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = search.query;
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
     const list = document.createElement('ul');
     list.className = 'chat-items';
     function drawList() {
-      const shown = chats.filter((c) => tools.matches(c, query));
+      const query = search.query;
+      const shown = tools.pick(chats, { query, view, hits: search.hits });
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);
-      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
     }
+    redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

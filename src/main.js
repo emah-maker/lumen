@@ -226,7 +226,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -8428,6 +8428,7 @@ ipcMain.handle('research:open', (event, url) => {
 
 ipcMain.handle('chats:list', (event) => {
   syncToSender(event);
+  sweepTrash();
   return {
     current: chatId,
     currentUsage: describeUsage(agent.messages.settings?.usage),
@@ -8439,7 +8440,7 @@ ipcMain.handle('chats:list', (event) => {
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
+      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
 });
@@ -8485,7 +8486,28 @@ ipcMain.handle('chats:show-tab', (event, id) => {
   return true;
 });
 ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
-// Deleting the open chat leaves an empty one in its place.
+// Deleting the open chat leaves an empty one in its place. A saved chat is only hidden for UNDO_MS (the Undo toast); then it is
+// erased with its pictures, uploads and engine homes. If Lumen quits inside that time the chat stays hidden and is erased
+// on the next start (or by the store after a day), after the index on disk is read again; no delete ever runs before the app is ready.
+const UNDO_MS = 8000;
+const pendingDeletes = new Map(); // chat id -> timer
+function finishDelete(id) {
+  clearTimeout(pendingDeletes.get(id));
+  pendingDeletes.delete(id);
+  const waiting = chats().trashed().some((t) => t.id === id);
+  if (!waiting) return; // undone meanwhile
+  if (!chats().remove(id)) return; // (the index can't be read right now: it stays hidden and is tried again later)
+  imageStore().removeChat(id); // its pictures go with it
+  uploads().removeChat(id); // [uploads] and the files attached to it
+  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
+  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+}
+let trashSwept = false;
+function sweepTrash() { // chats hidden by a Lumen that quit inside the undo time
+  if (trashSwept || !app.isReady()) return;
+  trashSwept = true;
+  for (const t of chats().trashed()) if (!pendingDeletes.has(t.id) && Date.now() - t.at > UNDO_MS) finishDelete(t.id);
+}
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
@@ -8499,28 +8521,43 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
-  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
-  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+  const undoable = chats().trash(id); // false: nothing saved to bring back (a first reply still coming)
+  if (undoable) { clearTimeout(pendingDeletes.get(id)); const t = setTimeout(() => finishDelete(id), UNDO_MS); t.unref?.(); pendingDeletes.set(id, t); }
+  const eraseNow = () => {
+    if (undoable) return;
+    chats().remove(id);
+    imageStore().removeChat(id);
+    uploads().removeChat(id);
+    require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {});
+    require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {});
+  };
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
     agent.reset();
     chatId = chats().newId();
     chatBind.bind(pageTabOf(event.sender)?.id ?? activeId, chatId);
-    chats().remove(id);
-    imageStore().removeChat(id);
-    uploads().removeChat(id); // [uploads] the files attached to it
+    eraseNow();
     announceModelIfChanged();
     pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
-    return { cleared: true, view: chatView() };
+    return { cleared: true, view: chatView(), undo: undoable, undoMs: UNDO_MS };
   }
-  const removed = chats().remove(id);
-  imageStore().removeChat(id); // its pictures go with it
-  uploads().removeChat(id); // [uploads] and the files attached to it
+  eraseNow();
   pushAttention();
-  return { cleared: false, removed };
+  return { cleared: false, removed: undoable || !chats().has(id), undo: undoable, undoMs: UNDO_MS };
 });
+ipcMain.handle('chats:undo-delete', (_e, id) => {
+  id = String(id);
+  if (!pendingDeletes.has(id)) return false; // the time is up (or it was never hidden)
+  const ok = chats().restore(id);
+  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); pushAttention(); }
+  return ok;
+});
+ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
+ipcMain.handle('chats:archive', (_e, id, on) => { const ok = chats().setArchived(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
+// Chats whose title or messages contain the words typed: [{ id, snippet }] (the list shows them in its own order).
+ipcMain.handle('chats:search', (_e, query) => chats().search(String(query ?? '').slice(0, 200)));
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 // `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
 function chatMarkdown(id, folder = null) {

@@ -1254,6 +1254,7 @@ function flushStreaming(el) {
 function decorateCode(root, { colour = false } = {}) {
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
+  window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -1268,6 +1269,7 @@ function decorateCode(root, { colour = false } = {}) {
     window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
+    window.codeExtras?.decorate(box, pre, { finished: colour || !root.classList?.contains('streaming') }); // Wrap button; ```mermaid as a diagram
     const code = pre.querySelector('code');
     if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }

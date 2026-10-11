@@ -169,7 +169,11 @@ contextBridge.exposeInMainWorld('assistant', {
     share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
     stopChat: (id) => ipcRenderer.invoke('chats:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
-    remove: (id) => ipcRenderer.invoke('chats:delete', id),
+    remove: (id) => ipcRenderer.invoke('chats:delete', id), // hides the chat for a few seconds (undoRemove), then erases it
+    undoRemove: (id) => ipcRenderer.invoke('chats:undo-delete', id),
+    pin: (id, on) => ipcRenderer.invoke('chats:pin', id, on),
+    archive: (id, on) => ipcRenderer.invoke('chats:archive', id, on),
+    search: (query) => ipcRenderer.invoke('chats:search', query), // chats whose title or messages match: [{ id, snippet }]
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
     onUsage: on('chats:usage'),

@@ -170,17 +170,24 @@ const fakeClient = (app) => app.evaluate(() => {
   const cancelled = await ui.evaluate((id) => window.assistant.chats.exportChat(id), newId);
   check('a cancelled export writes nothing', cancelled && cancelled.ok === false && cancelled.reason === 'canceled', JSON.stringify(cancelled));
 
-  // ---- 7. Delete: two clicks; deleting another chat leaves the open one alone.
+  // ---- 6b. Library: search over message text, pin and archive (through the same IPC the list uses).
+  const hits = await ui.evaluate(() => window.assistant.chats.search('Reply'));
+  check('search finds a chat by a word in its messages', Array.isArray(hits) && hits.length >= 1 && hits.every((h) => typeof h.id === 'string'), JSON.stringify(hits));
+  check('search for a word nobody wrote finds nothing', (await ui.evaluate(() => window.assistant.chats.search('zzzqqq'))).length === 0);
+  check('pin and archive are kept in the list', await ui.evaluate(async (id) => { const c = window.assistant.chats; const a = await c.pin(id, true); const b = await c.archive(id, true); const row = (await c.list()).chats.find((x) => x.id === id); const ok = a && b && row.pinned && row.archived; await c.archive(id, false); await c.pin(id, false); return ok; }, newId), 'flags');
+  check('the list has a search box as soon as there are chats', await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('#chat-list .chat-search')))), 'no box');
+  // ---- 7. Delete: one click hides the chat with an Undo bar; Undo brings it back; after the time it is erased. Deleting another chat leaves the open one alone.
   const del = `.chat-item[data-id="${newId}"] .chat-delete`;
   await rowAction(newId, '.chat-delete');
-  check('the first delete click only asks', (await app.evaluate(() => global.__chats.store().list().length)) === 2, 'deleted on first click');
+  check('delete hides the chat at once but keeps its file for the undo time', (await app.evaluate(() => global.__chats.store().list().length)) === 1 && fs.existsSync(path.join(chatsDir, `${newId}.json`)) && await ui.evaluate(() => /Chat deleted/.test(document.querySelector('.chat-undo-toast')?.textContent || '')), 'no undo bar');
+  await ui.click('.chat-undo-toast button');
+  check('Undo brings the chat back', await waitFor(async () => (await app.evaluate(() => global.__chats.store().list().length)) === 2), 'not restored');
   await rowAction(newId, '.chat-delete');
-  list = await waitFor(async () => { const l = await app.evaluate(() => global.__chats.store().list()); return l.length === 1 && l; });
-  check('the second click deletes the chat and its file', list && list[0].id === legacyId && !fs.existsSync(path.join(chatsDir, `${newId}.json`)), JSON.stringify(list));
+  list = await waitFor(async () => { const l = await app.evaluate(() => global.__chats.store().list()); return l.length === 1 && !fs.existsSync(path.join(chatsDir, `${newId}.json`)) && l; }, 15000);
+  check('after the undo time the chat and its file are gone', list && list[0].id === legacyId && !fs.existsSync(path.join(chatsDir, `${newId}.json`)), JSON.stringify(list));
   check('deleting another chat keeps the open one on screen', /back again/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 'view cleared');
   // Deleting the open chat empties the sidebar.
   const delOpen = `.chat-item[data-id="${legacyId}"] .chat-delete`;
-  await rowAction(legacyId, '.chat-delete');
   await rowAction(legacyId, '.chat-delete');
   const cleared = await waitFor(() => ui.evaluate(() => !document.querySelector('.msg') && document.getElementById('chat-usage').hidden));
   check('deleting the open chat empties the sidebar', cleared, 'still shows messages');
