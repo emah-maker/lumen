@@ -68,7 +68,7 @@ try {
 
 // wiring (agent.js): only navigate / open_tab take a local PDF, after the per-file card; read_urls and web_search stay web-only
 const agent = fs.readFileSync(path.join(__dirname, '..', 'src', 'ai', 'agent.js'), 'utf8');
-check('navigate and open_tab go through navUrl', /const url = navUrl\(input\.url\)/.test(agent) && /openTab\(navUrl\(input\.url\)/.test(agent));
+check('navigate and open_tab go through navUrl', /const url = navUrl\(input\.url\)/.test(agent) && /openTab\((?:this\.ownFileUrl\(input\.url\) \|\| )?navUrl\(input\.url\)/.test(agent));
 check('read_urls still takes web addresses only', /input\.urls\.slice\(0, 6\)\.map\(\(u\) => webUrl\(u\)\)/.test(agent));
 check('opening a local PDF asks once per file (the read_pdf permission)', /localPdf\.isLocalRef\(input\?\.url\)[\s\S]{0,400}requirePdfPermission/.test(agent));
 check('the tool descriptions say local PDFs work', /URL or local \.pdf path in the active tab/.test(agent) && /URL or local \.pdf path in a background tab/.test(agent));

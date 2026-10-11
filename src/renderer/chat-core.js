@@ -1369,6 +1369,7 @@ window.assistant.onEvent((event) => {
   // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
+  if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; } // [ai files]
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1407,6 +1408,20 @@ window.assistant.onEvent((event) => {
       appendToTurn(bubble);
       turn.pics = bubble;
       announce(t('genimg.made'));
+      break;
+    }
+    case 'file': { // [ai files] a file the AI made, or one its reply names: a card under what was said (renderer/ai-files.js)
+      if (!window.aiFiles || !event.file) break;
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      turn.text = null;
+      turn.textSource = '';
+      const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
+      const cardEl = window.aiFiles.card(event.file, { live: true });
+      bubble.append(cardEl);
+      appendToTurn(bubble);
+      if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
+      announce(t('aifile.added', { name: event.file.name }));
       break;
     }
     case 'text': {
@@ -1593,6 +1608,19 @@ function latePicture(event) {
   if (anchor?.isConnected) anchor.after(pic); else append(pic);
   earlyEnded.pics = pic;
   announce(t('genimg.made'));
+}
+
+// A file card for a reply that already ended early (see latePicture): placed after that reply's text or its last late card.
+function lateFile(event) {
+  if (!window.aiFiles || !event.file) return;
+  const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
+  const cardEl = window.aiFiles.card(event.file, { live: true });
+  bubble.append(cardEl);
+  const anchor = earlyEnded.files || earlyEnded.pics || earlyEnded.bubble;
+  if (anchor?.isConnected) anchor.after(bubble); else append(bubble);
+  earlyEnded.files = bubble;
+  if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
+  announce(t('aifile.added', { name: event.file.name }));
 }
 
 // While a reply streams, hold back a trailing link that hasn't finished arriving
@@ -2106,11 +2134,20 @@ function showHistory(items) {
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
       userEntries.push({ bubble, item });
-    } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
-      if (!item.text) { // only pictures
-        bubble.className = 'msg assistant gen-pics restored';
-        for (const pic of item.generated) bubble.append(window.genImages.figure(pic));
-        append(bubble);
+    } else if (item.role === 'assistant' && (item.text || item.generated?.length || item.outFiles?.length)) {
+      const fileCards = () => { // [ai files] the file cards of a restored reply, under it
+        if (!window.aiFiles || !item.outFiles?.length) return;
+        const box = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files restored' });
+        for (const f of item.outFiles) box.append(window.aiFiles.card(f, { live: false }));
+        append(box);
+      };
+      if (!item.text) { // only pictures (and files)
+        if (item.generated?.length) {
+          bubble.className = 'msg assistant gen-pics restored';
+          for (const pic of item.generated) bubble.append(window.genImages.figure(pic));
+          append(bubble);
+        }
+        fileCards();
         continue;
       }
       if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); } // its thinking (collapsed) and the steps it took
@@ -2132,8 +2169,10 @@ function showHistory(items) {
         const pics = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics restored' });
         for (const pic of item.generated) pics.append(window.genImages.figure(pic));
         append(pics);
+        fileCards();
         continue;
       }
+      if (item.outFiles?.length) { bubble.classList.add('restored'); append(bubble); fileCards(); continue; }
     } else {
       continue;
     }

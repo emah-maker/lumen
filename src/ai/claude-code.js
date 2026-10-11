@@ -24,6 +24,7 @@ const { turnLimitHit } = require('./loop-guard');
 const { isSignedOutText } = require('./auth-sync');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
+const aiFiles = require('../features/ai-files'); // [ai files] files the CLI's own tools wrote (noteWritten)
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -683,6 +684,7 @@ class ClaudeCodeEngine {
     const reused = proc.turns > 0;
     this.runDirs = new Set(); // folders this message's shell commands were pointed at (freshRoots)
     this.runImagePaths = []; // image files this message's tools reported (enginePictures checks each)
+    this.runWrittenPaths = new Set(); // files its Write / Edit tools named (agent.js engineFiles: the AI made them in this chat)
     if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
     const { tag } = proc;
@@ -782,6 +784,7 @@ class ClaudeCodeEngine {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
           active.builtin.add(b.id);
           if (b.name === 'Bash') for (const d of dirsInCommand(b.input?.command)) this.runDirs.add(d); // (freshRoots)
+          else if (WRITE_TOOLS.test(String(b.name)) && typeof b.input?.file_path === 'string' && this.runWrittenPaths.size < 60) { this.runWrittenPaths.add(b.input.file_path); aiFiles.noteWritten(active.scope?.chat, b.input.file_path); } // [ai files]
           active.inflight++;
           emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
         }
@@ -912,9 +915,12 @@ class ClaudeCodeEngine {
       emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0, imagePaths: [...(this.runImagePaths || [])] };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0, imagePaths: [...(this.runImagePaths || [])], writtenPaths: [...(this.runWrittenPaths || [])] };
   }
 }
+
+// The CLI's own tools that write a file (full access): the path they name is a file the AI made in this chat.
+const WRITE_TOOLS = /^(Write|Edit|MultiEdit|NotebookEdit)$/;
 
 ClaudeCodeEngine.prototype.imageRoots = function imageRoots() { return [...(this.workDirs || [])]; };
 

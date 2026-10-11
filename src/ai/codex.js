@@ -509,6 +509,7 @@ class CodexEngine {
     let stderr = '';
     let offItem = null;
     const imagePaths = []; // image files this turn's shell commands named (itemImagePaths)
+    const writtenPaths = []; // files its own file changes named (agent.js engineFiles)
     const shown = new Map(); // agent_message id -> how much of its text is on screen
     let lastId = null;
     const handle = (obj) => {
@@ -530,7 +531,10 @@ class CodexEngine {
       else if (ev.kind === 'item') {
         const bad = offItemOf(ev.item, { fullAccess });
         if (bad) { offItem = bad; this.kill(child); }
-        else if (ev.phase === 'completed') for (const f of itemImagePaths(ev.item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
+        else if (ev.phase === 'completed') {
+          for (const f of itemImagePaths(ev.item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
+          if (/^file_?change$/i.test(String(ev.item?.type || ''))) for (const c of (Array.isArray(ev.item.changes) ? ev.item.changes : []).slice(0, 20)) if (typeof c?.path === 'string' && writtenPaths.length < 60 && !writtenPaths.includes(c.path)) writtenPaths.push(c.path);
+        }
       } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; if (!failedMsg && !offItem) turnDone(); }
       else if (ev.kind === 'failed') failedMsg = ev.error || 'The turn failed.';
       else if (ev.kind === 'error') lastError = ev.error;
@@ -578,7 +582,7 @@ class CodexEngine {
       emit({ type: 'error', text: `Lumen stopped Codex: it used something that isn't one of Lumen's browser tools (${offItem}). Codex should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true, usage, rateLimit };
     }
-    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served, imagePaths };
+    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served, imagePaths, writtenPaths };
     if (stalled) {
       emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
       return { text, sessionId: conversation, failed: true, usage, rateLimit };
@@ -590,7 +594,7 @@ class CodexEngine {
     }
     if (completed && !failedMsg && (code === 0 || code === null)) {
       this.signedOut = false;
-      return { text, sessionId: conversation, usage, rateLimit, model: served, imagePaths };
+      return { text, sessionId: conversation, usage, rateLimit, model: served, imagePaths, writtenPaths };
     }
     const failText = failedMsg || lastError || stderr || '';
     // A resumed thread Codex no longer has: forget it so the next message starts a new one (handed the conversation).
