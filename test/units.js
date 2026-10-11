@@ -1286,7 +1286,8 @@ async function fuseChecks() {
 {
   const { createAiSites, siteOf, siteFromInput } = require('../src/features/ai-sites');
   check('ai-sites: a subdomain belongs to its site', siteOf('https://mail.example.co.uk/inbox?x=1') === 'example.co.uk', siteOf('https://mail.example.co.uk/inbox'));
-  check('ai-sites: non-web addresses have no site', siteOf('file:///C:/x.html') === '' && siteOf('about:blank') === '' && siteOf('not a url') === '', 'site for non-web');
+  check('ai-sites: addresses that are neither web nor files have no site', siteOf('about:blank') === '' && siteOf('not a url') === '' && siteOf('file:///C:/app/src/renderer/newtab.html') === '', 'site for non-web');
+  check('ai-sites: files on this computer are one site, and a PDF in the viewer is the site of the PDF itself', siteOf('file:///C:/x.txt') === 'file://' && siteOf(`lumen-pdf://app/viewer.html?u=${encodeURIComponent('file:///C:/Users/a/x.pdf')}`) === 'file://' && siteOf(`lumen-pdf://app/viewer.html?u=${encodeURIComponent('https://mail.example.co.uk/x.pdf')}`) === 'example.co.uk' && siteFromInput('local files') === 'file://' && siteFromInput('file://') === 'file://', siteOf('file:///C:/x.txt'));
   check('ai-sites: typed names and full addresses both work', siteFromInput('www.Example.com') === 'example.com' && siteFromInput('https://a.b.example.com/x') === 'example.com', siteFromInput('www.Example.com'));
   let saved = {};
   const changes = [];

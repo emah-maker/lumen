@@ -92,7 +92,15 @@ const PAGE_ICONS = {
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
+  // A tab that shows a file with no icon of its own (tab.fileKind: features/file-tabs.js iconKind): a page with a folded corner, marked by what the file is.
+  'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
+  'file-pdf': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25M6 11.75h4M6 9.5h4"/>',
+  'file-slides': '<rect x="2.25" y="3.25" width="11.5" height="7.5" rx="1"/><path d="M8 10.75v2.5M5.5 13.25h5"/>',
+  'file-image': '<rect x="2.25" y="3" width="11.5" height="10" rx="1.25"/><circle cx="5.9" cy="6.3" r="1"/><path d="m2.5 12 3.6-3.4 2.4 2.2 1.7-1.5 3.3 2.7"/>',
+  'file-sheet': '<rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1"/><path d="M2.25 6.25h11.5M2.25 9.75h11.5M6.25 2.75v10.5"/>',
+  'file-code': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="m6.6 8.2-1.4 1.6 1.4 1.6M9.4 8.2l1.4 1.6-1.4 1.6"/>',
 };
+const fileIcon = (tab) => (tab.fileKind ? `file-${tab.fileKind}` : null);
 
 function globeIcon(page = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -459,7 +467,7 @@ function createGhostTab(tab) {
   el.className = 'tab-drop-ghost';
   const inner = Object.assign(document.createElement('div'), { className: 'tab-inner' });
   const urls = (Array.isArray(tab.favicons) ? tab.favicons : []).filter((u) => typeof u === 'string');
-  let icon = globeIcon(tab.page || null);
+  let icon = globeIcon(tab.page || fileIcon(tab));
   if (urls.length) {
     icon = Object.assign(document.createElement('img'), { className: 'tab-favicon', alt: '' });
     let i = 0;
@@ -1238,9 +1246,9 @@ function updateTabEl(el, tab, group, activeId) {
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const monoHost = tab.page ? '' : siteHostOf(tab.url);
-  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page));
-  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}:${monoHost}`;
+  const monoHost = tab.page || tab.fileKind ? '' : siteHostOf(tab.url);
+  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page || fileIcon(tab)));
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || fileIcon(tab) || ''}:${monoHost}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
