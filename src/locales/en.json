@@ -96,6 +96,8 @@
   "chat.usedActions.other": "Used {count} browser actions",
   "chatpage.back": "Back to sidebar",
   "chatpage.back.title": "Back to sidebar (Ctrl+Shift+L)",
+  "chatpage.home": "New tab page",
+  "chatpage.home.title": "New tab page (Alt+Home)",
   "chatpage.conversation": "Conversation",
   "chatpage.empty": "Ask anything, or give {name} a task on the tab you were just on.",
   "chatpage.messages": "Messages",

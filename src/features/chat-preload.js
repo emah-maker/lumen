@@ -72,6 +72,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     // Page only
     state: () => ipcRenderer.invoke('chatpage:state'),
     backToSidebar: () => ipcRenderer.send('chatpage:back'),
+    home: () => ipcRenderer.send('chatpage:home'),
     openLink: (url) => ipcRenderer.send('chatpage:link', url),
   });
   contextBridge.exposeInMainWorld('lumenPrefs', {

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A way from the full-page chat back to the home page.** The chat page has a Home button (a house, "New tab page") in its header, and Alt+Home does the same: the tab turns into the new-tab page, and a reply still being written carries on in the background and stays in your chat list. The toolbar's Back button and Alt+Left on the chat page used to do nothing; they now return to the page you came from, or to the new-tab page when there is none. Typing an address or a search in the address bar still opens it in place of the chat page.
+
 ## 0.5.24 (2026-10-11)
 
 - **A long paste no longer splits your chat.** Sending a message with a pasted block attached ("summarize the paste") in a chat could start a new chat, because the pasted words looked like a new topic. It now stays in the chat you are in. Reopening a chat and coming back after a restart also keeps its unsent draft in the right place.
