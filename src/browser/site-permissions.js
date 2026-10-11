@@ -20,7 +20,49 @@ const ALWAYS_ALLOWED = new Set([
 // on "Block third-party cookies", where the answer stays no.
 const STORAGE_ACCESS = new Set(['storage-access', 'top-level-storage-access']);
 // The permissions Lumen asks about, which a page reads as 'prompt' until the user decides.
-const SHIMMED = ['geolocation', 'notifications', 'media', 'clipboard-read'];
+const SHIMMED = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read'];
+// Electron has one 'media' permission; Lumen decides the camera and the microphone separately (keys origin|camera and
+// origin|microphone), as Chrome does: allowing one never covers the other.
+const MEDIA_DEVICES = ['camera', 'microphone'];
+const mediaDevices = (details) => {
+  const types = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
+  const out = MEDIA_DEVICES.filter((d) => types.includes(d === 'camera' ? 'video' : 'audio'));
+  return out.length ? out : [...MEDIA_DEVICES]; // a request that names neither asks for both
+};
+// A permission check names its one device (details.mediaType); 'unknown' (device enumeration) needs either one.
+const checkDevices = (details) => (details?.mediaType === 'video' ? ['camera'] : details?.mediaType === 'audio' ? ['microphone'] : [...MEDIA_DEVICES]);
+
+// The decisions a request is about: { deny, ask }. deny: a device already refused (or blocked by default) refuses the
+// whole request; ask: the devices (or the one permission) with no decision yet, which are all a prompt asks about.
+function plan(decisions, origin, permission, details, isBlocked = () => false) {
+  const names = permission === 'media' ? mediaDevices(details) : [permission];
+  const ask = [];
+  for (const name of names) {
+    const key = `${origin}|${name}`;
+    if (decisions.has(key)) { if (!decisions.get(key)) return { deny: true, ask: [] }; continue; }
+    if (isBlocked(name)) return { deny: true, ask: [] };
+    ask.push(name);
+  }
+  return { deny: false, ask };
+}
+// Whether a permission CHECK is answered yes: a decision of true (for media, for the named device, or either when unnamed).
+function allowedNow(decisions, origin, permission, details) {
+  if (permission !== 'media') return decisions.get(`${origin}|${permission}`) === true;
+  return checkDevices(details).some((d) => decisions.get(`${origin}|${d}`) === true);
+}
+// Decisions saved by older versions were one entry for both devices (origin|media): each becomes a camera and a microphone
+// entry with the same answer, so earlier grants and refusals keep working. True when anything changed.
+function migrate(decisions) {
+  let changed = false;
+  for (const [key, value] of [...decisions]) {
+    if (!key.endsWith('|media')) continue;
+    const origin = key.slice(0, -'|media'.length);
+    for (const device of MEDIA_DEVICES) if (!decisions.has(`${origin}|${device}`)) decisions.set(`${origin}|${device}`, value);
+    decisions.delete(key);
+    changed = true;
+  }
+  return changed;
+}
 
 // The http(s) origin of the first candidate that has one (a URL or an origin, with or without a trailing slash).
 function canonicalOrigin(...candidates) {
@@ -73,4 +115,14 @@ function installIpc(ipcMain) {
   });
 }
 
-module.exports = { ALWAYS_ALLOWED, STORAGE_ACCESS, SHIMMED, canonicalOrigin, requestOrigin, checkOrigin, alwaysAllowed, register, statesFor, notify, installIpc };
+// The wording key for a permission prompt (permission.<name> in locales/en.json). A site asking for only the camera, or only
+// the microphone, is asked about only that (details.mediaTypes: the devices still undecided).
+function promptKey(permission, details) {
+  if (permission !== 'media') return `permission.${permission}`;
+  const types = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
+  const video = types.includes('video');
+  const audio = types.includes('audio');
+  return video && !audio ? 'permission.media.video' : audio && !video ? 'permission.media.audio' : 'permission.media';
+}
+
+module.exports = { plan, allowedNow, migrate, mediaDevices, MEDIA_DEVICES, promptKey, ALWAYS_ALLOWED, STORAGE_ACCESS, SHIMMED, canonicalOrigin, requestOrigin, checkOrigin, alwaysAllowed, register, statesFor, notify, installIpc };

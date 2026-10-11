@@ -536,6 +536,7 @@ function create(deps) {
     for (const [key, allowed] of Object.entries(readSettings().sitePermissions || {})) {
       if (typeof allowed === 'boolean') decisions.set(key, allowed);
     }
+    if (require('../browser/site-permissions').migrate(decisions)) savePermissions(decisions); // one camera-and-microphone entry -> one each
   }
   function savePermissions(decisions) {
     writeSettings({ ...readSettings(), sitePermissions: Object.fromEntries(decisions) });
@@ -545,7 +546,8 @@ function create(deps) {
   function saveDeviceGrants(rows) {
     writeSettings({ ...readSettings(), deviceGrants: rows });
   }
-  const permissionDefault = (permission) => prefs().permissionDefaults[permission] || 'ask';
+  // (one default, "Camera and microphone", covers both devices)
+  const permissionDefault = (permission) => prefs().permissionDefaults[permission === 'camera' || permission === 'microphone' ? 'media' : permission] || 'ask';
 
   // ---- HTTPS-only ----
   // The ad blocker owns onBeforeRequest, so upgrades happen at navigation start: the https address
@@ -982,7 +984,7 @@ function create(deps) {
     });
     handle('prefs:site-permissions', () => [...deps.permissionDecisions].map(([key, allowed]) => {
       const i = key.lastIndexOf('|');
-      return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
+      return { origin: key.slice(0, i), permission: key.slice(i + 1), label: { ...PERMISSIONS, camera: 'Camera', microphone: 'Microphone' }[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
     // [devices] What each site may use: the devices picked in the chooser (WebHID, WebUSB, Web Serial), and removing one.
     handle('prefs:device-grants', () => (deps.deviceGrants ? deps.deviceGrants.list() : []));

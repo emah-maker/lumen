@@ -13,6 +13,7 @@ if (page === 'bookmarks') {
     add: (b) => ipcRenderer.invoke('bookmarks:add', b),
     update: (b) => ipcRenderer.invoke('bookmarks:update', b),
     remove: (url) => ipcRenderer.invoke('bookmarks:remove', url),
+    restore: (b) => ipcRenderer.invoke('bookmarks:restore', b), // Undo of a removal
     open: (url) => ipcRenderer.invoke('bookmarks:open', url),
     exportFile: () => ipcRenderer.invoke('bookmarks:export'),
     importFile: () => ipcRenderer.invoke('bookmarks:import'),

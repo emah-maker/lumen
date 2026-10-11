@@ -112,10 +112,12 @@ check('reload: an error page loads the failed address again', reloadAction({ err
 
 // ---- certificate warning page
 {
-  check('cert page: a wrong name says whose certificate it is', CR.reasonFor('ERR_CERT_COMMON_NAME_INVALID', 'a.example') === 'Its certificate is for a different site, not a.example.', '');
-  check('cert page: the original reasons are unchanged', /self-signed/.test(CR.reasonFor('ERR_CERT_AUTHORITY_INVALID', 'a')) && /clock/.test(CR.reasonFor('ERR_CERT_DATE_INVALID', 'a')) && /revoked/.test(CR.reasonFor('net::ERR_CERT_REVOKED', 'a')), '');
-  check('cert page: errors that used to get the general line now say what is wrong', ['ERR_CERT_NAME_CONSTRAINT_VIOLATION', 'ERR_CERT_VALIDITY_TOO_LONG', 'ERR_CERT_UNABLE_TO_CHECK_REVOCATION', 'ERR_CERT_NON_UNIQUE_NAME', 'ERR_CERT_INVALID', 'ERR_CERTIFICATE_TRANSPARENCY_REQUIRED'].every((d) => CR.reasonFor(d, 'a.example') !== 'Its certificate couldn’t be verified.'), '');
-  check('cert page: an unknown error gets the general line', CR.reasonFor('ERR_CERT_SOMETHING_NEW', 'a.example') === 'Its certificate couldn’t be verified.' && CR.reasonFor('', '') === 'Its certificate couldn’t be verified.', '');
+  const EN = require('../src/locales/en.json'); // the page's wording lives there (certError.reason.*)
+  const tEn = (key, vars) => String(EN[key]).replace(/\{(\w+)\}/g, (whole, name) => (vars && name in vars ? vars[name] : whole));
+  check('cert page: a wrong name says whose certificate it is', CR.reasonFor('ERR_CERT_COMMON_NAME_INVALID', 'a.example', tEn) === 'Its certificate is for a different site, not a.example.', '');
+  check('cert page: the original reasons are unchanged', /self-signed/.test(CR.reasonFor('ERR_CERT_AUTHORITY_INVALID', 'a', tEn)) && /clock/.test(CR.reasonFor('ERR_CERT_DATE_INVALID', 'a', tEn)) && /revoked/.test(CR.reasonFor('net::ERR_CERT_REVOKED', 'a', tEn)), '');
+  check('cert page: errors that used to get the general line now say what is wrong', ['ERR_CERT_NAME_CONSTRAINT_VIOLATION', 'ERR_CERT_VALIDITY_TOO_LONG', 'ERR_CERT_UNABLE_TO_CHECK_REVOCATION', 'ERR_CERT_NON_UNIQUE_NAME', 'ERR_CERT_INVALID', 'ERR_CERTIFICATE_TRANSPARENCY_REQUIRED'].every((d) => CR.reasonFor(d, 'a.example', tEn) !== 'Its certificate couldn’t be verified.'), '');
+  check('cert page: an unknown error gets the general line', CR.reasonFor('ERR_CERT_SOMETHING_NEW', 'a.example', tEn) === 'Its certificate couldn’t be verified.' && CR.reasonFor('', '', tEn) === 'Its certificate couldn’t be verified.', '');
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'cert-error.html'), 'utf8');
   check('cert page: cert-error.html loads the reasons before its own script', html.indexOf('cert-reasons.js') !== -1 && html.indexOf('cert-reasons.js') < html.indexOf('cert-error.js"'), '');
 }

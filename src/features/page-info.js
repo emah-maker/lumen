@@ -17,7 +17,7 @@
 //         confirm({ message, detail, buttons }) -> Promise<bool>, openSiteSettings(), popup(template, point),
 //         zoomOf(host) -> remembered percentage or null, resetZoom() (the tab in front) }
 
-const PERMISSIONS = ['geolocation', 'media', 'notifications', 'clipboard-read'];
+const PERMISSIONS = ['geolocation', 'camera', 'microphone', 'notifications', 'clipboard-read'];
 const SITE_STORAGES = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
 
 // 'https://a.example:8443/x' -> { origin, host, scheme } for http(s) pages; null for anything else.
