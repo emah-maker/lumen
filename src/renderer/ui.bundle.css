@@ -1267,12 +1267,7 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
-/* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
-.msg-user-actions { position: relative; z-index: var(--z-raised); height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
-.msg-user-actions[hidden] { display: none; }
-.msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
-.msg-user-actions .msg-edit { position: absolute; right: 2px; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
-.msg-user-actions .msg-edit:hover { background: var(--field); color: var(--text); }
+/* Each message you sent: its row under the bubble (time, Copy, Edit, versions) is styled in chat-actions.css. */
 body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
 .btn:disabled, .btn.primary:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
 .msg.user.editing .msg-images { margin-bottom: 6px; }
@@ -2144,6 +2139,61 @@ button.rs-title:hover { color: var(--accent); text-decoration: underline; }
 .msg.assistant .reply-routine svg { width: 13px; height: 13px; }
 .msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
+/* ---- chat-actions.css */
+/* What sits on and under chat messages (renderer/chat-actions.js): the row under your message (time, Copy, Edit, versions), the strip
+   under a reply (versions, model, time, thumbs), long messages cut short, and a reopened chat's thinking and steps. */
+
+/* ---- under your message: no height of its own, so the gap under the bubble is the same with or without it */
+.msg-user-actions { position: relative; z-index: var(--z-raised); height: 0; margin: 0; }
+.msg-user-actions[hidden] { display: none; }
+.msg-user-tools { position: absolute; right: 2px; top: -17px; height: 16px; display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.msg-hover { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--t-fast) ease-out; }
+.msg.user:hover + .msg-user-actions .msg-hover, .msg-user-actions:hover .msg-hover, .msg-user-actions:focus-within .msg-hover,
+.msg.assistant:hover .reply-meta .msg-hover, .reply-meta:focus-within .msg-hover { opacity: 1; }
+.msg-time { font-size: 11px; color: var(--faint); white-space: nowrap; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.msg-user-tools .msg-edit { height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msg-user-tools .msg-edit:hover { background: var(--field); color: var(--text); }
+.msg-copy { width: 20px; height: 16px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg-copy svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.msg-copy:hover { background: var(--field); color: var(--text); }
+.msg-copy.copied { color: var(--accent); }
+body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
+
+/* ---- ‹ 2/3 ›: always visible; steps are off while a reply runs */
+.msg-versions { display: inline-flex; align-items: center; gap: 0; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.msg-version-step { width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg-version-step svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.msg-version-step:hover:not(:disabled) { background: var(--field); color: var(--text); }
+.msg-version-step:disabled { opacity: 0.35; cursor: default; }
+.msg-version-count { min-width: 26px; text-align: center; }
+body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
+
+/* ---- under a reply: versions, model, time and thumbs on the left (Copy and Regenerate stay at the right corner) */
+.reply-meta { position: absolute; left: 0; bottom: -22px; height: 22px; max-width: calc(100% - 56px); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.msg.assistant:has(> .reply-meta) { margin-bottom: 26px; }
+.reply-meta .reply-model { position: static; min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.reply-meta .msg-time { padding: 0; flex: none; }
+.reply-thumbs { display: inline-flex; align-items: center; flex: none; }
+.reply-thumb { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.reply-thumb svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.msg.assistant:hover .reply-thumb, .reply-thumb:focus-visible, .reply-thumbs.rated .reply-thumb[aria-pressed="true"] { opacity: 1; }
+.reply-thumb:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
+.reply-thumb[aria-pressed="true"] { color: var(--accent); }
+.reply-thumb[aria-pressed="true"] svg { fill: currentColor; fill-opacity: 0.18; }
+
+/* ---- a long message of yours: cut short; its Show more sits in the row under it */
+.msg.user.clamped:not(.expanded):not(.editing) { max-height: 11.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.msg-more { height: 16px; padding: 0 4px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.msg-more:hover { text-decoration: underline; }
+
+/* ---- a reopened chat: its thinking (collapsed) and the steps it took, as they were */
+.step-group { margin: 3px 0; }
+.step-group > summary { cursor: pointer; list-style: none; margin: 0; }
+.step-group > summary::-webkit-details-marker { display: none; }
+.step-group > summary .step-detail::after { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 0 2px 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--t-base) var(--spring-smooth); }
+.step-group[open] > summary .step-detail::after { transform: rotate(-135deg); }
+.step-items { margin: 2px 0 4px 14px; }
+.notice-continue { margin-left: 4px; }
 /* ---- macros.css */
 /* Macros in the main window (renderer/macros.js): the progress toast in the tab strip's row, and the form that asks
    for a macro's {{variables}} above the composer. Kept apart from styles.css so restyles there merge cleanly. */

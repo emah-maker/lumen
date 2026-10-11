@@ -148,6 +148,9 @@ contextBridge.exposeInMainWorld('assistant', {
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
   reset: () => ipcRenderer.send('agent:reset'),
   rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back
+  rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected), // Regenerate / Edit of any message, kept as a version
+  switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target), // the version switch
+  feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value), // thumbs up / down under a reply
   btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task (features/btw-side.js); streamed through onBtw
   btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
   onBtw: on('agent:btw-event'),

@@ -223,7 +223,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:close-tabs',
@@ -4485,7 +4485,11 @@ function chatSnapshot(messages) {
     if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
     return b;
   };
-  snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+  const slim = (list) => list.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+  snapshot.messages = slim(snapshot.messages);
+  // [versions] the other versions of an exchange (regenerate, edit) are kept the same way, tool results and page text left out
+  const slimForks = (forks) => (forks || []).map((f) => ({ ...f, tails: f.tails.map((t) => (t ? { messages: slim(t.messages), forks: slimForks(t.forks) } : null)) }));
+  if (snapshot.forks) snapshot.forks = slimForks(snapshot.forks);
   return snapshot;
 }
 
@@ -8027,6 +8031,34 @@ ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSele
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
+// [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
+function trackRunDetails(run, msg) {
+  const d = run.details;
+  if (msg.type === 'thinking') {
+    if (!d.thinkingSince) d.thinkingSince = Date.now();
+    if (d.thinking.length < 20000) d.thinking += msg.text || '';
+    return;
+  }
+  if (d.thinkingSince && ['text', 'text_block', 'tool', 'turn_start', 'done'].includes(msg.type)) { d.thinkingMs += Date.now() - d.thinkingSince; d.thinkingSince = 0; }
+  if (msg.type === 'retry') { d.thinking = ''; d.thinkingMs = 0; }
+  else if (msg.type === 'tool') {
+    if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: msg.input, ok: true });
+  } else if (msg.type === 'tool_update') {
+    const t = d.tools.find((x) => x.id && x.id === msg.id);
+    if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = msg.input; }
+  } else if (msg.type === 'tool_done') {
+    const t = d.tools.find((x) => x.id && x.id === msg.id);
+    if (t) t.ok = Boolean(msg.ok);
+  } else if (msg.type === 'auto') d.auto = { label: msg.label, reason: msg.reason };
+}
+function stampRun(run, done = null) {
+  try {
+    const d = run.details;
+    const info = { at: Date.now() };
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), auto: done.auto || d.auto });
+    agent.stampMessages(run.messages, run.startLen, info);
+  } catch (err) { console.error('Could not stamp chat messages:', err.message); }
+}
 ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
@@ -8047,7 +8079,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null };
+  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
@@ -8085,6 +8117,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
+    trackRunDetails(run, msg);
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
     else if (msg.type === 'error') run.error = msg.text || 'error';
@@ -8092,6 +8125,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
     if (msg.type === 'done') {
+      if (!run.deleted) stampRun(run, msg);
       const mine = chatRuns.get(runChat) === run;
       if (mine) chatRuns.delete(runChat);
       if (mine) runSlots.release(runChat); // the next chat in line may start
@@ -8105,7 +8139,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
         aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
       }
-    } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
+    } else if (msg.type === 'tool_done' && !run.deleted) (stampRun(run), isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; modelsChanged(); }
@@ -8171,6 +8205,35 @@ ipcMain.handle('agent:screen-drop', (_e, id) => {
   const n = screenContext.dropFrom(agent.messages, id);
   if (n) { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); }
   return n > 0;
+});
+// [versions] Regenerate / Edit of any user message (ordinal: its place among the sidebar's user messages): it and what followed are
+// taken back and kept as a version. Answers { result, versions }.
+ipcMain.handle('agent:rewind-user', (_e, ordinal, expected) => {
+  syncToSender(_e);
+  if (!Number.isInteger(ordinal) || ordinal < 0) return { result: 'absent' };
+  if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return { result: false }; // never mid-run
+  const out = agent.rewindUser(ordinal, typeof expected === 'string' ? expected : '');
+  if (out.result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); }
+  return out;
+});
+// [versions] The version switch: another version of an exchange becomes the chat. Answers the chat's new view (or null).
+ipcMain.handle('agent:version', (_e, at, target) => {
+  syncToSender(_e);
+  if (!Number.isInteger(at) || !Number.isInteger(target)) return null;
+  if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return null;
+  if (!agent.switchVersion(at, target)) return null;
+  saveChat();
+  const view = chatView();
+  chatPageRt.broadcast('chat:sync', { view }, _e.sender);
+  return view;
+});
+// [versions] The thumb under a reply, kept with the chat on this computer.
+ipcMain.handle('agent:feedback', (_e, ordinal, value) => {
+  syncToSender(_e);
+  if (!Number.isInteger(ordinal) || ordinal < 0 || !(value === null || value === 'up' || value === 'down')) return false;
+  const ok = agent.setFeedback(ordinal, value);
+  if (ok) saveChatSoon(chatGeneration);
+  return ok;
 });
 ipcMain.handle('agent:rewind', (_e, expected) => {
   syncToSender(_e);
