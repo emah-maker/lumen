@@ -4816,6 +4816,10 @@ function startChat() {
     rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>',
     export: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>',
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
+    pin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5"/></svg>',
+    unpin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5M2.5 2.5l11 11"/></svg>',
+    archive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>',
+    unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
@@ -4838,6 +4842,8 @@ function startChat() {
   window.chatListTools = {
     // chats -> [{ label, chats }] in order; empty groups are left out.
     group(chats, now = Date.now()) {
+      const pinned = chats.filter((c) => c.pinned && !c.archived);
+      if (pinned.length) chats = chats.filter((c) => !pinned.includes(c));
       const day = new Date(now); day.setHours(0, 0, 0, 0);
       const start = day.getTime();
       const bands = [
@@ -4848,9 +4854,68 @@ function startChat() {
       ];
       const out = bands.map((b) => ({ label: b.label, chats: [] }));
       for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
-      return out.filter((g) => g.chats.length);
+      return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
-    matches: (chat, q) => !q || String(chat.title || '').toLowerCase().includes(q.toLowerCase()),
+    // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
+    // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
+    pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+      if (query) {
+        const q = query.toLowerCase();
+        return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
+      }
+      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+    },
+    // Chats / Archived switch (shown once something is archived or the Archived view is open).
+    views(view, archivedCount, onPick) {
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
+      bar.setAttribute('role', 'group');
+      for (const [id, label] of [['chats', window.chatTr('chats.viewAll', 'Chats')], ['archived', window.chatTr('chats.viewArchived', 'Archived') + (archivedCount ? ` (${archivedCount})` : '')]]) {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: `chat-view${view === id ? ' on' : ''}`, textContent: label });
+        b.setAttribute('aria-pressed', String(view === id));
+        b.onclick = () => onPick(id);
+        bar.append(b);
+      }
+      return bar;
+    },
+    // Search state shared by both lists: titles match at once, message text a moment later (main-side search over saved chats).
+    searcher(api, redraw) {
+      let query = '', hits = null, timer = null, seq = 0;
+      return {
+        get query() { return query; },
+        get hits() { return hits; },
+        set(q) {
+          query = q; hits = null; clearTimeout(timer); const mine = ++seq;
+          redraw();
+          if (!q || !api.search) return;
+          timer = setTimeout(async () => {
+            let found = null;
+            try { found = await api.search(q); } catch { /* titles only */ }
+            if (mine !== seq || !Array.isArray(found)) return;
+            hits = new Map(found.map((h) => [h.id, h.snippet || '']));
+            redraw();
+          }, 160);
+        },
+        clear() { query = ''; hits = null; seq++; clearTimeout(timer); },
+      };
+    },
+    // "Chat deleted. Undo" for a few seconds, fixed to the window so a redrawn list keeps it.
+    undoToast(text, ms, onUndo) {
+      document.querySelector('.chat-undo-toast')?.remove();
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-undo-toast' });
+      bar.setAttribute('role', 'status');
+      const undo = Object.assign(document.createElement('button'), { type: 'button', textContent: window.chatTr('chats.undo', 'Undo') });
+      const timer = setTimeout(() => bar.remove(), ms);
+      undo.onclick = async () => {
+        clearTimeout(timer);
+        undo.disabled = true;
+        let ok = false;
+        try { ok = await onUndo(); } catch { /* too late */ }
+        if (ok === false) { bar.firstChild.textContent = window.chatTr('chats.undoLate', 'Too late to undo'); setTimeout(() => bar.remove(), 2000); } else bar.remove();
+      };
+      bar.append(Object.assign(document.createElement('span'), { textContent: text }), undo);
+      document.body.append(bar);
+      return bar;
+    },
     heading(label) {
       const li = Object.assign(document.createElement('li'), { className: 'chat-group', textContent: label });
       li.setAttribute('role', 'presentation');
@@ -4940,7 +5005,10 @@ function startChat() {
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
+      if (chat.pinned) li.classList.add('pinned');
+      if (chat.archived) li.classList.add('archived');
       openBtn.append(name, meta);
+      if (chat.snippet) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-snippet', textContent: chat.snippet })); // where a search found the words in the messages
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
       const place = inTabs || inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
@@ -5003,27 +5071,33 @@ function startChat() {
           else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
         } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
+      const pinBtn = iconButton(chat.pinned ? 'unpin' : 'pin', chat.pinned ? tr('chats.unpin', 'Unpin') : tr('chats.pin', 'Pin to top'));
+      pinBtn.onclick = async () => {
+        pinBtn.disabled = true;
+        try { if ((await api.pin(chat.id, !chat.pinned)) === false) throw new Error('refused'); await rerender(); } catch { pinBtn.disabled = false; say(tr('chats.pinFailed', 'Could not pin')); }
+      };
+      const archiveBtn = iconButton(chat.archived ? 'unarchive' : 'archive', chat.archived ? tr('chats.unarchive', 'Unarchive') : tr('chats.archive', 'Archive'));
+      archiveBtn.onclick = async () => {
+        archiveBtn.disabled = true;
+        try { if ((await api.archive(chat.id, !chat.archived)) === false) throw new Error('refused'); await rerender(); } catch { archiveBtn.disabled = false; say(tr('chats.archiveFailed', 'Could not archive')); }
+      };
+      // Delete goes at once and says so with an Undo for a few seconds (nothing is erased until the time is up).
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
-      let armed = null;
       del.onclick = async () => {
-        if (!armed) { // two clicks: the first asks, the second deletes
-          const again = tr('chats.deleteAgain', 'Click again to delete');
-          del.classList.add('armed');
-          del.dataset.confirm = tr('chats.deleteConfirm', 'Delete?');
-          del.title = again;
-          del.setAttribute('aria-label', again);
-          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
-          return;
-        }
-        clearTimeout(armed);
         del.disabled = true; // pending: a second click cannot delete twice
         try {
           const out = await api.remove(chat.id);
           if (out?.cleared) cleared();
+          if (out?.undo) {
+            window.chatListTools.undoToast(tr('chats.deleted', 'Chat deleted'), out.undoMs || 8000, async () => {
+              const ok = await api.undoRemove(chat.id);
+              if (ok) { if (out.cleared) await onOpen?.(chat.id); await rerender(); }
+              return ok;
+            });
+          }
           await rerender();
         } catch {
           del.disabled = false;
-          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
           say(tr('chats.deleteFailed', 'Could not delete'));
         }
       };
@@ -5066,7 +5140,7 @@ function startChat() {
         };
         tabActions.push(closeTabs);
       }
-      actions.append(...tabActions, rename, exportBtn, del);
+      actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
@@ -8272,8 +8346,10 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let redraw = () => {};
+  const search = tools.searcher(api, () => redraw());
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
@@ -8286,22 +8362,27 @@ $('agent-stop')?.addEventListener('click', () => {
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
-    // A search once there are enough chats to need one; what was typed survives a redraw.
+    // The search box is there as soon as there is a chat; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
-    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
-    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
-    if (searchBox) searchBox.value = query;
+    searchBox = chats.length ? tools.search((q) => search.set(q)) : null;
+    if (!searchBox) search.clear(); // (no chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = search.query;
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
     const list = document.createElement('ul');
     list.className = 'chat-items';
     function drawList() {
-      const shown = chats.filter((c) => tools.matches(c, query));
+      const query = search.query;
+      const shown = tools.pick(chats, { query, view, hits: search.hits });
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);
-      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
     }
+    redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];
