@@ -75,6 +75,7 @@ const organizeLearn = require('./features/organize-learn'); // what Organize lea
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
+const { menuLabel } = require('./browser/menu-label'); // page titles and file names as menu labels (a literal & is written &&)
 const navHistory = require('./browser/nav-history'); // Back / Forward's right-click list
 const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarTabsLib = require('./features/sidebar-tabs'); // [sidebar per tab] whether the AI sidebar is open, tab by tab
@@ -954,7 +955,7 @@ function setupPermissions() {
       buttons: [t('permission.deny'), t('permission.allow')],
       defaultId: 0,
       cancelId: 0,
-      message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }),
+      message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, details)) }),
       owner: wc,
     });
     if (cancelled) return callback(false);
@@ -1694,7 +1695,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -3508,7 +3509,7 @@ function tabMenuTemplate(id) {
         ui()?.send('group:rename-start', group.id);
       },
     });
-    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
+    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: menuLabel(g.name, 80), click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { manners.handOver(tab); tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
@@ -3849,7 +3850,7 @@ function historyMenu() {
   return [
     { label: t('menu.showAllHistory'), accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H', click: openHistoryPage },
     { type: 'separator' },
-    ...recent.map((h) => ({ label: (h.title || bareUrl(h.url)).slice(0, 60), click: () => openTab(h.url) })),
+    ...recent.map((h) => ({ label: menuLabel(h.title || bareUrl(h.url)), click: () => openTab(h.url) })),
     { type: 'separator' },
     {
       label: t('menu.clearHistory'),
@@ -4034,10 +4035,10 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
-    ...list.filter((b) => !b.folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
+    ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
-      label: folder,
-      submenu: list.filter((b) => b.folder === folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
+      label: menuLabel(folder, 80),
+      submenu: list.filter((b) => b.folder === folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     })),
   ];
 }
@@ -7976,7 +7977,7 @@ function navHistoryTemplate(direction) {
   if (!wc || wc.isDestroyed() || (direction !== 'back' && direction !== 'forward')) return [];
   const nav = wc.navigationHistory;
   const entries = navHistory.items(nav.getAllEntries(), nav.getActiveIndex(), direction);
-  const items = entries.map((e) => ({ label: e.label, click: () => { userTookOver(tab); nav.goToIndex(e.index); } }));
+  const items = entries.map((e) => ({ label: menuLabel(e.label), click: () => { userTookOver(tab); nav.goToIndex(e.index); } }));
   if (direction === 'back' && !items.length && tab.backToNewTab) items.push({ label: t('menu.newTabPage'), click: () => { userTookOver(tab); goBack(wc); } }); // (the one step Back still has)
   if (items.length) items.push({ type: 'separator' }, { label: t('menu.showAllHistory'), ...shortcutHint(process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H'), click: openHistoryPage });
   return items;

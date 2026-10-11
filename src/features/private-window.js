@@ -139,7 +139,7 @@ function createPrivateWindows(deps) {
       // Remembered for this window only; nothing is written to settings.json.
       const { response } = await dialog.showMessageBox(rec.win, {
         type: 'question', buttons: [t('permission.deny'), t('permission.allow')], defaultId: 0, cancelId: 0,
-        message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }), detail: t('private.permission.detail'),
+        message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, details)) }), detail: t('private.permission.detail'),
       });
       rec.decisions.set(key, response === 1);
       callback(response === 1);

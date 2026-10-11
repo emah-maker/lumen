@@ -73,4 +73,14 @@ function installIpc(ipcMain) {
   });
 }
 
-module.exports = { ALWAYS_ALLOWED, STORAGE_ACCESS, SHIMMED, canonicalOrigin, requestOrigin, checkOrigin, alwaysAllowed, register, statesFor, notify, installIpc };
+// The wording key for a permission prompt (permission.<name> in locales/en.json). A site asking for only the camera, or only
+// the microphone, is asked about only that; the decision is still stored once for both (key origin|media).
+function promptKey(permission, details) {
+  if (permission !== 'media') return `permission.${permission}`;
+  const types = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
+  const video = types.includes('video');
+  const audio = types.includes('audio');
+  return video && !audio ? 'permission.media.video' : audio && !video ? 'permission.media.audio' : 'permission.media';
+}
+
+module.exports = { promptKey, ALWAYS_ALLOWED, STORAGE_ACCESS, SHIMMED, canonicalOrigin, requestOrigin, checkOrigin, alwaysAllowed, register, statesFor, notify, installIpc };

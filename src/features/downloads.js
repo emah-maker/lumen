@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { hostOf } = require('./adblock');
 const { t } = require('./i18n');
+const { menuLabel } = require('../browser/menu-label'); // a file name as a menu label (a literal & is written &&)
 const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
 // Programs, installers and scripts Windows runs on open, and shortcut/settings files that launch them (a .url, .scf,
@@ -18,12 +19,15 @@ const settingsFile = require('../settings/settings-file'); // tmp + rename + .ba
 const RISKY_TYPES = /^\.(exe|msi|msp|mst|msix|msixbundle|bat|cmd|com|scr|pif|cpl|msc|ps1|ps1xml|psm1|psd1|vbs|vbe|vb|js|jse|wsf|wsh|wsc|sct|hta|jar|jnlp|dll|ocx|lnk|url|scf|inf|reg|appx|appxbundle|appinstaller|application|gadget|diagcab|settingcontent-ms)$/i;
 const { trailingThrottle } = require('../browser/trailing-throttle');
 const PROGRESS_MS = 250; // how often a running download's progress reaches the panel and the page
-const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
+const KEEP = 1000; // downloads remembered in the list (the Downloads page pages through them; the panel shows the latest PANEL_ROWS, the menu 10)
+const PANEL_ROWS = 50;
+const UNDO_KEEP = 20; // removed rows held for the page's Undo
 
 // deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)?,
 //         openInstead(item, contents)? (true: not downloaded, shown instead), onCompleted(entry)? }
 function createDownloads(deps) {
   const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk, url, started, endedAt, speed } (+ item, contents: not sent)
+  const removed = []; // rows taken off the list a moment ago, { entry, index }: the Downloads page's Undo puts one back
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
   let downloadSeq = 0;
   const icons = new Map(); // path -> { image (nativeImage, for dragging), dataUrl (for the panel) }
@@ -61,7 +65,7 @@ function createDownloads(deps) {
   const pushDownloads = () => {
     deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
     deps.onChange?.(); // the Downloads page (features/managers.js)
-    deps.panel?.()?.send('downloads:list', downloads.map(panelEntry)); // the toolbar's panel
+    deps.panel?.()?.send('downloads:list', downloads.slice(0, PANEL_ROWS).map(panelEntry)); // the toolbar's panel (the latest rows: each is stat()ed, and the panel is small)
     save();
   };
   // Chromium reports a running download's progress many times a second. Each report rebuilt the whole panel list (and
@@ -230,12 +234,12 @@ function createDownloads(deps) {
     const items = downloads.slice(0, 10).map((d) => {
       const percent = d.total ? `${Math.round((d.received / d.total) * 100)}%` : '';
       if (d.state === 'completed') {
-        return { label: d.name, click: () => deps.shell.openPath(d.path) };
+        return { label: menuLabel(d.name, 80), click: () => deps.shell.openPath(d.path) };
       }
       if (d.state === 'progressing') {
         const status = d.awaitingOk ? t('downloads.waitingOk') : d.paused ? (percent ? t('downloads.pausedAt', { percent }) : t('downloads.paused')) : percent || t('downloads.downloading');
         return {
-          label: t('downloads.item', { name: d.name, status }),
+          label: t('downloads.item', { name: menuLabel(d.name, 80), status }),
           submenu: [
             ...(d.awaitingOk ? [] : [d.paused
               ? { label: t('downloads.resume'), click: () => { d.item.resume(); } }
@@ -245,7 +249,7 @@ function createDownloads(deps) {
         };
       }
       return { // cancelled | interrupted
-        label: t('downloads.item', { name: d.name, status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
+        label: t('downloads.item', { name: menuLabel(d.name, 80), status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
         submenu: [{ label: d.state === 'interrupted' && d.item?.canResume() ? t('downloads.resume') : t('downloads.retry'), click: () => retry(d) }],
       };
     });
@@ -255,15 +259,27 @@ function createDownloads(deps) {
     return items;
   }
 
-  // The Downloads page: every remembered download, and what its buttons do.
+  // The Downloads page: every remembered download, and what its buttons do. Up to a thousand rows are asked about on every
+  // progress refresh, so whether a file is still there is remembered for a few seconds.
+  const seen = new Map(); // path -> { at, there }
+  const stillThere = (d) => {
+    const now = Date.now();
+    const hit = seen.get(d.path);
+    if (hit && now - hit.at < 3000) return hit.there;
+    const there = fs.existsSync(d.path);
+    seen.set(d.path, { at: now, there });
+    if (seen.size > KEEP * 2) seen.clear();
+    return there;
+  };
   const summary = () => downloads.map((d) => ({
     id: d.id, name: d.name, path: d.path, state: d.state, received: d.received, total: d.total, paused: d.paused,
     awaitingOk: Boolean(d.awaitingOk), started: d.started, endedAt: d.endedAt || null, url: d.url,
     canResume: d.state === 'interrupted' && Boolean(d.item?.canResume?.()),
-    exists: d.state === 'completed' && Boolean(d.path) && fs.existsSync(d.path),
+    exists: d.state === 'completed' && Boolean(d.path) && stillThere(d),
   }));
   function act(id, action) {
     const d = downloads.find((x) => x.id === id);
+    if (action === 'restore') return restore(id);
     if (!d) return false;
     if (action === 'open' && d.state === 'completed' && exists(d)) { deps.shell.openPath(d.path); return true; }
     if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
@@ -271,8 +287,18 @@ function createDownloads(deps) {
     if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
     if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item?.cancel(); return true; }
     if (action === 'retry' && (d.state === 'cancelled' || d.state === 'interrupted')) { retry(d); return true; }
-    if (action === 'remove' && d.state !== 'progressing') { downloads.splice(downloads.indexOf(d), 1); sendDownloads(); return true; }
+    if (action === 'remove' && d.state !== 'progressing') { const index = downloads.indexOf(d); downloads.splice(index, 1); removed.push({ entry: d, index }); if (removed.length > UNDO_KEEP) removed.shift(); sendDownloads(); return true; }
     return false;
+  }
+  // Undo of a removal (the Downloads page): the row goes back where it was.
+  function restore(id) {
+    const at = removed.findIndex((r) => r.entry.id === id);
+    if (at === -1 || downloads.some((x) => x.id === id)) return false;
+    const [{ entry, index }] = removed.splice(at, 1);
+    downloads.splice(Math.min(index, downloads.length), 0, entry);
+    trim();
+    sendDownloads();
+    return true;
   }
 
   function clearFinished() {
@@ -288,7 +314,7 @@ function createDownloads(deps) {
     sender.startDrag({ file: d.path, icon });
   }
 
-  return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
+  return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads, RISKY_TYPES };

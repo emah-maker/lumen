@@ -1905,7 +1905,7 @@ function finishTabsRender(state, before, container, switched) {
   $('zoom').hidden = !zoomed;
   $('zoom').textContent = `${zoom}%`;
   document.body.classList.toggle('zoomed', zoomed);
-  const lumenPage = active?.page === 'reader' || active?.page === 'source'; // shows a web address, but is Lumen's own page
+  const lumenPage = Boolean(active?.page); // Lumen's own page (Reader, View Source, Settings, History, Bookmarks, Downloads): no connection to vouch for, nothing to bookmark
   currentLumenPage = lumenPage;
   const reader = $('reader');
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;

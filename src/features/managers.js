@@ -90,6 +90,17 @@ function createManagers(deps) {
     save(next);
     return true;
   }
+  // Undo of a removal (the Bookmarks page): the bookmark goes back where it was in the list.
+  function restore({ url, title, folder, index } = {}) {
+    const href = webUrl(url);
+    if (!href) return { ok: false, error: 'Enter a web address (http or https).' };
+    const all = list();
+    if (all.some((b) => b.url === href)) return { ok: true }; // already back (added again by hand)
+    const at = Number.isInteger(index) ? Math.max(0, Math.min(index, all.length)) : all.length;
+    all.splice(at, 0, { url: href, title: cleanTitle(title) || deps.hostOf(href) || href, folder: cleanFolder(folder) });
+    save(all);
+    return { ok: true };
+  }
   // Adds bookmarks from a Netscape file, skipping addresses already bookmarked.
   function importHtml(html) {
     const all = list();
@@ -121,6 +132,7 @@ function createManagers(deps) {
     on('bookmarks:add', 'bookmarks', (_e, b) => add(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:update', 'bookmarks', (_e, b) => update(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:remove', 'bookmarks', (_e, url) => remove(url), false);
+    on('bookmarks:restore', 'bookmarks', (_e, b) => restore(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:open', 'bookmarks', (_e, url) => { const href = webUrl(url); if (href) deps.openTab(href); return Boolean(href); }, false);
     on('bookmarks:export', 'bookmarks', async () => {
       const w = deps.win();
@@ -147,7 +159,7 @@ function createManagers(deps) {
     on('downloads:folder', 'downloads', () => { deps.openFolder(); return true; }, false);
   }
 
-  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushBookmarks, pickers, add, update, remove, importHtml, exportHtml, list };
+  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushBookmarks, pickers, add, update, remove, restore, importHtml, exportHtml, list };
 }
 
 module.exports = { createManagers, pageOf, BOOKMARKS_URL, DOWNLOADS_URL, PRELOAD, preloadFor };

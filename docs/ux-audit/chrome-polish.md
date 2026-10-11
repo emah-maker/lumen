@@ -32,3 +32,35 @@ monogram and a `127.0.0.1` tab keeps the globe), `test/basics-units.js` (the sho
 - **Downloads page keeps only the latest 50** (`features/downloads.js`) and removing a row or bookmark has no undo toast; both match what the page promised and are low stakes.
 - **Toast in the strip pushes Organize along; the ⋯ menu is long** (items 9 and 10 of `chrome.md`).
 - `cert-error.html`, `https-only.html` and `safe-browsing.html` have English text baked into the HTML instead of `locales/en.json`.
+
+## Round 2
+
+Fixes for the "Left" list above, then another sweep of the tab hover card, the tab context menu, the ⋯ menu and the
+download panel (a hidden window with a throwaway profile; native menus were read from their templates, since they can't
+be screenshotted). Shots in `docs/ux-audit/shots/` (gitignored).
+
+### Found
+1. Internal pages (History, Bookmarks, Downloads) showed an empty address bar, and once they showed an address the star and AI buttons would have appeared on them.
+2. Removing a bookmark or a download had no way back.
+3. Downloads kept 50 entries.
+4. Certificate, HTTPS-only and Safe Browsing pages had English baked into HTML and scripts.
+5. The camera / microphone prompt always named both.
+6. Sweep: History, Bookmarks, Downloads and Back / Forward menu labels used page titles raw. On Windows and Linux a native menu reads "&" as a mnemonic, so "Q&A" showed as "QA"; History cut titles at 60 characters with no ellipsis, Bookmarks did not cut at all.
+7. Sweep: the Bookmarks page said "Removed ..." in a status line under the search box, which would now repeat the Undo note.
+
+### Fixed
+1. `main.js` tab state gives `lumen://history`, `lumen://bookmarks`, `lumen://downloads`; `app.js` treats any Lumen page (`tab.page`) as having no star, site chip or AI-off button.
+2. New `renderer/managers-toast.js` (the organize note's look: a pill with an accent Undo, about 8 s, Ctrl+Z outside a text field). Bookmarks restore through `bookmarks:restore` at the old index; downloads through a `restore` action that puts the row back where it was (the file was never deleted).
+3. `KEEP` is 1000. The page shows 100 and a "Show more N" button; the toolbar panel and the taskbar still get only the latest 50 / 10, and the page's "file still there" check is cached for 3 s so 1000 rows are not stat()ed on every progress tick.
+4. `locales/en.json` has `certError.*`, `httpsOnly.*`, `safeBrowsing.*`; the three pages load `i18n.js` and a small `interstitial.js` (fills `{host}` with an element); `error-preload.js` hands them the table. `cert-reasons.js` now maps errors to keys and takes the translate function.
+5. Wording only: `permission.media.video` / `.audio` from Electron's `details.mediaTypes`. The decision is still stored once (`origin|media`).
+6. `browser/menu-label.js` (`&` becomes `&&`, 60-character ellipsis) used by the History, Bookmarks, Downloads, Back / Forward and Add to group menus.
+7. The status line is used only when the note is missing.
+
+Tests: `test/chrome-ux-units.js`, `test/page-i18n-units.js`, `test/core-browsing-units.js`, `test/managers.js` (address, Undo for both pages).
+
+### Left
+- **Camera-only or microphone-only Allow also covers the other**, because the decision is one entry; a later request for the other device is not asked again. Splitting the stored decision is a larger change.
+- **The `&&` fix is untested on screen** (native menus can't be captured here); it follows Electron's rule for Windows and Linux labels.
+- **The toolbar download panel could not be screenshotted** (an off-screen view); its text and list were read and are fine (long names clip, progress, speed and time left show).
+- **Tab hover card and tab menu** were fine: the card clips long titles with an ellipsis and shows the host (`lumen://...` for Lumen pages); disabled items stay in place for internal pages.

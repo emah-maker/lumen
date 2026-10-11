@@ -77,8 +77,14 @@ function row(b) {
   const del = el('button', { type: 'button', textContent: t('bookmarksPage.remove') });
   del.setAttribute('aria-label', t('bookmarksPage.removeNamed', { name: b.title || host(b.url) }));
   del.onclick = async () => {
+    const index = entries.findIndex((x) => x.url === b.url);
     if (!(await api.remove(b.url))) return;
-    say(t('bookmarksPage.removed', { name: b.title || host(b.url) }));
+    const name = b.title || host(b.url);
+    if (!window.managersToast) say(t('bookmarksPage.removed', { name }));
+    window.managersToast?.({
+      text: t('bookmarksPage.removed', { name }), undoLabel: t('bookmarksPage.undo'),
+      onUndo: async () => { if ((await api.restore({ ...b, index }))?.ok) { say(t('bookmarksPage.restored', { name })); await load(); } },
+    });
     await load();
     query.focus();
   };
