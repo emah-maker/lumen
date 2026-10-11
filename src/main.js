@@ -4728,7 +4728,7 @@ function tellUser(run, kind) {
   pushAttention();
   if (!decided.os || TEST || !Notification.isSupported()) return;
   const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
-  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, chat: title }, t);
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
   try {
     const n = new Notification({ title: text.title, body: text.body, silent: false });
     n.on('click', () => {
@@ -8199,7 +8199,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     trackRunDetails(run, msg);
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
-    else if (msg.type === 'error') run.error = msg.text || 'error';
+    else if (msg.type === 'error') { run.error = msg.text || 'error'; run.errorSummary = msg.summary || ''; }
     else if (msg.type === 'notice' && msg.text === 'Stopped.') run.stopped = true;
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
@@ -9260,7 +9260,8 @@ app.whenReady().then(async () => {
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
   setupTaskbar();
-  setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
+  instance.ensureStartMenuShortcut(app, shell, APP_ID); // the shortcut a notification is named from (carries the app ID)
+  setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app, APP_ID); // Explorer and notifications say Lumen, not Electron
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC

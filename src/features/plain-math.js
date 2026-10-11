@@ -14,6 +14,7 @@ const SYMBOLS = {
   phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
   Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
 };
+const ACCENT = { vec: '⃗', hat: '̂', bar: '̄', dot: '̇', ddot: '̈', tilde: '̃' }; // combining marks
 const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎', a: 'ₐ', e: 'ₑ', h: 'ₕ', i: 'ᵢ', j: 'ⱼ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', o: 'ₒ', p: 'ₚ', r: 'ᵣ', s: 'ₛ', t: 'ₜ', u: 'ᵤ', v: 'ᵥ', x: 'ₓ' };
 const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ', i: 'ⁱ', T: 'ᵀ', '∘': '°' };
 
@@ -59,8 +60,13 @@ function texToText(tex) {
         if (s[i] === '[') { const end = s.indexOf(']', i); degree = s.slice(i + 1, end); i = end + 1; }
         const [a, j] = group(s, i); i = j;
         out += `${degree ? script(texToText(degree), SUP, '^') : ''}√${wrap(texToText(a))}`;
-      } else if (/^(text|textrm|textbf|textit|mathrm|mathbf|mathit|operatorname|mbox|boldsymbol|mathsf|mathtt)$/.test(name)) {
+      } else if (/^(text|textrm|textbf|textit|mathrm|mathbf|mathit|operatorname|mbox|boldsymbol|mathsf|mathtt|mathbb|mathcal|mathscr|mathfrak|boxed|underline|cancel|bm|overline|widehat|widetilde|overrightarrow)$/.test(name)) {
         const [a, j] = group(s, i); i = j; out += texToText(a);
+      } else if (ACCENT[name]) {
+        const [a, j] = group(s, i); i = j; const inner = texToText(a);
+        out += [...inner].length === 1 ? inner + ACCENT[name] : inner; // (a mark over one character; over more, the text as it is)
+      } else if (name === 'begin' || name === 'end') {
+        i = group(s, i)[1]; // \begin{aligned} / \end{cases}: the environment's name is not text
       } else if (/^(left|right|big|Big|bigg|Bigg|displaystyle|textstyle|limits|nolimits)$/.test(name)) {
         // sizing only
       } else if (name === ',' || name === ';' || name === ':' || name === ' ' || name === 'quad' || name === 'qquad' || name === '!') {
@@ -68,7 +74,7 @@ function texToText(tex) {
       } else if (/^[%$&#_{}]$/.test(name)) {
         out += name;
       } else if (name === '\\') {
-        out += ' ';
+        out = out.trimEnd() + '; '; // a row break (aligned, cases, matrix)
       } else {
         out += SYMBOLS[name] ?? name;
       }
@@ -77,6 +83,8 @@ function texToText(tex) {
       out += script(texToText(a), ch === '_' ? SUB : SUP, ch);
     } else if (ch === '{' || ch === '}') {
       i++;
+    } else if (ch === '&') {
+      out += ' '; i++; // a column break
     } else if (ch === '~') {
       out += ' '; i++;
     } else {
@@ -93,7 +101,13 @@ function plainMath(text) {
     .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => texToText(tex))
     .replace(/\\\[([\s\S]+?)\\\]/g, (_m, tex) => texToText(tex))
     .replace(/\\\(([\s\S]+?)\\\)/g, (_m, tex) => texToText(tex))
-    .replace(/(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\w)/g, (m, before, tex) => (/^\d+(?:[.,]\d+)?$/.test(tex) ? m : `${before}${texToText(tex)}`));
+    .replace(/(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\w)/g, (m, before, tex) => (/^\d+(?:[.,]\d+)?$/.test(tex) ? m : `${before}${texToText(tex)}`))
+    // A model sometimes leaves the delimiters off ("the ratio is \frac{a}{b}"): the commands that are only ever math.
+    .replace(BARE, (m) => texToText(m))
+    .replace(/\\([%$&#])/g, '$1'); // an escaped % or $ in a sentence
 }
+// A bare command with its braced arguments.
+const BRACED = String.raw`\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}`;
+const BARE = new RegExp(String.raw`\\(?:d|t)?frac(?:${BRACED}){2}|\\sqrt(?:\[[^\]]*\])?${BRACED}|\\(?:text|mathrm|mathbf|mathbb|mathcal|vec|hat|bar|boxed)${BRACED}`, 'g');
 
 module.exports = { plainMath, texToText };
