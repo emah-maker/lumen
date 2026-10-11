@@ -376,7 +376,7 @@ async function buildAi(card) {
   const permWarn = h('span', { class: 'note error', id: 'perm-warn' });
   const showPermWarn = (v) => { permWarn.textContent = v === 'bypass' ? tr('sidebar.perm.bypass.desc', 'The AI won’t ask before acting, reading PDFs, using your signed-in accounts, or sending what it read anywhere.') : ''; };
   const permissionRow = select('aiPermissionMode', tr('settings.ai.permissionMode', 'Asking before it acts'), tr('settings.ai.permissionModeDesc', 'Ask, Auto-allow actions, or Bypass permissions (the AI never asks).'),
-    ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: showPermWarn });
+    ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: (v) => { showPermWarn(v); window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'bypassBackground' } })); } }); // (leaving Bypass switches the background option off: its row follows)
   permissionRow.querySelector('.text').append(permWarn);
   showPermWarn(st.prefs.aiPermissionMode);
   // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).

@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **Background tasks and routines can stop asking too.** Bypass permissions answered every card in the sidebar but never in background tasks, so a routine still waited in the Tasks panel for "open this site?" and "submit this form?". Settings → AI → **Bypass in background tasks and routines too** (off by default, and only with Bypass permissions on) answers those cards Allow as well, including steps that buy, send, post or submit something; each one is listed in the task's steps. New test: `test/bypass-background-units.js`.
+- **Background tasks and routines can stop asking too.** Bypass permissions answered every card in the sidebar but never in background tasks, so a routine still waited in the Tasks panel for "open this site?" and "submit this form?". Settings → AI → **Bypass in background tasks and routines too** (off by default, and only with Bypass permissions on) answers those cards Allow as well, including steps that buy, send, post or submit something; each one is listed in the task's steps. It switches itself off whenever you leave Bypass permissions, so it never waits unseen for the next time you pick Bypass; sites with AI off and tabs you keep it off still apply. New tests: `test/bypass-background-units.js`, `test/bypass-background-security-units.js`.
 
 ## 0.5.24 (2026-10-11)
 
