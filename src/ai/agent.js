@@ -4871,6 +4871,9 @@ ${out.text}${note}
       throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use visible text.');
     }
     if (scope && (name === 'read_page' || name === 'find' || name === 'batch' || name === 'fill_form')) scope.idsFresh = true;
+    // navigate loads in a tab of the chat's own ([agents out of sight]): move there first, so the redirect guard watches the tab that
+    // actually loads the page, not the user's tab it is about to leave.
+    if (name === 'navigate') { try { await this.ownNavigationTab(); } catch {} }
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });

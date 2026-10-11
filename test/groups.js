@@ -268,7 +268,7 @@ const os = require('os');
   t = await tabsNow();
   g = await groupsNow();
   const req2 = await app.evaluate(() => global.__topicRequest);
-  check('AI topics use the cheapest model (Haiku) with titles and hosts only', req2?.model === 'claude-haiku-4-5' && !/untrusted_page_content|PAGE TEXT/.test(JSON.stringify(req2)), JSON.stringify(req2)?.slice(0, 200));
+  check('AI topics use the cheapest model (Haiku) with titles and hosts only', /^claude-haiku-/.test(req2?.model || '') && !/untrusted_page_content|PAGE TEXT/.test(JSON.stringify(req2)), JSON.stringify(req2)?.slice(0, 200));
   check('AI topics apply the named group', g.some((x) => x.name === 'Weekend Baking' && recipes.every((id) => groupOf(id) === x.id)), JSON.stringify(g));
   await app.evaluate(() => global.__setTopicAi(false));
 

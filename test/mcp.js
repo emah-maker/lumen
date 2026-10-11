@@ -118,14 +118,17 @@ const os = require('os');
   await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false));
   await app.evaluate(() => { global.__agent.browser.autoApprove = () => false; });
   const clickPromise = call('click', { text: 'More information' });
-  await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});
-  // An outside agent's card is quiet: it never opens the sidebar by itself (the AI button gets its badge); the user opens it to answer.
-  check('an agent approval card does not open the sidebar', await ui.evaluate(() => document.body.classList.contains('sidebar-hidden') && document.getElementById('toggle-sidebar').classList.contains('approval-pending')), 'sidebar opened or no badge');
-  await ui.evaluate(() => window.showSidebar(true));
-  await ui.waitForSelector('.approval:not(.resolved)', { timeout: 10000 }).catch(() => {});
-  const cardTitle = await ui.$eval('.approval:not(.resolved) .approval-title', (e) => e.textContent).catch(() => '');
-  check('approval card names the external agent', cardTitle === 'An external agent (Claude Code) wants to interact with example.com', cardTitle);
-  await ui.click('.approval:not(.resolved) .btn:not(.primary)');
+  // [agents out of sight] An outside agent works in a window of its own, and so does its approval card: the user's window only gets a passive
+  // count in the toolbar (#agents-pending) and opens nothing.
+  const agentUi = async () => { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window')).catch(() => false)) return p; return null; };
+  let aui = null;
+  for (let i = 0; i < 100 && !aui; i++) { aui = await agentUi(); if (!aui) await ui.waitForTimeout(100); }
+  await aui?.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});
+  await ui.waitForSelector('#agents-pending:not([hidden])', { state: 'attached', timeout: 5000 }).catch(() => {});
+  check('an agent approval card does not open the sidebar (or take anything over) in the user window; it shows a count in the toolbar', await ui.evaluate(() => document.body.classList.contains('sidebar-hidden') && !document.getElementById('agents-pending').hidden && !document.querySelector('.approval:not(.resolved)')), 'sidebar opened, no count, or the card is in the user window');
+  const cardTitle = await aui?.$eval('.approval:not(.resolved) .approval-title', (e) => e.textContent).catch(() => '');
+  check('approval card, in the agent own window, names the external agent', cardTitle === 'An external agent (Claude Code) wants to interact with example.com', cardTitle);
+  await aui?.click('.approval:not(.resolved) .btn:not(.primary)');
   r = await clickPromise;
   check('denying the card returns isError to the agent', r.result.isError === true && /did not allow Claude Code/.test(text(r)), JSON.stringify(r));
 
