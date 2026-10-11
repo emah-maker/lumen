@@ -20,6 +20,8 @@ const PRELOAD = path.join(__dirname, 'chat-preload.js');
 // Local file URLs compare without case (Windows paths do) and ignore the query and hash.
 const bare = (url) => { try { const u = new URL(String(url)); u.search = ''; u.hash = ''; return u.protocol === 'file:' ? u.href.toLowerCase() : ''; } catch { return ''; } };
 const isChatUrl = (url) => typeof url === 'string' && bare(url) === CHAT_URL.toLowerCase();
+const CANVAS_FRAME_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'canvas-frame.html')).href;
+const isCanvasFrameUrl = (url) => typeof url === 'string' && bare(url) === CANVAS_FRAME_URL.toLowerCase();
 const displayUrl = () => 'lumen://chat';
 // lumen://chat (chrome://chat works too) typed in the address bar.
 const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(text || '').trim()) ? { page: 'chat' } : null);
@@ -54,7 +56,8 @@ function pickTargetTab(tabs) {
 // moves to an ordinary tab (`leave(url)`) while this one closes, as Settings does.
 function guardTab(wc, leave) {
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  wc.on('will-frame-navigate', (event) => { if (!event.isMainFrame || !isChatUrl(event.url)) event.preventDefault(); });
+  // (a subframe may load only the canvas preview's own page, which the sandboxed <iframe> in chat-canvas.js shows)
+  wc.on('will-frame-navigate', (event) => { if (event.isMainFrame ? !isChatUrl(event.url) : !isCanvasFrameUrl(event.url)) event.preventDefault(); });
   wc.on('will-navigate', (event) => { if (!isChatUrl(event.url)) event.preventDefault(); });
   wc.on('will-redirect', (event) => event.preventDefault());
   wc.on('did-navigate', (_e, url) => { if (!isChatUrl(url)) setImmediate(() => leave(url)); });
@@ -185,4 +188,4 @@ function create(deps) {
   return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
-module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
+module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
