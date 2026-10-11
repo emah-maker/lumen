@@ -29,6 +29,7 @@
     pin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5"/></svg>',
     unpin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5M2.5 2.5l11 11"/></svg>',
     archive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>',
+    more: '<svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>',
     unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
@@ -50,8 +51,9 @@
   // A long history stays usable: grouped by when it was last used (Today, Yesterday, Previous 7 days, Earlier),
   // filtered by a search over titles, and walked with Up/Down/Home/End. Shared by the sidebar and lumen://chat.
   window.chatListTools = {
-    // chats -> [{ label, chats }] in order; empty groups are left out.
-    group(chats, now = Date.now()) {
+    // chats -> [{ label, chats }] in order; empty groups are left out. `months`: lumen://chat's list, which adds Previous 30 days
+    // and then names each older month instead of one "Earlier".
+    group(chats, now = Date.now(), { months = false } = {}) {
       const pinned = chats.filter((c) => c.pinned && !c.archived);
       if (pinned.length) chats = chats.filter((c) => !pinned.includes(c));
       const day = new Date(now); day.setHours(0, 0, 0, 0);
@@ -60,10 +62,22 @@
         { label: window.chatTr('chats.today', 'Today'), test: (t) => t >= start },
         { label: window.chatTr('chats.yesterday', 'Yesterday'), test: (t) => t >= start - 864e5 },
         { label: window.chatTr('chats.week', 'Previous 7 days'), test: (t) => t >= start - 7 * 864e5 },
+        ...(months ? [{ label: window.chatTr('chats.month', 'Previous 30 days'), test: (t) => t >= start - 30 * 864e5 }] : []),
         { label: window.chatTr('chats.earlier', 'Earlier'), test: () => true },
       ];
       const out = bands.map((b) => ({ label: b.label, chats: [] }));
-      for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
+      const monthly = new Map(); // older than 30 days: one group per month (chats arrive newest first)
+      for (const c of chats) {
+        const at = c.updated || c.created || 0;
+        const i = bands.findIndex((b) => b.test(at));
+        if (months && i === bands.length - 1) {
+          const d = new Date(at);
+          const key = at ? `${d.getFullYear()}-${d.getMonth()}` : 'none';
+          if (!monthly.has(key)) monthly.set(key, { label: at ? d.toLocaleDateString([], { month: 'long', year: 'numeric' }) : bands[i].label, chats: [] });
+          monthly.get(key).chats.push(c);
+        } else out[i].chats.push(c);
+      }
+      if (months) { out.pop(); out.push(...monthly.values()); }
       return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
     // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
@@ -152,7 +166,8 @@
     },
   };
   window.chatTr = tr;
-  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true }) => {
+  // `menu`: the row's actions live in a "⋯" menu (lumen://chat's list) instead of a strip of icon buttons.
+  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true, menu = false }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
@@ -184,6 +199,51 @@
       unread: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
       approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
     };
+    // The row's actions as a menu: a "⋯" button shows on hover and focus, and the same buttons open under it with their names.
+    // Escape, a click elsewhere or choosing one closes it; near the bottom of the window it opens upward.
+    const closeMenus = () => {
+      for (const li of document.querySelectorAll('.chat-item.menu-open')) { li.classList.remove('menu-open'); li.querySelector('.chat-more')?.setAttribute('aria-expanded', 'false'); }
+    };
+    if (menu && !window.chatRowMenuWired) {
+      window.chatRowMenuWired = true;
+      document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.chat-item.menu-open')) closeMenus(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const open = document.querySelector('.chat-item.menu-open');
+        if (open) { e.preventDefault(); closeMenus(); open.querySelector('.chat-more')?.focus(); }
+      });
+    }
+    function rowMenu(li, actions) {
+      actions.classList.add('chat-menu');
+      actions.setAttribute('role', 'menu');
+      for (const b of actions.children) {
+        b.setAttribute('role', 'menuitem');
+        b.append(Object.assign(document.createElement('span'), { className: 'chat-menu-label', textContent: b.getAttribute('aria-label') }));
+        b.addEventListener('click', closeMenus);
+      }
+      const more = iconButton('more', tr('chats.more', 'More actions'));
+      more.setAttribute('aria-haspopup', 'menu');
+      more.setAttribute('aria-expanded', 'false');
+      more.onclick = (e) => {
+        e.stopPropagation();
+        const was = li.classList.contains('menu-open');
+        closeMenus();
+        if (was) return;
+        li.classList.add('menu-open');
+        more.setAttribute('aria-expanded', 'true');
+        actions.classList.toggle('up', li.getBoundingClientRect().bottom + actions.offsetHeight + 8 > window.innerHeight);
+        actions.querySelector('button')?.focus();
+      };
+      actions.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        const items = [...actions.querySelectorAll('button:not(:disabled)')];
+        const at = items.indexOf(document.activeElement);
+        e.preventDefault();
+        e.stopPropagation();
+        items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+      });
+      li.insertBefore(more, actions);
+    }
     return function item(chat, isCurrent) {
       const li = document.createElement('li');
       li.className = `chat-item${isCurrent ? ' current' : ''}`;
@@ -350,7 +410,8 @@
         };
         tabActions.push(closeTabs);
       }
-      actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
+      if (menu) actions.append(rename, pinBtn, archiveBtn, exportBtn, ...tabActions, del);
+      else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
@@ -393,6 +454,7 @@
         li.append(stop);
       }
       li.append(actions);
+      if (menu) rowMenu(li, actions);
       return li;
     };
   };

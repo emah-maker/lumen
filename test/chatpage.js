@@ -396,8 +396,104 @@ const fakeClient = (app) => app.evaluate(() => {
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'K', control: true, shift: true }));
   check('Ctrl+Shift+K opens a closed sidebar with the prompt focused', await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && document.activeElement === document.getElementById('prompt'))), 'not open/focused');
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
+
+  // ---- 16. The layout of claude.ai and ChatGPT: a rail with the chat list, a centred column, an empty chat with the composer in the middle
+  await app.close();
+  const profile2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chatpage-layout-'));
+  app = await launch(profile2);
+  ui = await app.firstWindow();
+  await ui.waitForSelector('.tab');
+  await fakeClient(app);
+  await app.evaluate(() => { // chats from different days, to see the groups
+    const store = global.__chats.store(); const real = Date.now; const day = 864e5;
+    for (const [title, d] of [['Plan a trip to Lisbon', 45], ['Compare mortgage rates', 20], ['Fix flaky CI test', 3], ['Summarize the Rust notes', 1.2], ['Draft email to landlord', 0.1]]) {
+      Date.now = () => real() - d * day;
+      store.save(store.newId(), { messages: [{ role: 'user', content: title }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }], settings: {} });
+    }
+    Date.now = real;
+  });
+  await app.evaluate(() => global.__chatPage.open());
+  await waitFor(chatTab);
+  await waitFor(async () => (await inPage('document.readyState')) === 'complete' && (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 5);
+  const geo = (sel) => inPage(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom, vw: innerWidth, vh: innerHeight }; })()`);
+  const settled = async (sel) => { let last = null; for (let i = 0; i < 40; i++) { const g = await geo(sel); if (last && g && Math.abs(g.y - last.y) < 0.5) return g; last = g; await sleep(150); } return last; }; // (the composer glides: measure it once it has stopped)
+  const titles = () => inPage("[...document.querySelectorAll('#cp-items .chat-title')].map((t) => t.textContent)");
+  const rowCount = () => inPage("document.querySelectorAll('#cp-items .chat-item').length");
+  const rail = await geo('#cp-rail');
+  check('the chat list is a rail of about 260px, open on a wide window', rail && rail.w > 240 && rail.w < 290 && rail.x === 0 && rail.vw >= 800, JSON.stringify(rail));
+  const order = await inPage(`(() => { const rail = document.getElementById('cp-rail'); const pos = (sel) => [...rail.querySelectorAll('*')].indexOf(rail.querySelector(sel)); return { n: pos('#new-chat'), s: pos('.chat-search'), l: pos('#cp-items'), kbd: Boolean(rail.querySelector('#new-chat .cp-kbd')?.textContent) }; })()`);
+  check('the rail reads New chat (with its shortcut), Search chats, then the list', order.n >= 0 && order.n < order.s && order.s < order.l && order.kbd, JSON.stringify(order));
+  const groups = await inPage("[...document.querySelectorAll('#cp-items .chat-group')].map((g) => g.textContent)");
+  check('the list is grouped: Today, Yesterday, Previous 7 days, Previous 30 days, then by month', ['Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days'].every((g) => groups.includes(g)) && groups.length === 5 && /\d{4}/.test(groups[4]), JSON.stringify(groups));
+  // search
+  await inPage(`(() => { const s = document.querySelector('.chat-search'); s.value = 'mortgage'; s.dispatchEvent(new Event('input')); })()`);
+  check('searching narrows the list', await waitFor(async () => JSON.stringify(await titles()) === '["Compare mortgage rates"]'), JSON.stringify(await titles()));
+  await inPage(`(() => { const s = document.querySelector('.chat-search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+  await waitFor(async () => (await rowCount()) === 5);
+  // the ⋯ menu on a row
+  await inPage("document.querySelector('#cp-items .chat-item .chat-more').click()");
+  const menu = await inPage(`(() => { const li = document.querySelector('#cp-items .chat-item.menu-open'); const m = li?.querySelector('.chat-menu'); return { open: Boolean(li), shown: m ? getComputedStyle(m).display !== 'none' : false, labels: [...(m?.querySelectorAll('.chat-menu-label') || [])].map((l) => l.textContent), expanded: li?.querySelector('.chat-more').getAttribute('aria-expanded') }; })()`);
+  check('a row has a ⋯ menu: Rename, Pin, Archive, Delete', menu.open && menu.shown && menu.expanded === 'true' && ['Rename', 'Pin to top', 'Archive', 'Delete'].every((l) => menu.labels.includes(l)), JSON.stringify(menu));
+  await inPage("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+  check('Escape closes the row menu', await inPage("!document.querySelector('#cp-items .chat-item.menu-open')"), 'still open');
+  await inPage("document.querySelector('#cp-items .chat-item .chat-more').click(); document.querySelector('#cp-items .chat-item.menu-open .chat-pin').click()");
+  check('Pin from the menu pins the chat (it moves under Pinned)', await waitFor(async () => (await inPage("document.querySelector('#cp-items .chat-group')?.textContent")) === 'Pinned'), String(await inPage("document.querySelector('#cp-items .chat-group')?.textContent")));
+  await inPage("document.querySelector('#cp-items .chat-item .chat-more').click(); document.querySelector('#cp-items .chat-item.menu-open .chat-archive').click()");
+  check('Archive from the menu moves it to Archived, reachable from the rail', await waitFor(async () => /Archived \(1\)/.test(await inPage("document.getElementById('cp-archived').textContent"))), String(await inPage("document.getElementById('cp-archived').textContent")));
+  await inPage("document.getElementById('cp-archived').click()");
+  check('and the Archived row shows just that chat', await waitFor(async () => (await rowCount()) === 1), String(await rowCount()));
+  await inPage("document.getElementById('cp-archived').click()");
+  await waitFor(async () => (await rowCount()) === 4);
+  // collapse with the button and with Ctrl+Shift+S (main hands the key to the page)
+  await inPage("document.getElementById('cp-rail-close').click()");
+  const folded = await waitFor(async () => { const r = await geo('#cp-rail'); return r && r.r <= 1 ? r : null; });
+  check('the rail folds with its button, and a Show button takes its place in the header', Boolean(folded) && await inPage("!document.getElementById('cp-rail-open').hidden && document.body.classList.contains('cp-rail-hidden') && document.getElementById('cp-rail').inert"), JSON.stringify(await geo('#cp-rail')));
+  await app.evaluate(() => global.__chatPage.switchTab(global.__chatPage.tabs().find((x) => x.chat).id));
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'S', control: true, shift: true }));
+  check('Ctrl+Shift+S opens it again', await waitFor(async () => { const r = await geo('#cp-rail'); return r && r.x === 0 && r.w > 240 && !(await inPage("document.body.classList.contains('cp-rail-hidden')")); }), JSON.stringify(await geo('#cp-rail')));
+  // a chat with messages: the column
+  await inPage("document.querySelector('#cp-items .chat-open').click()");
+  await waitFor(async () => (await inPage("document.querySelectorAll('#messages .msg').length")) > 0);
+  const col = await inPage(`(() => { const r = (s) => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return { x: b.x, r: b.right, w: b.width }; }; return { m: r('#messages .msg.assistant'), c: r('#composer'), main: r('#chat-root'), userRight: document.querySelector('#messages .msg.user').getBoundingClientRect().right }; })()`);
+  check('the conversation is a centred column of at most 768px, and the composer is as wide', col.m.w <= 769 && col.m.w > 300 && Math.abs((col.m.x + col.m.r) / 2 - (col.main.x + col.main.r) / 2) < 3 && Math.abs(col.c.w - col.m.w) < 4, JSON.stringify(col));
+  check('your messages sit on the right of the column, in a bubble', Math.abs(col.userRight - col.m.r) < 3, JSON.stringify(col));
+  check('the tab is titled with the chat', await waitFor(async () => (await inPage('document.title')) === (await inPage("document.querySelector('#cp-items .chat-item.current .chat-title').textContent"))), String(await inPage('document.title')));
+  const bottomed = await waitFor(async () => { const g = await geo('#composer'); return g && g.b > g.vh - 90 ? g : null; }, 4000);
+  check('a chat with messages has its composer at the bottom', Boolean(bottomed), JSON.stringify(await geo('#composer')));
+  // a new chat: the greeting, the composer in the middle, starters under it; then the first message moves it down
+  await inPage("document.getElementById('new-chat').click()");
+  await sleep(300);
+  const mid0 = await settled('#composer');
+  const mid = mid0 && mid0.y + mid0.h / 2 < mid0.vh * 0.62 && mid0.y + mid0.h / 2 > mid0.vh * 0.3 ? mid0 : null;
+  check('an empty chat has its composer in the middle of the page', Boolean(mid), JSON.stringify(await geo('#composer')));
+  const greetBox = await geo('#empty .empty-title');
+  const chips = await inPage("[...document.querySelectorAll('#empty .chip')].filter((c) => c.offsetParent).length");
+  const cb = await geo('#empty .chips');
+  check('with a greeting above it, and three or four starters below', Boolean(greetBox) && Boolean(mid) && greetBox.b <= mid.y + 2 && chips >= 3 && chips <= 4 && cb.y >= mid.b - 2, JSON.stringify({ greetBox, chips, cb, mid }));
+  const greeting = await inPage("document.querySelector('#empty .empty-title').textContent");
+  check('the greeting asks what it can help with when no name is known', /What can I help with\?|^Good (morning|afternoon|evening)/.test(greeting), greeting);
+  check('a small disclaimer sits under the composer', /Lumen can make mistakes/.test(await inPage("document.querySelector('.cp-disclaimer').textContent")), 'no disclaimer');
+  await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'first message of a fresh chat'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
+  await sleep(300);
+  const down0 = await settled('#composer');
+  const down = down0 && down0.b > down0.vh - 90 ? down0 : null;
+  check('the first message moves the composer down to the bottom', Boolean(down), JSON.stringify(await geo('#composer')));
+  // a narrow window: the rail is a drawer over the page, closed at first
+  await app.evaluate(async () => { const wc = global.__chatPage.contents(global.__chatPage.tabs().find((x) => x.chat).id); if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); await wc.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width: 700, height: 800, deviceScaleFactor: 1, mobile: false }); });
+  const narrow = await waitFor(async () => (await inPage("document.body.classList.contains('cp-narrow') && document.body.classList.contains('cp-rail-hidden')")) === true);
+  const drawerGeo = await waitFor(async () => { const r = await geo('#cp-rail'); return r && r.r <= 1 ? r : null; }) || await geo('#cp-rail');
+  check('under 800px the rail is a drawer, closed at first, and the conversation has the whole width', Boolean(narrow) && drawerGeo.r <= 1 && (await geo('#chat-root')).x < 2, JSON.stringify(drawerGeo));
+  await inPage("document.getElementById('cp-rail-open').click()");
+  const open = await waitFor(async () => { const r = await geo('#cp-rail'); return r && r.x >= 0 && r.w > 240 && !(await inPage("document.getElementById('cp-scrim').hidden")) ? r : null; });
+  check('its button opens it over the conversation, with a scrim behind', Boolean(open) && (await geo('#chat-root')).w > 600, JSON.stringify(await geo('#cp-rail')));
+  await inPage("document.getElementById('cp-scrim').click()");
+  check('a click on the scrim closes the drawer', await waitFor(async () => { const r = await geo('#cp-rail'); return r && r.r <= 1; }), JSON.stringify(await geo('#cp-rail')));
+  const unlabeled = await inPage(`[...document.querySelectorAll('button')].filter((b) => b.offsetParent !== null && !(b.getAttribute('aria-label') || b.textContent.trim() || b.title)).map((b) => b.id || b.className)`);
+  check('every button, in the rail, header and menus, has a name', Array.isArray(unlabeled) && unlabeled.length === 0, JSON.stringify(unlabeled));
+  await app.evaluate(async () => { const wc = global.__chatPage.contents(global.__chatPage.tabs().find((x) => x.chat).id); await wc.debugger.sendCommand('Emulation.clearDeviceMetricsOverride'); });
   await app.close();
   server.close();
+  fs.rmSync(profile2, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

@@ -2131,6 +2131,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
+const stuckLoad = require('./features/stuck-load');
 function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
@@ -2370,6 +2371,14 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
+  // One of Lumen's own pages whose load never commits (white page, spinner, empty console) is loaded again (features/stuck-load.js).
+  stuckLoad.guard(wc, {
+    url,
+    graceMs: TEST ? Number(process.env.LUMEN_STUCK_LOAD_GRACE_MS) || undefined : undefined,
+    fresh: (u) => (isNewTab(u) ? newTabUrl() : u), // (the new-tab page's data may have moved on)
+    alive: () => alive(tab) && tab.view.webContents === wc,
+    log: (msg) => console.warn(msg),
+  });
   // The saved back/forward list is used only when its current entry is the page `url` names (tabSleep.wakePlan);
   // otherwise, or if the restore throws or leaves the view blank, the plain address loads.
   const plan = history?.entries?.length ? tabSleep.wakePlan({ sleepUrl: url, history, isError: isErrorPage }) : null;
@@ -4359,6 +4368,8 @@ function handleShortcut(event, input) {
   if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
   const extra = extraShortcut(input);
   if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
+  // The full-page chat's own keys (renderer/chat-page.js listens): Ctrl+Shift+S folds or opens the chat list, Ctrl+Shift+O starts a new chat.
+  if (mod && input.shift && !input.alt && (key === 's' || key === 'o') && wc && activeTabIsChatPage()) { wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: '${key === 's' ? 'rail' : 'new'}' }))`).catch(() => {}); event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') reopenLastClosed();
   else if (mod && input.shift && key === 'a') openTabSearch();
