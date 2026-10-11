@@ -1249,6 +1249,7 @@ function decorateCode(root, { colour = false } = {}) {
       setTimeout(() => { b.textContent = t('chat.copyCode'); }, 1400);
     });
     head.append(b);
+    window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
     window.codeExtras?.decorate(box, pre, { finished: colour || !root.classList?.contains('streaming') }); // Wrap button; ```mermaid as a diagram
