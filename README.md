@@ -8,7 +8,7 @@
 
 - **An AI that does things, not just chats.** It reads the page you're on and acts on it: clicks, types, fills in forms, opens and groups tabs, and researches several pages at once. It asks before acting on a new site, and a form that doesn't fill completely is never submitted.
 - **Your choice of model.** Claude (Opus, Sonnet, Haiku, Fable), OpenAI, Grok, Gemini and OpenRouter. Use your Claude account through Claude Code, add a key, sign in to Anthropic with its CLI, or sign in with OpenRouter. The toolbar button takes on each company's mark.
-- **A real browser underneath.** Tabs that group themselves by site or by topic, a bookmarks menu, a searchable history page, a downloads menu (with a list in Settings), find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
+- **A real browser underneath.** Tabs that group themselves by site or by topic, a bookmarks menu, a searchable history page, a downloads menu (with a list in Settings), find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, fingerprinting and tracking protection on by default, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
 - **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, the current chat is encrypted at rest, and the start page makes no network requests.
 - **Calm to look at.** Light and dark themes that follow your system, and spring animations.
 
@@ -248,6 +248,7 @@ Compact is about 4–5× smaller than a full read. The big savings come from not
 ## Privacy and security
 
 - **No telemetry, no analytics, no crash reports.** Lumen has no servers of its own. What leaves your computer, and to whom: [PRIVACY.md](PRIVACY.md).
+- **Sites see less of you, by default.** Pages can't tell when you leave the tab, switch apps, use split screen or move the pointer off the page. They see a screen the size of your window. Canvas, WebGL and audio fingerprints change from site to site, WebRTC can't reveal your local or VPN-hidden IP address, tracking parameters (`utm_`, `fbclid`, `gclid`…) come off links before the page opens, link-click pings and beacons are blocked, and Global Privacy Control is sent. Each one has its own switch in Settings → Privacy and security. Details and limits: [docs/privacy-protections.md](docs/privacy-protections.md).
 - **Keys and the chat** are encrypted with the OS keychain. Lumen keeps one chat; **New chat** replaces it. Without a keychain, keys aren't saved (use the environment variables) and the chat isn't kept between sessions.
 - **Background reading and web search** run in a separate in-memory session with none of your cookies or logins. That session denies every permission request and cancels downloads.
 - **Lumen's own UI is locked down.** The browser UI, the address-bar suggestions and the dialog overlay can't be navigated away or open popups (links open as tabs), web pages in tabs can't send the UI's privileged messages, and a link dropped on the window opens as a tab.
@@ -315,6 +316,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
+- [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
@@ -347,7 +349,7 @@ docs/                   reference pages (below) and docs/media (the README's scr
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
 ```
 
-`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `passkeys`, `webauthn-windows`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
+`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `hide-activity`, `tracking-params`, `passwords`, `password-page`, `passkeys`, `webauthn-windows`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
 
 **Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `npm run test:units` runs every pure-node suite (`scripts/test-units.js`, no window), which CI runs on pull requests and the release build runs before packaging. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 
