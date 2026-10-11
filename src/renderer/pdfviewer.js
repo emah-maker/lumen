@@ -101,6 +101,18 @@ const password = $('password');
 let pendingPassword = null;
 password.addEventListener('submit', (e) => { e.preventDefault(); if (!pendingPassword) return; const cb = pendingPassword; pendingPassword = null; password.hidden = true; cb($('passwordInput').value); $('passwordInput').value = ''; });
 
+// The first page's text, for Organize (main.js readFileText, through executeJavaScript: the page has no IPC): at most `max` characters, nothing for a PDF that did not open.
+let docOpened;
+const docReady = new Promise((resolve) => { docOpened = resolve; });
+async function firstPageText(max = 300) {
+  const d = await docReady;
+  if (!d) return '';
+  try {
+    const content = await (await d.getPage(1)).getTextContent();
+    return content.items.map((item) => item.str || '').join(' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  } catch { return ''; }
+}
+
 async function open() {
   if (!source) { say('There is no PDF in this address.'); return; }
   say('Opening…');
@@ -118,10 +130,12 @@ async function open() {
   };
   let doc;
   try { doc = await task.promise; } catch (err) {
+    docOpened(null);
     say(err && err.name === 'PasswordException' ? 'This PDF needs its password.' : err && err.name === 'MissingPDFException' ? 'The PDF could not be found. It may have been moved or deleted.' : 'This PDF could not be opened. It may be damaged, or not a PDF.');
     return;
   }
   say('');
+  docOpened(doc);
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
   $('pageCount').textContent = `/ ${doc.numPages}`;
@@ -141,7 +155,7 @@ async function open() {
 
 // What main.js's keyboard handling and the AI's tools call (the page has no IPC of its own).
 window.lumenPdf = {
-  find: openFind, zoomIn, zoomOut, zoomReset,
+  find: openFind, zoomIn, zoomOut, zoomReset, firstPageText,
   state: () => ({ page: viewer.currentPageNumber, pages: viewer.pagesCount, scale: viewer.currentScale, scrollTop: Math.round(container.scrollTop), scrollMax: Math.max(0, container.scrollHeight - container.clientHeight), height: container.clientHeight }),
 };
 open();

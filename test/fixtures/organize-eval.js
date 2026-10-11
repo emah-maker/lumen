@@ -123,4 +123,7 @@ const sessions = [
   },
 ];
 const more = require("./organize-eval-more");
-module.exports = { sessions: [...sessions, ...more.sessions], base: sessions };
+// Sessions where tabs show files (PDFs and slides in the viewers, files from disk, web PDFs): scored beside the rest by scripts/eval-organize.js and
+// test/organize-eval-units.js, apart from `sessions` (scripts/eval-organize-ai.js has cached model answers for those only).
+const files = require('./organize-files');
+module.exports = { sessions: [...sessions, ...more.sessions], base: sessions, files: files.sessions };

@@ -19,5 +19,13 @@ for (const s of sessions) {
 }
 console.log(`EVAL SET  P/R/F1 ${(sum.precision / n).toFixed(2)}/${(sum.recall / n).toFixed(2)}/${(sum.f1 / n).toFixed(2)}  loose-wrong ${sum.wrong}  names right ${sum.named}/${sum.labelled}`);
 console.log(`FIRST ${baseSum.n} (round 1's set)  P/R/F1 ${(baseSum.precision / baseSum.n).toFixed(2)}/${(baseSum.recall / baseSum.n).toFixed(2)}/${(baseSum.f1 / baseSum.n).toFixed(2)}`);
+// Tabs that show files (test/fixtures/organize-files.js), as the app sees them. On main before file tabs were organized they scored recall 0.04, F1 0.07.
+const fileSum = { f1: 0, precision: 0, recall: 0, n: 0 };
+for (const s of fixtures.files) {
+  const r = run.runSession(mod, s, verbose);
+  console.log(`${s.name.padEnd(52)} P/R/F1 ${r.precision.toFixed(2)}/${r.recall.toFixed(2)}/${r.f1.toFixed(2)}  loose-wrong ${r.wronglyGroupedLoose}  groups ${r.total}/${r.labelled}  named ${r.named}`);
+  fileSum.n++; fileSum.f1 += r.f1; fileSum.precision += r.precision; fileSum.recall += r.recall;
+}
+console.log(`FILE SESSIONS  P/R/F1 ${(fileSum.precision / fileSum.n).toFixed(2)}/${(fileSum.recall / fileSum.n).toFixed(2)}/${(fileSum.f1 / fileSum.n).toFixed(2)}`);
 console.log('--- older sessions (test/topics-sessions.js)');
 run.main(mod, false);

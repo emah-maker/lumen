@@ -86,6 +86,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     if (data) {
       index = { current: ID_RE.test(data.current) ? data.current : null, chats: Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [] };
+      if (Array.isArray(data.projects)) index.projects = data.projects.filter((p) => ID_RE.test(p?.id) && typeof p.name === 'string'); // (optional: older indexes have none)
       remember(index);
       return index;
     }
@@ -253,6 +254,54 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const setPinned = (id, on) => setFlag(id, 'pinned', Boolean(on));
   const setArchived = (id, on) => setFlag(id, 'archived', Boolean(on));
 
+  // ---- projects: named groups of chats with instructions that go to the AI in each of their chats.
+  // Only the index holds them: `projects` ([{ id, name, instructions, created }]) next to `chats`, and an optional `project` id on a
+  // chat's entry. Older indexes have neither and load as they were. Removing a project only clears that field on its chats: no chat
+  // or chat file is ever touched.
+  const MAX_PROJECTS = 60;
+  const MAX_NAME = 60;
+  const MAX_INSTRUCTIONS = 4000;
+  const cleanText = (text, max) => String(text ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').replace(/\r\n?/g, '\n').trim().slice(0, max);
+  const projectList = () => readIndex().projects || [];
+  const projects = () => projectList().map((p) => ({ ...p }));
+  const projectById = (id) => projectList().find((p) => p.id === id) || null;
+  // New project (no id) or an edit; null for an empty name, a full list, a degraded index or an unknown id.
+  function saveProject({ id, name, instructions } = {}) {
+    const idx = readIndex();
+    const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
+    if (idx.degraded || !clean) return null;
+    let project = id ? projectById(id) : null;
+    if (id && !project) return null;
+    if (!project) {
+      if (projectList().length >= MAX_PROJECTS) return null;
+      project = { id: newId(), name: clean, instructions: '', created: now() };
+      (idx.projects ||= []).push(project);
+    }
+    project.name = clean;
+    if (instructions !== undefined) project.instructions = cleanText(instructions, MAX_INSTRUCTIONS);
+    writeIndex();
+    return { ...project };
+  }
+  function removeProject(id) {
+    const idx = readIndex();
+    if (idx.degraded || !projectById(id)) return false;
+    idx.projects = idx.projects.filter((p) => p.id !== id);
+    if (!idx.projects.length) delete idx.projects;
+    for (const c of idx.chats) if (c.project === id) delete c.project;
+    writeIndex();
+    return true;
+  }
+  // Put a chat in a project (null: out of any). False for an unknown chat or project.
+  function setProject(chatId, projectId) {
+    const entry = entryOf(chatId);
+    if (!entry || entry.trashed || readIndex().degraded) return false;
+    if (projectId) { if (!projectById(projectId)) return false; entry.project = projectId; } else delete entry.project;
+    writeIndex();
+    return true;
+  }
+  // The project a chat is in, or null (a chat whose project was removed, or an index that lost its projects, has none).
+  const projectOf = (chatId) => { const entry = entryOf(chatId); return (entry?.project && projectById(entry.project)) || null; };
+
   // Delete with undo, step 1: the chat leaves the list (and Archived) but its file stays. restore() brings it back; remove()
   // (after the undo time) erases it.
   function trash(id) {
@@ -274,6 +323,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // Chats waiting out their undo time (also after a restart).
   const trashed = () => readIndex().chats.filter((c) => c.trashed).map((c) => ({ id: c.id, at: c.trashed }));
 
+  // Every message of yours is saved with the context Lumen added around it (<browser_state>, a file list...): whole tagged blocks
+  // come out first, so search sees what you typed (cleanSaved alone would cut the message at the first tag).
+  const WRAPPED = /<([a-z]+_[a-z_]+)\b[^>]*>[\s\S]*?<\/\1>\s*/g;
   // What was said in a chat, for search (never tool results or attached page text), cut at a sane size.
   const SEARCH_CHARS = 200000;
   function textOf(snapshot) {
@@ -283,7 +335,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : [];
       for (const b of blocks) {
         if (b?.type !== 'text' || typeof b.text !== 'string') continue;
-        const t = (m.role === 'user' ? cleanSaved(b.text) : b.text).replace(/\s+/g, ' ').trim();
+        const t = (m.role === 'user' ? cleanSaved(b.text.replace(WRAPPED, '')) : b.text).replace(/\s+/g, ' ').trim();
         if (!t) continue;
         parts.push(t);
         if ((n += t.length) > SEARCH_CHARS) return parts.join('\n').slice(0, SEARCH_CHARS);
@@ -363,7 +415,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     known.clear(); foreign.clear(); fileChecks.clear();
   }
 
-  return { list, has, load, save, rename, remove, trash, restore, trashed, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
+  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

@@ -2925,7 +2925,7 @@ $('model').addEventListener('change', async (e) => {
   if (switched === 'next-message') {
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switchNext', { name: label }) }));
   } else if (messages.querySelector('.msg')) {
-    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switched', { name: label }) }));
+    append(Object.assign(document.createElement('div'), { className: 'notice model-switch', textContent: t('models.switched', { name: label }) })); // (the chat page draws it as a divider)
   }
   prompt.focus();
 });
@@ -4755,6 +4755,7 @@ function applySync(view) {
   showHistory(view?.items);
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
+  chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   chatHost.chatChanged?.();
 }
 window.assistant.onSync?.(({ view } = {}) => applySync(view));
@@ -5557,6 +5558,7 @@ function startChat() {
     unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
+    project: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
     sharehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 8.2v3.6M6.2 10h3.6"/></svg>',
     movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
@@ -5691,7 +5693,8 @@ function startChat() {
   };
   window.chatTr = tr;
   // `menu`: the row's actions live in a "⋯" menu (lumen://chat's list) instead of a strip of icon buttons.
-  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true, menu = false }) => {
+  // `extra(chat)`: more buttons for the row's menu (the chat page's "Move to project").
+  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true, menu = false, extra = null }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
@@ -5934,7 +5937,7 @@ function startChat() {
         };
         tabActions.push(closeTabs);
       }
-      if (menu) actions.append(rename, pinBtn, archiveBtn, exportBtn, ...tabActions, del);
+      if (menu) actions.append(rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, ...tabActions, del);
       else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
@@ -6246,7 +6249,15 @@ const PAGE_ICONS = {
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
+  // A tab that shows a file with no icon of its own (tab.fileKind: features/file-tabs.js iconKind): a page with a folded corner, marked by what the file is.
+  'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
+  'file-pdf': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25M6 11.75h4M6 9.5h4"/>',
+  'file-slides': '<rect x="2.25" y="3.25" width="11.5" height="7.5" rx="1"/><path d="M8 10.75v2.5M5.5 13.25h5"/>',
+  'file-image': '<rect x="2.25" y="3" width="11.5" height="10" rx="1.25"/><circle cx="5.9" cy="6.3" r="1"/><path d="m2.5 12 3.6-3.4 2.4 2.2 1.7-1.5 3.3 2.7"/>',
+  'file-sheet': '<rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1"/><path d="M2.25 6.25h11.5M2.25 9.75h11.5M6.25 2.75v10.5"/>',
+  'file-code': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="m6.6 8.2-1.4 1.6 1.4 1.6M9.4 8.2l1.4 1.6-1.4 1.6"/>',
 };
+const fileIcon = (tab) => (tab.fileKind ? `file-${tab.fileKind}` : null);
 
 function globeIcon(page = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -6613,7 +6624,7 @@ function createGhostTab(tab) {
   el.className = 'tab-drop-ghost';
   const inner = Object.assign(document.createElement('div'), { className: 'tab-inner' });
   const urls = (Array.isArray(tab.favicons) ? tab.favicons : []).filter((u) => typeof u === 'string');
-  let icon = globeIcon(tab.page || null);
+  let icon = globeIcon(tab.page || fileIcon(tab));
   if (urls.length) {
     icon = Object.assign(document.createElement('img'), { className: 'tab-favicon', alt: '' });
     let i = 0;
@@ -7392,9 +7403,9 @@ function updateTabEl(el, tab, group, activeId) {
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const monoHost = tab.page ? '' : siteHostOf(tab.url);
-  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page));
-  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}:${monoHost}`;
+  const monoHost = tab.page || tab.fileKind ? '' : siteHostOf(tab.url);
+  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page || fileIcon(tab)));
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || fileIcon(tab) || ''}:${monoHost}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;

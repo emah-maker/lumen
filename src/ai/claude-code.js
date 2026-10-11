@@ -63,17 +63,28 @@ function transientFailure(text, code) {
   if (PERMANENT_FAILURE.test(t)) return false;
   if (code === -1) return true; // the spawn itself failed
   if (TRANSIENT_FAILURE.test(t)) return true;
-  return !t && typeof code === 'number' && code !== 0; // exited at once, silent
+  return !t && (code === null || typeof code === 'number') && code !== 0; // exited at once (or was killed), silent
 }
 
+const SIGNED_OUT_STRONG = /not logged in|please run \/login|\/login|invalid api key|b401b|token (has )?(expired|been revoked)/i;
+const SIGNED_OUT_WEAK = /oauth|authenticat|credentials/i;
 // Turns a CLI failure into what the user should do about it.
 function describeFailure(text, code) {
   const t = String(text || '').trim();
-  if (isSignedOutText(t, /not logged in|please run \/login|\/login|invalid api key|b401b|token (has )?(expired|been revoked)/i, /oauth|authenticat|credentials/i)) {
-    return { text: 'Claude Code is not signed in. Open a terminal, run `claude` once, then type /login. Lumen never sees your Claude login.' };
+  if (isSignedOutText(t, SIGNED_OUT_STRONG, SIGNED_OUT_WEAK)) {
+    return { text: 'Claude Code is not signed in. Open a terminal, run `claude` once, then type /login. Lumen never sees your Claude login.', summary: 'Claude Code is not signed in' };
   }
   if (/usage limit|limit reached|rate.?limit|out of (extra )?usage|resets? (at|in)|quota/i.test(t)) {
     return { text: `Your Claude plan's usage limit is reached. ${t.split('\n')[0].slice(0, 200)}` };
+  }
+  if (/no conversation found|session.*not found/i.test(t)) {
+    return { text: "Claude Code no longer has this chat's saved session (an update or a cleanup can remove it). Press Retry and Lumen starts a fresh session.", summary: 'Claude Code lost this chat’s session' };
+  }
+  if (/EADDRINUSE|address already in use/i.test(t)) {
+    return { text: 'A network port Claude Code needs is already in use by another program. Close other Claude Code sessions or restart Lumen, then press Retry.', summary: 'Claude Code could not connect (port in use)' };
+  }
+  if (/spawn (EPERM|EACCES|EFTYPE|UNKNOWN)|EACCES/i.test(t)) {
+    return { text: `Windows or your security software would not let Lumen run Claude Code (${t.split('\n')[0].slice(0, 160)}). Allow claude.exe in your security software, or reinstall Claude Code, then press Retry.`, summary: 'Claude Code was blocked from starting' };
   }
   return { text: `Claude Code stopped${code !== null && code !== undefined ? ` (exit ${code})` : ''}: ${t.split('\n').slice(0, 3).join(' ').slice(0, 300) || 'no output'}` };
 }
@@ -149,6 +160,11 @@ const WARM_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // A message whose process says nothing (no stdout line, no Lumen tool call in flight) for this long
 // is ended with an error; the next message starts the process again with --resume.
 const WATCHDOG_MS = 90 * 1000;
+// The silence limit is this many times longer right after a tool result went back to the model and before its next line: the CLI
+// is sending the result (a generated picture, a PDF's text) and the model reads it before the first token, which on a busy
+// API or a big result takes minutes without one line of output. A tool call that is running (Lumen's own, or the CLI's in
+// full access) switches the watchdog off altogether; see turn().
+const AFTER_TOOL_FACTOR = 4;
 // A fresh process that has not printed its first line yet is only starting (the CLI loads its settings and connects its MCP
 // servers, slowly on a machine busy with other Claude Code sessions), so it gets this much longer before it counts as hung.
 // Slowness alone is never a failure, and never a reason to hand the message to another model.
@@ -394,7 +410,7 @@ class ClaudeCodeEngine {
     // process's messages, so a capped chat gets a fresh (pre-started) process per message instead.
     // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
     // leftover output is being read off (take() waits for it).
-    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
+    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
@@ -424,7 +440,7 @@ class ClaudeCodeEngine {
     child.stdout.on('data', lineReader((line) => {
       if (process.env.LUMEN_CC_DEBUG) fs.appendFileSync(process.env.LUMEN_CC_DEBUG, `${line}\n`);
       let msg;
-      try { msg = JSON.parse(line); } catch { return; }
+      try { msg = JSON.parse(line); } catch { proc.raw = `${proc.raw}${line}\n`.slice(-2000); return; } // (a sign-in or update prompt the CLI prints as plain text: kept for the stall message)
       proc.turn?.handle(msg); // between messages there is no turn: nothing to show it on
     }));
     child.stderr.on('data', (d) => { proc.stderr = (proc.stderr + d).slice(-4000); });
@@ -676,6 +692,8 @@ class ClaudeCodeEngine {
     const active = { tag, emit, signal, child: proc.child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null, builtin: new Set() };
     this.active = active;
 
+    // The same message once more on a fresh process (attempt 1: no further automatic retry).
+    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, ...over }, { fresh: true, attempt: 1 });
     let text = '';
     let finalText = '';
     let result = null;
@@ -691,17 +709,24 @@ class ClaudeCodeEngine {
     let sent = false; // the message went into stdin
     let over = false; // the turn has ended (the watchdog stays off)
     let stalled = false;
+    let mcpDown = null; // the CLI's report of a failed connection to Lumen's tools (init)
     // Watchdog: any line from the CLI restarts it; it is off while a Lumen tool call runs (an approval card
     // can wait on the user). A CLI that says nothing for watchdogMs is hung: end it and say so.
     // A fresh process that has said nothing yet is starting, not hung: it gets the longer startup allowance, and a note on
     // screen when it is slow (heard: its first line has come).
     let heard = reused;
     let slow = null;
-    const waitMs = () => (heard ? this.watchdogMs : Math.max(this.watchdogMs, this.startupWatchdogMs));
+    // afterTool: a tool result went back to the model and nothing has come since (its next call is slow to start: AFTER_TOOL_FACTOR).
+    // pending: the tool calls this turn made that have no result yet (id -> name), so a stall can say what it was waiting for.
+    let afterTool = false;
+    const pending = new Map();
+    let stall = null; // { ms, heard, tool, said } of the silence that ended the turn
+    const waitMs = () => (heard ? this.watchdogMs * (afterTool ? AFTER_TOOL_FACTOR : 1) : Math.max(this.watchdogMs, this.startupWatchdogMs));
     active.arm = () => {
       clearTimeout(active.dog);
       if (!this.watchdogMs || over || active.inflight > 0) return;
-      active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, waitMs());
+      const ms = waitMs();
+      active.dog = setTimeout(() => { stalled = true; stall = { ms, heard, tool: [...pending.values()][0] || '', said: [proc.raw, proc.stderr].join(' ').trim() }; this.dispose(proc); settle({ code: null }); }, ms);
     };
     if (!reused && this.slowStartMs) { slow = setTimeout(() => { if (!heard && !over) emit({ type: 'status', text: 'Claude Code is still starting (this computer is busy)…' }); }, this.slowStartMs); slow.unref?.(); }
     // "Reply complete" (once per message): the screen clears its working state and takes the next message now. This run
@@ -717,6 +742,8 @@ class ClaudeCodeEngine {
     const handle = (msg) => {
       heard = true;
       clearTimeout(slow);
+      if (msg.type === 'stream_event' || msg.type === 'assistant') afterTool = false; // the model is answering again
+      else if (msg.type === 'user' && (Array.isArray(msg.message?.content) ? msg.message.content : []).some((b) => b.type === 'tool_result')) afterTool = true;
       active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
         rateLimit = msg.rate_limit_info;
@@ -724,7 +751,9 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
         const lumen = (msg.mcp_servers || []).find((s) => s.name === 'lumen');
-        if (lumen && lumen.status !== 'connected') emit({ type: 'notice', text: `Claude Code could not connect to Lumen (${lumen.status}).` });
+        // Its connection to Lumen's tools failed: nothing it would do this turn works, so the process is dropped and the turn starts over once (below).
+        if (lumen && /^(failed|needs-auth)$/.test(lumen.status)) { mcpDown = lumen.status; this.dispose(proc); settle({ code: null }); }
+        else if (lumen && lumen.status !== 'connected' && lumen.status !== 'pending') emit({ type: 'notice', text: `Claude Code could not connect to Lumen (${lumen.status}).` });
       } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
         const meta = msg.compact_metadata || {};
         compacted = { trigger: meta.trigger || null, pre: Number(meta.pre_tokens) || 0, post: Number(meta.post_tokens) || 0 };
@@ -749,6 +778,7 @@ class ClaudeCodeEngine {
         if (msg.message?.stop_reason === 'end_turn') replyComplete(msg); // (a CLI that puts it on the message itself)
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
+          if (b.type === 'tool_use' && b.id && !msg.parent_tool_use_id) pending.set(b.id, String(b.name || '').replace(/^mcp__lumen__/, ''));
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
           active.builtin.add(b.id);
           if (b.name === 'Bash') for (const d of dirsInCommand(b.input?.command)) this.runDirs.add(d); // (freshRoots)
@@ -756,8 +786,9 @@ class ClaudeCodeEngine {
           emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
         }
         active.arm();
-      } else if (msg.type === 'user' && active.builtin.size) {
+      } else if (msg.type === 'user') {
         for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
+          if (b.type === 'tool_result') pending.delete(b.tool_use_id);
           if (b.type !== 'tool_result' || !active.builtin.delete(b.tool_use_id)) continue;
           active.inflight = Math.max(0, active.inflight - 1);
           for (const p of toolImagePaths(b.content, { home: os.homedir() })) if (this.runImagePaths.length < 20 && !this.runImagePaths.includes(p)) this.runImagePaths.push(p);
@@ -813,10 +844,34 @@ class ClaudeCodeEngine {
     }
 
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
-    if (code === 'ENOENT') { this.bin = null; return notInstalled(); }
+    if (code === 'ENOENT') {
+      // The file the process was started from is gone: Claude Code updated itself (its folder changes on Windows) or was removed.
+      // Looked for again once, and the message goes on with whatever is found at a new place.
+      const gone = this.bin;
+      this.bin = undefined;
+      if (!attempt) {
+        const found = await this.detect(true);
+        if (found && found !== gone) { emit({ type: 'status', text: 'Claude Code moved (it updated?), reconnecting…' }); return again(); }
+      }
+      this.bin = null;
+      emit({ type: 'error', text: `Claude Code isn't installed at ${gone || 'its usual place'} any more (an update or an uninstall moved it), and Lumen found no other copy. ${INSTALL_HINT}`, summary: 'Claude Code was not found' });
+      return { text: '', sessionId: null, failed: true };
+    }
+    if (mcpDown) {
+      if (!attempt) { emit({ type: 'status', text: 'Reconnecting Claude Code to Lumen…' }); return again(); }
+      emit({ type: 'error', text: `Claude Code could not connect to Lumen's tools (${mcpDown}). Restart Lumen and press Retry; if it keeps failing, check that no firewall or VPN blocks connections to 127.0.0.1, or pick another model.`, summary: 'Claude Code could not connect to Lumen' });
+      return { text: '', sessionId: newSession, failed: true, rateLimit };
+    }
     if (stalled) {
+      const s = stall || { ms: waitMs(), heard: true, tool: '', said: '' };
+      // A kept process that hung before anything ran is replaced, and the message goes again by itself (once).
+      if (!attempt && reused && !text && !finalText && active.tools === 0 && !pending.size && !signal.aborted) { emit({ type: 'status', text: 'Claude Code stopped answering, reconnecting…' }); return again(); }
+      const secs = Math.round(s.ms / 1000); // (the sign-in / start-up notes below say it in the same words)
+      // It said something that is not JSON (a sign-in prompt, "update available?") and then waited for a person: say that.
+      if (s.said && isSignedOutText(s.said, SIGNED_OUT_STRONG, SIGNED_OUT_WEAK)) emit({ type: 'error', ...describeFailure(s.said, null) });
       // noFallback: slowness alone never hands the message to another model (agent.js runTask).
-      emit({ type: 'error', noFallback: true, text: `Claude Code stopped responding for ${Math.round(waitMs() / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
+      else if (!s.heard) emit({ type: 'error', noFallback: true, text: `Claude Code stopped responding while starting (nothing for ${secs} seconds), so Lumen ended it.${s.said ? ` It printed: ${s.said.replace(/\s+/g, ' ').slice(0, 160)}.` : ''} Press Retry. If it keeps happening, run \`claude\` once in a terminal to see why it does not start (it may be updating or waiting for you), or reinstall it.`, summary: 'Claude Code did not start' });
+      else emit({ type: 'error', noFallback: true, text: `Claude Code stopped responding for ${secs} seconds${s.tool ? ` while waiting for ${s.tool}` : ''}, so Lumen ended it. Press Retry to pick up where it left off.`, summary: 'Claude Code stopped responding' });
       return { text, sessionId: newSession, failed: true, rateLimit };
     }
     // Sent again on a fresh process only when nothing ran: a turn that called a tool may have acted already.
@@ -834,6 +889,8 @@ class ClaudeCodeEngine {
       const expired = /no conversation found|session.*not found/i.test(`${result?.result || ''}${(result?.errors || []).join('\n')}${proc.stderr}`);
       if (expired && resume && quietExpired && !text) return { text: '', sessionId: null, failed: true, expired: true, usage, rateLimit };
       const failure = result?.result || (result?.errors || []).join('\n') || proc.stderr;
+      // A session id the CLI still holds from a start that never finished ("already in use"): the same chat is continued with --resume instead.
+      if (!attempt && !resume && !text && !finalText && !signal.aborted && /session id .*already in use|already in use/i.test(failure)) return again({ resume: true });
       // [cc settings] Nothing ran, and the CLI had none of the user's settings: they may hold the credentials or proxy it needs.
       // Retried once with them; this engine keeps them from then on (needUserSettings), and the user is told which setting that is.
       if (!userSettings && !fullAccess && !expired && !text && !finalText && active.tools === 0 && settingsRetryable(failure)) {
