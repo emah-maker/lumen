@@ -427,6 +427,10 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* The spark turns as Claude arrives. */
 #toggle-sidebar svg { transition: transform var(--t-snappy) var(--spring-bouncy); }
 #toggle-sidebar[aria-pressed="true"] svg { transform: rotate(45deg); }
+/* Nothing connected yet: the button says what it is for (its label), not just a sparkle. */
+#toggle-sidebar.needs-setup { display: inline-flex; align-items: center; justify-content: center; width: auto; padding: 0 10px 0 8px; gap: 6px; }
+#toggle-sidebar.needs-setup::after { content: attr(aria-label); font-size: 13px; font-weight: 500; color: var(--accent); white-space: nowrap; }
+@media (max-width: 760px) { #toggle-sidebar.needs-setup { width: 30px; padding: 0; } #toggle-sidebar.needs-setup::after { display: none; } }
 
 /* Address field: a quiet tinted field at rest, centered like Safari; it lifts into a lit surface on focus. */
 .omnibox {
@@ -1279,6 +1283,16 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .setup-option:disabled { opacity: 0.7; }
 .setup-name { font-weight: 500; }
 .setup-detail { color: var(--muted); font-size: 12px; }
+/* Nothing found on this computer: the ways in that need no install come first, the coding agents (which need one) after. */
+.setup.cold #setup-openrouter { order: 1; }
+.setup.cold #setup-keys { order: 2; }
+.setup.cold #setup-claude-code { order: 3; }
+.setup.cold #setup-claude-code-get { order: 4; }
+.setup.cold .setup-more { order: 5; }
+.setup.cold .setup-error { order: 9; }
+.setup-more { margin: 2px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.setup-more[hidden] { display: none; }
+.setup-more .link-btn { font-size: inherit; }
 
 
 /* ---------- AI agents over MCP (session B) ---------- */

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A clearer way in when no AI is connected yet.** The toolbar button now reads "Set up AI" instead of showing only a sparkle. The setup card in the sidebar and the welcome lead with the two choices that need nothing installed (sign in with OpenRouter, or add an API key), then Claude Code; Codex, Grok Build and Antigravity no longer get greyed-out rows when they are not on the computer, just one line saying how to bring them. Settings, AI and agents says "No AI connected yet." with a **Connect an AI** button, and no longer shows an empty model box beside it.
+- **The toolbar button no longer says "Set up AI" once an AI is connected.** With Auto picked (the default when you connect more than one AI), the button kept asking you to set up. It now says "Lumen".
 - **Deleting a saved login asks first.** In Settings, Delete on one saved password used to remove it at once with no way back; it now says "Delete? Click again", the same as Delete all. Clear list under Recent downloads asks the same way.
 - **A reopened chat still shows where you switched models.** The "Now using ..." line between messages used to vanish when you came back to the chat; it is drawn again before the first message the new model answered (not when Auto picked the model itself).
 

@@ -61,6 +61,9 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
 
 (async () => {
   // ---------- locating: Windows ----------
+  const m0 = machine({ files: { 'C:\\tools\\codex.exe': '' }, env: { ...winEnv('C:\\Windows\\System32;C:\\tools'), LUMEN_CODEX_BIN: 'C:\\nowhere\\codex.exe' } });
+  const hit0 = await find(m0);
+  check('LUMEN_CODEX_BIN is the only Codex there is: a missing file means none, even with one on PATH (so a test can stand in "no Codex")', hit0.found === false && m0.calls.length === 0, JSON.stringify(hit0));
   let m = machine({ files: { 'C:\\tools\\codex.exe': '' }, env: winEnv('C:\\Windows\\System32;C:\\tools') });
   let hit = await find(m);
   check('standalone codex.exe on PATH: run directly, no shell, no node', hit.found && hit.command === 'C:\\tools\\codex.exe' && hit.args.length === 0 && hit.kind === 'exe' && hit.version === '0.130.0', JSON.stringify(hit));

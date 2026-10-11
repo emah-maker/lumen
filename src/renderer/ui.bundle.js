@@ -2904,12 +2904,15 @@ async function refreshSetup() {
   optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
   // Antigravity (Google's CLI, which replaces Gemini CLI): always offered in the sidebar; not found, it leads to Settings, where the install command is.
   const agy = s.antigravity || {};
-  optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
+  optional('setup-antigravity').hidden = !window.assistant.useAntigravity || !agy.installed; // (not installed: the note below says how, like Codex and Grok Build)
   optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
   // Codex (OpenAI's CLI): offered once it is found on this computer; the click turns it on in the sidebar.
   const cx = s.codex || {};
   optional('setup-codex').hidden = !cx.installed || !window.assistant.useCodex;
   optional('setup-codex-detail').textContent = cx.signedIn === false ? t('setup.codex.signedOut') : t('setup.codex.detail');
+  // Nothing found on this computer: the options that need no install lead (styles.css .setup.cold); a note says how to bring a coding agent.
+  $('setup').classList.toggle('cold', !s.claudeCode && !grok.installed && !agy.installed && !cx.installed);
+  optional('setup-more').hidden = Boolean(grok.installed && agy.installed && cx.installed);
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -3033,6 +3036,7 @@ optional('setup-codex').onclick = async () => {
   if (await window.assistant.setModel('codex:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity'); // (Settings > AI > Agents: where each one's install command and Download are)
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -3068,6 +3072,12 @@ const ASSISTANTS = {
   AI: {
     name: 'AI',
     setup: true, // the toolbar button reads "Set up AI" (app.js identity) until a model is connected
+    tint: 'var(--accent)',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
+  },
+  // Auto across providers is connected but nobody's name: the same neutral mark, and no "Set up AI".
+  Auto: {
+    name: 'Lumen',
     tint: 'var(--accent)',
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
   },
@@ -3122,7 +3132,7 @@ function setAssistantIdentity(group) {
   chatHost.identity?.(who, first); // the sidebar's toolbar button follows the model's company (app.js)
   const empty = document.querySelector('#empty .empty-title');
   // "Ask anything, or give <name> a task": the connected assistant's name; with Auto (or nothing known) it is Lumen, not "AI" or one provider.
-  const emptyName = who === ASSISTANTS.AI ? 'Lumen' : who.name;
+  const emptyName = who === ASSISTANTS.AI || who === ASSISTANTS.Auto ? 'Lumen' : who.name;
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
   if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
@@ -3180,7 +3190,7 @@ async function loadModels() {
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
-  setAssistantIdentity(current?.auto && !current.autoScope ? '' : current?.group); // Auto across providers is nobody's name: the neutral mark, not the provider it last used
+  setAssistantIdentity(current?.auto && !current.autoScope ? 'Auto' : current?.group); // Auto across providers is nobody's name: the neutral mark (not "Set up AI": something is connected), not the provider it last used
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
@@ -3223,7 +3233,7 @@ $('model').addEventListener('change', async (e) => {
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
   prompt.placeholder = select.selectedOptions[0].dataset.auto ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
-  setAssistantIdentity(group);
+  setAssistantIdentity(select.selectedOptions[0].dataset.auto && !group ? 'Auto' : group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
