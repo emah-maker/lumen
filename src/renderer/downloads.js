@@ -20,6 +20,13 @@ const size = (n) => {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 };
 
+// When a finished download ended: a time today, a date before (as the toolbar's panel shows it).
+const when = (time) => {
+  if (!time) return '';
+  const d = new Date(time);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
 // The wording is locales/en.json (dlpage.*), through window.t (i18n.js).
 const t = window.t || ((key) => key);
 
@@ -54,7 +61,7 @@ function row(d) {
   const failed = d.state === 'interrupted' || (d.state === 'completed' && !d.exists);
   const main = el('div', { className: 'main' },
     el('span', { className: 'title', textContent: d.name }),
-    el('span', { className: `detail${failed ? ' state-failed' : ''}`, textContent: [statusOf(d), host(d.url)].filter(Boolean).join(' · ') }));
+    el('span', { className: `detail${failed ? ' state-failed' : ''}`, textContent: [statusOf(d), host(d.url), d.state === 'progressing' ? '' : when(d.endedAt)].filter(Boolean).join(' · ') }));
   const r = el('div', { className: 'row' }, main, el('div', { className: `actions${d.state === 'progressing' ? ' always' : ''}` }, ...actions));
   r.dataset.id = String(d.id);
   r.dataset.state = d.state;

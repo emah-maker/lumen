@@ -316,9 +316,22 @@
     }).join('');
   }
 
-  const emphasis = (s) => scripts(s)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  // ~~strike~~, ***both***, **bold**, *italic*, __bold__, _italic_; they nest (**bold *and italic* text**). Strong is
+  // taken first so an italic inside it is found by the pass after. A star next to a space ("2 * 3 * 4") is not a mark;
+  // an underscore inside a word (snake_case) is not one either.
+  const emphasis = (s) => scripts(s.replace(/~~(?=\S)([^\n]+?)(?<=\S)~~/g, '<del>$1</del>'))
+    .replace(/\*\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])__(?=\S)(.+?)(?<=\S)__(?!\w)/g, '$1<strong>$2</strong>')
+    .replace(/(^|[^\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)/g, '$1<em>$2</em>');
+
+  // Parsing state of the render in progress (render is synchronous): the reference links and footnotes the text defines.
+  let CTX = null; // { refs: id -> url, notes: { id -> text }, used: [id, ...] (footnotes in the order first cited) }
+  const refKey = (id) => id.trim().replace(/\s+/g, ' ').toLowerCase();
+  // Held pieces of finished HTML (code spans, links, pictures) while emphasis runs over the text around them, so
+  // "**a [link](u) and `code`**" is one bold run. A held piece is a private-use token.
+  const HELD = /(\d+)/g;
 
   // Reads a URL starting at `start` in escaped text. Parentheses are kept when balanced, so
   // https://en.wikipedia.org/wiki/Safari_(web_browser) stays whole. Returns '' if there is no URL.
@@ -372,11 +385,48 @@
     return url && s[start + url.length] === ')' ? { length: url.length, html: (alt) => `<span class="md-img-remote" data-src="${url}" data-alt="${alt}"></span>` } : null;
   }
 
-  // Links and emphasis for text outside code spans.
-  function formatText(s) {
-    let out = '';
+  // Backslash escapes: \* \_ \[ \ … show the character itself. An escaped & < > " arrives as \&amp; …
+  const ESCAPED = /\\(&(?:amp|lt|gt|quot);|[\\`*_{}[\]()#+\-.!|~^$])/g;
+
+  // A footnote marker: a number, with the note's text as its tooltip; the notes themselves are listed after the reply.
+  function footnoteMark(id) {
+    if (!CTX || !(id in CTX.notes)) return '';
+    if (!CTX.used.includes(id)) CTX.used.push(id);
+    const n = CTX.used.indexOf(id) + 1;
+    return `<sup class="fn-ref" data-fn="${n}" title="${CTX.notes[id].slice(0, 200)}">${n}</sup>`;
+  }
+  // [text][id], [id][] and [id] (a numbered citation like [1]) with a definition in the reply: a link.
+  function refLink(s, i, hold) {
+    if (!CTX) return null;
+    const close = s.indexOf(']', i + 1);
+    if (close < 0) return null;
+    const label = s.slice(i + 1, close);
+    if (!label || label.includes('[') || label.length > 300) return null;
+    if (label[0] === '^') {
+      const html = footnoteMark(refKey(label.slice(1)));
+      return html ? { end: close + 1, html: hold(html) } : null;
+    }
+    if (s[close + 1] === '(') return null;
+    let id = label;
+    let end = close + 1;
+    let text = label;
+    if (s[close + 1] === '[') {
+      const close2 = s.indexOf(']', close + 2);
+      const second = close2 < 0 ? null : s.slice(close + 2, close2);
+      // "[1][2]" is two citations side by side, not the text "1" linked to reference 2
+      if (second !== null && !second.includes('[') && !(/^\d+$/.test(label) && /^\d+$/.test(second))) { id = second || label; end = close2 + 1; }
+    }
+    const url = CTX.refs[refKey(id)];
+    if (!url) return null;
+    const cite = /^\d{1,3}$/.test(text) && end === close + 1;
+    if (cite) text = `[${text}]`;
+    return { end, html: hold(`<a${cite ? ' class="md-cite"' : ''} href="${url}">${cite ? text : emphasis(text)}</a>`) };
+  }
+
+  // Links and emphasis for text outside code spans. `hold` sets finished HTML aside (a token stands in for it).
+  function formatText(s, hold) {
+    s = s.replace(ESCAPED, (_m, c) => hold(c));
     let plain = '';
-    const flush = () => { out += emphasis(plain); plain = ''; };
     let i = 0;
     while (i < s.length) {
       if (s[i] === '!' && s[i + 1] === '[') {
@@ -385,8 +435,7 @@
         if (close > i && !alt.includes('[') && !alt.includes(']') && alt.length <= 300) {
           const image = imageAt(s, close + 2);
           if (image) {
-            flush();
-            out += image.html(alt);
+            plain += hold(image.html(alt));
             i = close + 3 + image.length;
             continue;
           }
@@ -399,18 +448,18 @@
         if (label && (/^\[\d{1,3}\]$/.test(label) || (!label.includes('[') && !label.includes(']')))) {
           const url = scanUrl(s, close + 2, true);
           if (url && s[close + 2 + url.length] === ')') {
-            flush();
-            out += link(url, emphasis(label));
+            plain += hold(link(url, emphasis(label)));
             i = close + 3 + url.length;
             continue;
           }
         }
+        const ref = refLink(s, i, hold);
+        if (ref) { plain += ref.html; i = ref.end; continue; }
       }
       if ((s.startsWith('http://', i) || s.startsWith('https://', i)) && (i === 0 || /[\s(>[]/.test(s[i - 1]))) {
         const url = scanUrl(s, i, false);
         if (url) {
-          flush();
-          out += link(url, url);
+          plain += hold(link(url, url));
           i += url.length;
           continue;
         }
@@ -418,18 +467,22 @@
       plain += s[i];
       i++;
     }
-    flush();
-    return out;
+    return emphasis(plain);
   }
 
   function inline(text) {
-    return text.split(/(`[^`]+`)/).map((part, i) => (i % 2 ? `<code>${part.slice(1, -1)}</code>` : formatText(part))).join('');
+    const held = [];
+    const hold = (html) => { held.push(html); return `${held.length - 1}`; };
+    const src = text.replace(/[]/g, '').replace(/`([^`]+)`/g, (_m, code) => hold(`<code>${code}</code>`));
+    let out = formatText(src, hold);
+    for (let pass = 0; pass < 4 && held.length && out.includes(''); pass++) out = out.replace(HELD, (_t, n) => held[n] ?? '');
+    return out;
   }
 
   // ---------- tables (GitHub style) ----------
 
   const isSeparator = (line) => line.includes('-') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line);
-  const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const cells = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
   // A body row looks like the header: it starts with | when the header does, and otherwise has the
   // header's number of cells. A sentence after the table that happens to contain a | stays text.
   const isTableRow = (line, header) => {
@@ -451,10 +504,102 @@
     return dropMath(renderText(text, maths), maths);
   }
 
+  const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+  const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])(\s+)(.*)$/;
+  const QUOTE = /^\s{0,3}&gt;\s?(.*)$/;
+  const FOOTNOTE_DEF = /^\s{0,3}\[\^([^\]\s]+)\]:\s*(.*)$/;
+  const REF_DEF = /^\s{0,3}\[([^\]^][^\]]*)\]:\s*(?:&lt;)?(https?:\/\/\S+?)(?:&gt;)?(?:\s+(?:&quot;.*?&quot;|'.*?'|\(.*?\)))?\s*$/;
+  const expandTabs = (line) => line.replace(/^[ \t]+/, (w) => w.replace(/\t/g, '    '));
+  const indentOf = (line) => line.length - line.trimStart().length;
+
+  // [1]: https://… (reference links, which also back [1] citations) and [^1]: … (footnotes) are read out of the text
+  // (outside code fences) and removed from it; the rest renders with them in CTX.
+  function takeDefinitions(lines) {
+    const refs = {};
+    const notes = {};
+    const keep = [];
+    let fenced = false;
+    for (let n = 0; n < lines.length; n++) {
+      const line = lines[n];
+      if (/^```/.test(line)) { fenced = !fenced; keep.push(line); continue; }
+      if (fenced) { keep.push(line); continue; }
+      const note = line.match(FOOTNOTE_DEF);
+      if (note) {
+        const body = [note[2]];
+        while (n + 1 < lines.length && /^\s+\S/.test(lines[n + 1])) body.push(lines[++n].trim());
+        notes[refKey(note[1])] = body.join(' ');
+        continue;
+      }
+      const def = line.match(REF_DEF);
+      const url = def ? scanUrl(def[2], 0, true) : '';
+      if (def && url) { refs[refKey(def[1])] ??= url; continue; }
+      keep.push(line);
+    }
+    return { refs, notes, lines: keep };
+  }
+
   function renderText(source, maths) {
-    const lines = escape(source).split('\n');
+    const outer = CTX;
+    const defs = takeDefinitions(escape(source).split('\n'));
+    CTX = { refs: defs.refs, notes: defs.notes, used: [] };
+    try {
+      let html = blocks(defs.lines, maths);
+      if (CTX.used.length) html += `<section class="footnotes"><ol>${CTX.used.map((id) => `<li>${inline(CTX.notes[id])}</li>`).join('')}</ol></section>`;
+      return html;
+    } finally { CTX = outer; }
+  }
+
+  // The list starting at lines[n] (an item line): nested lists, an item's own paragraphs and code, task boxes.
+  // Returns { html, next } (next: the first line after the list).
+  function listAt(lines, n, maths) {
+    const first = expandTabs(lines[n]).match(ITEM);
+    const base = first[1].length;
+    const type = /\d/.test(first[2][0]) ? 'ol' : 'ul';
+    const items = [];
+    let k = n;
+    let cur = null;
+    while (k < lines.length) {
+      const line = expandTabs(lines[k]);
+      if (line.trim() === '') {
+        let j = k + 1;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        const nextLine = j < lines.length ? expandTabs(lines[j]) : '';
+        const nm = nextLine.match(ITEM);
+        // after blank lines the list goes on with an item of this level or with an indented part of the item
+        if (!cur || j >= lines.length || !(nm ? (indentOf(nextLine) > base || (indentOf(nextLine) === base && (/\d/.test(nm[2][0]) ? 'ol' : 'ul') === type)) : indentOf(nextLine) >= cur.offset)) break;
+        for (let b = k; b < j; b++) cur.body.push('');
+        k = j;
+        continue;
+      }
+      const m = line.match(ITEM);
+      if (m && !HR.test(line) && indentOf(line) >= base && (!cur || indentOf(line) < cur.offset)) {
+        if ((/\d/.test(m[2][0]) ? 'ol' : 'ul') !== type) break; // another kind of list starts here
+        cur = { offset: m[1].length + m[2].length + (m[3].length > 4 ? 1 : m[3].length), first: m[4], body: [] };
+        items.push(cur);
+        k++;
+        continue;
+      }
+      if (!cur || indentOf(line) < cur.offset) break; // a line outside the item ends the list
+      cur.body.push(line.slice(Math.min(cur.offset, indentOf(line))));
+      k++;
+    }
+    const li = (item) => {
+      let head = item.first;
+      let cls = '';
+      let box = '';
+      const task = head.match(/^\[([ xX])\]\s+(.*)$/);
+      if (task) { head = task[2]; cls = ' class="task"'; box = `<input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> `; }
+      let inner = blocks([head, ...item.body], maths);
+      // an item with one paragraph (the rest nested lists, code) is not wrapped in <p>
+      if (!/<\/p>[^]*<p>/.test(inner)) inner = inner.replace(/^<p>(.*?)<\/p>/, '$1');
+      return `<li${cls}>${box}${inner}</li>`;
+    };
+    const start = type === 'ol' ? Number(first[2].slice(0, -1)) : 1;
+    return { html: `<${type}${type === 'ol' && start !== 1 ? ` start="${start}"` : ''}>${items.map(li).join('')}</${type}>`, next: k };
+  }
+
+  function blocks(lines, maths) {
     const out = [];
-    let list = null; // 'ul' | 'ol'
     let paragraph = [];
     let code = null;
     let codeLang = '';
@@ -462,10 +607,6 @@
     const flushParagraph = () => {
       if (paragraph.length) out.push(`<p>${inline(paragraph.join('<br>'))}</p>`);
       paragraph = [];
-    };
-    const closeList = () => {
-      if (list) out.push(`</${list}>`);
-      list = null;
     };
 
     for (let n = 0; n < lines.length; n++) {
@@ -477,10 +618,10 @@
         } else code.push(line);
         continue;
       }
-      if (/^```/.test(line)) { flushParagraph(); closeList(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
+      if (/^```/.test(line)) { flushParagraph(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
 
       if (line.includes('|') && n + 1 < lines.length && isSeparator(lines[n + 1])) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const rows = [];
         let k = n + 2;
         while (k < lines.length && lines[k].trim() !== '' && isTableRow(lines[k], line)) rows.push(lines[k++]);
@@ -489,56 +630,46 @@
         continue;
       }
 
-      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
-      const heading = line.match(/^(#{1,6})\s+(.*)$/);
-      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
-      const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
-
       // A display formula on a line of its own is a block of its own.
-      const block = line.match(/^(\s*)\uE000(\d+)\uE001\s*$/);
+      const block = line.match(/^(\s*)(\d+)\s*$/);
       if (block && maths[block[2]]?.display === true) {
-        const token = `\uE000${block[2]}\uE001`;
-        // Indented under a list item: part of that item (the list goes on after it).
-        const last = out.length - 1;
-        if (list && block[1] && /<\/li>$/.test(out[last] || '')) { flushParagraph(); out[last] = out[last].replace(/<\/li>$/, `${token}</li>`); continue; }
-        // The same after a blank line (which closed the list): the list opens again around it.
-        if (!list && block[1] && !paragraph.length && /^<\/(ol|ul)>$/.test(out[last] || '') && /<\/li>$/.test(out[last - 1] || '')) {
-          list = out[last].slice(2, 4);
-          out.pop();
-          out[last - 1] = out[last - 1].replace(/<\/li>$/, `${token}</li>`);
-          continue;
-        }
-        flushParagraph(); closeList();
-        out.push(token);
+        flushParagraph();
+        out.push(`${block[2]}`);
         continue;
       }
 
+      // A block quote: its lines (without the >) are read as blocks of their own, so quotes hold lists, code and quotes.
+      if (QUOTE.test(line)) {
+        flushParagraph();
+        const inner = [];
+        let k = n;
+        while (k < lines.length && QUOTE.test(lines[k])) inner.push(lines[k++].match(QUOTE)[1]);
+        out.push(`<blockquote>${blocks(inner, maths)}</blockquote>`);
+        n = k - 1;
+        continue;
+      }
+
+      if (HR.test(line)) { flushParagraph(); out.push('<hr>'); continue; }
+
+      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
       if (heading) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const level = Math.min(heading[1].length, 4);
         out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
-      } else if (bullet || numbered) {
+      } else if (ITEM.test(expandTabs(line))) {
         flushParagraph();
-        const type = bullet ? 'ul' : 'ol';
-        // The same kind of list again after only blank lines (or a formula it held): one list, not two.
-        if (!list && out[out.length - 1] === `</${type}>`) { out.pop(); list = type; }
-        if (list !== type) {
-          closeList();
-          // A numbered list split by a paragraph or code block keeps counting (3., 4., …) instead of restarting at 1.
-          const start = numbered ? Number(numbered[1]) : 1;
-          out.push(type === 'ol' && start !== 1 ? `<ol start="${start}">` : `<${type}>`);
-          list = type;
-        }
-        out.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
+        const list = listAt(lines, n, maths);
+        out.push(list.html);
+        n = list.next - 1;
       } else if (line.trim() === '') {
-        flushParagraph(); closeList();
+        flushParagraph();
       } else {
-        closeList();
         paragraph.push(line);
       }
     }
     if (code !== null) out.push(`<pre${codeLang ? ` data-lang="${codeLang}"` : ''}><code>${code.join('\n')}</code></pre>`);
-    flushParagraph(); closeList();
+    flushParagraph();
     return out.join('');
   }
 

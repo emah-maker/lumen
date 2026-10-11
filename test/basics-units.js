@@ -35,7 +35,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   check('shortcuts: every section and label is in en.json', missingLabels.length === 0, missingLabels.join(', '));
   // Every simple Ctrl/Cmd chord on the sheet is one handleShortcut() in main.js really handles.
   const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-  const handler = main.slice(main.indexOf('function handleShortcut('), main.indexOf('function newSidebarChat('));
+  const handler = main.slice(main.indexOf('function handleShortcut('), main.indexOf('function newSidebarChat(')) + fs.readFileSync(path.join(__dirname, '..', 'src', 'browser', 'shortcut-mod.js'), 'utf8'); // (F3 / Ctrl+G, F6 and Alt+D live in extraShortcut)
   const chords = SH.SECTIONS.flatMap((s) => s.entries.flatMap(([, keys]) => keys.flatMap((k) => (typeof k === 'string' ? [k] : [k.mac, k.other].filter(Boolean)))));
   const unhandled = chords.filter((c) => /^mod\+(shift\+)?[a-z,]$/.test(c)).filter((c) => {
     const key = c.slice(-1);
@@ -95,8 +95,8 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   loc[0].click(); loc[2].click();
   check('page info: Ask forgets, Block blocks', JSON.stringify(acts.slice(-2)) === JSON.stringify([['set', 'geolocation', null], ['set', 'geolocation', false]]), JSON.stringify(acts));
   check('page info: cookies are counted', Boolean(byLabel(/^3 cookies in use$/)), '');
-  check('page info: the remembered zoom is shown with a reset', Boolean(byLabel(/^Zoom: 125%/)) && (byLabel(/^Reset Zoom/).click(), acts.at(-1)[0] === 'zoom'), '');
-  byLabel(/^Clear Cookies/).click(); byLabel(/^Site Settings/).click();
+  check('page info: the remembered zoom is shown with a reset', Boolean(byLabel(/^Zoom: 125%/)) && (byLabel(/^Reset zoom/).click(), acts.at(-1)[0] === 'zoom'), '');
+  byLabel(/^Clear cookies/).click(); byLabel(/^Site settings/).click();
   check('page info: Clear and Site Settings call their actions', acts.slice(-2).map((a) => a[0]).join() === 'clear,settings', JSON.stringify(acts));
   const plain = PI.buildTemplate({ url: 'http://b.example/', cookies: 1 }, piDeps, act);
   check('page info: an http page says not secure, one cookie is singular, no zoom row without one', plain[1].label === 'Connection is not secure' && plain.some((i) => i.label === '1 cookie in use') && !plain.some((i) => /^Zoom/.test(i.label || '')), plain.map((i) => i.label).join(' | '));
