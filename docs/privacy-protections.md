@@ -1,6 +1,6 @@
 # Privacy protections
 
-What Lumen keeps websites from learning about you, beyond blocking ads and trackers. Every protection here is **on by default** and has its own switch in **Settings → Privacy and security** (`lumen://settings/privacy`). A change applies to pages loaded after it: reload a tab that was already open.
+What Lumen keeps websites from learning about you, beyond blocking ads and trackers. Every protection here has its own switch, and all are **on by default** except **Hide when you leave the tab** and **Hide your IP address from WebRTC**, which you turn on yourself (the first makes chat apps think you are still watching, so notifications and read receipts go wrong; the second can stop some calls from connecting). The switches are in **Settings → Privacy and security** (`lumen://settings/privacy`). A change applies to pages loaded after it: reload a tab that was already open.
 
 | Switch | Setting key | What a site can no longer do |
 |---|---|---|

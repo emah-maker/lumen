@@ -84,11 +84,11 @@ const DEFAULTS = {
   blockThirdPartyCookies: false,
   sendDoNotTrack: false,
   sendGpc: true, // Sec-GPC: 1, and navigator.globalPrivacyControl (preload/activity-preload.js)
-  hideTabActivity: true, // [hide activity] pages always read as the visible, focused tab (preload/activity-preload.js)
+  hideTabActivity: false, // [hide activity] pages always read as the visible, focused tab; off by default: chat apps would think you are watching (notifications, read receipts) and tab checks misfire (preload/activity-preload.js)
   hideWindowSize: true, // [hide activity] the screen reads as the window's size: split screen or a small window doesn't show
   stripTrackingParams: true, // utm_*, fbclid, gclid… are taken off the addresses pages open at (features/tracking-params.js)
   fingerprintProtection: true, // canvas, WebGL and audio readouts vary per site; the battery reads as a desktop's (preload/activity-preload.js)
-  webrtcIpProtection: true, // WebRTC uses only the default route's public address: no local or VPN-bypassing IPs (settings-backend.js attachTab)
+  webrtcIpProtection: false, // off by default (Chromium already hides local IPs behind mDNS, and on it can stop some peer connections from opening): WebRTC uses only the default route's public address: no local or VPN-bypassing IPs (settings-backend.js attachTab)
   blockTrackingPings: true, // hyperlink-auditing pings (<a ping>) and navigator.sendBeacon reports are not sent (features/adblock.js)
   httpsOnly: false,
   passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API

@@ -27,7 +27,8 @@ check('a non-string comes back as it was', strip(null) === null && strip(undefin
 
 const backend = fs.readFileSync(path.join(__dirname, '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
 const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'locales', 'en.json'), 'utf8'));
-check('every privacy protection ships on', ['hideTabActivity', 'hideWindowSize', 'fingerprintProtection', 'webrtcIpProtection', 'sendGpc', 'stripTrackingParams', 'blockTrackingPings'].every((k) => new RegExp(`\\n {2}${k}: true,`).test(backend)));
+check('the low-risk privacy protections ship on', ['hideWindowSize', 'fingerprintProtection', 'sendGpc', 'stripTrackingParams', 'blockTrackingPings'].every((k) => new RegExp(`\\n {2}${k}: true,`).test(backend)));
+check('tab-activity hiding and WebRTC IP protection ship off (they can break chat notifications and some calls)', ['hideTabActivity', 'webrtcIpProtection'].every((k) => new RegExp(`\\n {2}${k}: false,`).test(backend)));
 check('so none of them is in the after-update offers (those are for features that ship off)', !FO.OFFERS.some((o) => ['hideTabActivity', 'hideWindowSize', 'fingerprintProtection'].includes(o.key)));
 check('every new Settings row has its strings', ['hideTab', 'hideSize', 'fingerprint', 'webrtc', 'stripParams', 'pings'].every((k) => en[`settings.privacy.${k}`] && en[`settings.privacy.${k}Desc`]));
 

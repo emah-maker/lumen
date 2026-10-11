@@ -74,7 +74,7 @@ ${frame ? `<iframe src="${frame}"></iframe>` : ''}`;
     await app.evaluate((_e, id) => global.__agent.browser.closeTab?.(id), off);
 
     // ---- on
-    await app.evaluate(async () => { await global.__settings.backend.set('hideTabActivity', true); await global.__settings.backend.set('hideWindowSize', true); }); // (through Settings' own setter)
+    await app.evaluate(async () => { await global.__settings.backend.set('hideTabActivity', true); await global.__settings.backend.set('hideWindowSize', true); await global.__settings.backend.set('webrtcIpProtection', true); }); // (through Settings' own setter; tab hiding and WebRTC IP protection ship off)
     const onUrl = `${base}/on`;
     const on = await openTab(onUrl);
     await loaded(onUrl);
