@@ -27,9 +27,12 @@ const world = { signedIn: false, playerBroken: false, hits: 0 };
 // a mediaSession for playback on this device, a search route and play buttons on item pages (client-side routing, no reload).
 const page = () => `<!doctype html><meta charset="utf-8"><title>Stand-in Spotify</title><body style="margin:0;background:#121212;color:#fff;font:14px system-ui">
 <main id="main"><h1>Stand-in Spotify</h1><a href="https://accounts.spotify.com/">Log in here</a></main>
+${world.framePort && !world.signedIn ? `<iframe id="challenge" src="https://127.0.0.1:${world.framePort}/frame" style="position:fixed;left:20px;top:200px;width:300px;height:150px;border:0"></iframe>` : ''}
 ${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer><aside id="lib" aria-label="Your Library"></aside>` : ''}
 <script>
 window.__log = ['width:' + innerWidth];
+window.__msgs = [];
+window.addEventListener('message', (e) => { window.__msgs.push(typeof e.data === 'string' ? e.data : JSON.stringify(e.data)); });
 window.__sp = { signed: ${world.signedIn}, title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', artists: ['Ann'], playing: true, pos: 31, dur: 200, device: '', local: true, art: 'https://i.scdn.co/image/ab67616d00001e02fixture' };
 const sp = window.__sp;
 function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
@@ -105,8 +108,14 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
     fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     return;
   }
-  const srv = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => { world.hits++; res.writeHead(200, { 'content-type': 'text/html' }); res.end(page()); });
+  const POPUP = '<!doctype html><meta charset="utf-8"><title>Identity provider</title><body style="background:#121212;color:#fff">sign in here<script>try { window.opener.postMessage(JSON.stringify({ popup: "ok", ua: navigator.userAgent, hasOpener: true }), "*"); } catch (e) { document.title = "no opener"; }</script>';
+  const FRAME = '<!doctype html><meta charset="utf-8"><body style="margin:0"><button id="b" style="width:200px;height:100px" onclick="parent.postMessage(\'challenge-clicked\', \'*\')">I am not a robot</button>';
+  const tls = { key: fs.readFileSync(key), cert: fs.readFileSync(cert) };
+  const srv = https.createServer(tls, (req, res) => { world.hits++; res.writeHead(200, { 'content-type': 'text/html' }); res.end(req.url.startsWith('/popup') ? POPUP : page()); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const frameSrv = https.createServer(tls, (req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(FRAME); }); // (another origin: another port)
+  await new Promise((r) => frameSrv.listen(0, '127.0.0.1', r));
+  world.framePort = frameSrv.address().port;
   const base = `https://127.0.0.1:${srv.address().port}`;
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-spengine-profile-'));
@@ -141,6 +150,51 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   const winInfo = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => /Sign in to Spotify/.test(w.getTitle())).map((w) => ({ visible: w.isVisible() })));
   check('spotify engine: Sign in opens one window with the engine\'s page in it (shown only now)', await waitMain(async ({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w) => /Sign in to Spotify/.test(w.getTitle()) && w.isVisible())) && await app.evaluate(() => global.__spotifyWeb.view().getVisible()), JSON.stringify(await winInfo()));
   await shot('spotify-engine-signin-fixture.png');
+
+  // ---- the sign-in window is a proper full-window page: its bounds are the window's content area, nothing else is over it, the human check can be clicked, a popup works ----
+  const geom = () => app.evaluate(({ BrowserWindow }) => {
+    const sw = BrowserWindow.getAllWindows().find((w) => /Sign in to Spotify/.test(w.getTitle()));
+    const v = global.__spotifyWeb.view();
+    const others = BrowserWindow.getAllWindows().filter((w) => w !== sw && !w.isDestroyed());
+    const c = sw.getContentBounds();
+    return { content: { width: c.width, height: c.height }, view: v.getBounds(), visible: v.getVisible(), inSignin: sw.contentView.children.includes(v), signinChildren: sw.contentView.children.length, inOthers: others.some((w) => w.contentView.children.includes(v)), zoom: v.webContents.getZoomFactor() };
+  });
+  const fills = (g) => g.view.x === 0 && g.view.y === 0 && g.view.width === g.content.width && g.view.height === g.content.height;
+  let g1 = await geom();
+  check('spotify engine sign-in: the page fills the window\u2019s content area exactly (bounds equal the content size, from 0,0, no zoom left over from the card)', fills(g1) && g1.zoom === 1 && g1.visible, JSON.stringify(g1));
+  await app.evaluate(({ BrowserWindow }) => { const sw = BrowserWindow.getAllWindows().find((w) => /Sign in to Spotify/.test(w.getTitle())); sw.setContentSize(760, 640); });
+  await sleep(500);
+  let g2 = await geom();
+  check('spotify engine sign-in: …after the window is resized (a second size) it still does', fills(g2) && g2.content.width !== g1.content.width, JSON.stringify(g2));
+  await app.evaluate(({ BrowserWindow }) => { const sw = BrowserWindow.getAllWindows().find((w) => /Sign in to Spotify/.test(w.getTitle())); sw.setContentSize(520, 700); });
+  await sleep(500);
+  const g3 = await geom();
+  check('spotify engine sign-in: …and at a third', fills(g3) && g3.content.width !== g2.content.width, JSON.stringify(g3));
+  // another tab opened (the browser re-stacks its floating views): the sign-in page must not be pulled out of its window over the browser\u2019s toolbar
+  await app.evaluate(() => { global.__agent.browser.openTab('about:blank'); });
+  await sleep(600);
+  const g4 = await geom();
+  check('spotify engine sign-in: no other view overlaps it: it is the only view of its window, it is in no other window (the browser stacking its overlays does not take it), and it stays in place', g4.inSignin && g4.signinChildren === 1 && !g4.inOthers && fills(g4), JSON.stringify(g4));
+  // the human check: a frame from another origin on the sign-in page receives a real click
+  const frameBox = await engine("(() => { const r = document.getElementById('challenge').getBoundingClientRect(); return [r.left, r.top, innerWidth, innerHeight]; })()");
+  await engine('window.__msgs.length = 0');
+  await app.evaluate(({ BrowserWindow }, pt) => {
+    const wc = global.__spotifyWeb.view().webContents;
+    const base = { x: pt[0], y: pt[1], button: 'left', clickCount: 1 };
+    wc.sendInputEvent({ type: 'mouseMove', x: pt[0], y: pt[1] });
+    wc.sendInputEvent({ type: 'mouseDown', ...base });
+    wc.sendInputEvent({ type: 'mouseUp', ...base });
+  }, [Math.round(frameBox[0]) + 60, Math.round(frameBox[1]) + 40]);
+  check('spotify engine sign-in: a click on a frame from another origin (the human check) reaches it: nothing is laid over the page, and the frame is not blocked', await (async () => { for (let i = 0; i < 30; i++) { if ((await engine('window.__msgs')).includes('challenge-clicked')) return true; await sleep(150); } return false; })(), JSON.stringify(await engine('window.__msgs')));
+  // a popup (\u201cContinue with ...\u201d): opened blank, sent to the identity page, which tells its opener
+  await engine('window.__msgs.length = 0');
+  await engine("(() => { const w = window.open('about:blank'); window.__pop = w; w.location = '" + base + "/popup'; })()");
+  const gotPopup = await (async () => { for (let i = 0; i < 40; i++) { const m = (await engine('window.__msgs')).find((x) => /popup/.test(x)); if (m) return JSON.parse(m); await sleep(150); } return null; })();
+  check('spotify engine sign-in: a popup the page opens (blank first, then sent to the identity page) loads, can post a message to its opener, and has the Chrome identity (no "Electron")', Boolean(gotPopup) && gotPopup.popup === 'ok' && gotPopup.hasOpener === true && !/Electron/.test(gotPopup.ua) && /Chrome\//.test(gotPopup.ua), JSON.stringify(gotPopup));
+  const popWin = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => !/Sign in to Spotify/.test(w.getTitle()) && w.webContents.getURL().includes('/popup')).map((w) => ({ bg: w.getBackgroundColor(), url: w.webContents.getURL().replace(/:\d+/, ':PORT') })));
+  check('spotify engine sign-in: the popup is a window of the same browsing session with a dark background (not white while it loads)', popWin.length === 1 && /121212/i.test(popWin[0].bg), JSON.stringify(popWin));
+  await engine('window.__pop.close()');
+  check('spotify engine sign-in: when the popup finishes it closes (the page closes it) and the sign-in window is still there', await waitMain(async ({ BrowserWindow }) => !BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes('/popup') && !w.isDestroyed())) && (await winInfo()).length === 1, JSON.stringify(await winInfo()));
   world.signedIn = true; // the user signs in on the page (the server's page now has the player); Spotify's cookie appears
   await app.evaluate(async ({ session }) => { await session.defaultSession.cookies.set({ url: 'https://open.spotify.com/', name: 'sp_dc', value: 'fixture', domain: '.spotify.com', secure: true }); });
   check('spotify engine: when Spotify\'s sign-in cookie appears the window closes by itself and the page goes back, hidden', await waitMain(async ({ BrowserWindow }) => !BrowserWindow.getAllWindows().some((w) => /Sign in to Spotify/.test(w.getTitle()))) && await app.evaluate(() => !global.__spotifyWeb.view().getVisible()), JSON.stringify(await winInfo()));
@@ -252,6 +306,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
 
   await app.close();
   srv.close();
+  frameSrv.close();
   fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 })().then(() => { console.log(failures ? `\n${failures} failed` : '\nall passed'); process.exit(failures ? 1 : 0); }).catch((e) => { console.error(e); process.exit(1); });

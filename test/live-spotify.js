@@ -59,7 +59,12 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
 
   if (SIGNIN) {
     console.log('A window with open.spotify.com is open. Sign in there yourself (the Log in button); this waits up to 5 minutes and closes when the card reports signed in.');
-    await app.evaluate(() => { global.__spotifyEngine.signIn(); });
+    // The same flow a person gets: the new-tab page's Spotify card, whose "Sign in to Spotify in Lumen" button opens the sign-in window (not a call made behind the card).
+    await app.evaluate(() => new Promise((res) => { const t = global.__agent.browser.openTab(); global.__wtab = t; t.webContents.once('did-finish-load', res); }));
+    const cardPage = (code) => app.evaluate((_e, c) => global.__wtab.webContents.executeJavaScript(c), code);
+    let pressed = false;
+    for (let i = 0; i < 60 && !pressed; i++) { pressed = await cardPage("(() => { const b = document.querySelector('.w-card.spotify .am-signin'); if (!b) return false; b.click(); return true; })()").catch(() => false); if (!pressed) await sleep(500); }
+    if (!pressed) console.log('The card shows no Sign in button (already signed in, or the card did not load): waiting for the signed-in state anyway.');
     const end = Date.now() + 5 * 60e3;
     let ok = false;
     while (Date.now() < end) { if ((await status().catch(() => ({}))).signedIn === true) { ok = true; break; } await sleep(1500); }

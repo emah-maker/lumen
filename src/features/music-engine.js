@@ -498,12 +498,16 @@ function createMusicEngine(deps) {
     wake();
     if (signInWin && !signInWin.isDestroyed()) { signInWin.focus(); return true; }
     if (!deps.BrowserWindow) return false;
-    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title, autoHideMenuBar: true, show: true }); // (no `parent`: an owned window stays above the browser window on Windows; this one is a window of its own, as a sign-in popup is in Chrome)
+    // useContentSize: the size is the page's, not the frame's; the dark background is what shows for a frame before the page paints (never a white strip).
+    const win = new deps.BrowserWindow({ ...SIGNIN_SIZE, title, autoHideMenuBar: true, show: true, useContentSize: true, backgroundColor: '#121212' }); // (no `parent`: an owned window stays above the browser window on Windows; this one is a window of its own, as a sign-in popup is in Chrome)
     signInWin = win;
     try { win.removeMenu?.(); } catch { /* no menu to remove */ }
-    const fit = () => { if (win.isDestroyed()) return; const [width, height] = win.getContentSize(); player.showIn(win, { x: 0, y: 0, width, height }); };
+    // The page fills the window's content area exactly, and follows every change of it (resizing, maximising, full screen, a move to another screen's scale,
+    // the window settling after it is shown): the bounds are the window's own content bounds, asked each time, never the size it was made with.
+    const fit = () => { if (win.isDestroyed() || signInWin !== win) return; const [width, height] = win.getContentSize(); player.showIn(win, { x: 0, y: 0, width, height }); };
     fit();
-    win.on('resize', fit);
+    for (const ev of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen', 'show', 'ready-to-show', 'moved']) win.on(ev, fit);
+    (deps.setTimeout || setTimeout)(fit, 250)?.unref?.(); // (a window that is still settling its size when it is made)
     win.on('close', () => { player.release(); if (signInWin === win) signInWin = null; changed(); });
     return true;
   }

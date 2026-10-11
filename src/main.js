@@ -1838,7 +1838,10 @@ const { overlaysToRaise } = require('./features/overlay-order');
 function raiseOverlays() {
   if (!win || win.isDestroyed()) return;
   // Fixed order, bottom to top: spotify, apple music, suggestions, downloads, tool overlay (dialogs: dialogs.raise below).
-  const order = [spotifyWeb.view(), appleMusicWeb.view(), suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  // (a music player's view shown in a window of its own, the sign-in window, is not this window's: re-adding it here would pull it out of that window and
+  // lay it over the browser's toolbar)
+  const here = (v) => !v || win.contentView.children.includes(v);
+  const order = [here(spotifyWeb.view()) ? spotifyWeb.view() : null, here(appleMusicWeb.view()) ? appleMusicWeb.view() : null, suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
   // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
   for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
@@ -7617,6 +7620,8 @@ const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive, onAuth) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
   getBounds: () => contentBounds,
+  userAgent: () => app.userAgentFallback, // (browser/chrome-identity.js: a sign-in page, Apple's above all, refuses "Electron" in it)
+  hideWindow: (w) => { if (TEST_BACKGROUND && w && !w.isDestroyed()) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); } }, // (tests only: a sign-in popup never shows or takes focus)
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
   hasWidget,
   keepAlive,
@@ -7643,12 +7648,19 @@ const appleMusicNative = require('./features/apple-music-native').createNowPlayi
   resizeArt,
   onChange: () => widgets.engineChanged(),
 });
+// The engines' sign-in / player windows. LUMEN_TEST_BACKGROUND (tests only): off screen, see-through, never focused, like every other test window.
+function engineWindow(opts) {
+  if (!TEST_BACKGROUND) return new BrowserWindow(opts);
+  const w = new BrowserWindow({ ...opts, show: false });
+  w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive();
+  return w;
+}
 const appleMusicEngine = require('./features/apple-music-engine').createEngine({
   player: appleMusicWeb,
   native: appleMusicNative,
   resizeArt,
   fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on mzstatic.com)
-  BrowserWindow,
+  BrowserWindow: engineWindow,
   hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
   respondMs: () => (TEST && global.__respondMs) || 0,
   onChange: () => widgets.engineChanged(),
@@ -7659,7 +7671,7 @@ const spotifyEngine = require('./features/spotify-engine').createEngine({
   player: spotifyWeb,
   resizeArt,
   fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
-  BrowserWindow,
+  BrowserWindow: engineWindow,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
   respondMs: () => (TEST && global.__respondMs) || 0,

@@ -16,7 +16,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // (about:blank and srcdoc frames too: a page could otherwise make one and read the real answers through it.)
 const web = typeof location !== 'undefined' && (((location.protocol === 'http:' || location.protocol === 'https:') && location.origin !== 'null') || location.protocol === 'about:');
-const skip = typeof location !== 'undefined' && /(^|\.)accounts\.google\.com$/.test(location.hostname); // Google's sign-in pages check the browser closely: untouched there
+// Sign-in pages and the human checks inside them read the browser closely (a bot check scores the real readings; noise on them fails the person): untouched there.
+// By the frame's own host, so a check inside another site's page (Spotify's sign-in) is untouched too.
+const SKIP_HOST = /(^|\.)(accounts\.google\.com|accounts\.spotify\.com|appleid\.apple\.com|idmsa\.apple\.com|arkoselabs\.com|funcaptcha\.com|hcaptcha\.com|challenges\.cloudflare\.com|recaptcha\.net)$/;
+const skip = typeof location !== 'undefined' && (SKIP_HOST.test(location.hostname) || (/(^|\.)google\.com$/.test(location.hostname) && location.pathname.startsWith('/recaptcha/')));
 
 function ask() {
   try { const s = ipcRenderer.sendSync('hide-activity:config'); return s && typeof s === 'object' ? s : {}; } catch { return {}; }
@@ -232,4 +235,4 @@ if (typeof location !== 'undefined' && web && !skip) {
 }
 
 // (The main process reads install() from here for the DevTools script.)
-if (typeof module !== 'undefined' && typeof location === 'undefined') module.exports = { install };
+if (typeof module !== 'undefined' && typeof location === 'undefined') module.exports = { install, SKIP_HOST };

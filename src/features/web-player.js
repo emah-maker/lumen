@@ -57,6 +57,18 @@ const DRM_PROBE = `(async () => {
   } catch { return false; }
 })()`;
 
+// The identity providers a "Continue with ..." button on a sign-in page opens in a popup (the page needs the popup's opener, to be told the result): Apple, Google,
+// Facebook, Microsoft. A popup may also start as about:blank and be sent to one of these by the page. Only for a player whose spec has `popups`.
+const OAUTH_HOSTS = ['appleid.apple.com', 'idmsa.apple.com', 'accounts.google.com', 'www.facebook.com', 'm.facebook.com', 'facebook.com', 'login.live.com', 'login.microsoftonline.com'];
+const POPUP_SIZE = { width: 520, height: 720 };
+// May a sign-in popup show this address? The player's own hosts, an identity provider (https, default port), or the blank page a script opens first.
+function popupAllowed(url, hosts, testOrigin = '') {
+  const s = String(url || '');
+  if (s === '' || s === 'about:blank') return true;
+  if (isAllowedUrl(s, hosts, testOrigin)) return true;
+  try { const u = new URL(s); return u.protocol === 'https:' && !u.username && !u.password && !u.port && OAUTH_HOSTS.includes(u.hostname); } catch { return false; }
+}
+
 // Permissions the view is given: only what playing protected audio needs. 'mediaKeySystem' is Electron's
 // name for EME/Widevine key-system access ('protectedMediaIdentifier' is the older one). Autoplay is not
 // a permission: the view's autoplayPolicy covers it. Camera, microphone, location, notifications,
@@ -243,17 +255,27 @@ function createWebPlayer(deps, spec) {
     wc.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
     // A sign-in page the site opens (Apple's) is a real window, so it can tell the page that opened it when you are in; its own
     // navigation stays on the allowed hosts. Everything else opens as a tab, in the same session.
-    const guard = (child) => {
-      child.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
-      child.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
-      child.setWindowOpenHandler(({ url }) => { leave(url); return { action: 'deny' }; });
-    };
-    wc.setWindowOpenHandler(({ url }) => {
-      if (spec.popups && allowed(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } } };
+    // The popup is a window of the browser's own session (the same cookies as the player: no partition), with the opener kept (window.opener, postMessage), a
+    // Chrome identity (Apple refuses "Electron" in it) and the player's own dark background, not white, while it loads.
+    const popupOptions = () => ({ ...POPUP_SIZE, autoHideMenuBar: true, backgroundColor: spec.background || '#121212', ...(deps.hideWindow ? { show: false } : {}), webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const popupPolicy = ({ url }) => {
+      if (spec.popups && popupAllowed(url, spec.hosts, testOrigin())) return { action: 'allow', overrideBrowserWindowOptions: popupOptions() };
       leave(url);
       return { action: 'deny' };
-    });
-    wc.on('did-create-window', (child) => guard(child.webContents));
+    };
+    const popupOk = (url) => popupAllowed(url, spec.hosts, testOrigin());
+    const guard = (child) => {
+      const cwc = child.webContents;
+      try { if (deps.userAgent) cwc.setUserAgent(deps.userAgent()); } catch { /* the default identity stays */ }
+      cwc.on('will-navigate', (event) => { if (!popupOk(event.url)) { event.preventDefault(); leave(event.url); } });
+      cwc.on('will-redirect', (event) => { if (!popupOk(event.url)) { event.preventDefault(); leave(event.url); } });
+      cwc.setWindowOpenHandler(popupPolicy); // (a popup's own popup: the same rule)
+      cwc.on('did-create-window', guard);
+      try { deps.hideWindow?.(child); } catch { /* the window is gone */ }
+    };
+    try { if (deps.userAgent) wc.setUserAgent(deps.userAgent()); } catch { /* the default identity stays */ }
+    wc.setWindowOpenHandler(popupPolicy);
+    wc.on('did-create-window', guard);
     wc.on('render-process-gone', () => destroy());
     // A blank frame says nothing: when the page can't load, the card says why (and tries again).
     let failedLoad = false; // Chromium finishes loading its own error page afterwards: that is not the site being ready
@@ -316,6 +338,7 @@ function createWebPlayer(deps, spec) {
     host = win;
     pinned = true;
     emulate(false);
+    try { if (v.webContents.getZoomFactor() !== 1) v.webContents.setZoomFactor(1); } catch { /* no page yet */ } // (a card's reduced zoom is not the sign-in page's)
     win.contentView.addChildView(v);
     v.setBounds(rect);
     v.setVisible(true);
@@ -410,4 +433,4 @@ function createWebPlayer(deps, spec) {
   };
 }
 
-module.exports = { MIN_LAYOUT_WIDTH, SLOT_PREFIX, parseSlotMessage, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };
+module.exports = { OAUTH_HOSTS, popupAllowed, MIN_LAYOUT_WIDTH, SLOT_PREFIX, parseSlotMessage, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };
