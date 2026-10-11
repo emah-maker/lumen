@@ -41,6 +41,10 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       stopChat: (id) => ipcRenderer.invoke('chats:stop', id),
       rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
       remove: (id) => ipcRenderer.invoke('chats:delete', id),
+      undoRemove: (id) => ipcRenderer.invoke('chats:undo-delete', id),
+      pin: (id, on) => ipcRenderer.invoke('chats:pin', id, on),
+      archive: (id, on) => ipcRenderer.invoke('chats:archive', id, on),
+      search: (query) => ipcRenderer.invoke('chats:search', query),
       exportChat: (id) => ipcRenderer.invoke('chats:export', id),
       closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners]
       onUsage: on('chats:usage'),

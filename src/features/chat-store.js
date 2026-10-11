@@ -4,10 +4,13 @@
 // nothing is kept at all. What goes into a chat file is decided by the caller (main.js strips tool
 // results and attached page text first).
 //
-// The store keeps the newest `limit` chats; older ones are deleted as new ones are saved. An empty
-// chat (no messages yet) is never written, so New chat doesn't fill the list with blank entries.
+// Nothing falls off the end of the list: past `limit` active chats the oldest unpinned ones are ARCHIVED (still saved, listed
+// under Archived, searchable), never deleted. Chats can be pinned and archived; an entry's flags are plain optional fields
+// (pinned, archived, autoArchived, trashed, msgs) that older index files simply don't have, so they load as they were.
+// Deleting is two steps so it can be undone: trash() hides the chat (its file stays), remove() erases it.
+// An empty chat (no messages yet) is never written, so New chat doesn't fill the list with blank entries.
 //
-// Chat files are only ever deleted one at a time, for a reason (the user deleted the chat, or it fell past the limit),
+// Chat files are only ever deleted one at a time, for a reason (the user deleted the chat and the undo time passed),
 // after the index on disk has been read again, and never for a chat another writer's index lists (a second Lumen, or a
 // test run, on the same profile). Nothing here removes the whole folder: a "clear everything" once ran from a second
 // process that quit before the keychain was ready, and took every chat with it.
@@ -24,7 +27,7 @@ const { autoTitle, cleanSaved } = require('./chat-title');
 
 const cleanTitle = (title) => String(title ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 
-function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 50, legacyFile = null, now = () => Date.now() }) {
+function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now() }) {
   const indexFile = path.join(dir, 'index.json');
   const chatFile = (id) => path.join(dir, `${id}.json`);
 
@@ -42,7 +45,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   let index = null; // { current, chats: [{ id, title, renamed, created, updated, model, usage }] }
   const known = new Set(); // chat ids in the index as this store last read or wrote it
   const foreign = new Set(); // ids another writer added to the index on disk meanwhile: never pruned or deleted here
-  const MAX_PRUNE = 3; // files one save may delete: more than that means something is wrong (a changed limit, a clobbered index), not that the list grew
+  const TRASH_KEEP_MS = 24 * 3600 * 1000; // a trashed chat nobody undid (the app quit inside the undo time) is erased after this
   // The index can be lost to a half-written file, a locked keychain or another machine's keys. Only a
   // missing file means "no chats yet"; anything else must never become an empty index that the next
   // write would save over the real one (that orphaned every chat file).
@@ -147,7 +150,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // Newest first.
   function list() {
-    const chats = readIndex().chats;
+    const chats = readIndex().chats.filter((c) => !c.trashed);
     // A title saved with a screen capture's markup in it (older chats) is made again from the chat's first real text, once,
     // for display; the saved chat is untouched, and a rename always wins.
     for (const c of chats) {
@@ -167,7 +170,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const READ_TRIES = 4;
   const pause = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no wait: retry at once */ } };
   function load(id) {
-    if (!ID_RE.test(String(id)) || !readIndex().chats.some((c) => c.id === id)) return null;
+    if (!has(id)) return null;
     for (let attempt = 1; ; attempt++) {
       try { return readEnc(chatFile(id)); } catch (err) {
         if (!TRANSIENT.has(err?.code)) return null; // damaged or undecryptable: retrying will not help
@@ -180,7 +183,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   }
 
   // Is the chat in the history list (whether or not its file can be read right now)?
-  const has = (id) => ID_RE.test(String(id)) && readIndex().chats.some((c) => c.id === id);
+  function has(id) { return ID_RE.test(String(id)) && readIndex().chats.some((c) => c.id === id && !c.trashed); }
 
   // Writes the chat and its index entry. Returns false when nothing could be kept (no keychain).
   function save(id, snapshot) {
@@ -200,23 +203,31 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     entry.updated = now();
     entry.model = snapshot.settings?.model || null;
     entry.usage = snapshot.settings?.usage || null;
-    prune(idx);
+    // A chat that is used again (more messages than when it was archived) comes back to the main list.
+    const count = snapshot.messages.length;
+    if (entry.archived && (entry.autoArchived || (entry.msgs !== undefined && count > entry.msgs))) { entry.archived = false; delete entry.autoArchived; }
+    entry.msgs = count;
+    delete entry.trashed; // (saved again: it was not deleted after all)
+    archiveOverflow(idx, id);
     writeIndex();
+    purgeExpiredTrash(idx);
     return true;
   }
 
-  // Oldest chats past the limit go (never the open one, never one another writer's index lists), a few per save at most,
-  // and only once the index on disk has been read again: if it can't be, nothing is deleted this time.
-  function prune(idx) {
-    if (idx.chats.length <= limit) return;
-    if (!syncFromDisk(idx)) return;
-    const keep = new Set([...idx.chats].sort((a, b) => b.updated - a.updated).slice(0, limit).map((c) => c.id));
-    if (idx.current) keep.add(idx.current);
-    for (const id of foreign) keep.add(id);
-    const doomed = idx.chats.filter((c) => !keep.has(c.id)).sort((a, b) => a.updated - b.updated).slice(0, MAX_PRUNE);
-    for (const c of doomed) fs.rmSync(chatFile(c.id), { force: true });
-    const gone = new Set(doomed.map((c) => c.id));
-    idx.chats = idx.chats.filter((c) => !gone.has(c.id));
+  // Past `limit` active chats the oldest unpinned ones are archived (never deleted), except the open one, the one just saved
+  // and chats another writer added. Only the index changes, so nothing on disk is at risk.
+  function archiveOverflow(idx, savedId) {
+    const active = idx.chats.filter((c) => !c.archived && !c.trashed);
+    if (active.length <= limit) return;
+    const candidates = active.filter((c) => !c.pinned && c.id !== idx.current && c.id !== savedId && !foreign.has(c.id)).sort((a, b) => a.updated - b.updated);
+    for (const c of candidates.slice(0, active.length - limit)) { c.archived = true; c.autoArchived = true; }
+  }
+  // A chat trashed long ago (the app quit before its undo time ended) is erased for good, one file at a time, only with the
+  // keychain up, and remove() re-reads the index on disk first.
+  function purgeExpiredTrash(idx) {
+    if (!available()) return;
+    const old = idx.chats.filter((c) => c.trashed && now() - c.trashed > TRASH_KEEP_MS && !foreign.has(c.id)).map((c) => c.id);
+    for (const id of old) remove(id);
   }
 
   function rename(id, title) {
@@ -229,10 +240,92 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return true;
   }
 
+  const entryOf = (id) => (ID_RE.test(String(id)) ? readIndex().chats.find((c) => c.id === id) : null);
+  // Archive and pin change only the index. False for an unknown or trashed chat.
+  function setFlag(id, key, on) {
+    const entry = entryOf(id);
+    if (!entry || entry.trashed || readIndex().degraded) return false;
+    if (on) entry[key] = true; else delete entry[key];
+    delete entry.autoArchived; // (once the user chooses, it is theirs, no longer an automatic archive)
+    writeIndex();
+    return true;
+  }
+  const setPinned = (id, on) => setFlag(id, 'pinned', Boolean(on));
+  const setArchived = (id, on) => setFlag(id, 'archived', Boolean(on));
+
+  // Delete with undo, step 1: the chat leaves the list (and Archived) but its file stays. restore() brings it back; remove()
+  // (after the undo time) erases it.
+  function trash(id) {
+    const entry = entryOf(id);
+    const idx = readIndex();
+    if (!entry || idx.degraded || !available()) return false;
+    entry.trashed = now();
+    if (idx.current === id) idx.current = null;
+    writeIndex();
+    return true;
+  }
+  function restore(id) {
+    const entry = entryOf(id);
+    if (!entry?.trashed || readIndex().degraded) return false;
+    delete entry.trashed;
+    writeIndex();
+    return true;
+  }
+  // Chats waiting out their undo time (also after a restart).
+  const trashed = () => readIndex().chats.filter((c) => c.trashed).map((c) => ({ id: c.id, at: c.trashed }));
+
+  // What was said in a chat, for search (never tool results or attached page text), cut at a sane size.
+  const SEARCH_CHARS = 200000;
+  function textOf(snapshot) {
+    const parts = [];
+    let n = 0;
+    for (const m of snapshot?.messages || []) {
+      const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : [];
+      for (const b of blocks) {
+        if (b?.type !== 'text' || typeof b.text !== 'string') continue;
+        const t = (m.role === 'user' ? cleanSaved(b.text) : b.text).replace(/\s+/g, ' ').trim();
+        if (!t) continue;
+        parts.push(t);
+        if ((n += t.length) > SEARCH_CHARS) return parts.join('\n').slice(0, SEARCH_CHARS);
+      }
+    }
+    return parts.join('\n');
+  }
+  const textCache = new Map(); // id -> { updated, text }: a chat is read again only after it changed
+  // Chats whose title or messages contain every word of the query: [{ id, snippet }] newest first (snippet: '' when the title matched).
+  function search(query, { max = 100 } = {}) {
+    const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+    if (!words.length) return [];
+    const out = [];
+    for (const c of list()) {
+      if (c.missing) continue;
+      const title = String(c.title || '').toLowerCase();
+      let body;
+      const seen = textCache.get(c.id);
+      if (seen && seen.updated === c.updated) body = seen.text;
+      else {
+        try { body = textOf(load(c.id)).toLowerCase(); } catch { body = ''; }
+        textCache.set(c.id, { updated: c.updated, text: body });
+      }
+      if (!words.every((w) => title.includes(w) || body.includes(w))) continue;
+      let snippet = '';
+      if (!words.every((w) => title.includes(w))) {
+        const word = words.find((w) => !title.includes(w));
+        const at = Math.max(0, body.indexOf(word));
+        snippet = (at > 30 ? '…' : '') + body.slice(Math.max(0, at - 30), at + 90).replace(/\n/g, ' ').trim() + (body.length > at + 90 ? '…' : '');
+      }
+      out.push({ id: c.id, snippet });
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+
+  // Erases a chat for good (one file: the chat the user deleted). The index on disk is read again first; if it can't be, nothing is erased.
   function remove(id) {
     const idx = readIndex();
-    if (!idx.chats.some((c) => c.id === id)) return false;
-    idx.chats = idx.chats.filter((c) => c.id !== id);
+    if (idx.degraded || !syncFromDisk(idx) || !idx.chats.some((c) => c.id === id)) return false;
+    textCache.delete(id);
+    idx.chats =idx.chats.filter((c) => c.id !== id);
     if (idx.current === id) idx.current = null;
     fs.rmSync(chatFile(id), { force: true }); // (one file: the chat the user deleted)
     fileChecks.delete(id);
@@ -270,7 +363,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     known.clear(); foreign.clear(); fileChecks.clear();
   }
 
-  return { list, has, load, save, rename, remove, current, setCurrent, migrate, newId, clearAll };
+  return { list, has, load, save, rename, remove, trash, restore, trashed, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

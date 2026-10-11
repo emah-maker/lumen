@@ -1240,12 +1240,12 @@ async function fuseChecks() {
   check('chats: the newest `limit` chats are kept, plus the open one', store.list().map((c) => c.title).join() === 'chat 3,chat 2,chat 1,chat 0', store.list().map((c) => c.title).join());
   store.setCurrent(ids[3]);
   store.save(ids[3], chat('chat 3'));
-  check('chats: past the limit, the oldest chat and its file go', store.list().length === 3 && !store.list().some((c) => c.id === ids[0]) && !fs.existsSync(path.join(dir, `${ids[0]}.json`)), store.list().map((c) => c.title).join());
+  check('chats: past the limit, the oldest chat is archived, never deleted (the open one stays)', store.list().length === 4 && store.list().find((c) => c.id === ids[1])?.archived === true && !store.list().find((c) => c.id === ids[0]).archived && fs.existsSync(path.join(dir, `${ids[1]}.json`)) && !store.list().find((c) => c.id === ids[3]).archived, store.list().map((c) => `${c.title}:${c.archived}`).join());
   const disk = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
   check('chats: the index and chats are written encrypted', disk.includes('"enc"') && !/chat 1|claude-opus-5/.test(disk), disk.slice(0, 120));
-  check('chats: an empty chat is not saved', store.save(store.newId(), { messages: [] }) === true && store.list().length === 3, store.list().length);
+  check('chats: an empty chat is not saved', store.save(store.newId(), { messages: [] }) === true && store.list().length === 4, store.list().length);
   check('chats: a chat loads back', store.load(ids[2])?.messages?.[0]?.content?.[0]?.text === 'chat 2', JSON.stringify(store.load(ids[2])).slice(0, 100));
-  check('chats: an id that is not in the list does not load', store.load('../index') === null && store.load(ids[0]) === null, 'loaded');
+  check('chats: an id that is not in the list does not load', store.load('../index') === null && store.load('0000000000000000') === null && store.load(ids[0]) !== null, 'loaded');
 
   check('chats: rename cleans the title', store.rename(ids[2], '  My\n  trip\u0007 ') && store.list().find((c) => c.id === ids[2]).title === 'My trip', store.list().find((c) => c.id === ids[2])?.title);
   store.save(ids[2], chat('chat 2 again'));
@@ -1253,7 +1253,7 @@ async function fuseChecks() {
   check('chats: a blank rename is refused', store.rename(ids[2], '   ') === false && store.rename('nope', 'x') === false, 'renamed');
 
   const reopened = createChatStore({ dir, encrypt: enc, decrypt: dec, limit: 3 });
-  check('chats: the list and open chat survive a restart', reopened.list().length === 3 && reopened.current() === ids[3] && reopened.list()[0].id === ids[2], JSON.stringify(reopened.list().map((c) => c.title)));
+  check('chats: the list and open chat survive a restart', reopened.list().length === 4 && reopened.current() === ids[3] && reopened.list()[0].id === ids[2], JSON.stringify(reopened.list().map((c) => c.title)));
   check('chats: delete removes the entry and its file', reopened.remove(ids[1]) && !reopened.list().some((c) => c.id === ids[1]) && !fs.existsSync(path.join(dir, `${ids[1]}.json`)), 'still there');
   check('chats: deleting the open chat clears which one is open', reopened.remove(ids[3]) && reopened.current() === null, reopened.current());
   check('chats: deleting an unknown chat does nothing', reopened.remove('0000000000000000') === false, 'removed');

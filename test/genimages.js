@@ -125,6 +125,7 @@ const SRC = path.join(__dirname, '..', 'src').split(path.sep).join('/');
 
   // ---- delete the chat: its picture file goes with it
   const removed = await ui.evaluate((id) => window.assistant.chats.remove(id), chatId);
+  for (let i = 0; i < 150 && fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 100)); // (erased once the Undo time is up)
   check('deleting the chat removes the picture file', Boolean(removed) && !fs.existsSync(file) && (await app.evaluate((_e, id) => global.__imageStore().read(id) === null, info.block.id)), JSON.stringify(removed));
 
   check('no UI errors', errors.length === 0, errors.join('; '));

@@ -208,8 +208,7 @@ const fakeClient = (app) => app.evaluate(() => {
   const md = await waitFor(() => fs.existsSync(exportPath) && fs.readFileSync(exportPath, 'utf8'));
   check('Markdown export works from the page', /^# Renamed here/.test(md || '') && /first from the sidebar/.test(md || ''), (md || '').slice(0, 120));
   await inPage("document.querySelector('#cp-items .chat-item:not(.current) .chat-delete').click()");
-  await inPage("document.querySelector('#cp-items .chat-item:not(.current) .chat-delete').click()");
-  check('delete (two clicks) works from the page', await waitFor(async () => (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 1), await inPage("document.querySelectorAll('#cp-items .chat-item').length"));
+  check('delete works from the page (one click, with Undo)', await waitFor(async () => (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 1), await inPage("document.querySelectorAll('#cp-items .chat-item').length"));
 
   // ---- 10. Guards: a page cannot navigate to the chat page or read it; the chat tab cannot leave
   const chatUrl = (await chatTab()).url;
