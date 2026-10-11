@@ -18,13 +18,20 @@
     sql: words('select from where and or not insert into values update set delete create table drop alter index join left right inner outer full on group by order having limit offset as distinct union all null is in like between case when then else end primary key foreign references default exists with returning'),
     css: words('important media supports keyframes import from to and not only'),
     json: words('true false null'),
+    rb: words('def end if elsif else unless while until for in do begin rescue ensure raise return yield class module self nil true false and or not then case when require require_relative include extend attr_accessor attr_reader attr_writer puts lambda proc super'),
+    php: words('function return if elseif else for foreach while do switch case default break continue new class extends implements interface trait abstract final public private protected static namespace use try catch finally throw echo print isset unset empty array null true false as instanceof const fn match enum readonly'),
+    kt: words('fun val var if else when for while do return class object interface enum data sealed open abstract override private public protected internal import package is as in try catch finally throw null true false this super companion init constructor suspend inline typealias by lateinit const'),
+    swift: words('func let var if else guard switch case default for while repeat return class struct enum protocol extension import init deinit self Self super try catch throw throws rethrows defer in is as nil true false public private internal fileprivate open static async await some any where inout mutating weak lazy'),
+    yaml: words('true false null yes no on off'),
+    toml: words('true false'),
   };
-  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'java', kt: 'java', scala: 'java', swift: 'java', dart: 'java', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
-  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb']);
+  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'kt', kts: 'kt', scala: 'java', dart: 'java', ruby: 'rb', yml: 'yaml', xml: 'html', xhtml: 'html', svg: 'html', vue: 'html', patch: 'diff', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
+  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb', 'yaml', 'toml']);
   // One pass, left to right: the first alternative that matches at a position wins.
   function tokenizer(lang) {
     const comment = lang === 'sql' ? '--[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : HASH_COMMENT.has(lang) ? '#[^\\n]*'
+      : lang === 'php' ? '//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : lang === 'json' ? '(?!)'
       : lang === 'css' ? '/\\*[\\s\\S]*?\\*/'
       : '//[^\\n]*|/\\*[\\s\\S]*?\\*/';
@@ -34,10 +41,39 @@
   }
   const cache = new Map();
   const esc = (s) => s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  // HTML and XML: comments, tag names, attribute names and quoted values; text between tags stays plain.
+  const MARKUP = /(<!--[\s\S]*?-->)|(<\/?[A-Za-z][\w:.-]*)|([A-Za-z_:@][\w:.-]*)(?==)|("[^"]*"|'[^']*')|(\/?>)/g;
+  function markup(code) {
+    let out = '';
+    let at = 0;
+    let inTag = false;
+    MARKUP.lastIndex = 0;
+    for (let m; (m = MARKUP.exec(code));) {
+      const [text, com, tag, attr, , end] = m;
+      if (!com && !tag && !end && !inTag) continue; // attributes and quotes only count inside a tag
+      out += esc(code.slice(at, m.index));
+      at = m.index + text.length;
+      if (tag) inTag = true;
+      if (end) inTag = false;
+      const cls = com ? 'tk-com' : tag || end ? 'tk-kw' : attr ? 'tk-fn' : 'tk-str';
+      out += `<span class="${cls}">${esc(text)}</span>`;
+    }
+    return out + esc(code.slice(at));
+  }
+  // A diff: added and removed lines, hunk headers and file headers, by their first characters.
+  function diff(code) {
+    return code.split('\n').map((line) => {
+      const cls = /^(\+\+\+|---|diff |index )/.test(line) ? 'tk-meta' : line.startsWith('@@') ? 'tk-hunk' : line[0] === '+' ? 'tk-add' : line[0] === '-' ? 'tk-del' : '';
+      return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+    }).join('\n');
+  }
   function highlight(code, langName) {
     const lang = ALIAS[langName] || langName;
+    if (code.length > 60000) return null; // too big to be worth it: plain
+    if (lang === 'html') return markup(code);
+    if (lang === 'diff') return diff(code);
     const keys = KEYWORDS[lang];
-    if (!keys || code.length > 60000) return null; // unknown language, or too big to be worth it: plain
+    if (!keys) return null; // unknown language: plain
     let re = cache.get(lang);
     if (!re) cache.set(lang, (re = tokenizer(lang)));
     re.lastIndex = 0;
@@ -49,7 +85,9 @@
       at = m.index + m[0].length;
       const [text, com, str, num, word] = m;
       const nextParen = word !== undefined && /^\s*\(/.test(code.slice(at, at + 8));
-      const cls = com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
+      // YAML and TOML keys: a word before ":" (YAML) or "=" (TOML)
+      const key = word !== undefined && ((lang === 'yaml' && /^:(\s|$)/.test(code.slice(at, at + 2))) || (lang === 'toml' && /^\s*=/.test(code.slice(at, at + 4))));
+      const cls = key ? 'tk-key' : com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
         : keys.has(text) || (lang === 'sql' && keys.has(text.toLowerCase())) ? 'tk-kw'
         : nextParen ? 'tk-fn'
         : /^[A-Z][a-z]\w*$/.test(text) && lang !== 'sql' ? 'tk-type' : '';
