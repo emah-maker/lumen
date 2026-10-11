@@ -131,7 +131,10 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   // (Auto's pick also follows the last model used and the home provider, so it is not predicted here: the next request fails, whichever model gets it.)
   await failNext('*', 'prompt is too long: 900000 tokens > 200000 maximum', 400);
   u = await send('hi');
-  check('too long for the cheap model: the same message goes on another one', u.length === 2 && u[0] !== u[1], JSON.stringify(u));
+  // Claude's models all take a 1M window now and nothing in the list has a larger one, so a "too long" answer from the cheap model is not a
+  // reason to move: the same message goes again on the same model with a shorter history (agent.js, fitContext). A model with a larger
+  // window to move up to is covered in auto-model-units.js (escalate, context).
+  check('too long for the cheap model, with no larger window to go to: the same message is sent once more, on the same model', u.length === 2 && u[0] === u[1], JSON.stringify(u));
 
   // ---- a provider's own Auto ("OpenAI · Auto"): the same router inside one provider
   {
@@ -146,7 +149,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
     // the open menu lists it inside its group, after the heading
     await ui.click('.model-picker .picker-button');
     const group = await ui.$$eval('.picker-menu .picker-section', (secs) => secs.map((s) => [...s.children].map((c) => (c.classList.contains('picker-group') ? `#${c.textContent}` : c.querySelector('.picker-name')?.textContent || '')).join('|')).find((t) => /^#OpenAI/.test(t)) || '');
-    check('in the open menu the OpenAI group starts with its Auto row', /^#OpenAI\|Auto(\||$)/.test(group), group);
+    check('in the open menu the OpenAI group starts with its Auto row', /^#OpenAI\|Auto · OpenAI(\||$)/.test(group), group);
     await ui.keyboard.press('Escape');
 
     await ui.selectOption('#model', 'openai:auto');
@@ -156,7 +159,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
     u = await send('hi');
     check('OpenAI Auto, "hi": only OpenAI answers, with its small model', u.length === 1 && u[0].startsWith('openai:') && A.tierOf(u[0].replace(/^openai:/, '')) === 'fast', JSON.stringify(u));
     check('the reply is labelled "Auto · OpenAI · …" with the provider named in the tooltip', await waitFor(() => ui.evaluate(() => { const el = [...document.querySelectorAll('.reply-model')].pop(); return Boolean(el) && /^Auto · OpenAI · /.test(el.textContent) && /^Auto \(OpenAI\): /.test(el.title); })), await ui.evaluate(() => [...document.querySelectorAll('.reply-model')].map((e) => `${e.textContent} | ${e.title}`).join(' ; ')));
-    check('the provider\'s row says what it chose last; the global row does not', await waitFor(async () => { const ms = (await settings()).models; return /^Auto · /.test(ms.find((m) => m.id === 'openai:auto').name) && ms.find((m) => m.id === 'auto').name === 'Auto' && ms.find((m) => m.id === 'anthropic:auto').name === 'Auto'; }), JSON.stringify((await settings()).models.filter((m) => m.auto).map((m) => m.name)));
+    check('the provider\'s row says what it chose last; the global row does not', await waitFor(async () => { const ms = (await settings()).models; return /^Auto · /.test(ms.find((m) => m.id === 'openai:auto').name) && ms.find((m) => m.id === 'auto').name === 'Auto' && ms.find((m) => m.id === 'anthropic:auto').name === 'Auto · Claude'; }), JSON.stringify((await settings()).models.filter((m) => m.auto).map((m) => m.name)));
     u = await send(HEAVY);
     check('a hard brief: OpenAI\'s flagship, and the chat is still on OpenAI Auto', u.length === 1 && A.tierOf(u[0].replace(/^openai:/, '')) === 'strong' && u[0].startsWith('openai:') && (await ui.inputValue('#model')) === 'openai:auto', JSON.stringify(u));
     u = await send('/fast ' + HEAVY);
