@@ -81,7 +81,7 @@ const SHOT_DIR = process.env.LUMEN_SHOT_DIR;
   });
   assert.match(await overlay("document.getElementById('message').textContent"), /Allow example\.com to know your location\?/);
   await shot('permission');
-  await click("Don't Allow");
+  await click("Don't allow");
 
   console.log('dialogs: ok');
   await app.close();

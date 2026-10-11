@@ -84,6 +84,15 @@ const block = (i) => ({ type: 'image', source: { type: 'base64', media_type: i.m
     check('OpenRouter\'s "no endpoints support image input" too', /can't read images/.test(providers.describeProviderError(orErr, 'openrouter')?.text || ''));
     const other = new OpenAI.APIError(404, { message: 'model not found' }, 'model not found', H);
     check('other 404s keep their message', /isn't available for your key/.test(providers.describeProviderError(other, 'openai')?.text || ''));
+    // [AI errors] Plain words: no system codes, no raw JSON, a fix named.
+    const down = new OpenAI.APIConnectionError({ cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.openai.com'), { code: 'ENOTFOUND' }) });
+    const downText = providers.describeProviderError(down, 'openai')?.text || '';
+    check('a network error names no system code and says what to check', /Could not reach OpenAI. Check your internet/.test(downText) && !/ENOTFOUND/.test(downText), downText);
+    const slow = new OpenAI.APIConnectionTimeoutError({});
+    check('a timeout says the provider was slow', /took too long/.test(providers.describeProviderError(slow, 'openai')?.text || ''), providers.describeProviderError(slow, 'openai')?.text);
+    const bad = new OpenAI.APIError(400, { message: 'temperature: must be at most 1' }, '400 {"error":{"message":"temperature: must be at most 1"}}', H);
+    const badText = providers.describeProviderError(bad, 'openai')?.text || '';
+    check('an unlisted error shows the provider sentence, not raw JSON', /couldn't answer \(error 400\): temperature: must be at most 1/.test(badText) && !/[{}]/.test(badText), badText);
   }
 
   // ---- text-only models: the images are left out of the request, said once, the text still goes

@@ -405,8 +405,9 @@ function describeProviderError(err, provider) {
   const label = PROVIDERS[provider]?.label || provider;
   // Offline, DNS, a timeout: there is no HTTP status to report.
   if (err instanceof OpenAIModule.APIConnectionError) {
-    const why = String(err.cause?.code || err.cause?.message || '').split('\n')[0].slice(0, 80);
-    return { text: `Could not reach ${label}${why ? ` (${why})` : ''}. Check your internet connection and try again.` };
+    const code = String(err.cause?.code || '');
+    const how = /TIMEDOUT|TIMEOUT/i.test(code) || /timed? ?out/i.test(String(err.message || '')) ? `${label} took too long to answer. Try again, or pick another model.` : `Could not reach ${label}. Check your internet connection and try again.`;
+    return { text: how };
   }
   if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   // A model that takes no images, given a chat that holds some (a catalog can be wrong or silent about it).
@@ -416,7 +417,10 @@ function describeProviderError(err, provider) {
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
   if (err.status === 429) return { text: provider === 'openrouter' ? 'OpenRouter is rate limiting this model. Wait a moment, or pick another model.' : `${label} rate limit or quota reached. Wait a moment, or check your ${label} billing.` };
   if (err.status >= 500) return { text: `${label} is having trouble right now (error ${err.status}). Try again in a minute, or pick another model.` };
-  return { text: err.status ? `${label} error ${err.status}: ${err.message}` : `${label} error: ${err.message}` };
+  // The rest (a 400, a 422): the provider's own sentence, without the status prefix or a raw JSON body the SDK sometimes leaves in.
+  const said = String(err.message || '').replace(/^\d{3}\s*/, '');
+  const plain = /^\s*[{[]/.test(said) ? (() => { try { const j = JSON.parse(said); return String(j?.error?.message || j?.message || ''); } catch { return ''; } })() : said;
+  return { text: `${label} couldn't answer${err.status ? ` (error ${err.status})` : ''}${plain ? `: ${plain.slice(0, 240)}` : '.'}` };
 }
 
 // OpenRouter's own name for a model, without its vendor ("Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"), if known.

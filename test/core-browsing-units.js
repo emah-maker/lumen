@@ -4,7 +4,7 @@
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const path = require('path');
-const { resolveInput } = require('../src/browser/search');
+const { resolveInput, internalPage } = require('../src/browser/search');
 const { shortcutMod, extraShortcut, appCommandAction } = require('../src/browser/shortcut-mod');
 const { reloadAction } = require('../src/browser/reload-action');
 const { editMenuTemplate, oneLine } = require('../src/browser/edit-menu');
@@ -118,6 +118,11 @@ check('reload: an error page loads the failed address again', reloadAction({ err
   check('cert page: an unknown error gets the general line', CR.reasonFor('ERR_CERT_SOMETHING_NEW', 'a.example') === 'Its certificate couldn’t be verified.' && CR.reasonFor('', '') === 'Its certificate couldn’t be verified.', '');
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'cert-error.html'), 'utf8');
   check('cert page: cert-error.html loads the reasons before its own script', html.indexOf('cert-reasons.js') !== -1 && html.indexOf('cert-reasons.js') < html.indexOf('cert-error.js"'), '');
+}
+
+// ---- Lumen's own pages by address
+for (const [input, want] of [['lumen://history', 'history'], ['chrome://bookmarks/', 'bookmarks'], [' LUMEN://Downloads ', 'downloads'], ['lumen://about', 'updates'], ['chrome://version', 'updates'], ['lumen://nope', null], ['https://history', null], ['history', null]]) {
+  check(`own page: "${input}" -> ${want}`, internalPage(input) === want, internalPage(input));
 }
 
 if (failures) { console.log(`${failures} failed`); process.exit(1); }
