@@ -395,3 +395,101 @@
     });
   };
 })();
+
+// ---------- composer hint, chat shortcuts and their sheet ----------
+// The hint above the box says something only when it matters: a very long message, or the attachment limit close. The shortcuts work
+// anywhere in the chat; "?" or Ctrl+/ lists them. (Ctrl+K stays the browser's: web pages never get it.) Up (edit the last message)
+// and Esc (stop) live in the composer's own key handler in chat-core.js.
+(() => {
+  const prompt = document.getElementById('prompt');
+  if (!prompt) return;
+  const mac = navigator.platform.startsWith('Mac');
+
+  const hint = Object.assign(document.createElement('div'), { className: 'composer-hint', hidden: true });
+  document.getElementById('attachment-note')?.after(hint);
+  const HINT_CHARS = 4000;
+  function updateHint() {
+    const parts = [];
+    const chars = prompt.value.length;
+    if (chars >= HINT_CHARS) parts.push(window.t('composer.hint.chars', { n: chars.toLocaleString() }));
+    const files = window.chatAttachments;
+    const count = files?.count() || 0;
+    const near = Boolean(files && count >= files.max - 2);
+    if (near) parts.push(window.t('composer.hint.files', { n: count, max: files.max }));
+    hint.textContent = parts.join(' · ');
+    hint.hidden = parts.length === 0;
+    hint.classList.toggle('near', near && count >= files.max);
+  }
+  prompt.addEventListener('input', updateHint);
+  document.addEventListener('lumen:attachments', updateHint);
+
+  // The sheet: built the first time it is asked for.
+  let sheet = null;
+  let returnTo = null;
+  const key = (k) => ({ mod: mac ? '⌘' : 'Ctrl', shift: mac ? '⇧' : 'Shift' })[k] || k;
+  const ROWS = [
+    ['shortcuts.chat.send', [['Enter']]],
+    ['shortcuts.chat.newline', [['shift', 'Enter']]],
+    ['shortcuts.chat.sendNow', [['mod', 'Enter']]],
+    ['shortcuts.chat.stop', [['Esc']]],
+    ['shortcuts.chat.editLast', [['↑']]],
+    ['shortcuts.chat.newChat', [['mod', 'shift', 'O']]],
+    ['shortcuts.chat.copyLast', [['mod', 'shift', 'C']]],
+    ['shortcuts.chat.commands', [['/']]],
+    ['shortcuts.chat.sheet', [['?'], ['mod', '/']]],
+  ];
+  function closeSheet() {
+    if (!sheet || sheet.hidden) return;
+    sheet.hidden = true;
+    (returnTo && returnTo.isConnected ? returnTo : prompt).focus();
+  }
+  function openSheet() {
+    if (!sheet) {
+      sheet = Object.assign(document.createElement('div'), { className: 'shortcut-sheet', hidden: true });
+      const card = Object.assign(document.createElement('div'), { className: 'shortcut-card' });
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-labelledby', 'shortcut-title');
+      const title = Object.assign(document.createElement('h2'), { id: 'shortcut-title', textContent: window.t('shortcuts.chat.title') });
+      const list = document.createElement('dl');
+      for (const [label, chords] of ROWS) {
+        const dd = document.createElement('dd');
+        chords.forEach((chord, i) => {
+          if (i) dd.append(Object.assign(document.createElement('span'), { textContent: window.t('shortcuts.chat.or') }));
+          for (const k of chord) dd.append(Object.assign(document.createElement('kbd'), { textContent: key(k) }));
+        });
+        list.append(Object.assign(document.createElement('dt'), { textContent: window.t(label) }), dd);
+      }
+      const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn shortcut-close', textContent: window.t('shortcuts.chat.close') });
+      close.onclick = closeSheet;
+      card.append(title, list, close);
+      sheet.append(card);
+      sheet.addEventListener('pointerdown', (e) => { if (e.target === sheet) closeSheet(); });
+      sheet.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSheet(); } else if (e.key === 'Tab') { e.preventDefault(); close.focus(); } // (one control: focus stays in the card)
+      });
+      document.body.append(sheet);
+    }
+    returnTo = document.activeElement;
+    sheet.hidden = false;
+    sheet.querySelector('.shortcut-close').focus();
+  }
+
+  window.chatShortcuts = { open: openSheet };
+  const typing = (el) => Boolean(el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable));
+  document.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') { // new chat (ChatGPT, Claude.ai)
+      e.preventDefault();
+      document.getElementById('new-chat')?.click();
+      prompt.focus();
+    } else if (mod && !e.shiftKey && !e.altKey && e.key === '/') {
+      e.preventDefault();
+      if (sheet && !sheet.hidden) closeSheet(); else openSheet();
+    } else if (e.key === '?' && !mod && !e.altKey && !typing(e.target) && !(sheet && !sheet.hidden)) {
+      e.preventDefault();
+      openSheet();
+    }
+  });
+})();
