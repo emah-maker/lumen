@@ -322,7 +322,8 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
-  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: tr('settings.ai.noModels', 'No AI connected yet. Add a key or sign in under Accounts and keys below.') });
+  // Nothing connected: say so and put the way in right here (the keys and sign-ins page), not somewhere below.
+  const noModels = h('p', { class: 'note empty-model', id: 'ai-model-empty' }, h('span', { text: tr('settings.ai.noModels', 'No AI connected yet.') }), h('button', { type: 'button', class: 'primary', id: 'ai-model-connect', text: tr('settings.ai.connect', 'Connect an AI'), onclick: () => { location.hash = '#ai-keys-page'; } }));
   modelPicker.parentElement.append(noModels);
   const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
   let autoUseRender = () => {};

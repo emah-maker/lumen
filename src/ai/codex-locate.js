@@ -291,6 +291,9 @@ async function locateCodex(options = {}) {
     const hit = await attempt(file, source);
     if (hit) return hit;
   }
+  // LUMEN_CODEX_BIN names the only Codex there is (like LUMEN_CLAUDE_BIN and friends): a missing file means none, so a test can stand in
+  // "no Codex on this computer" without this machine's own install being found on PATH.
+  if (env.LUMEN_CODEX_BIN && !options.custom) return { found: false, reason: null, custom: false, hint: installHint(platform), links: INSTALL_LINKS };
 
   // 2. PATH: this process's, plus the registry's / login shell's (a GUI launch lacks them)
   const dirs = [];
