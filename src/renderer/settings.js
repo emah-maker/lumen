@@ -467,6 +467,21 @@ async function buildAi(card) {
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
 
+  // [screen context] Files on this computer the AI may always see: added only from its card ("Allow always for this file"); removed here.
+  const sharedList = h('div', { class: 'list', id: 'ai-shared-files' });
+  const clearShared = h('button', { id: 'ai-shared-files-clear', text: 'Remove all', onclick: async () => renderShared(await S.ai.clearSharedFiles()) });
+  const renderShared = async (files) => {
+    files ||= await S.ai.sharedFiles();
+    clearShared.hidden = !files.length;
+    sharedList.replaceChildren(...(files.length ? files.map(({ url, name }) => h('div', { class: 'item', 'data-file': name },
+      h('span', { class: 'grow', text: name, title: decodeURI(url).replace(/^file:\/\/\//, '') }),
+      h('button', { text: 'Remove', 'aria-label': `Remove ${name}`, onclick: async () => renderShared(await S.ai.removeSharedFile(url)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it looks at a file on your computer.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Files on this computer the AI can see', 'When you ask about a file in front of you ("what does this say?"), Lumen asks once; choosing Allow always for this file lists it here. Turn AI off for local files under Sites where AI is off to stop it for every file.', sharedList,
+    h('div', { class: 'controls' }, clearShared)));
+  renderShared();
+
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
   const renderKeys = () => {

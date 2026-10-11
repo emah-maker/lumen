@@ -10,14 +10,20 @@
 // Privacy, the same as the page text the sidebar already attaches, and a little stricter:
 //   - a site the user turned AI off for is never captured (title and address aren't shared either), whatever the button says
 //   - private windows have no AI sidebar at all (features/private-window.js); the check here is a second lock
-//   - only web pages (http, https), local PDFs and the slide viewer: settings, passwords, history and every other
-//     internal page, extension pages and files are never captured, button or not
+//   - Lumen's own pages (new tab, Settings, History, Downloads, the chat page, error pages, passwords) and extension or
+//     other internal addresses are never captured, button or not, and the refusal says so
+//   - a web page, or a web PDF in Lumen's viewer (it counts as the site it came from), is captured under that site's rules
+//   - a file on this computer (a PDF or deck in Lumen's viewer, a file:// page, picture or text) is captured only after the
+//     user said yes ONCE for that file: plan() answers { local, ask } and agent.js shows the card (screenAskFile). The user's own
+//     message plus the tab in front are the only inputs: a page can't ask for it. "Turn off AI for local files" refuses it
+//     with its own message
 //   - by the words alone (no button), pages that look like a payment, checkout, billing, password or one-time-code
 //     screen are left alone too; the button overrides that one, because the user asked
 //   - the user's setting "attach the current page" (Settings > AI) off means the words alone attach nothing
 //   - the capture is the visible part of the tab as the user sees it, never the rest of the page, and it counts as
 //     reading the page (the chat becomes "tainted" for outside destinations, like read_page)
 const intent = require('./screen-intent');
+const fileTabs = require('../features/file-tabs');
 
 const MAX_EDGE = 1568; // the API shrinks anything larger anyway
 const JPEG_QUALITY = 70;
@@ -47,16 +53,22 @@ function parseMarker(text) {
 }
 const newId = () => `s${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-// Why this tab's address may not be captured at all: a reason, or null. `viewer`: the tab is Lumen's own slide viewer.
-function blockedAddress(url, { viewer = false } = {}) {
+// What this tab's address is, for the decision: { kind, address?, name? }
+//   'none'   no page; 'new-tab' Lumen's new tab page (or a blank tab); 'internal' any other page of Lumen's own or an address that is no page
+//   'web'    an http(s) page, or a web PDF / document (also one inside Lumen's PDF viewer: `address` is where it came from)
+//   'local'  a file on this computer: file:// text, code, picture or PDF, or a PDF or deck in Lumen's viewer. `address` is the file's own file:// address, `name` its name.
+const NEW_TAB = /\/renderer\/newtab\.html$/i;
+const fileName = (address) => { try { return decodeURIComponent(new URL(address).pathname.split('/').filter(Boolean).pop() || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || 'this file'; } catch { return 'this file'; } };
+function classify(url) {
   const s = String(url || '');
-  if (!s) return 'no page';
-  if (viewer) return null;
+  if (!s) return { kind: 'none' };
+  const address = fileTabs.addressOf(s);
+  if (address) return /^file:/i.test(address) ? { kind: 'local', address: address.split('#')[0], name: fileName(address) } : { kind: 'web', address };
   let u;
-  try { u = new URL(s); } catch { return 'internal'; }
-  if (u.protocol === 'http:' || u.protocol === 'https:') return null;
-  if (u.protocol === 'file:' && /\.pdf$/i.test(u.pathname)) return null; // a PDF opened from disk
-  return 'internal';
+  try { u = new URL(s); } catch { return { kind: 'internal' }; }
+  if (s === 'about:blank' || (u.protocol === 'file:' && NEW_TAB.test(u.pathname))) return { kind: 'new-tab' };
+  if (u.protocol === 'http:' || u.protocol === 'https:') return { kind: 'web' };
+  return { kind: 'internal' };
 }
 // Pages the words alone never capture (the button overrides): where the picture would likely hold payment or sign-in secrets.
 const SENSITIVE_PATH = /(?:^|[/._-])(?:pay|payment|payments|checkout|billing|cards?|wallet|password|passwords|passcode|2fa|mfa|otp|totp|verify-code|authenticator|recovery-codes?)(?:$|[/._?#-])/i;
@@ -64,24 +76,31 @@ function sensitiveAddress(url) {
   try { const u = new URL(String(url)); return SENSITIVE_PATH.test(`${u.hostname}${u.pathname}`); } catch { return false; }
 }
 
-// Decide, before anything is captured. -> { capture, how: 'image' | 'text' | null, why, reason? }
-//   why: what made it fire ('words: ...', 'button', or what stopped it: 'ai-off', 'private', 'internal', 'sensitive', 'off', 'setting', 'no-intent', 'no-tab')
+// Decide, before anything is captured. -> { capture, how: 'image' | 'text' | null, why, reason?, forced, asked, local?, ask? }
+//   why: what made it fire ('words: ...', 'button', or what stopped it: 'ai-off', 'local-off', 'private', 'internal', 'new-tab', 'sensitive', 'off', 'setting', 'no-intent', 'no-tab')
 //   mode: 'on' (the button is lit), 'off' (turned off for this message), anything else: the words decide
 //   vision: false for a model known to be text-only (unknown counts as able to see, like image attachments do)
-function plan({ text, mode, hasSelection = false, lastTurns = [], url, aiOff = false, privateWindow = false, pageContext = true, vision = true, viewer = false, hasTab = true } = {}) {
-  const no = (why, extra = {}) => ({ capture: false, how: null, why, forced: mode === 'on', ...extra }); // forced: the user lit the button, so a refusal is said
+//   shared: the user already said yes to sharing this local file (this chat, or "always for this file")
+//   forced: the button was lit; asked: the button or the words asked for it. Either way a refusal is said (refusal()); no pointer, no refusal.
+//   local: { url, name } when the tab shows a file on this computer; ask: true when the user has to say yes first (the card).
+function plan({ text, mode, hasSelection = false, lastTurns = [], url, aiOff = false, privateWindow = false, pageContext = true, vision = true, hasTab = true, shared = false } = {}) {
+  const said = () => mode === 'on' || (mode !== 'off' && pageContext !== false && intent.wantsScreen(text, { hasSelection, lastTurns }).screen);
+  const no = (why, extra = {}, say = false) => ({ capture: false, how: null, why, forced: mode === 'on', asked: say ? said() : mode === 'on', ...extra }); // forced / asked: so a refusal is said
   if (privateWindow) return no('private');
   if (!hasTab) return no('no-tab');
-  if (aiOff) return no('ai-off');
-  const blocked = blockedAddress(url, { viewer });
-  if (blocked) return no(blocked === 'no page' ? 'no-tab' : 'internal');
+  const page = classify(url);
+  if (page.kind === 'none') return no('no-tab');
+  if (aiOff) return no(page.kind === 'local' ? 'local-off' : 'ai-off', page.kind === 'local' ? { local: { url: page.address, name: page.name } } : {}, page.kind === 'local'); // (a site with AI off: the words alone say nothing; the button does)
+  if (page.kind === 'new-tab') return no('new-tab', {}, true);
+  if (page.kind === 'internal') return no('internal', {}, true);
   if (mode === 'off') return no('off');
   const how = vision === false ? 'text' : 'image';
-  if (mode === 'on') return { capture: true, how, why: 'button', forced: true };
+  const local = page.kind === 'local' ? { local: { url: page.address, name: page.name }, ask: !shared } : {};
+  if (mode === 'on') return { capture: true, how, why: 'button', forced: true, asked: true, ...local };
   if (pageContext === false) return no('setting');
-  if (sensitiveAddress(url)) return no('sensitive');
-  const said = intent.wantsScreen(text, { hasSelection, lastTurns });
-  return said.screen ? { capture: true, how, why: `words: ${said.reason}` } : no('no-intent', { reason: said.reason });
+  if (page.kind === 'web' && sensitiveAddress(page.address || url)) return no('sensitive'); // (a file the user opened is theirs to ask about, whatever its folder is called)
+  const heard = intent.wantsScreen(text, { hasSelection, lastTurns });
+  return heard.screen ? { capture: true, how, why: `words: ${heard.reason}`, forced: false, asked: true, ...local } : no('no-intent', { reason: heard.reason });
 }
 
 // Shrink a captured NativeImage to a JPEG: { media_type, data, width, height }. `image` needs getSize, resize, toJPEG.
@@ -120,13 +139,21 @@ function textMarker({ title, url }) {
   return { blocks: [{ type: 'text', text: markerText({ id, title, url, kind: 'text' }) }], chip: { id, kind: 'text', title, thumb: '' } };
 }
 
-// What the user sees when they asked (the button) and nothing was attached.
+// What the user sees when they asked (the button, or words that point at the page) and nothing was attached: what was left out
+// and what to do about it. refusal(plan) -> the text, or '' when the plan needs no notice.
 const WHY_NOT = {
-  'ai-off': 'The screenshot was left out: you turned off AI on this site.',
+  'ai-off': "The screenshot was left out: you turned off AI on this site. To share it, turn AI back on here (the tab's right-click menu, or Settings, Sites where AI is off).",
+  'local-off': 'Nothing from this file was shared: you turned off AI for local files. To turn it back on, open Settings, find Sites where AI is off, and choose Turn on AI next to file://.',
   private: 'The screenshot was left out: private windows never share their pages.',
-  internal: 'The screenshot was left out: Lumen does not share its own pages or files with the AI.',
+  internal: "The screenshot was left out: this is one of Lumen's own pages (Settings, History, Downloads, chat), and those are never shared with the AI. Copy the part you want help with into your message.",
+  'new-tab': "That's Lumen's new tab page, so there's nothing on it to read.",
   'no-tab': 'The screenshot was left out: no page is open.',
 };
+function refusal(plan) {
+  if (!plan || plan.capture || !(plan.forced || plan.asked)) return '';
+  if (plan.why === 'declined') return `Not shared: you chose not to share ${plan.local?.name || 'this file'} with the AI. Ask again and Lumen will ask again.`;
+  return WHY_NOT[plan.why] || '';
+}
 
 // An older message's picture taken out (the chip's ×): the image block of that marker becomes a short note.
 const DROPPED_NOTE = '[screenshot removed by the user]';
@@ -145,4 +172,4 @@ function dropFrom(messages, id) {
   return n;
 }
 
-module.exports = { plan, capture, textMarker, shrink, thumbnail, markerText, parseMarker, blockedAddress, sensitiveAddress, dropFrom, WHY_NOT, SCREEN_BLOCK, DROPPED_NOTE, MAX_EDGE, JPEG_QUALITY };
+module.exports = { plan, capture, textMarker, shrink, thumbnail, markerText, parseMarker, classify, sensitiveAddress, dropFrom, WHY_NOT, refusal, SCREEN_BLOCK, DROPPED_NOTE, MAX_EDGE, JPEG_QUALITY };
