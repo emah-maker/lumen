@@ -266,14 +266,14 @@ const J = (v) => JSON.stringify(v);
   const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
   check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
   check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: min\(var\(--actions-w/.test(css));
-  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: min\(calc/.test(css) && /--actions-w/.test(items));
+  check('list: the title leaves room for the floating buttons', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /--actions-w/.test(items));
   check('list: the "go there" arrow shows only on rows a click takes you to the tab of (working ones)', /is\(\.has-running, \.has-queued, \.has-approval\) \.chat-place:not\(\.here\)::after/.test(css) && !/\n\.chat-place:not\(\.here\)::after/.test(css));
   check('list: forced-colors selectors are as specific as the state rules they override', /forced-colors: active\) \{\s*\.chat-badge, \.chat-badge\.queued, \.chat-badge\.unread/.test(css) && /\.tab-chat-mark, \.tab-chat-mark\.waiting, \.tab-chat-mark\.done \{ color: CanvasText/.test(css));
   check('list: "Exported" goes in its own span (the state word stays) and the badge is hidden from screen readers', /say\(tr\('chats\.exported'/.test(items) && /metaText\.textContent = text/.test(items) && !/[^a-zA-Z]meta\.textContent =/.test(items) && /badge\.setAttribute\('aria-hidden', 'true'\)/.test(items) && !/badge\.setAttribute\('aria-label'/.test(items));
   check('list: the usage line is AA like the meta line', /\.chat-usage \{[^}]*color-mix\(in srgb, var\(--muted\) 55%/.test(css));
   check('list: a narrow list drops "move here" from an idle chat in another tab and the title padding follows', /@container chatlist \(max-width: 240px\)[^]*drops-one \.chat-act-drop \{ display: none/.test(css) && /drops-one:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w-narrow\)/.test(css) && /setProperty\('--actions-w-narrow'/.test(items) && /setProperty\('--actions-w',/.test(items) && /chat-act-drop/.test(items));
   check('list: the title padding eases in with the bar (same --t-fast)', /\.chat-title \{ transition: padding-right var\(--t-fast\)/.test(css) && /\.chat-actions \{[^}]*top: 3px/.test(css));
-  check('list: the armed Delete? pill keeps a border under forced-colors', /forced-colors: active[^]*chat-delete\.armed \{ border: 1px solid CanvasText/.test(css));
+  check('list: the Undo bar keeps a border under forced-colors', /forced-colors: active[^]*chat-undo-toast \{ background: Canvas; border: 1px solid CanvasText/.test(css));
   check('list: export, delete, stop and open-tab report a failure instead of staying silent, and a passing note reverts', /exportFailed/.test(items) && /deleteFailed/.test(items) && /stopFailed/.test(items) && /tabFailed/.test(items) && /setTimeout\(\(\) => \{ metaText\.textContent = original/.test(items) && /stop\.disabled = true/.test(items) && /del\.disabled = true/.test(items));
   check('list: an idle chat in another tab says that a click moves it here', /clickMoves/.test(items) && ['clickMoves', 'exportFailed', 'deleteFailed', 'stopFailed', 'stopping', 'tabFailed'].every((k) => en['chats.' + k]));
   { // the real export handler's answers, and what the list does with each
@@ -309,16 +309,16 @@ const J = (v) => JSON.stringify(v);
       for (const sel of m[1].split(',').map((x) => x.trim()).filter((x) => /\.chat-title\b/.test(x))) rules.push({ sel, at: n, spec: spec(sel), val: (m[2].match(/padding-right:\s*([^;]+)/) || [])[1] });
     }
     const find = (needle, not) => rules.filter((r) => r.sel.includes(needle) && (!not || !r.sel.includes(not)));
-    const hover = find('.chat-item:hover .chat-title')[0], armed = find('.chat-delete.armed', 'drops-one')[0];
-    const nHover = find('.drops-one:hover .chat-title')[0], nArmed = find('.drops-one:has(.chat-delete.armed) .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
-    check('padding rules: every one of them was found', [hover, armed, nHover, nArmed, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
-    check('padding rules: the narrow hover rule outranks the plain hover rule, the armed rules come after their hover rules and are not weaker', cmp(nHover.spec, hover.spec) > 0 && armed.at > hover.at && cmp(armed.spec, hover.spec) >= 0 && nArmed.at > nHover.at && cmp(nArmed.spec, nHover.spec) >= 0, J({ hover: hover.spec, nHover: nHover.spec, armed: armed.spec, nArmed: nArmed.spec }));
+    const hover = find('.chat-item:hover .chat-title')[0];
+    const nHover = find('.drops-one:hover .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
+    check('padding rules: every one of them was found', [hover, nHover, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
+    check('padding rules: the narrow hover rule outranks the plain hover rule', cmp(nHover.spec, hover.spec) > 0, J({ hover: hover.spec, nHover: nHover.spec }));
     check('padding rules: the narrow touch rule outranks the plain touch rule', cmp(nTouch.spec, find('.chat-title', ':').filter((r) => r.sel === '.chat-title')[0].spec) > 0);
-    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nArmed, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && [hover, armed].every((r) => /--actions-w\b(?!-)/.test(r.val)));
+    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && /--actions-w\b(?!-)/.test(hover.val));
   }
   { // deleting a chat refreshes the Chats button, the list and the tab marks (a stale green "done" mark otherwise)
     const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf('// The chat as Markdown'));
+    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf("ipcMain.handle('chats:undo-delete'"));
     check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
     const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
     check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));

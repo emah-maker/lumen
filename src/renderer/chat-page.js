@@ -37,16 +37,19 @@
     cleared: () => { clearChatView(); refreshUsage(''); },
   });
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let viewsBar = null;
+  const search = tools.searcher(api, () => drawItems());
   let lastChats = [];
   let lastCurrent = null;
   function drawItems() {
-    const shown = lastChats.filter((c) => tools.matches(c, query));
+    const query = search.query;
+    const shown = tools.pick(lastChats, { query, view, hits: search.hits });
     const rows = [];
     for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
-    if (query && !shown.length) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: t('chats.noMatch') }));
+    if (!shown.length && (query || view === 'archived')) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : window.chatTr('chats.noArchived', 'No archived chats') }));
   }
   async function renderList() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
@@ -55,9 +58,14 @@
     const { current, chats } = await api.list();
     lastChats = chats;
     lastCurrent = current;
-    if (chats.length > 6 && !searchBox) { searchBox = tools.search((q) => { query = q; drawItems(); }); items.before(searchBox); }
-    if (searchBox) searchBox.hidden = chats.length <= 6;
-    if (searchBox?.hidden) { query = ''; searchBox.value = ''; }
+    if (chats.length && !searchBox) { searchBox = tools.search((q) => search.set(q)); items.before(searchBox); }
+    if (searchBox) searchBox.hidden = !chats.length;
+    if (searchBox?.hidden) { search.clear(); searchBox.value = ''; }
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    viewsBar?.remove();
+    viewsBar = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; renderList(); }) : null;
+    if (viewsBar) items.before(viewsBar);
     drawItems();
     empty.hidden = chats.length > 0;
     if (focused) {

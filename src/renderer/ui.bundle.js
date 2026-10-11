@@ -360,9 +360,22 @@
     }).join('');
   }
 
-  const emphasis = (s) => scripts(s)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  // ~~strike~~, ***both***, **bold**, *italic*, __bold__, _italic_; they nest (**bold *and italic* text**). Strong is
+  // taken first so an italic inside it is found by the pass after. A star next to a space ("2 * 3 * 4") is not a mark;
+  // an underscore inside a word (snake_case) is not one either.
+  const emphasis = (s) => scripts(s.replace(/~~(?=\S)([^\n]+?)(?<=\S)~~/g, '<del>$1</del>'))
+    .replace(/\*\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])__(?=\S)(.+?)(?<=\S)__(?!\w)/g, '$1<strong>$2</strong>')
+    .replace(/(^|[^\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)/g, '$1<em>$2</em>');
+
+  // Parsing state of the render in progress (render is synchronous): the reference links and footnotes the text defines.
+  let CTX = null; // { refs: id -> url, notes: { id -> text }, used: [id, ...] (footnotes in the order first cited) }
+  const refKey = (id) => id.trim().replace(/\s+/g, ' ').toLowerCase();
+  // Held pieces of finished HTML (code spans, links, pictures) while emphasis runs over the text around them, so
+  // "**a [link](u) and `code`**" is one bold run. A held piece is a private-use token.
+  const HELD = /(\d+)/g;
 
   // Reads a URL starting at `start` in escaped text. Parentheses are kept when balanced, so
   // https://en.wikipedia.org/wiki/Safari_(web_browser) stays whole. Returns '' if there is no URL.
@@ -416,11 +429,48 @@
     return url && s[start + url.length] === ')' ? { length: url.length, html: (alt) => `<span class="md-img-remote" data-src="${url}" data-alt="${alt}"></span>` } : null;
   }
 
-  // Links and emphasis for text outside code spans.
-  function formatText(s) {
-    let out = '';
+  // Backslash escapes: \* \_ \[ \ … show the character itself. An escaped & < > " arrives as \&amp; …
+  const ESCAPED = /\\(&(?:amp|lt|gt|quot);|[\\`*_{}[\]()#+\-.!|~^$])/g;
+
+  // A footnote marker: a number, with the note's text as its tooltip; the notes themselves are listed after the reply.
+  function footnoteMark(id) {
+    if (!CTX || !(id in CTX.notes)) return '';
+    if (!CTX.used.includes(id)) CTX.used.push(id);
+    const n = CTX.used.indexOf(id) + 1;
+    return `<sup class="fn-ref" data-fn="${n}" title="${CTX.notes[id].slice(0, 200)}">${n}</sup>`;
+  }
+  // [text][id], [id][] and [id] (a numbered citation like [1]) with a definition in the reply: a link.
+  function refLink(s, i, hold) {
+    if (!CTX) return null;
+    const close = s.indexOf(']', i + 1);
+    if (close < 0) return null;
+    const label = s.slice(i + 1, close);
+    if (!label || label.includes('[') || label.length > 300) return null;
+    if (label[0] === '^') {
+      const html = footnoteMark(refKey(label.slice(1)));
+      return html ? { end: close + 1, html: hold(html) } : null;
+    }
+    if (s[close + 1] === '(') return null;
+    let id = label;
+    let end = close + 1;
+    let text = label;
+    if (s[close + 1] === '[') {
+      const close2 = s.indexOf(']', close + 2);
+      const second = close2 < 0 ? null : s.slice(close + 2, close2);
+      // "[1][2]" is two citations side by side, not the text "1" linked to reference 2
+      if (second !== null && !second.includes('[') && !(/^\d+$/.test(label) && /^\d+$/.test(second))) { id = second || label; end = close2 + 1; }
+    }
+    const url = CTX.refs[refKey(id)];
+    if (!url) return null;
+    const cite = /^\d{1,3}$/.test(text) && end === close + 1;
+    if (cite) text = `[${text}]`;
+    return { end, html: hold(`<a${cite ? ' class="md-cite"' : ''} href="${url}">${cite ? text : emphasis(text)}</a>`) };
+  }
+
+  // Links and emphasis for text outside code spans. `hold` sets finished HTML aside (a token stands in for it).
+  function formatText(s, hold) {
+    s = s.replace(ESCAPED, (_m, c) => hold(c));
     let plain = '';
-    const flush = () => { out += emphasis(plain); plain = ''; };
     let i = 0;
     while (i < s.length) {
       if (s[i] === '!' && s[i + 1] === '[') {
@@ -429,8 +479,7 @@
         if (close > i && !alt.includes('[') && !alt.includes(']') && alt.length <= 300) {
           const image = imageAt(s, close + 2);
           if (image) {
-            flush();
-            out += image.html(alt);
+            plain += hold(image.html(alt));
             i = close + 3 + image.length;
             continue;
           }
@@ -443,18 +492,18 @@
         if (label && (/^\[\d{1,3}\]$/.test(label) || (!label.includes('[') && !label.includes(']')))) {
           const url = scanUrl(s, close + 2, true);
           if (url && s[close + 2 + url.length] === ')') {
-            flush();
-            out += link(url, emphasis(label));
+            plain += hold(link(url, emphasis(label)));
             i = close + 3 + url.length;
             continue;
           }
         }
+        const ref = refLink(s, i, hold);
+        if (ref) { plain += ref.html; i = ref.end; continue; }
       }
       if ((s.startsWith('http://', i) || s.startsWith('https://', i)) && (i === 0 || /[\s(>[]/.test(s[i - 1]))) {
         const url = scanUrl(s, i, false);
         if (url) {
-          flush();
-          out += link(url, url);
+          plain += hold(link(url, url));
           i += url.length;
           continue;
         }
@@ -462,18 +511,22 @@
       plain += s[i];
       i++;
     }
-    flush();
-    return out;
+    return emphasis(plain);
   }
 
   function inline(text) {
-    return text.split(/(`[^`]+`)/).map((part, i) => (i % 2 ? `<code>${part.slice(1, -1)}</code>` : formatText(part))).join('');
+    const held = [];
+    const hold = (html) => { held.push(html); return `${held.length - 1}`; };
+    const src = text.replace(/[]/g, '').replace(/`([^`]+)`/g, (_m, code) => hold(`<code>${code}</code>`));
+    let out = formatText(src, hold);
+    for (let pass = 0; pass < 4 && held.length && out.includes(''); pass++) out = out.replace(HELD, (_t, n) => held[n] ?? '');
+    return out;
   }
 
   // ---------- tables (GitHub style) ----------
 
   const isSeparator = (line) => line.includes('-') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line);
-  const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const cells = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
   // A body row looks like the header: it starts with | when the header does, and otherwise has the
   // header's number of cells. A sentence after the table that happens to contain a | stays text.
   const isTableRow = (line, header) => {
@@ -495,10 +548,102 @@
     return dropMath(renderText(text, maths), maths);
   }
 
+  const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+  const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])(\s+)(.*)$/;
+  const QUOTE = /^\s{0,3}&gt;\s?(.*)$/;
+  const FOOTNOTE_DEF = /^\s{0,3}\[\^([^\]\s]+)\]:\s*(.*)$/;
+  const REF_DEF = /^\s{0,3}\[([^\]^][^\]]*)\]:\s*(?:&lt;)?(https?:\/\/\S+?)(?:&gt;)?(?:\s+(?:&quot;.*?&quot;|'.*?'|\(.*?\)))?\s*$/;
+  const expandTabs = (line) => line.replace(/^[ \t]+/, (w) => w.replace(/\t/g, '    '));
+  const indentOf = (line) => line.length - line.trimStart().length;
+
+  // [1]: https://… (reference links, which also back [1] citations) and [^1]: … (footnotes) are read out of the text
+  // (outside code fences) and removed from it; the rest renders with them in CTX.
+  function takeDefinitions(lines) {
+    const refs = {};
+    const notes = {};
+    const keep = [];
+    let fenced = false;
+    for (let n = 0; n < lines.length; n++) {
+      const line = lines[n];
+      if (/^```/.test(line)) { fenced = !fenced; keep.push(line); continue; }
+      if (fenced) { keep.push(line); continue; }
+      const note = line.match(FOOTNOTE_DEF);
+      if (note) {
+        const body = [note[2]];
+        while (n + 1 < lines.length && /^\s+\S/.test(lines[n + 1])) body.push(lines[++n].trim());
+        notes[refKey(note[1])] = body.join(' ');
+        continue;
+      }
+      const def = line.match(REF_DEF);
+      const url = def ? scanUrl(def[2], 0, true) : '';
+      if (def && url) { refs[refKey(def[1])] ??= url; continue; }
+      keep.push(line);
+    }
+    return { refs, notes, lines: keep };
+  }
+
   function renderText(source, maths) {
-    const lines = escape(source).split('\n');
+    const outer = CTX;
+    const defs = takeDefinitions(escape(source).split('\n'));
+    CTX = { refs: defs.refs, notes: defs.notes, used: [] };
+    try {
+      let html = blocks(defs.lines, maths);
+      if (CTX.used.length) html += `<section class="footnotes"><ol>${CTX.used.map((id) => `<li>${inline(CTX.notes[id])}</li>`).join('')}</ol></section>`;
+      return html;
+    } finally { CTX = outer; }
+  }
+
+  // The list starting at lines[n] (an item line): nested lists, an item's own paragraphs and code, task boxes.
+  // Returns { html, next } (next: the first line after the list).
+  function listAt(lines, n, maths) {
+    const first = expandTabs(lines[n]).match(ITEM);
+    const base = first[1].length;
+    const type = /\d/.test(first[2][0]) ? 'ol' : 'ul';
+    const items = [];
+    let k = n;
+    let cur = null;
+    while (k < lines.length) {
+      const line = expandTabs(lines[k]);
+      if (line.trim() === '') {
+        let j = k + 1;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        const nextLine = j < lines.length ? expandTabs(lines[j]) : '';
+        const nm = nextLine.match(ITEM);
+        // after blank lines the list goes on with an item of this level or with an indented part of the item
+        if (!cur || j >= lines.length || !(nm ? (indentOf(nextLine) > base || (indentOf(nextLine) === base && (/\d/.test(nm[2][0]) ? 'ol' : 'ul') === type)) : indentOf(nextLine) >= cur.offset)) break;
+        for (let b = k; b < j; b++) cur.body.push('');
+        k = j;
+        continue;
+      }
+      const m = line.match(ITEM);
+      if (m && !HR.test(line) && indentOf(line) >= base && (!cur || indentOf(line) < cur.offset)) {
+        if ((/\d/.test(m[2][0]) ? 'ol' : 'ul') !== type) break; // another kind of list starts here
+        cur = { offset: m[1].length + m[2].length + (m[3].length > 4 ? 1 : m[3].length), first: m[4], body: [] };
+        items.push(cur);
+        k++;
+        continue;
+      }
+      if (!cur || indentOf(line) < cur.offset) break; // a line outside the item ends the list
+      cur.body.push(line.slice(Math.min(cur.offset, indentOf(line))));
+      k++;
+    }
+    const li = (item) => {
+      let head = item.first;
+      let cls = '';
+      let box = '';
+      const task = head.match(/^\[([ xX])\]\s+(.*)$/);
+      if (task) { head = task[2]; cls = ' class="task"'; box = `<input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> `; }
+      let inner = blocks([head, ...item.body], maths);
+      // an item with one paragraph (the rest nested lists, code) is not wrapped in <p>
+      if (!/<\/p>[^]*<p>/.test(inner)) inner = inner.replace(/^<p>(.*?)<\/p>/, '$1');
+      return `<li${cls}>${box}${inner}</li>`;
+    };
+    const start = type === 'ol' ? Number(first[2].slice(0, -1)) : 1;
+    return { html: `<${type}${type === 'ol' && start !== 1 ? ` start="${start}"` : ''}>${items.map(li).join('')}</${type}>`, next: k };
+  }
+
+  function blocks(lines, maths) {
     const out = [];
-    let list = null; // 'ul' | 'ol'
     let paragraph = [];
     let code = null;
     let codeLang = '';
@@ -506,10 +651,6 @@
     const flushParagraph = () => {
       if (paragraph.length) out.push(`<p>${inline(paragraph.join('<br>'))}</p>`);
       paragraph = [];
-    };
-    const closeList = () => {
-      if (list) out.push(`</${list}>`);
-      list = null;
     };
 
     for (let n = 0; n < lines.length; n++) {
@@ -521,10 +662,10 @@
         } else code.push(line);
         continue;
       }
-      if (/^```/.test(line)) { flushParagraph(); closeList(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
+      if (/^```/.test(line)) { flushParagraph(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
 
       if (line.includes('|') && n + 1 < lines.length && isSeparator(lines[n + 1])) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const rows = [];
         let k = n + 2;
         while (k < lines.length && lines[k].trim() !== '' && isTableRow(lines[k], line)) rows.push(lines[k++]);
@@ -533,56 +674,46 @@
         continue;
       }
 
-      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
-      const heading = line.match(/^(#{1,6})\s+(.*)$/);
-      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
-      const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
-
       // A display formula on a line of its own is a block of its own.
-      const block = line.match(/^(\s*)\uE000(\d+)\uE001\s*$/);
+      const block = line.match(/^(\s*)(\d+)\s*$/);
       if (block && maths[block[2]]?.display === true) {
-        const token = `\uE000${block[2]}\uE001`;
-        // Indented under a list item: part of that item (the list goes on after it).
-        const last = out.length - 1;
-        if (list && block[1] && /<\/li>$/.test(out[last] || '')) { flushParagraph(); out[last] = out[last].replace(/<\/li>$/, `${token}</li>`); continue; }
-        // The same after a blank line (which closed the list): the list opens again around it.
-        if (!list && block[1] && !paragraph.length && /^<\/(ol|ul)>$/.test(out[last] || '') && /<\/li>$/.test(out[last - 1] || '')) {
-          list = out[last].slice(2, 4);
-          out.pop();
-          out[last - 1] = out[last - 1].replace(/<\/li>$/, `${token}</li>`);
-          continue;
-        }
-        flushParagraph(); closeList();
-        out.push(token);
+        flushParagraph();
+        out.push(`${block[2]}`);
         continue;
       }
 
+      // A block quote: its lines (without the >) are read as blocks of their own, so quotes hold lists, code and quotes.
+      if (QUOTE.test(line)) {
+        flushParagraph();
+        const inner = [];
+        let k = n;
+        while (k < lines.length && QUOTE.test(lines[k])) inner.push(lines[k++].match(QUOTE)[1]);
+        out.push(`<blockquote>${blocks(inner, maths)}</blockquote>`);
+        n = k - 1;
+        continue;
+      }
+
+      if (HR.test(line)) { flushParagraph(); out.push('<hr>'); continue; }
+
+      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
       if (heading) {
-        flushParagraph(); closeList();
+        flushParagraph();
         const level = Math.min(heading[1].length, 4);
         out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
-      } else if (bullet || numbered) {
+      } else if (ITEM.test(expandTabs(line))) {
         flushParagraph();
-        const type = bullet ? 'ul' : 'ol';
-        // The same kind of list again after only blank lines (or a formula it held): one list, not two.
-        if (!list && out[out.length - 1] === `</${type}>`) { out.pop(); list = type; }
-        if (list !== type) {
-          closeList();
-          // A numbered list split by a paragraph or code block keeps counting (3., 4., …) instead of restarting at 1.
-          const start = numbered ? Number(numbered[1]) : 1;
-          out.push(type === 'ol' && start !== 1 ? `<ol start="${start}">` : `<${type}>`);
-          list = type;
-        }
-        out.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
+        const list = listAt(lines, n, maths);
+        out.push(list.html);
+        n = list.next - 1;
       } else if (line.trim() === '') {
-        flushParagraph(); closeList();
+        flushParagraph();
       } else {
-        closeList();
         paragraph.push(line);
       }
     }
     if (code !== null) out.push(`<pre${codeLang ? ` data-lang="${codeLang}"` : ''}><code>${code.join('\n')}</code></pre>`);
-    flushParagraph(); closeList();
+    flushParagraph();
     return out.join('');
   }
 
@@ -1726,13 +1857,20 @@ explain describe list find give compare difference summarize summary write rewri
     sql: words('select from where and or not insert into values update set delete create table drop alter index join left right inner outer full on group by order having limit offset as distinct union all null is in like between case when then else end primary key foreign references default exists with returning'),
     css: words('important media supports keyframes import from to and not only'),
     json: words('true false null'),
+    rb: words('def end if elsif else unless while until for in do begin rescue ensure raise return yield class module self nil true false and or not then case when require require_relative include extend attr_accessor attr_reader attr_writer puts lambda proc super'),
+    php: words('function return if elseif else for foreach while do switch case default break continue new class extends implements interface trait abstract final public private protected static namespace use try catch finally throw echo print isset unset empty array null true false as instanceof const fn match enum readonly'),
+    kt: words('fun val var if else when for while do return class object interface enum data sealed open abstract override private public protected internal import package is as in try catch finally throw null true false this super companion init constructor suspend inline typealias by lateinit const'),
+    swift: words('func let var if else guard switch case default for while repeat return class struct enum protocol extension import init deinit self Self super try catch throw throws rethrows defer in is as nil true false public private internal fileprivate open static async await some any where inout mutating weak lazy'),
+    yaml: words('true false null yes no on off'),
+    toml: words('true false'),
   };
-  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'java', kt: 'java', scala: 'java', swift: 'java', dart: 'java', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
-  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb']);
+  const ALIAS = { javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js', node: 'js', typescript: 'ts', tsx: 'ts', python: 'py', py3: 'py', bash: 'sh', shell: 'sh', zsh: 'sh', console: 'sh', powershell: 'ps', pwsh: 'ps', ps1: 'ps', golang: 'go', rs: 'rust', kotlin: 'kt', kts: 'kt', scala: 'java', dart: 'java', ruby: 'rb', yml: 'yaml', xml: 'html', xhtml: 'html', svg: 'html', vue: 'html', patch: 'diff', cpp: 'c', 'c++': 'c', h: 'c', hpp: 'c', cc: 'c', objc: 'c', csharp: 'cs', 'c#': 'cs', postgres: 'sql', mysql: 'sql', sqlite: 'sql', scss: 'css', less: 'css', jsonc: 'json', json5: 'json' };
+  const HASH_COMMENT = new Set(['py', 'sh', 'ps', 'rb', 'yaml', 'toml']);
   // One pass, left to right: the first alternative that matches at a position wins.
   function tokenizer(lang) {
     const comment = lang === 'sql' ? '--[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : HASH_COMMENT.has(lang) ? '#[^\\n]*'
+      : lang === 'php' ? '//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/'
       : lang === 'json' ? '(?!)'
       : lang === 'css' ? '/\\*[\\s\\S]*?\\*/'
       : '//[^\\n]*|/\\*[\\s\\S]*?\\*/';
@@ -1742,10 +1880,39 @@ explain describe list find give compare difference summarize summary write rewri
   }
   const cache = new Map();
   const esc = (s) => s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  // HTML and XML: comments, tag names, attribute names and quoted values; text between tags stays plain.
+  const MARKUP = /(<!--[\s\S]*?-->)|(<\/?[A-Za-z][\w:.-]*)|([A-Za-z_:@][\w:.-]*)(?==)|("[^"]*"|'[^']*')|(\/?>)/g;
+  function markup(code) {
+    let out = '';
+    let at = 0;
+    let inTag = false;
+    MARKUP.lastIndex = 0;
+    for (let m; (m = MARKUP.exec(code));) {
+      const [text, com, tag, attr, , end] = m;
+      if (!com && !tag && !end && !inTag) continue; // attributes and quotes only count inside a tag
+      out += esc(code.slice(at, m.index));
+      at = m.index + text.length;
+      if (tag) inTag = true;
+      if (end) inTag = false;
+      const cls = com ? 'tk-com' : tag || end ? 'tk-kw' : attr ? 'tk-fn' : 'tk-str';
+      out += `<span class="${cls}">${esc(text)}</span>`;
+    }
+    return out + esc(code.slice(at));
+  }
+  // A diff: added and removed lines, hunk headers and file headers, by their first characters.
+  function diff(code) {
+    return code.split('\n').map((line) => {
+      const cls = /^(\+\+\+|---|diff |index )/.test(line) ? 'tk-meta' : line.startsWith('@@') ? 'tk-hunk' : line[0] === '+' ? 'tk-add' : line[0] === '-' ? 'tk-del' : '';
+      return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+    }).join('\n');
+  }
   function highlight(code, langName) {
     const lang = ALIAS[langName] || langName;
+    if (code.length > 60000) return null; // too big to be worth it: plain
+    if (lang === 'html') return markup(code);
+    if (lang === 'diff') return diff(code);
     const keys = KEYWORDS[lang];
-    if (!keys || code.length > 60000) return null; // unknown language, or too big to be worth it: plain
+    if (!keys) return null; // unknown language: plain
     let re = cache.get(lang);
     if (!re) cache.set(lang, (re = tokenizer(lang)));
     re.lastIndex = 0;
@@ -1757,7 +1924,9 @@ explain describe list find give compare difference summarize summary write rewri
       at = m.index + m[0].length;
       const [text, com, str, num, word] = m;
       const nextParen = word !== undefined && /^\s*\(/.test(code.slice(at, at + 8));
-      const cls = com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
+      // YAML and TOML keys: a word before ":" (YAML) or "=" (TOML)
+      const key = word !== undefined && ((lang === 'yaml' && /^:(\s|$)/.test(code.slice(at, at + 2))) || (lang === 'toml' && /^\s*=/.test(code.slice(at, at + 4))));
+      const cls = key ? 'tk-key' : com ? 'tk-com' : str ? (lang === 'json' && /^\s*:/.test(code.slice(at, at + 8)) ? 'tk-key' : 'tk-str') : num ? 'tk-num'
         : keys.has(text) || (lang === 'sql' && keys.has(text.toLowerCase())) ? 'tk-kw'
         : nextParen ? 'tk-fn'
         : /^[A-Z][a-z]\w*$/.test(text) && lang !== 'sql' ? 'tk-type' : '';
@@ -1774,6 +1943,155 @@ explain describe list find give compare difference summarize summary write rewri
     codeEl.dataset.hl = '1';
   };
   window.highlightCode.test = highlight; // (unit tests)
+})();
+;
+// ---- code-extras.js
+// Extras for code blocks in replies (chat-core.js decorateCode calls window.codeExtras.decorate for each new block):
+//  - a Wrap button (long lines wrap instead of scrolling sideways; the choice is remembered),
+//  - a ```mermaid block drawn as a diagram, with a Source/Diagram switch. Mermaid (renderer/vendor/mermaid.min.js, 3.5 MB)
+//    loads the first time a reply has such a block, never at start-up. Any failure (not loaded, bad syntax, too slow, too
+//    big) leaves the plain code block as it was. securityLevel is 'strict' (labels sanitised, no click handlers), and the
+//    SVG is scrubbed again here before it goes into the page.
+(() => {
+  const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
+  const MAX_SOURCE = 20000;
+  const TIMEOUT_MS = 8000;
+  const WRAP_KEY = 'lumen.codeWrap';
+
+  // ---------- the SVG that goes in the page ----------
+  // Drops scripts, foreign objects' event handlers, javascript: links and external loads from an SVG string. Returns '' if
+  // it is not an SVG at all.
+  function cleanSvg(svg, doc = document) {
+    const tpl = doc.createElement('template');
+    tpl.innerHTML = String(svg || '');
+    const root = tpl.content.firstElementChild;
+    if (!root || root.localName !== 'svg') return '';
+    for (const el of [...root.querySelectorAll('script, iframe, object, embed, link, meta, base, img')]) el.remove();
+    for (const style of root.querySelectorAll('style')) style.textContent = style.textContent.replace(/@import[^;]*;?/gi, '').replace(/url\(\s*['"]?\s*(?!#)[^)]*\)/gi, 'none');
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim().toLowerCase();
+        if (name.startsWith('on')) el.removeAttribute(attr.name);
+        else if ((name === 'href' || name === 'xlink:href' || name === 'src') && !value.startsWith('#')) el.removeAttribute(attr.name);
+      }
+    }
+    return root.outerHTML;
+  }
+
+  // ---------- mermaid ----------
+  const cache = new Map(); // theme|source -> svg (a finished reply redraws its blocks: the diagram comes back at once)
+  let loading = null; // Promise of window.mermaid
+  let queue = Promise.resolve(); // mermaid.render is one at a time
+
+  function loadMermaid() {
+    if (window.mermaid) return Promise.resolve(window.mermaid);
+    if (loading) return loading;
+    loading = new Promise((resolve, reject) => {
+      if (typeof document === 'undefined' || !here) { reject(new Error('no page')); return; }
+      const js = Object.assign(document.createElement('script'), { src: new URL('vendor/mermaid.min.js', here).href, async: true });
+      js.onload = () => (window.mermaid ? resolve(window.mermaid) : reject(new Error('mermaid missing')));
+      js.onerror = () => reject(new Error('mermaid did not load'));
+      document.head.append(js);
+    }).catch((e) => { loading = null; throw e; }); // (tried again with the next block)
+    return loading;
+  }
+
+  const isDark = () => {
+    const theme = document.documentElement.dataset.theme;
+    return theme === 'dark' || (theme !== 'light' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  };
+
+  let initedFor = null;
+  async function draw(source) {
+    const dark = isDark();
+    const key = `${dark ? 'd' : 'l'}|${source}`;
+    if (cache.has(key)) return cache.get(key);
+    const mermaid = await loadMermaid();
+    const job = queue.then(async () => {
+      if (initedFor !== dark) {
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: 'inherit', flowchart: { htmlLabels: false }, deterministicIds: true });
+        initedFor = dark;
+      }
+      const id = `mmd-${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        const out = await Promise.race([mermaid.render(id, source), new Promise((_r, rej) => setTimeout(() => rej(new Error('timeout')), TIMEOUT_MS))]);
+        return out.svg;
+      } finally {
+        // a failed render leaves its error drawing in the page body
+        document.getElementById(id)?.remove();
+        document.getElementById(`d${id}`)?.remove();
+      }
+    });
+    queue = job.catch(() => {});
+    const svg = cleanSvg(await job);
+    if (!svg) throw new Error('not an svg');
+    cache.set(key, svg);
+    if (cache.size > 40) cache.delete(cache.keys().next().value);
+    return svg;
+  }
+
+  function diagram(box, pre, source) {
+    if (source.trim() === '' || source.length > MAX_SOURCE || box.dataset.diagram) return;
+    box.dataset.diagram = 'pending';
+    draw(source).then((svg) => {
+      if (!box.isConnected) return;
+      const view = Object.assign(document.createElement('div'), { className: 'mermaid-view' });
+      view.innerHTML = svg;
+      pre.before(view);
+      box.classList.add('mermaid-ok');
+      box.dataset.diagram = 'done';
+      const head = box.querySelector('.code-head');
+      const toggle = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy code-source', textContent: window.t?.('chat.showSource') || 'Source' });
+      toggle.addEventListener('click', () => {
+        const showing = box.classList.toggle('show-source');
+        toggle.textContent = showing ? (window.t?.('chat.showDiagram') || 'Diagram') : (window.t?.('chat.showSource') || 'Source');
+      });
+      head?.insertBefore(toggle, head.querySelector('.code-copy'));
+    }).catch((e) => { box.dataset.diagram = 'failed'; }); // the code block stays as it is
+  }
+
+  // ---------- wrap ----------
+  const wrapped = () => { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } };
+  const remember = (on) => { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch { /* (no storage: per block only) */ } };
+  function wrapButton(box, head) {
+    const label = () => (box.classList.contains('wrap') ? (window.t?.('chat.noWrap') || 'No wrap') : (window.t?.('chat.wrap') || 'Wrap'));
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy code-wrap', textContent: '' });
+    box.classList.toggle('wrap', wrapped());
+    b.textContent = label();
+    b.setAttribute('aria-pressed', String(box.classList.contains('wrap')));
+    b.addEventListener('click', () => {
+      const on = box.classList.toggle('wrap');
+      remember(on);
+      b.textContent = label();
+      b.setAttribute('aria-pressed', String(on));
+    });
+    head.insertBefore(b, head.querySelector('.code-copy'));
+  }
+
+  // `finished`: the block is complete (not the last, still-streaming one), so a diagram can be drawn.
+  function decorate(box, pre, { finished = true } = {}) {
+    const head = box.querySelector('.code-head');
+    if (head && pre.dataset.lang !== 'mermaid') wrapButton(box, head);
+    if (pre.dataset.lang === 'mermaid' && finished) diagram(box, pre, pre.querySelector('code')?.textContent ?? '');
+  }
+
+  // A table of five or more columns gets a Fit / Scroll switch: scroll keeps each column readable (the table
+  // is as wide as its text, which scrolls sideways); fit squeezes it into the width of the reply.
+  function decorateTables(root) {
+    for (const wrap of root?.querySelectorAll?.('.table-wrap:not(.fit-ready)') || []) {
+      wrap.classList.add('fit-ready');
+      if (wrap.querySelectorAll('thead th').length < 5) continue;
+      const b = Object.assign(document.createElement('button'), { type: 'button', className: 'table-fit', textContent: window.t?.('chat.tableFit') || 'Fit to width' });
+      b.addEventListener('click', () => {
+        const on = wrap.classList.toggle('fit');
+        b.textContent = on ? (window.t?.('chat.tableScroll') || 'Scroll') : (window.t?.('chat.tableFit') || 'Fit to width');
+      });
+      wrap.before(b);
+    }
+  }
+
+  window.codeExtras = { decorate, decorateTables, cleanSvg, draw, _reset() { cache.clear(); loading = null; initedFor = null; queue = Promise.resolve(); } };
 })();
 ;
 // ---- gen-images.js
@@ -3078,10 +3396,18 @@ function settleThinking() {
 // Retry (after an error) and Regenerate (the latest reply): the last exchange is taken back in main and on screen,
 // then asked again, as if it had never been sent.
 let lastAsk = null;
-async function askAgain() {
+// [versions] The versions main kept when it took an exchange back: the next turn shows the switch (chat-actions.js). { at, n, cur, same }
+let pendingVersions = null;
+// `version`: a Regenerate, which keeps the reply it replaces as an earlier version (Retry after an error keeps nothing).
+async function askAgain(version = false) {
   if (running || !lastAsk) return false;
   const again = lastAsk;
-  const result = await window.assistant.rewind?.(again.text);
+  let result;
+  if (version && window.assistant.rewindUser) {
+    const out = await window.assistant.rewindUser(messages.querySelectorAll('.msg.user').length - 1, again.text);
+    result = out?.result;
+    pendingVersions = result === 'rewound' && out.versions ? { ...out.versions, same: true } : null;
+  } else result = await window.assistant.rewind?.(again.text);
   // 'absent': the message never reached the history (it failed first): nothing to take back there, so it is
   // simply asked again; anything else (a run going, no reply) changes nothing.
   if (result !== 'rewound' && result !== 'absent') return false;
@@ -3106,10 +3432,15 @@ async function askAgain() {
 // Claude.ai and ChatGPT. Nothing is taken back until Send; Cancel or Esc leaves everything as it was. The composer
 // (and whatever is typed there) is untouched.
 function editLast() {
-  if (running || !lastAsk) return;
-  const bubble = [...messages.querySelectorAll('.msg.user')].pop();
-  if (!bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
-  const again = lastAsk;
+  editBubble([...messages.querySelectorAll('.msg.user')].pop());
+}
+// Any message of yours can be edited: what followed it is kept as another version (the ‹ 2/3 › switch), and the edited message
+// starts the branch the chat goes on from.
+function editBubble(bubble) {
+  if (running || !bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
+  const again = askOf(bubble) || (bubble === [...messages.querySelectorAll('.msg.user')].pop() ? lastAsk : null);
+  if (!again) return;
+  for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (one edit at a time)
   const kept = [...bubble.childNodes];
   const box = Object.assign(document.createElement('textarea'), { className: 'msg-edit-box', value: again.text, rows: 1 });
   box.setAttribute('aria-label', t('chat.editMessage.title'));
@@ -3141,7 +3472,13 @@ function editLast() {
     if ((!text && !again.images?.length) || running) return;
     if (!modelReady) { restore(); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') })); return; }
     send.disabled = true;
-    const result = await window.assistant.rewind?.(again.text);
+    let result;
+    pendingVersions = null;
+    if (window.assistant.rewindUser) {
+      const out = await window.assistant.rewindUser([...messages.querySelectorAll('.msg.user')].indexOf(bubble), again.text);
+      result = out?.result;
+      if (result === 'rewound' && out.versions) pendingVersions = { ...out.versions, same: text === again.text.trim() };
+    } else result = await window.assistant.rewind?.(again.text);
     if (result !== 'rewound' && result !== 'absent') {
       restore();
       append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.editFailed') }));
@@ -3158,16 +3495,10 @@ function editLast() {
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.onclick(); }
   });
 }
-// The latest message you sent: Edit, in a row under the bubble (not inside it, so it's no part of its text).
-function markEditable(bubble) {
-  for (const b of messages.querySelectorAll('.msg-user-actions')) b.remove(); // only the latest message
-  if (!bubble) return;
-  const row = Object.assign(document.createElement('div'), { className: 'msg-user-actions' });
-  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage') });
-  b.title = t('chat.editMessage.title');
-  b.onclick = () => editLast();
-  row.append(b);
-  bubble.after(row);
+// Each message you sent: the time, Copy and Edit in a row under the bubble (not inside it, so it's no part of its text), and the
+// version switch when it was asked again (chat-actions.js). info: { at, versions }
+function markEditable(bubble, info = {}) {
+  window.chatActions?.userRow(bubble, info);
 }
 // What a user bubble asked (for Regenerate and Edit after a restore or a chat switch).
 const bubbleAsks = new WeakMap();
@@ -3204,10 +3535,14 @@ function startTurn(text, images, tabs = null) {
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
   for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  for (const b of messages.querySelectorAll('.notice-continue')) b.remove(); // (a Continue left under an earlier reply)
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
-  markEditable(bubble);
+  const versions = pendingVersions;
+  pendingVersions = null;
+  markEditable(bubble, { at: Date.now(), versions });
   beginTurn();
+  turn.versions = versions; // (a Regenerate: the switch goes on its reply, see labelReply)
 }
 
 // The working line and turn state of a reply that is now running (its user bubble already shown).
@@ -3396,6 +3731,7 @@ function flushStreaming(el) {
 function decorateCode(root, { colour = false } = {}) {
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
+  window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -3410,6 +3746,7 @@ function decorateCode(root, { colour = false } = {}) {
     window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
+    window.codeExtras?.decorate(box, pre, { finished: colour || !root.classList?.contains('streaming') }); // Wrap button; ```mermaid as a diagram
     const code = pre.querySelector('code');
     if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }
@@ -3571,8 +3908,8 @@ window.assistant.onEvent((event) => {
         };
         notice.append(' ', button);
       }
-      if (event.action === 'continue') {
-        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
+      if (event.action === 'continue' || (event.stopped && lastAsk)) { // (after Stop too: the reply so far stays, and this asks it to go on)
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn notice-continue', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
         notice.append(' ', button);
       }
@@ -3621,7 +3958,7 @@ function finishTurn(event, { early }) {
     turn.working.before(row);
   }
   if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
-  labelReply(turn.text, event.model, event.auto || turn.auto);
+  labelReply(turn.text, event.model, event.auto || turn.auto, { at: Date.now(), versions: turn.versions });
   scrollToBottom(); // (the reply's copy button and label were added below its end)
   endStream();
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
@@ -3643,7 +3980,7 @@ function finishTurn(event, { early }) {
 function lateDone(event) {
   const { bubble } = earlyEnded;
   earlyEnded = null;
-  labelReply(bubble, event.model, event.auto);
+  labelReply(bubble, event.model, event.auto, { at: Date.now() });
   if (turn) return;
   if (event.undo) window.showRunUndo?.(append, event.undo);
   aiTabsRunId = event.runId;
@@ -3675,9 +4012,14 @@ function settledMarkdown(source) {
 }
 
 // Which model wrote a reply: a quiet label, since a chat can move between models.
-function labelReply(bubble, modelId, auto = null) {
+// `extra`: { at, feedback, versions }, for the strip under the reply (chat-actions.js: version switch, time, thumbs).
+function labelReply(bubble, modelId, auto = null, extra = {}) {
   flushStreaming(bubble);
-  if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
+  if (!bubble) return;
+  if (modelId && !bubble.querySelector('.reply-model')) addModelLabel(bubble, modelId, auto);
+  window.chatActions?.replyMeta(bubble, extra);
+}
+function addModelLabel(bubble, modelId, auto) {
   const option = [...$('model').options].find((o) => o.value === modelId);
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(modelId) ?? option?.parentElement?.label;
@@ -3730,7 +4072,7 @@ function regenButton() {
       setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
       return;
     }
-    askAgain();
+    askAgain(true);
   };
   return regen;
 }
@@ -4148,6 +4490,8 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
+  const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
+  const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
   for (const item of items) {
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -4164,6 +4508,7 @@ function showHistory(items) {
       if (item.text) bubble.append(document.createTextNode(item.text));
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
+      userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
       if (!item.text) { // only pictures
         bubble.className = 'msg assistant gen-pics restored';
@@ -4171,7 +4516,8 @@ function showHistory(items) {
         append(bubble);
         continue;
       }
-      if (item.steps) {
+      if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); } // its thinking (collapsed) and the steps it took
+      else if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
         summary.innerHTML = '<span class="step-detail"></span>';
@@ -4182,6 +4528,7 @@ function showHistory(items) {
       bubble.innerHTML = window.renderMarkdown(item.text);
       decorateCode(bubble);
       finishReply(bubble, item.text);
+      if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)
       if (item.generated?.length) { // the words, then the pictures under them
         bubble.classList.add('restored');
         append(bubble);
@@ -4214,17 +4561,34 @@ function showHistory(items) {
     if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
-    markEditable([...messages.querySelectorAll('.msg.user')].pop());
   } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length || items[lastIndex].files?.length)) {
     // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
     const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
     lastAsk = askOf(lastBubble);
     if (lastAsk) {
-      markEditable(lastBubble);
       const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only restored' });
       row.append(regenButton());
       append(row);
     }
+  }
+  // The Stop of a run that was cut off: the reply so far is there, and it can go on.
+  const lastItem = items[lastIndex];
+  if (lastAsk && lastItem?.role === 'assistant' && /\[This reply was interrupted\.\]\s*$/.test(lastItem.text || '')) {
+    const notice = Object.assign(document.createElement('div'), { className: 'notice stopped restored', textContent: t('chat.stopped') });
+    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn notice-continue', textContent: t('chat.continue') });
+    button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
+    notice.append(' ', button);
+    append(notice);
+  }
+  // Under each reply and message: model, time, thumbs, versions (chat-actions.js).
+  for (const { bubble, item } of replyEntries) labelReply(bubble, item.model, item.auto, { at: item.at, feedback: item.feedback });
+  for (const { bubble, item } of userEntries) {
+    let versions = item.versions && item.versions.n > 1 ? item.versions : null;
+    if (versions && versions.same !== false) { // asked again (Regenerate): the switch goes on its reply
+      const reply = window.chatActions?.finalReplyOf(bubble);
+      if (reply) { window.chatActions.replyMeta(reply, { versions }); versions = null; } else versions = { ...versions, same: false };
+    }
+    markEditable(bubble, { at: item.at, versions });
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -4429,6 +4793,217 @@ function startChat() {
   refreshSetup();
   loadModels();
 }
+;
+// ---- chat-actions.js
+// What sits on and under each chat message, shared by the sidebar and the full-page chat (loaded after chat-core.js, whose
+// globals it uses when something is clicked, never while loading):
+//   your messages    a row under the bubble on hover: the time, Copy, Edit; a long message is cut short with "Show more"
+//   replies          a strip under the reply: the ‹ 2/3 › switch between versions, which model wrote it, the time and the
+//                    thumbs up / down (kept with the chat on this computer)
+//   a reopened chat  its thinking (collapsed) and the steps it took, as they were when it ran
+// Versions come from main (features/chat-branches.js): Regenerate and Edit keep what they replace, and the chosen version is the
+// chat that goes on. Messages are named to main by their place among your messages in the view (their "ordinal").
+(() => {
+  const ICONS = {
+    copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>',
+    check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
+    up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
+    down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
+  };
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+  const button = (className, label, html, onclick) => {
+    const b = el('button', { type: 'button', className, title: label });
+    b.setAttribute('aria-label', label);
+    b.innerHTML = html;
+    b.onclick = onclick;
+    return b;
+  };
+
+  // "2:41 PM", or "Oct 9, 2:41 PM" for another day. The tooltip has the whole date.
+  function timeLabel(at) {
+    const d = new Date(at);
+    if (!Number.isFinite(d.getTime())) return null;
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const text = d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+    return el('time', { className: 'msg-time', textContent: text, title: d.toLocaleString(), dateTime: d.toISOString() });
+  }
+
+  const userBubbles = () => [...messages.querySelectorAll('.msg.user')];
+  const ordinalOf = (bubble) => userBubbles().indexOf(bubble);
+  // The user bubble that opens the exchange `node` (a reply) belongs to.
+  function exchangeUser(node) {
+    for (let n = node.previousElementSibling; n; n = n.previousElementSibling) if (n.classList?.contains('msg') && n.classList.contains('user')) return n;
+    return null;
+  }
+  // The reply that closes the exchange a user bubble opens (its last text bubble), or null when it has none.
+  function finalReplyOf(bubble) {
+    let last = null;
+    for (let n = bubble.nextElementSibling; n && !n.classList.contains('user'); n = n.nextElementSibling) {
+      if (n.classList.contains('assistant') && !n.classList.contains('gen-pics') && !n.classList.contains('reply-actions-only') && n.classList.contains('msg')) last = n;
+    }
+    return last;
+  }
+
+  // ---- the version switch
+  async function switchTo(at, target) {
+    if (running || !Number.isInteger(at)) return;
+    const view = await window.assistant.switchVersion?.(at, target).catch(() => null);
+    if (view) applySync(view);
+  }
+  function versionSwitch(versions) {
+    const { at, n, cur } = versions;
+    const box = el('span', { className: 'msg-versions' });
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', t('chat.versions'));
+    const prev = button('msg-version-step', t('chat.versionPrev'), '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3.5-4.5 4.5 4.5 4.5"/></svg>', () => switchTo(at, cur - 2));
+    const next = button('msg-version-step', t('chat.versionNext'), '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5-4.5 4.5"/></svg>', () => switchTo(at, cur));
+    prev.disabled = cur <= 1;
+    next.disabled = cur >= n;
+    box.append(prev, el('span', { className: 'msg-version-count', textContent: t('chat.versionOf', { n: cur, total: n }) }), next);
+    return box;
+  }
+
+  // ---- long messages of yours
+  const LONG_CHARS = 700;
+  const LONG_LINES = 10;
+  // Returns the Show more / Show less button (it goes in the row under the bubble), or null for a message that is not long.
+  function clampLong(bubble, text) {
+    if (!text || (text.length <= LONG_CHARS && text.split(/\n/).length <= LONG_LINES)) return null;
+    bubble.classList.add('clamped');
+    const more = el('button', { type: 'button', className: 'msg-more', textContent: t('chat.showMore') });
+    more.setAttribute('aria-expanded', 'false');
+    more.onclick = () => {
+      const open = bubble.classList.toggle('expanded');
+      more.textContent = t(open ? 'chat.showLess' : 'chat.showMore');
+      more.setAttribute('aria-expanded', String(open));
+    };
+    return more;
+  }
+
+  // ---- under your message
+  async function copyText(text, b) {
+    try {
+      await navigator.clipboard.writeText(text);
+      b.innerHTML = ICONS.check;
+      b.classList.add('copied');
+      setTimeout(() => { b.innerHTML = ICONS.copy; b.classList.remove('copied'); }, 1400);
+    } catch { b.title = t('chat.copyFailed'); }
+  }
+  // info: { at, versions }. One row per message of yours; a message asked again with different words shows its switch here.
+  const ask0 = (bubble) => clampLong(bubble, askOf(bubble)?.text);
+  function userRow(bubble, info = {}) {
+    if (!bubble) return;
+    bubble.nextElementSibling?.classList.contains('msg-user-actions') && bubble.nextElementSibling.remove();
+    const row = el('div', { className: 'msg-user-actions' });
+    const tools = el('div', { className: 'msg-user-tools' });
+    const more = ask0(bubble);
+    if (more) tools.append(more);
+    if (info.versions && info.versions.same === false && info.versions.n > 1) tools.append(versionSwitch(info.versions));
+    const hover = el('span', { className: 'msg-hover' });
+    const time = info.at ? timeLabel(info.at) : null;
+    if (time) hover.append(time);
+    const ask = askOf(bubble);
+    if (ask?.text) hover.append(button('msg-copy', t('chat.copyMessage'), ICONS.copy, (e) => copyText(ask.text, e.currentTarget)));
+    if (ask && !bubble.dataset.skill) {
+      const edit = el('button', { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage'), title: t('chat.editMessage.title') });
+      edit.onclick = () => editBubble(bubble);
+      hover.append(edit);
+    }
+    tools.append(hover);
+    row.append(tools);
+    bubble.after(row);
+  }
+
+  // ---- under a reply
+  // info: { at, feedback, versions }. Safe to call again for the same reply: it fills in what is new.
+  function replyMeta(bubble, info = {}) {
+    if (!bubble || !bubble.classList.contains('assistant')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) {
+      strip = el('div', { className: 'reply-meta' });
+      bubble.append(strip);
+    }
+    const model = bubble.querySelector(':scope > .reply-model');
+    if (model && model.parentElement !== strip) { const v = strip.querySelector('.msg-versions'); if (v) v.after(model); else strip.prepend(model); }
+    if (info.versions && info.versions.same !== false && info.versions.n > 1 && !strip.querySelector('.msg-versions')) strip.prepend(versionSwitch(info.versions));
+    if (info.at && !strip.querySelector('.msg-time')) {
+      const time = timeLabel(info.at);
+      if (time) { time.classList.add('msg-hover'); strip.append(time); }
+    }
+    if (!strip.querySelector('.reply-thumbs') && bubble.querySelector('.reply-copy')) strip.append(thumbs(bubble, info.feedback)); // (a reply of only a picture has no text to rate)
+  }
+  function thumbs(bubble, current = null) {
+    const box = el('span', { className: 'reply-thumbs' });
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', t('chat.rateReply'));
+    let value = current === 'up' || current === 'down' ? current : null;
+    const sync = () => { for (const b of box.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.value === value)); box.classList.toggle('rated', Boolean(value)); };
+    const make = (v, label, icon) => {
+      const b = button('reply-thumb', label, icon, async () => {
+        const user = exchangeUser(bubble);
+        const next = value === v ? null : v;
+        const ok = user ? await window.assistant.feedback?.(ordinalOf(user), next).catch(() => false) : false;
+        if (ok) { value = next; sync(); }
+      });
+      b.dataset.value = v;
+      return b;
+    };
+    box.append(make('up', t('chat.goodReply'), ICONS.up), make('down', t('chat.badReply'), ICONS.down));
+    sync();
+    return box;
+  }
+
+  // ---- a reopened chat: what the reply did before its answer
+  // item: a transcript item of an assistant reply. Returns the nodes to put above its bubble (thinking, then the steps).
+  function details(item) {
+    const out = [];
+    if (item.thinking) {
+      const box = el('details', { className: 'thinking restored' });
+      const summary = el('summary', { textContent: item.thinkingMs ? t('chat.thoughtFor', { n: Math.max(1, Math.round(item.thinkingMs / 1000)) }) : t('chat.thought') });
+      box.append(summary, el('div', { textContent: item.thinking }));
+      out.push(box);
+    }
+    const tools = Array.isArray(item.tools) ? item.tools : [];
+    if (item.steps || tools.length) {
+      const count = item.steps || tools.length;
+      const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });
+      if (!tools.length) {
+        const line = el('div', { className: 'step done restored' });
+        line.innerHTML = '<span class="step-detail"></span>';
+        line.firstChild.textContent = label;
+        out.push(line);
+      } else {
+        const group = el('details', { className: 'step-group restored' });
+        const summary = el('summary', { className: 'step done restored' });
+        summary.innerHTML = '<span class="step-detail"></span>';
+        summary.firstChild.textContent = label;
+        const list = el('div', { className: 'step-items' });
+        for (const tool of tools) {
+          const text = tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : tool.name || '');
+          const row = el('div', { className: tool.ok === false ? 'step failed restored' : 'step done restored', title: text });
+          row.innerHTML = '<span class="step-detail"></span>';
+          row.firstChild.textContent = text;
+          list.append(row);
+        }
+        group.append(summary, list);
+        out.push(group);
+      }
+    }
+    return out;
+  }
+  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return tool.name || ''; } }
+
+  // ---- Ctrl+Shift+C: copy the latest reply
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 'c') return;
+    const copy = [...messages.querySelectorAll('.reply-copy')].pop();
+    if (!copy) return;
+    e.preventDefault();
+    copy.click();
+  });
+
+  window.chatActions = { userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+})();
 ;
 // ---- tabs-ask-core.js
 // The logic behind "@" in the composer (renderer/tabs-ask.js): finding the mention being typed,
@@ -4817,6 +5392,10 @@ function startChat() {
     rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>',
     export: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>',
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
+    pin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5"/></svg>',
+    unpin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5M2.5 2.5l11 11"/></svg>',
+    archive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>',
+    unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
@@ -4839,6 +5418,8 @@ function startChat() {
   window.chatListTools = {
     // chats -> [{ label, chats }] in order; empty groups are left out.
     group(chats, now = Date.now()) {
+      const pinned = chats.filter((c) => c.pinned && !c.archived);
+      if (pinned.length) chats = chats.filter((c) => !pinned.includes(c));
       const day = new Date(now); day.setHours(0, 0, 0, 0);
       const start = day.getTime();
       const bands = [
@@ -4849,9 +5430,68 @@ function startChat() {
       ];
       const out = bands.map((b) => ({ label: b.label, chats: [] }));
       for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
-      return out.filter((g) => g.chats.length);
+      return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
-    matches: (chat, q) => !q || String(chat.title || '').toLowerCase().includes(q.toLowerCase()),
+    // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
+    // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
+    pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+      if (query) {
+        const q = query.toLowerCase();
+        return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
+      }
+      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+    },
+    // Chats / Archived switch (shown once something is archived or the Archived view is open).
+    views(view, archivedCount, onPick) {
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
+      bar.setAttribute('role', 'group');
+      for (const [id, label] of [['chats', window.chatTr('chats.viewAll', 'Chats')], ['archived', window.chatTr('chats.viewArchived', 'Archived') + (archivedCount ? ` (${archivedCount})` : '')]]) {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: `chat-view${view === id ? ' on' : ''}`, textContent: label });
+        b.setAttribute('aria-pressed', String(view === id));
+        b.onclick = () => onPick(id);
+        bar.append(b);
+      }
+      return bar;
+    },
+    // Search state shared by both lists: titles match at once, message text a moment later (main-side search over saved chats).
+    searcher(api, redraw) {
+      let query = '', hits = null, timer = null, seq = 0;
+      return {
+        get query() { return query; },
+        get hits() { return hits; },
+        set(q) {
+          query = q; hits = null; clearTimeout(timer); const mine = ++seq;
+          redraw();
+          if (!q || !api.search) return;
+          timer = setTimeout(async () => {
+            let found = null;
+            try { found = await api.search(q); } catch { /* titles only */ }
+            if (mine !== seq || !Array.isArray(found)) return;
+            hits = new Map(found.map((h) => [h.id, h.snippet || '']));
+            redraw();
+          }, 160);
+        },
+        clear() { query = ''; hits = null; seq++; clearTimeout(timer); },
+      };
+    },
+    // "Chat deleted. Undo" for a few seconds, fixed to the window so a redrawn list keeps it.
+    undoToast(text, ms, onUndo) {
+      document.querySelector('.chat-undo-toast')?.remove();
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-undo-toast' });
+      bar.setAttribute('role', 'status');
+      const undo = Object.assign(document.createElement('button'), { type: 'button', textContent: window.chatTr('chats.undo', 'Undo') });
+      const timer = setTimeout(() => bar.remove(), ms);
+      undo.onclick = async () => {
+        clearTimeout(timer);
+        undo.disabled = true;
+        let ok = false;
+        try { ok = await onUndo(); } catch { /* too late */ }
+        if (ok === false) { bar.firstChild.textContent = window.chatTr('chats.undoLate', 'Too late to undo'); setTimeout(() => bar.remove(), 2000); } else bar.remove();
+      };
+      bar.append(Object.assign(document.createElement('span'), { textContent: text }), undo);
+      document.body.append(bar);
+      return bar;
+    },
     heading(label) {
       const li = Object.assign(document.createElement('li'), { className: 'chat-group', textContent: label });
       li.setAttribute('role', 'presentation');
@@ -4941,7 +5581,10 @@ function startChat() {
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
+      if (chat.pinned) li.classList.add('pinned');
+      if (chat.archived) li.classList.add('archived');
       openBtn.append(name, meta);
+      if (chat.snippet) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-snippet', textContent: chat.snippet })); // where a search found the words in the messages
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
       const place = inTabs || inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
@@ -5004,27 +5647,33 @@ function startChat() {
           else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
         } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
+      const pinBtn = iconButton(chat.pinned ? 'unpin' : 'pin', chat.pinned ? tr('chats.unpin', 'Unpin') : tr('chats.pin', 'Pin to top'));
+      pinBtn.onclick = async () => {
+        pinBtn.disabled = true;
+        try { if ((await api.pin(chat.id, !chat.pinned)) === false) throw new Error('refused'); await rerender(); } catch { pinBtn.disabled = false; say(tr('chats.pinFailed', 'Could not pin')); }
+      };
+      const archiveBtn = iconButton(chat.archived ? 'unarchive' : 'archive', chat.archived ? tr('chats.unarchive', 'Unarchive') : tr('chats.archive', 'Archive'));
+      archiveBtn.onclick = async () => {
+        archiveBtn.disabled = true;
+        try { if ((await api.archive(chat.id, !chat.archived)) === false) throw new Error('refused'); await rerender(); } catch { archiveBtn.disabled = false; say(tr('chats.archiveFailed', 'Could not archive')); }
+      };
+      // Delete goes at once and says so with an Undo for a few seconds (nothing is erased until the time is up).
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
-      let armed = null;
       del.onclick = async () => {
-        if (!armed) { // two clicks: the first asks, the second deletes
-          const again = tr('chats.deleteAgain', 'Click again to delete');
-          del.classList.add('armed');
-          del.dataset.confirm = tr('chats.deleteConfirm', 'Delete?');
-          del.title = again;
-          del.setAttribute('aria-label', again);
-          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
-          return;
-        }
-        clearTimeout(armed);
         del.disabled = true; // pending: a second click cannot delete twice
         try {
           const out = await api.remove(chat.id);
           if (out?.cleared) cleared();
+          if (out?.undo) {
+            window.chatListTools.undoToast(tr('chats.deleted', 'Chat deleted'), out.undoMs || 8000, async () => {
+              const ok = await api.undoRemove(chat.id);
+              if (ok) { if (out.cleared) await onOpen?.(chat.id); await rerender(); }
+              return ok;
+            });
+          }
           await rerender();
         } catch {
           del.disabled = false;
-          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
           say(tr('chats.deleteFailed', 'Could not delete'));
         }
       };
@@ -5067,7 +5716,7 @@ function startChat() {
         };
         tabActions.push(closeTabs);
       }
-      actions.append(...tabActions, rename, exportBtn, del);
+      actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
@@ -8278,8 +8927,10 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let redraw = () => {};
+  const search = tools.searcher(api, () => redraw());
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
@@ -8292,22 +8943,27 @@ $('agent-stop')?.addEventListener('click', () => {
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
-    // A search once there are enough chats to need one; what was typed survives a redraw.
+    // The search box is there as soon as there is a chat; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
-    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
-    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
-    if (searchBox) searchBox.value = query;
+    searchBox = chats.length ? tools.search((q) => search.set(q)) : null;
+    if (!searchBox) search.clear(); // (no chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = search.query;
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
     const list = document.createElement('ul');
     list.className = 'chat-items';
     function drawList() {
-      const shown = chats.filter((c) => tools.matches(c, query));
+      const query = search.query;
+      const shown = tools.pick(chats, { query, view, hits: search.hits });
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);
-      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
     }
+    redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

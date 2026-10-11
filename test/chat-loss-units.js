@@ -51,7 +51,7 @@ const files = (dir) => fs.readdirSync(dir).filter((n) => /^[a-f0-9]{16}\.json$/.
   for (let i = 1; i <= 3; i++) a.save(hexId(i), snap(`a${i}`));
   const b = mk(dir, { limit: 3 }); // another process, same folder
   b.save(hexId(10), snap('b10')); // b's own prune deletes the oldest (a1) after re-reading the index
-  check('the second writer pruned past its limit', !fs.existsSync(path.join(dir, `${hexId(1)}.json`)), files(dir).join());
+  check('the second writer deleted nothing past its limit (it archives)', files(dir).length === 4, files(dir).join());
   a.save(hexId(4), snap('a4')); // a does not know b10: it must adopt it, not delete it, and not drop it from the index
   check('the first writer did not delete the chat the other one added', fs.existsSync(path.join(dir, `${hexId(10)}.json`)), files(dir).join());
   const ids = mk(dir).list().map((c) => c.id);
@@ -75,7 +75,7 @@ const files = (dir) => fs.readdirSync(dir).filter((n) => /^[a-f0-9]{16}\.json$/.
   const before = files(dir).length;
   const small = mk(dir, { limit: 1 }); // a mistakenly small limit must not wipe the history in one go
   small.save(hexId(9), snap('c9'));
-  check('one save deletes at most three files', before - (files(dir).length - 1) <= 3, `${before} -> ${files(dir).length}`);
+  check('a mistakenly small limit deletes nothing: the extra chats are only archived', files(dir).length === before + 1 && small.list().length === before + 1, `${before} -> ${files(dir).length}`);
 }
 
 // ---- prune and remove do nothing destructive when the index on disk can't be read
