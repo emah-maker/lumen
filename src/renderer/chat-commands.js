@@ -9,6 +9,7 @@
 //   /model     opens the model picker (with a search: /model sonnet).
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
+//   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
 //   /help      lists every command.
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows
 (() => {
@@ -28,6 +29,18 @@
     takesInput: false,
     run() {
       newChat.click();
+      return { ok: true };
+    },
+  });
+
+  slash.register({
+    name: 'shortcuts',
+    label: tr('slash.shortcuts', 'Keyboard shortcuts'),
+    description: tr('slash.shortcuts.description', 'List the chat’s keyboard shortcuts (also ? or Ctrl+/).'),
+    takesInput: false,
+    run() {
+      if (!window.chatShortcuts) return { ok: false, message: tr('slash.shortcuts.none', 'The shortcut list is not available here.') };
+      window.chatShortcuts.open();
       return { ok: true };
     },
   });

@@ -416,6 +416,32 @@ let running = false;
 // are that chat's alone: an event or a queued message for another chat never touches them.
 let shownChatId = null;
 const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
+// ---------- drafts: each chat keeps its own unsent text ----------
+// What is typed (and the long pasted blocks waiting as chips) is saved per chat on every change (renderer/chat-drafts.js, localStorage), put
+// away when another chat opens and back when this one does, also after a restart. 'draftHold' keeps the box from saving while it is empty
+// between two chats (or before startChat).
+const drafts = (() => { try { return window.chatDrafts.create(window.localStorage); } catch { return null; } })();
+let pastes = []; // long pasted blocks shown as chips and sent with the message (strings)
+let draftHold = true;
+const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+function restoreDraft() {
+  draftHold = false;
+  const d = drafts?.get(shownChatId);
+  if (d) {
+    const carried = prompt.value.trim(); // (queued messages that came back to the box)
+    prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
+    pastes = d.pastes.slice();
+  }
+  autosize();
+  renderAttachments();
+  renderScreenBtn();
+}
+// The chat just started here got its id: a draft typed meanwhile moves to it.
+function nameChat(id) {
+  if (!id || shownChatId) return;
+  drafts?.rename(null, id);
+  shownChatId = id;
+}
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
 
@@ -501,9 +527,10 @@ function setRunning(value) {
 // "Send now" (Ctrl+Enter while a reply runs): shown only while one runs and something is typed.
 const sendNowBtn = optional('send-now');
 function updateSend() {
-  const typed = Boolean(prompt.value.trim() || attachments.length);
+  const typed = Boolean(prompt.value.trim() || attachments.length || pastes.length);
   send.disabled = !running && !typed;
   sendNowBtn.hidden = !(running && typed);
+  saveDraft();
 }
 
 // ---------- screen context: "what is this?" sends a screenshot of the tab ----------
@@ -677,7 +704,7 @@ function showAttachNote(lines) {
   const el = $('attachment-note');
   if (!el) return;
   clearTimeout(attachNoteTimer);
-  el.replaceChildren(...lines.map((line) => Object.assign(document.createElement('div'), { textContent: line })));
+  el.replaceChildren(...lines.map((line) => (typeof line === 'string' ? Object.assign(document.createElement('div'), { textContent: line }) : line)));
   el.hidden = lines.length === 0;
   if (lines.length) attachNoteTimer = setTimeout(() => showAttachNote([]), 12000);
 }
@@ -726,7 +753,7 @@ async function addFiles(files) {
 function renderAttachments() {
   const strip = $('attachments');
   strip.replaceChildren();
-  strip.hidden = attachments.length === 0;
+  strip.hidden = attachments.length === 0 && pastes.length === 0;
   attachments.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = isFileItem(a) ? 'attachment attachment-file' : 'attachment';
@@ -755,6 +782,28 @@ function renderAttachments() {
     chip.append(remove);
     strip.append(chip);
   });
+  // A long pasted block: a chip like a file's, sent as part of the message (the model reads it; a file chip it would not).
+  pastes.forEach((text, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'attachment attachment-file attachment-paste';
+    chip.setAttribute('role', 'listitem');
+    chip.title = text.slice(0, 300);
+    const size = t('composer.paste.size', { n: text.length.toLocaleString() });
+    chip.setAttribute('aria-label', t('composer.paste.chip', { size }));
+    chip.append(
+      Object.assign(document.createElement('span'), { className: 'attachment-ext', textContent: 'TXT' }),
+      Object.assign(document.createElement('span'), { className: 'attachment-name', textContent: t('composer.paste.name') }),
+      Object.assign(document.createElement('span'), { className: 'attachment-size', textContent: size }),
+    );
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'attachment-remove';
+    remove.setAttribute('aria-label', t('composer.paste.remove'));
+    remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
+    remove.onclick = () => { pastes.splice(i, 1); renderAttachments(); prompt.focus(); };
+    chip.append(remove);
+    strip.append(chip);
+  });
   strip.setAttribute('role', 'list');
   strip.setAttribute('aria-label', t('composer.attachments'));
   const attachBtn = $('attach');
@@ -767,7 +816,7 @@ function renderAttachments() {
   document.dispatchEvent(new CustomEvent('lumen:attachments', { detail: { count: attachments.length } })); // (the background button can't carry images)
 }
 
-window.chatAttachments = { count: () => attachments.length, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
+window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
 
 // The attach button: a file picker (Tab to it, then Enter or Space).
 {
@@ -790,8 +839,31 @@ prompt.addEventListener('paste', async (e) => {
   if (files.length) {
     e.preventDefault(); // text paste stays untouched; only files (pictures included) are intercepted
     await addFiles(files);
+    return;
   }
+  // A long block of text goes into the box as usual; a line under it offers to move it to a chip instead (as Claude.ai does).
+  const text = (e.clipboardData?.getData('text/plain') || '').replace(/\r\n?/g, '\n');
+  if (window.chatDrafts.isLongPaste(text)) setTimeout(() => offerPasteChip(text));
 });
+function offerPasteChip(text) {
+  if (!prompt.value.includes(text)) return;
+  const line = document.createElement('div');
+  line.className = 'paste-offer';
+  const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('composer.paste.attach') });
+  line.append(Object.assign(document.createElement('span'), { textContent: t('composer.paste.offer', { n: text.length.toLocaleString() }) }), ' ', button);
+  button.onclick = () => {
+    const at = prompt.value.indexOf(text);
+    if (at === -1) { showAttachNote([]); return; } // (edited or removed since)
+    prompt.value = (prompt.value.slice(0, at) + prompt.value.slice(at + text.length)).replace(/\n{3,}/g, '\n\n');
+    pastes.push(text);
+    autosize();
+    renderAttachments();
+    renderScreenBtn();
+    showAttachNote([]);
+    prompt.focus();
+  };
+  showAttachNote([line]);
+}
 const sidebarEl = chatRoot;
 // Any file dropped on the chat joins the message (it no longer opens in a tab).
 const dragHasFiles = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file');
@@ -1294,7 +1366,7 @@ window.assistant.onEvent((event) => {
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
-  if (event.chatId && !shownChatId) shownChatId = event.chatId; // (a chat just started here: its first event names it)
+  if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
@@ -2119,7 +2191,7 @@ window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 // events follow, tagged with its run id.
 window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } = {}) => {
   if (running || forOtherChat(chat)) return; // (a turn of a chat this view has moved off is not this chat's running state)
-  if (chat && !shownChatId) shownChatId = chat;
+  if (chat && !shownChatId) nameChat(chat);
   const shown = [...(images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` })), ...restoredFiles(files)];
   lastAsk = { text: String(text || ''), images: shown, tabs: null }; // started in the other view: this is the chat's last message now
   startTurn(String(text || ''), shown);
@@ -2145,7 +2217,7 @@ async function reconcile() {
   if (!view || !view.id) return true;
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
-  if (action === 'adopt') { shownChatId = view.id; return true; } // (a chat not named yet: now it is)
+  if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
@@ -2166,7 +2238,7 @@ new ResizeObserver(() => {
 
 function autosize() {
   prompt.style.height = 'auto';
-  prompt.style.height = `${Math.min(prompt.scrollHeight, 160)}px`;
+  prompt.style.height = `${Math.min(prompt.scrollHeight, 240)}px`;
 }
 // Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
 let prewarmAt = 0;
@@ -2216,6 +2288,9 @@ prompt.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation(); // (and doesn't also leave the full-page chat)
     window.assistant.stop(); // Esc in an empty composer stops the reply
+  } else if (e.key === 'ArrowUp' && !prompt.value && !running && !attachments.length && !pastes.length && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && messages.querySelector('.msg.user')) {
+    e.preventDefault();
+    editLast(); // Up in an empty composer edits the message you sent last (Claude.ai, ChatGPT)
   }
 });
 $('composer').addEventListener('submit', async (e) => {
@@ -2230,13 +2305,15 @@ $('composer').addEventListener('submit', async (e) => {
 });
 sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
-  const text = prompt.value.trim();
-  if (!text && attachments.length === 0) return;
+  const typed = prompt.value.trim();
+  if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  const text = window.chatDrafts.withPastes(typed, pastes);
   const images = attachments;
   attachments = [];
-  renderAttachments();
-  showAttachNote([]);
+  pastes = [];
   prompt.value = '';
+  renderAttachments(); // (saves the empty draft)
+  showAttachNote([]);
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
   const screen = takeScreenMode(); // [screen context] the camera button's choice for this message
@@ -2280,6 +2357,13 @@ document.querySelectorAll('.chip').forEach((chip) => {
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
 function clearChatView() {
+  saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+  draftHold = true;
+  prompt.value = '';
+  pastes = [];
+  autosize();
+  renderAttachments();
+  queueMicrotask(restoreDraft);
   runId++;
   shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
   lastAsk = null; // another chat: its last message isn't known here
@@ -2311,6 +2395,7 @@ $('new-chat').onclick = () => {
 
 // Called once by the page's script after it has set its chatHost hooks.
 function startChat() {
+  restoreDraft();
   refreshSetup();
   loadModels();
 }
