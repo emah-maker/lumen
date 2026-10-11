@@ -57,7 +57,7 @@ if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
 cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
 const { engineModel } = require('./ai/cli-utils');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
@@ -3824,6 +3824,9 @@ function importMenu() {
 // The History page asks for its entries over IPC (history-preload.js). They used to be packed into
 // the page's URL, which a long history pushed past Chromium's URL length limit (a blank page).
 function openHistoryPage() {
+  // One History tab, like Bookmarks and Downloads: Ctrl+H again goes back to it (reloaded, so it lists what you visited since).
+  const existing = tabs.find((t) => alive(t) && t.view.webContents.getURL().startsWith(HISTORY_URL));
+  if (existing) { switchTab(existing.id); existing.view.webContents.reload(); return; }
   openTab(HISTORY_URL, { historyPage: true });
 }
 const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
@@ -4395,6 +4398,7 @@ function handleShortcut(event, input) {
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
+  else if (process.platform !== 'darwin' && mod && input.shift && !input.alt && key === 'i') wc?.toggleDevTools(); // Ctrl+Shift+I, as in Chrome (macOS has Cmd+Option+I in the View menu)
   else handled = false;
   if (handled) event.preventDefault();
 }
@@ -7130,7 +7134,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -7948,6 +7952,8 @@ function goFromAddress(text) {
   const internal = settingsPage.parseSettingsInput(text);
   if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
   if (chatPage.parseChatInput(text)) { chatPageRt.open(); return; } // lumen://chat
+  const own = internalPageOf(text); // lumen://history, bookmarks, downloads, about
+  if (own) { if (own === 'history') openHistoryPage(); else if (own === 'updates') openSettingsPage('updates', { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); else managers.open(own); return; }
   if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }

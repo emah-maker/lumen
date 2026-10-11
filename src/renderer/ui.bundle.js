@@ -1151,7 +1151,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (label) { where.textContent = ''; text.textContent = option ? label(option) : ''; }
     else { where.textContent = tag && !name.toLowerCase().startsWith(tag.toLowerCase()) ? tag : ''; text.textContent = name; }
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
-    button.title = option ? [groupOf(option), name, option.value].filter(Boolean).join(' · ') : '';
+    button.title = option ? [groupOf(option), name, option.value.toLowerCase() === name.toLowerCase() ? '' : option.value].filter(Boolean).join(' · ') : ''; // (not "Auto · auto")
     button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent].filter(Boolean).join(': '));
     requestAnimationFrame(fitTag); // a new name (or the list reloaded): shortened again to the room there is
   };
@@ -1230,7 +1230,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const maker = recentRow ? o.dataset.provider || groupOf(o) : '';
     const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
-    el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
+    el.title = [nameOf(o), o.dataset.more || o.value.toLowerCase() === nameOf(o).toLowerCase() ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
     if (usageBars) decorateUsage(el, top, usageBars.forModel(o.value, usageBars.state()), o);
     act.set(el, () => choose(o.value));
@@ -3424,6 +3424,7 @@ function decorateCode(root, { colour = false } = {}) {
       setTimeout(() => { b.textContent = t('chat.copyCode'); }, 1400);
     });
     head.append(b);
+    window.chatCanvas?.decorate(pre, head, b); // lumen://chat only: "Open in canvas" for a long block or an HTML/SVG page
     pre.replaceWith(box);
     box.append(head, pre);
     const code = pre.querySelector('code');
@@ -5644,7 +5645,12 @@ function globeIcon(page = null) {
 // A page with no icon of its own: a monogram (the first letter of its site on a color taken from the site), so a row of
 // tabs without favicons doesn't read as a row of identical globes. Not for Lumen's own pages (they have their own icons).
 function siteHostOf(url) {
-  try { const u = new URL(String(url || '')); return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./i, '') : ''; } catch { return ''; }
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.replace(/^www\./i, '');
+    // An address of numbers (127.0.0.1, [::1]) has no site name to take a letter from: "1" on a green tile reads as a glitch, so it keeps the globe.
+    return /^https?:$/.test(u.protocol) && !/^[\d.]+$/.test(host) && !host.startsWith('[') ? host : '';
+  } catch { return ''; }
 }
 function monogramIcon(host) {
   const span = document.createElement('span');
