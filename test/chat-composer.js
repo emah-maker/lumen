@@ -1,7 +1,7 @@
 // The composer in the sidebar, end to end (hidden window, a fake Claude client: no network, no key): each chat keeps its own draft
 // (switching chats and back, and after a restart), Up in an empty box edits your last message, a long paste is offered as a chip and
-// goes with the message, the shortcut sheet opens, and the chat-history panel shows Undo after a delete. Run it with
-// LUMEN_TEST_BACKGROUND=1 so no window shows.
+// goes with the message (and does not make the message a "new topic" that splits the chat), the shortcut sheet opens, and a chat deleted
+// from the history list comes back with Undo. Run it with LUMEN_TEST_BACKGROUND=1 so no window shows.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
@@ -58,9 +58,11 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     if (rowA) {
       await ui.click(`.chat-item[data-id="${rowA}"] .chat-title`);
       const back = await waitFor(async () => (await promptValue()) === 'draft for chat A');
-      if (process.env.DEBUG_DRAFT) console.log('DEBUG1', rowA, await ui.evaluate(() => localStorage.getItem('lumen.chatDrafts')), await ui.evaluate(() => typeof shownChatId !== 'undefined' ? shownChatId : 'n/a'));
       check('opening chat A again brings back its own draft', back, await promptValue());
     }
+    const chatOnScreen = () => app.evaluate(() => global.__tabChats.chatId());
+    const idA = await chatOnScreen();
+    check('chat A is the open chat again', idA === rowA, `${idA} vs ${rowA}`);
     // ---- Up in an empty box edits your last message
     await ui.fill('#prompt', '');
     await sleep(200);
@@ -97,6 +99,8 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
       await waitFor(() => app.evaluate((n) => global.__sent.length > n, before));
       await idle();
       const sent = await app.evaluate(() => global.__sent[global.__sent.length - 1] || '');
+      check('sending in a reopened chat stays in that chat (no new chat is started)', (await chatOnScreen()) === idA && (await ui.evaluate(() => document.querySelectorAll('.notice.topic-split').length)) === 0, await chatOnScreen());
+      check('the reply lands under the earlier messages of chat A', /first chat hello[\s\S]*summarize the paste/.test(await text()), (await text()).slice(0, 200));
       check("the chip's text is sent with the message", /line 59 of a long pasted block/.test(sent) && /summarize the paste/.test(sent), sent.slice(0, 200));
     }
 
@@ -121,8 +125,23 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     const rowAgain = await ui.evaluate(() => [...document.querySelectorAll('.chat-item')].find((li) => /first chat hello/i.test(li.textContent))?.dataset.id || null);
     if (rowAgain) await ui.click(`.chat-item[data-id="${rowAgain}"] .chat-title`);
     const restored = await waitFor(async () => (await promptValue()) === 'draft for chat A');
-    if (process.env.DEBUG_DRAFT) console.log('DEBUG', rowAgain, JSON.stringify(await ui.evaluate(() => ({ store: localStorage.getItem('lumen.chatDrafts'), id: typeof shownChatId !== 'undefined' ? shownChatId : 'n/a', msgs: document.getElementById('messages').textContent.replace(/s+/g, ' ').slice(0, 150) }))));
+    check('after a restart, opening chat A shows its messages', /first chat hello/.test(await ui.evaluate(() => [...document.querySelectorAll('#messages .msg')].map((m) => m.textContent).join(' '))), await text());
     check('after a restart, opening chat A brings back its draft', restored, await promptValue());
+
+    // ---- delete another chat from the history list: Undo brings it back
+    await ui.click('#chat-history');
+    await ui.waitForSelector('#chat-list:not([hidden]) .chat-item');
+    const rowB = await ui.evaluate(() => [...document.querySelectorAll('.chat-item')].find((li) => /second chat hello/i.test(li.textContent))?.dataset.id || null);
+    check('the history list shows chat B', Boolean(rowB), '');
+    if (rowB) {
+      await ui.hover(`.chat-item[data-id="${rowB}"]`);
+      await sleep(200);
+      await ui.click(`.chat-item[data-id="${rowB}"] .chat-delete`);
+      const toast = await waitFor(() => ui.evaluate(() => /Chat deleted/.test(document.querySelector('.chat-undo-toast')?.textContent || '')), 3000);
+      check('deleting a chat says so, with Undo', toast && !(await ui.$(`.chat-item[data-id="${rowB}"]`)), '');
+      await ui.click('.chat-undo-toast button');
+      check('Undo brings the deleted chat back', await waitFor(() => ui.evaluate((id) => Boolean(document.querySelector(`.chat-item[data-id="${id}"]`)), rowB), 4000), '');
+    }
   } catch (err) {
     failures++;
     console.log(`FAIL  threw: ${err.stack || err}`);

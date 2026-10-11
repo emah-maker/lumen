@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A long paste no longer splits your chat.** Sending a message with a pasted block attached ("summarize the paste") in a chat could start a new chat, because the pasted words looked like a new topic. It now stays in the chat you are in. Reopening a chat and coming back after a restart also keeps its unsent draft in the right place.
+
 ## 0.5.23 (2026-10-11)
 
 - **Custom instructions, and a canvas beside the chat.** Settings > AI > Custom instructions has two boxes, "What should Lumen know about you?" and "How should Lumen respond?" (1,500 characters each), and an on/off switch; new chats follow them, and they never override the safety and ask-before-acting rules. On the full-page chat, a long code block (25 lines or more) or an HTML or SVG page gets **Open in canvas**: a resizable side panel with Code and Preview tabs, Copy, Download and Close (Esc). The preview runs sandboxed with no network and no way into Lumen.
