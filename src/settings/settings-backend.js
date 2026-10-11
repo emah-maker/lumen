@@ -151,6 +151,9 @@ const DEFAULTS = {
   agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
+  aiInstructionsOn: true, // [ai] Settings > AI > Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
+  aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
+  aiInstructionsStyle: '', // [ai] "How should Lumen respond"
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
@@ -219,6 +222,7 @@ function validate(key, value) {
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
+    case 'aiInstructionsAbout': case 'aiInstructionsStyle': return typeof value === 'string' ? require('../ai/custom-instructions').clean(value) : null;
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
     case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
