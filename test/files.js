@@ -43,12 +43,12 @@ function makePdf(pages) {
   await ui.waitForSelector('.tab');
 
   const active = () => app.evaluate(() => { const wc = global.__agent.browser.activeTab().webContents; return { url: wc.getURL(), title: wc.getTitle() }; });
-  // The viewer's own state: page count and whether the document loaded.
+  // The viewer's own state: page count (the toolbar's "/ N") and whether the document loaded (no status message, one page element per page).
+  // The viewer is Lumen's pdf.js page (lumen-pdf://app/viewer.html?u=<the PDF's address>), no longer Chrome's PDF extension in a subframe.
   const pdfState = () => app.evaluate(async () => {
     const wc = global.__agent.browser.activeTab().webContents;
-    const viewer = wc.mainFrame.framesInSubtree.find((f) => f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'));
-    if (!viewer) return null;
-    return viewer.executeJavaScript("(() => { const v = document.querySelector('pdf-viewer'); return v ? { pages: v.docLength_, state: v.loadState_ } : null; })()");
+    if (!wc.getURL().startsWith('lumen-pdf://')) return null;
+    return wc.executeJavaScript("(() => { const n = Number(/\\d+/.exec(document.getElementById('pageCount')?.textContent || '')?.[0]); const msg = document.getElementById('message'); const pages = document.querySelectorAll('#viewer .page').length; return { pages: n, state: msg && msg.hidden && pages === n && n > 0 ? 'success' : 'loading', message: msg?.textContent || '' }; })()");
   });
   const waitPdf = async () => {
     let s = null;
@@ -84,7 +84,7 @@ function makePdf(pages) {
   await sleep(1500);
   const after = await app.evaluate(({ webContents }) => webContents.getAllWebContents().length);
   a = await active();
-  check('a dropped file opens in a new tab', a.url === pathToFileURL(path.join(dir, 'doc.pdf')).href, JSON.stringify(a));
+  check('a dropped file opens in a new tab', a.url === pathToFileURL(path.join(dir, 'doc.pdf')).href || (a.url.startsWith('lumen-pdf://') && new URL(a.url).searchParams.get('u') === pathToFileURL(path.join(dir, 'doc.pdf')).href), JSON.stringify(a)); // (a PDF opens in Lumen's viewer, whose address carries the file's)
   check('missing and relative paths are ignored', after - before === 1, `${before} -> ${after} web contents`);
 
   // ---- 6. the AI still can't open local files ----
