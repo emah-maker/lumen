@@ -2273,12 +2273,18 @@ async function buildPasswords(card) {
         hideTimer = setTimeout(hide, 30000); // shown for 30 seconds at most
       },
     });
+    // A saved login can't be got back, so Delete asks twice (a second click within 4 seconds), like Delete all.
+    const deleteLogin = (l) => {
+      const w = armedButton(tr('settings.passwords.delete', 'Delete'), tr('settings.passwords.deleteSure', 'Delete? Click again'), async () => { logins = await P.remove(l.id); renderLogins(false); }, 'danger');
+      w.button.setAttribute('aria-label', tr('settings.passwords.deleteLogin', 'Delete the login for {site}', { site: l.site }));
+      return w;
+    };
     const el = h('div', { class: 'item', 'data-site': l.site },
       h('span', { class: 'grow' }, l.site, h('span', { class: 'note', text: ` · ${l.username || 'no username'}` })),
       secret, showBtn,
       h('button', { text: 'Copy', 'aria-label': `Copy the password for ${l.site}`, onclick: async () => { if (await P.copy(l.id).catch(() => false)) flash(result, 'Copied. The clipboard is cleared in 30 seconds.'); } }),
       h('button', { text: 'Edit', 'aria-label': `Edit the login for ${l.site}`, onclick: () => el.replaceWith(editor(l)) }),
-      h('button', { class: 'danger', text: 'Delete', 'aria-label': `Delete the login for ${l.site}`, onclick: async () => { logins = await P.remove(l.id); renderLogins(false); } }));
+      deleteLogin(l));
     return el;
   };
   const editor = (l) => {
@@ -2390,7 +2396,7 @@ async function buildDownloads(card) {
       : [h('span', { class: 'note', text: 'No downloads yet.' })]));
   };
   card.append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
-    h('button', { id: 'downloads-clear', text: 'Clear list', onclick: async () => { await S.clearDownloads(); render(); } }))));
+    armedButton(tr('settings.downloads.clear', 'Clear list'), tr('settings.downloads.clearSure', 'Clear the list? Click again'), async () => { await S.clearDownloads(); render(); }, '', 'downloads-clear'))));
   render();
 }
 
