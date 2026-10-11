@@ -63,6 +63,7 @@ const path = require('path');
     global.__pageContext = pageContext;
     const tab = agent.browser.activeTab();
     if (startUrl) await tab.webContents.loadURL(startUrl).catch(() => {});
+    const before = new Map(agent.browser.listTabs().map((t) => [t.id, t.url]));
     agent.messages.settings = { model: 'claude-opus-5', adhdMode: true };
     let turn = 0;
     agent.getClient = () => ({ beta: { messages: { stream: () => {
@@ -85,6 +86,9 @@ const path = require('path');
       approved: [...agent.approvedHosts],
       results,
       url: agent.browser.activeTab().webContents.getURL(),
+      // Where the AI went: a chat's navigate loads in a tab of its own, not the user's (agents out of sight), so the active tab's url
+      // says nothing about it. These are the tabs that are new or moved during this run.
+      reached: agent.browser.listTabs().filter((t) => before.get(t.id) !== t.url).map((t) => t.url),
       tabs: agent.browser.listTabs().length,
     };
   }, opts);
@@ -103,20 +107,20 @@ const path = require('path');
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: `${other}/collect` } },
   ] });
-  check('allowed: the navigation happens', r.approvals.length === 1 && r.url.startsWith(other), JSON.stringify(r));
+  check('allowed: the navigation happens', r.approvals.length === 1 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 3. Host already approved in this chat: no card.
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [otherHost], toolUses: [
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: `${other}/collect` } },
   ] });
-  check('an already-approved host gets no card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('an already-approved host gets no card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 4. A run that read nothing navigates freely (and the taint from earlier runs doesn't carry over).
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
     { name: 'navigate', input: { url: `${other}/somewhere` } },
   ] });
-  check('an untainted run navigates without a card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('an untainted run navigates without a card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 4b. Page content read in one message stays in the chat: a later message in the same chat is
   // still asked; New chat starts clean.
@@ -124,7 +128,7 @@ const path = require('path');
   r = await run({ fresh: false, pageContext: false, answer: false, toolUses: [{ name: 'navigate', input: { url: `${other}/collect` } }] });
   check('a read in message 1 still asks before navigating in message 2 of the same chat', r.approvals.length === 1 && r.approvals[0].host === otherHost && r.url.startsWith(home), JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [{ name: 'navigate', input: { url: `${other}/collect` } }] });
-  check('after New chat, the same navigation goes without a card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('after New chat, the same navigation goes without a card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 5. The page text attached to the message counts as reading it.
   r = await run({ startUrl: `${home}/inbox`, pageContext: true, answer: false, toolUses: [
@@ -160,11 +164,11 @@ const path = require('path');
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: bounce('/landing-allowed') } },
   ] });
-  check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.url === `${other}/landing-allowed` && !r.results[1]?.error, JSON.stringify(r));
+  check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.reached.includes(`${other}/landing-allowed`) && !r.results[1]?.error, JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
     { name: 'navigate', input: { url: bounce('/landing-untainted'), read: false } }, // (navigate returns the page head by default, which counts as reading it (e7c240b); read:false keeps the run untainted)
   ] });
-  check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.url === `${other}/landing-untainted`, JSON.stringify(r));
+  check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.reached.includes(`${other}/landing-untainted`), JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
     { name: 'read_page', input: {} },
     { name: 'read_urls', input: { urls: [bounce('/hidden-denied')] } },
