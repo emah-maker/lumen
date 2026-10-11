@@ -87,8 +87,8 @@ window.__authorize = () => { mk.isAuthorized = true; fire('authorizationStatusDi
 
   // search -> results -> play
   await page(`(() => { ${card}.querySelector('.am-searchbtn').click(); const i = ${card}.querySelector('.am-searchfield input'); i.value = 'fixture'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  check('engine: a search goes through the bridge to MusicKit\'s API at the catalog path and the results come back as rows', await waitFor(`${card}.querySelectorAll('.am-opt:not(.am-opt-recent)').length === 1`, 60) && (await engine('__cmds')).includes('api:/v1/catalog/us/search'), JSON.stringify(await engine('__cmds')));
-  await page(`${card}.querySelector('.am-opt:not(.am-opt-recent)').click()`);
+  check('engine: a search goes through the bridge to MusicKit\'s API at the catalog path and the results come back as rows', await waitFor(`${card}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 1`, 60) && (await engine('__cmds')).includes('api:/v1/catalog/us/search'), JSON.stringify(await engine('__cmds')));
+  await page(`${card}.querySelector('.am-pop .am-opt:not(.am-opt-recent)').click()`);
   check('engine: clicking a result sets that queue and plays (the kind and id are exact)', await waitFor(`${card}.querySelector('.sp-title')?.textContent === 'Fixture Song'`, 60) && (await engine('__cmds')).includes('queue:{"song":"1"}'), JSON.stringify(await engine('__cmds')));
   check('engine: the card shows title, artist, album, a seekable bar and the preview note (signed out)', await page(`${card}.querySelector('.sp-artist').textContent === 'Fixture Artist' && ${card}.querySelector('.sp-album').textContent === 'Fixture Album' && ${card}.querySelector('.sp-bar').getAttribute('role') === 'slider' && /Preview only/.test(${card}.textContent)`), await page(`${card}.textContent.slice(0, 200)`));
   await shot('engine-fixture-playing.png');
