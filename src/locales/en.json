@@ -18,6 +18,7 @@
   "agent.notify.done": "Lumen finished: {reply}",
   "agent.notify.doneEmpty": "Lumen finished",
   "agent.notify.failed": "Lumen stopped: {error}",
+  "agent.notify.failedHint": "Open the chat and press Retry.",
   "agent.notify.approval": "Lumen needs your OK",
   "agent.notify.approvalBody": "Open the sidebar to answer.",
   "approval.allow": "Allow site for this chat",

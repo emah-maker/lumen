@@ -4702,7 +4702,7 @@ function tellUser(run, kind) {
   pushAttention();
   if (!decided.os || TEST || !Notification.isSupported()) return;
   const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
-  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, chat: title }, t);
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
   try {
     const n = new Notification({ title: text.title, body: text.body, silent: false });
     n.on('click', () => {
@@ -8173,7 +8173,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     trackRunDetails(run, msg);
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
-    else if (msg.type === 'error') run.error = msg.text || 'error';
+    else if (msg.type === 'error') { run.error = msg.text || 'error'; run.errorSummary = msg.summary || ''; }
     else if (msg.type === 'notice' && msg.text === 'Stopped.') run.stopped = true;
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
