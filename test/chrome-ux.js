@@ -108,10 +108,13 @@ const os = require('os');
   check('the toolbar AI button names what it is for (set up, or the model)', aiBtn.who === 'AI' ? aiBtn.setup && /^Set up AI \(/.test(aiBtn.title) && aiBtn.label === 'Set up AI' : !aiBtn.setup && aiBtn.label === aiBtn.who, JSON.stringify(aiBtn));
   // the omnibox: plain words with a history page first pre-select it; an address typed in full is left alone
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), b);
+  // (the strip's own update for the switch rewrites the address field when it lands: typing before it does leaves 'bage', not 'page')
+  await waitFor(() => ui.evaluate(() => document.getElementById('address').value.endsWith('/b')));
+  await sleep(300);
   await ui.evaluate(() => document.getElementById('address').focus());
   await ui.keyboard.press('Control+A');
   await ui.keyboard.type('page');
-  const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, kinds: suggest.items.map((i) => i.kind) })'); return s.kinds.length && s; });
+  const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, typed: suggest.typed, kinds: suggest.items.map((i) => i.kind) })'); return s.typed === 'page' && s.kinds.length && s; }); // (not an earlier keystroke's list: 'p', 'pa' and 'pag' arrive first)
   check('typing plain words pre-selects the first row when it is a page from history', pre && pre.kinds[0] === 'history' && pre.selected === 0, JSON.stringify(pre));
   await ui.keyboard.press('Enter');
   const went = await waitFor(async () => { const u = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); return u.startsWith(base) && !/google/.test(u) && u; });
