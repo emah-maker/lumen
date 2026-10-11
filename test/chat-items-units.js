@@ -266,6 +266,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const chats = [{ id: 'a', title: 'Alpha', updated: now }, { id: 'p', title: 'Pinned one', pinned: true, updated: now - 9e9 }, { id: 'z', title: 'Zeta', archived: true, updated: now }, { id: 'm', title: 'Match by body', updated: now }];
     check('library: the main list leaves archived chats out, the Archived view shows only them', tools.pick(chats, {}).map((c) => c.id).join() === 'a,p,m' && tools.pick(chats, { view: 'archived' }).map((c) => c.id).join() === 'z');
     check('library: a pinned chat gets its own first group', tools.group(tools.pick(chats, {}), now)[0].label === 'Pinned' && tools.group(tools.pick(chats, {}), now)[0].chats[0].id === 'p');
+    { // lumen://chat's list: Previous 30 days, then one group per month; the sidebar's keeps its plain Earlier
+      const day = 864e5;
+      const old = [{ id: 'w', title: 'W', updated: now - 3 * day }, { id: 'm1', title: 'M1', updated: now - 20 * day }, { id: 'o1', title: 'O1', updated: now - 70 * day }, { id: 'o2', title: 'O2', updated: now - 75 * day }, { id: 'o3', title: 'O3', updated: now - 400 * day }];
+      const plain = tools.group(old, now).map((g) => g.label);
+      const monthly = tools.group(old, now, { months: true });
+      check('library: the sidebar grouping is unchanged (no month groups)', plain.join() === 'Previous 7 days,Earlier', plain.join());
+      check('library: the page names Previous 30 days, then each older month once, newest first', monthly[0].label === 'Previous 7 days' && monthly[1].label === 'Previous 30 days' && monthly.length >= 4 && monthly.slice(2).every((g) => /[0-9]{4}/.test(g.label)) && monthly.slice(2).reduce((n, g) => n + g.chats.length, 0) === 3 && monthly[monthly.length - 1].chats[0].id === 'o3', monthly.map((g) => g.label).join());
+    }
     check('library: a search matches titles at once and message hits later, across archived too', tools.pick(chats, { query: 'zet' }).map((c) => c.id).join() === 'z' && tools.pick(chats, { query: 'tram', hits: new Map([['m', '...tram 28...']]) }).map((c) => c.snippet).join() === '...tram 28...' && tools.pick(chats, { query: 'tram' }).length === 0);
     const sent = [];
     const search = tools.searcher({ search: async (q) => { sent.push(q); return q === 'tr' ? [] : [{ id: 'm', snippet: 's' }]; } }, () => {});
