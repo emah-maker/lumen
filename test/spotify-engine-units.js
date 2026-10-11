@@ -202,6 +202,41 @@ module.exports = async function spotifyEngineUnits(check) {
   await w.save({ type: 'spotify', mode: 'api', clientId: CLIENT }).then(() => check('spotify widget: API mode still asks to log in first', false, 'saved'), (er) => check('spotify widget: API mode still asks to log in first', /Log in with Spotify first/.test(er.message), er.message));
   const w2 = createWidgets({ readSettings: () => ({ homeWidgets: [{ id: 'wapi00001', type: 'spotify', mode: 'api', clientId: CLIENT, art: false, x: 0, y: 0, w: 4, h: 3 }] }), writeSettings: () => {}, fetch: async () => { throw new Error('offline'); }, getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}) });
   check('spotify widget: an existing API-mode card keeps its mode and Client ID', w2.list()[0].mode === 'api' && w2.list()[0].clientId === CLIENT && w2.list()[0].art === false, JSON.stringify(w2.list()[0]));
+
+  // ---- the library: asked, pending, answered, failed (with its cause), empty, never answered, asked again ----
+  {
+    let t2 = 2e12;
+    const pl = fakePlayer();
+    pl.signed = true;
+    const warns = [];
+    const realWarn = console.warn;
+    console.warn = (...a) => { warns.push(a.join(' ')); };
+    const e2 = createEngine({ player: pl, now: () => t2, fetchBytes: async () => PNG, resizeArt: (b) => b, BrowserWindow: function BrowserWindow() { return fakeWin(); }, getParent: () => null, hasCard: () => true, onChange: () => {}, setInterval: () => ({ unref() {} }) });
+    const cmds = () => (pl.wc ? pl.wc.sent.map((s) => s[1]).filter((c) => c.cmd === 'list' && c.kind === 'playlists') : []);
+    await e2.read();
+    e2.onMessage('{"t":"ready"}');
+    e2.onMessage(state());
+    let d = await e2.read();
+    check('spotify engine library: signed in and ready, the library is asked once and the card is told it is being read', cmds().length === 1 && d.libraryPending === true && d.libraryOk === true && d.libraryEmpty === false, JSON.stringify([cmds().length, d.libraryPending, d.libraryOk]));
+    e2.onMessage(JSON.stringify({ t: 'list', kind: 'playlists', rid: cmds()[0].rid, ok: false, why: 'noPanel', detail: 'no library rows (0 list rows, no panel)', items: [] }));
+    d = await e2.read();
+    check('spotify engine library: a failed read says why (noPanel), no longer pending, and the cause is logged to main with the [spotify] prefix and the page detail', d.libraryOk === false && d.libraryWhy === 'noPanel' && d.libraryPending === false && warns.some((m) => m.startsWith('[spotify] library:') && /noPanel/.test(m) && /no panel/.test(m)), JSON.stringify([d.libraryOk, d.libraryWhy, warns]));
+    e2.refreshLists();
+    d = await e2.read();
+    check('spotify engine library: Try again asks the page again (a second list command) and the old failure is not shown while it is read', cmds().length === 2 && d.libraryOk === true && d.libraryPending === true, JSON.stringify([cmds().length, d.libraryOk, d.libraryPending]));
+    e2.onMessage(JSON.stringify({ t: 'list', kind: 'playlists', rid: cmds()[1].rid, ok: true, signedOut: false, items: [] }));
+    d = await e2.read();
+    check('spotify engine library: an ok answer with no rows is an EMPTY library (libraryEmpty), not a failure and not pending', d.libraryOk === true && d.libraryEmpty === true && d.libraryPending === false && d.playlists.length === 0, JSON.stringify([d.libraryOk, d.libraryEmpty, d.libraryPending]));
+    e2.refreshLists();
+    t2 += 15e3; // the page never answers
+    d = await e2.read();
+    check('spotify engine library: a page that never answers ends as a failure (timeout) after 14 s, logged, instead of "Loading…" for ever', d.libraryOk === false && d.libraryWhy === 'timeout' && d.libraryPending === false && warns.some((m) => /never answered/.test(m)), JSON.stringify([d.libraryOk, d.libraryWhy, warns.slice(-1)]));
+    e2.refreshLists();
+    e2.onMessage(JSON.stringify({ t: 'list', kind: 'playlists', rid: cmds()[3].rid, ok: true, signedOut: false, items: [{ id: 'PLAYLIST0000000000001', kind: 'playlist', title: 'Mine', sub: 'Sam', art: 'https://image-cdn-ak.spotifycdn.com/image/abc' }, { id: 'ALBUM00000000000000001', kind: 'album', title: 'Disc', art: 'https://evil.example/x.jpg' }] }));
+    d = await e2.read();
+    check('spotify engine library: rows come through (a picture from an unknown host is dropped by the message check)', d.libraryOk === true && d.playlists.length === 2 && d.playlists[0].title === 'Mine' && d.libraryEmpty === false, JSON.stringify(d.playlists));
+    console.warn = realWarn;
+  }
 };
 
 if (require.main === module) {

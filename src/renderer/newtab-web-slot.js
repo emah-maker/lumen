@@ -10,6 +10,9 @@
   const CARDS = ['spotify', 'applemusic']; // the cards' classes (features/spotify-web.js, apple-music-web.js)
   let frame = 0;
   let last = '';
+  let moving = false; // the page is scrolling or being resized: the native view cannot follow in the same frame, so main hides it until this settles
+  let settle = 0;
+  const SETTLE_MS = 140;
   const watched = new WeakSet();
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => schedule()) : null;
   const round = (n) => Math.round(n * 10) / 10;
@@ -17,7 +20,8 @@
   function measure() {
     frame = 0;
     if (document.hidden) return;
-    const blocked = document.body.classList.contains('w-editing') || Boolean(document.querySelector('.w-picker, dialog[open]'));
+    // Something laid over the card (a picker, a dialog, a stack's panel or menu, the edit mode's handles): the native view would draw over it, so it hides.
+    const blocked = document.body.classList.contains('w-editing') || Boolean(document.querySelector('.w-picker, dialog[open]')) || [...document.querySelectorAll('.w-stack-panel, .w-stack-menu, [role="menu"]')].some((n) => n.getClientRects().length > 0);
     const out = {};
     let any = false;
     for (const cls of CARDS) {
@@ -26,7 +30,7 @@
       any = true;
       if (ro && !watched.has(slot)) { watched.add(slot); ro.observe(slot); }
       const r = slot.getBoundingClientRect();
-      out[cls] = { x: round(r.left), y: round(r.top), w: round(r.width), h: round(r.height) };
+      out[cls] = { x: round(r.left), y: round(r.top), w: round(r.width), h: round(r.height), r: round(parseFloat(getComputedStyle(slot).borderTopLeftRadius) || 0), ...(moving ? { m: 1 } : {}) };
     }
     const msg = JSON.stringify(out);
     if (msg === last) return;
@@ -35,10 +39,18 @@
     console.debug(PREFIX + msg);
   }
   function schedule() { if (!frame && !document.hidden) frame = requestAnimationFrame(measure); }
+  // A scroll or a resize: say "moving" at once (the view hides), and "settled" a moment after the last one (the view is shown at the new place).
+  function motion() {
+    moving = true;
+    clearTimeout(settle);
+    settle = setTimeout(() => { moving = false; schedule(); }, SETTLE_MS);
+    schedule();
+  }
   window.syncWebSlots = schedule; // (a redraw of the cards calls it; tests too)
 
-  addEventListener('scroll', schedule, { capture: true, passive: true });
-  addEventListener('resize', schedule, { passive: true });
+  // (only a scroll that carries a slot along: a list scrolled inside another card does not move the player)
+  addEventListener('scroll', (e) => { const t = e.target; if (t === document || [...document.querySelectorAll('.sp-web-slot')].some((s) => t.contains && t.contains(s))) motion(); else schedule(); }, { capture: true, passive: true });
+  addEventListener('resize', motion, { passive: true });
   document.addEventListener('visibilitychange', () => { if (document.hidden) last = ''; else schedule(); }); // (shown again: main may have lost it, say it again)
   document.addEventListener('DOMContentLoaded', () => {
     window.widgetGrid?.onLayout(schedule);

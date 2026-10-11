@@ -26,6 +26,7 @@ const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the comman
 const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
 const WARM_MS = 30 * 60e3; // the card's search is open (or its box was focused, or a search asked): the hidden page is not unloaded for being idle until this long after
 const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
+const LIBRARY_MS = 14e3; // the library asked and not answered this long (the page's own wait is shorter): it ends as a failure, not "Loading…" for ever
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
@@ -46,6 +47,8 @@ function createMusicEngine(deps) {
   let error = null; // { message, at }: the player's last error, shown for a few seconds
   const lists = { recent: null, playlists: null }; // { items, at, signedOut }
   let listsAskedAt = 0;
+  let libraryAskedAt = 0; // when the library was asked and nothing has answered yet (0: answered, or never asked)
+  const tag = `[${String(deps.name || 'music').toLowerCase().replace(/\s+/g, '-')}]`; // (the prefix of what is logged to main's console)
   let results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' };
   let searchCmd = null; // { cmd, at, gen }: the search asked last, kept until it is answered, so a new document of the page (a full navigation) is asked again
   const arts = new Map(); // address -> data: URL ('' when it has none), the last few
@@ -135,15 +138,18 @@ function createMusicEngine(deps) {
   function askLists(force = false) {
     if (!caps.lists || !ready || (!force && now() - listsAskedAt < LISTS_FRESH_MS)) return;
     listsAskedAt = now();
+    if (lists.playlists && lists.playlists.ok === false) lists.playlists = null; // (asked again: the old failure is not shown meanwhile, nor kept if this one fails differently)
+    libraryAskedAt = now();
     send({ cmd: 'list', kind: 'recent', rid: ++rid });
     send({ cmd: 'list', kind: 'playlists', rid: ++rid });
+    changed(); // (the card hears that the library is being read again: "Loading…", not the failure it showed)
   }
   let page = null; // the web contents the state belongs to: a new page (made again after a crash or an unload) starts from nothing
   function wake() {
     touch();
     player.ensure();
     const wc = player.webContents();
-    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; playerMissingSince = 0; pending = null; pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; }
+    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; libraryAskedAt = 0; playerMissingSince = 0; pending = null; pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; }
     expireQueue();
     if (!timer) {
       timer = (deps.setInterval || setInterval)(unloadIfIdle, 60e3);
@@ -153,6 +159,12 @@ function createMusicEngine(deps) {
   // A search kept for a page that never became ready, or asked and never answered, says so (the card stops saying "Searching…"); a kept button just goes.
   function expireQueue() {
     if (results.pending && searchCmd && results.rid === searchCmd.cmd.rid && now() - searchCmd.at > SEARCH_MS) { results = { ...results, pending: false, ok: false, why: 'timeout', detail: 'no answer from the page' }; searchCmd = null; changed(); }
+    if (libraryAskedAt && now() - libraryAskedAt > LIBRARY_MS) { // (a page that never answered: the card says so, and offers Try again)
+      libraryAskedAt = 0;
+      lists.playlists = { items: [], at: now(), signedOut: false, ok: false, why: 'timeout', detail: 'no answer from the page' };
+      console.warn(`${tag} library: the page never answered`);
+      changed();
+    }
     for (const kind of ['search', 'control']) {
       const item = queued[kind];
       if (!item || now() - item.at <= QUEUE_MS) continue;
@@ -162,7 +174,7 @@ function createMusicEngine(deps) {
   }
   const playing = () => Boolean(msg && bridge.playbackKind(msg.state) === 'playing' && msg.item);
   function unload() {
-    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null; warmUntil = 0;
+    ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; libraryAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null; warmUntil = 0;
     queued = { control: null, search: null };
     pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; wantTab = { name: '', at: 0 };
     clearTimeout(tabTimer);
@@ -228,7 +240,12 @@ function createMusicEngine(deps) {
         if (m.ok === false || m.items.length) searchCmd = null;
         // (the pictures are asked for by the card when the rows are on screen: loadThumbs)
       } else {
-        lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut, ok: m.ok !== false, why: m.ok === false ? m.why || 'page' : '' };
+        lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut, ok: m.ok !== false, why: m.ok === false ? m.why || 'page' : '', detail: m.ok === false ? m.detail || '' : '' };
+        if (m.kind === 'playlists') {
+          libraryAskedAt = 0;
+          if (m.ok === false) console.warn(`${tag} library: couldn't be read (${m.why || 'page'}${m.detail ? `: ${m.detail}` : ''})`);
+          else if (!m.items.length && !m.signedOut) console.log(`${tag} library: the page shows an empty library`);
+        }
       }
       changed();
     }
@@ -318,6 +335,8 @@ function createMusicEngine(deps) {
       playlists: listCard(lists.playlists, 25),
       libraryOk: !(lists.playlists && lists.playlists.ok === false), // (false: the page's library could not be read; the card says so and offers Try again)
       libraryWhy: lists.playlists && lists.playlists.ok === false ? lists.playlists.why || 'page' : '',
+      libraryPending: libraryAskedAt > 0 && now() - libraryAskedAt <= LIBRARY_MS, // (asked, no answer yet: the card says "Loading…" where it has no rows to show)
+      libraryEmpty: Boolean(lists.playlists) && lists.playlists.ok !== false && !lists.playlists.signedOut && !lists.playlists.items.length,
       queue: pageCard(pageLists.queue),
       tracks: pageCard(pageLists.tracks),
       lyrics: { pending: lyr.pending, ok: lyr.ok !== false, why: lyr.ok === false ? lyr.why || 'page' : '', lines: lyr.ok === false ? [] : lyr.lines.slice(0, 250), forTitle: lyr.forTitle },

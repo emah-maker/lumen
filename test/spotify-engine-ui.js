@@ -27,7 +27,7 @@ const world = { signedIn: false, playerBroken: false, hits: 0 };
 // a mediaSession for playback on this device, a search route and play buttons on item pages (client-side routing, no reload).
 const page = () => `<!doctype html><meta charset="utf-8"><title>Stand-in Spotify</title><body style="margin:0;background:#121212;color:#fff;font:14px system-ui">
 <main id="main"><h1>Stand-in Spotify</h1><a href="https://accounts.spotify.com/">Log in here</a></main>
-${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer>` : ''}
+${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer><aside id="lib" aria-label="Your Library"></aside>` : ''}
 <script>
 window.__log = ['width:' + innerWidth];
 window.__sp = { signed: ${world.signedIn}, title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', artists: ['Ann'], playing: true, pos: 31, dur: 200, device: '', local: true, art: 'https://i.scdn.co/image/ab67616d00001e02fixture' };
@@ -73,6 +73,21 @@ function route() {
     m.querySelector('button').onclick = () => { __log.push('play:' + p); sp.title = 'Played ' + p.split('/')[2]; sp.artist = 'Result'; sp.artists = ['Result']; sp.playing = true; sp.pos = 0; mediaSession(); drawFoot(); };
   }
 }
+// The left library as the real page makes it hard (sp.lib): 'rows' (listrow ids, the second row's picture lazy, on Spotify's newer image host), 'collapsed' (only the
+// icon rail's Open button until pressed), 'empty' (the empty-library words), 'none' (the panel is not there at all: the page changed).
+function drawLib() {
+  const lib = document.getElementById('lib');
+  if (!lib) return;
+  if (sp.lib === 'none') { lib.remove(); return; }
+  const row = (kind, id, title, img) => '<div role="row"><div data-encore-id="listRow" role="group">' + img + '<p data-encore-id="listRowTitle" id="listrow-title-spotify:' + kind + ':' + id + '">' + title + '</p><p data-encore-id="listRowSubtitle" id="listrow-subtitle-spotify:' + kind + ':' + id + '">Playlist • Sam</p></div></div>';
+  if (sp.lib === 'rows') lib.innerHTML = '<div role="grid">' + row('playlist', 'LIBPLAYLIST00000000001', 'Road mix', '<img src="https://i.scdn.co/image/ab67706c0000da84libone">') + row('album', 'LIBALBUM0000000000000001', 'Quiet Hours', '<img src="" srcset="https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851libtwo 64w, https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02libtwo 300w">') + '</div>';
+  else if (sp.lib === 'collapsed') { lib.innerHTML = '<button aria-label="Open Your Library"></button>'; lib.querySelector('button').onclick = () => { __log.push('lib:open'); sp.lib = 'rows'; drawLib(); }; }
+  else if (sp.lib === 'empty') lib.innerHTML = '<h2>Create your first playlist</h2><p>It is easy, we will help you</p>';
+  else lib.innerHTML = '';
+}
+sp.setLib = (m) => { sp.lib = m; if (m !== 'none' && !document.getElementById('lib')) { const a = document.createElement('aside'); a.id = 'lib'; a.setAttribute('aria-label', 'Your Library'); document.body.appendChild(a); } drawLib(); };
+sp.lib = 'rows';
+drawLib();
 window.addEventListener('popstate', route);
 sp.setRemote = (name) => { sp.device = name; sp.local = !name; mediaSession(); drawFoot(); };
 mediaSession(); drawFoot();
@@ -198,6 +213,20 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await pageJs(`${card}.querySelector('.am-songs .am-opt').click()`);
   check('spotify engine: clicking a song goes to its page and presses its play button, and the card follows', await waitFor(`/Played AAAAAAAAAAAAAAAAAAAAA1/.test(${card}.querySelector('.sp-title')?.textContent || '')`, 80) && (await engine('__log')).some((l) => l.startsWith('play:/track/AAAAAAAAAAAAAAAAAAAAA1')), JSON.stringify(await engine('__log')));
   check('spotify engine: no page was loaded for it (the app\'s router did the navigation, so playback goes on)', world.hits === hits0, `${world.hits} ${hits0}`);
+
+  // ---- the library, read from the page’s left panel (the card’s Library tab), through the real engine ----
+  const libNow = () => app.evaluate(async () => { const d = await global.__spotifyEngine.read(); return { ok: d.libraryOk, why: d.libraryWhy, empty: d.libraryEmpty, pending: d.libraryPending, titles: d.playlists.map((p) => p.title) }; });
+  const askLib = async (mode, wait = 4000) => { await engine(`window.__sp.setLib(${JSON.stringify(mode)}); window.__log.length = 0`); await app.evaluate(() => { global.__spotifyEngine.refreshLists(); }); const end = Date.now() + wait; let s = await libNow(); while (Date.now() < end && s.pending) { await sleep(200); s = await libNow(); } return s; };
+  let lib = await askLib('rows');
+  check('spotify engine library: the left panel’s rows come back as the card’s library (a playlist and an album), not pending', lib.ok === true && lib.titles.join() === 'Road mix,Quiet Hours' && lib.pending === false, JSON.stringify(lib));
+  lib = await askLib('collapsed');
+  check('spotify engine library: a collapsed panel is opened by its own button, then its rows are read', lib.ok === true && lib.titles.join() === 'Road mix,Quiet Hours' && (await engine('__log')).includes('lib:open'), JSON.stringify([lib, await engine('__log')]));
+  lib = await askLib('empty');
+  check('spotify engine library: an empty library is an answer (libraryEmpty), not a failure', lib.ok === true && lib.empty === true && lib.titles.length === 0, JSON.stringify(lib));
+  lib = await askLib('none', 14000);
+  check('spotify engine library: a page with no library panel fails with why noPanel (the card says the page changed), and Try again asks the page again', lib.ok === false && lib.why === 'noPanel', JSON.stringify(lib));
+  lib = await askLib('rows');
+  check('spotify engine library: …Try again after the page is fine reads the rows again (the failure was not kept)', lib.ok === true && lib.titles.length === 2, JSON.stringify(lib));
 
   // ---- junk from the page ----
   const before = JSON.stringify(await status());

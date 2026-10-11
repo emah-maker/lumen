@@ -16,7 +16,9 @@ const { PLAYER } = SV;
 
 const TAB_MAX_AGE_MS = 5000;
 const THUMBS = 6; // pictures fetched for a list (each distinct picture is a request, and all widgets share 40 a minute: a queue of one album is one)
-const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played', liked: 'user-library-read' };
+const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played', liked: 'user-library-read', albums: 'user-library-read', following: 'user-follow-read' };
+const LIB_PAGES = 2; // pages of 50 read for a library list (the playlists, saved songs, saved albums, followed artists), following `next`
+const LIB_CAP = { playlists: 100, liked: 50, albums: 50, artists: 50 }; // rows kept of each
 const MAX_SONGS = 30; // songs a search can grow to by "more songs" (three pages of 10)
 const LIST_MAX_AGE_MS = 2 * 60e3; // a playlist's songs are read again only when asked for after this (a tab opened again, "Try again")
 const MAX_LISTS = 6; // playlists kept (the pinned ones and the one open)
@@ -31,7 +33,26 @@ const failure = (res, what) => {
 async function ask(call, ui, req, what) {
   const res = await call(req[0], req[1], req[2]);
   if (!res.ok && SV.scopeError(res.status, res.body)) (ui.missing ||= {})[what] = true;
+  else if (res.ok && ui.missing?.[what]) delete ui.missing[what]; // (signed in again with the permission: the notice goes)
   return res;
+}
+// A library list: the first page, then the pages `next` names (only on Spotify's own API, see SV.nextPath), up to LIB_PAGES and `cap` rows.
+// -> { res (the first answer), items, status (the first failing answer's, or 0) }
+async function paged(call, ui, req, what, normalize, cap) {
+  const first = await ask(call, ui, req, what);
+  if (!first.ok) return { res: first, items: [], status: first.status };
+  let items = bare(normalize(first.body));
+  let res = first;
+  let status = 0;
+  for (let i = 1; i < LIB_PAGES && items.length < cap; i++) {
+    const next = SV.nextPath(res.body);
+    if (!next) break;
+    res = await ask(call, ui, ['GET', next], what);
+    if (!res.ok) { status = res.status; break; } // (the rows already read stay)
+    const have = new Set(items.map((x) => x.id));
+    items = items.concat(bare(normalize(res.body)).filter((x) => !have.has(x.id)));
+  }
+  return { res: first, items: items.slice(0, cap), status };
 }
 
 // A row's picture: the first of its candidate addresses that comes as a small data: URL (kept an hour by `image`), else ''.
@@ -115,14 +136,26 @@ async function loadTab(call, name, ctx, playback) {
     return;
   }
   if (name === 'library') {
-    const [recent, playlists, liked] = await Promise.all([ask(call, ui, PLAYER.recent(), 'recent'), ask(call, ui, PLAYER.playlists(), 'library'), ask(call, ui, PLAYER.liked(), 'liked')]);
+    const settle = (p) => p.catch((err) => ({ res: { ok: false, status: 0, body: '', error: err }, items: [], status: 0 })); // (a network error is one list failing, not the tab)
+    const [recent, playlists, liked, albums, artists] = await Promise.all([
+      settle(ask(call, ui, PLAYER.recent(), 'recent').then((res) => ({ res, items: res.ok ? bare(SV.normalizeRecent(res.body)).slice(0, 10) : [], status: res.ok ? 0 : res.status }))),
+      settle(paged(call, ui, PLAYER.playlists(), 'library', SV.normalizePlaylists, LIB_CAP.playlists)),
+      settle(paged(call, ui, PLAYER.liked(), 'liked', SV.normalizeLiked, LIB_CAP.liked)),
+      settle(paged(call, ui, PLAYER.albums(), 'albums', SV.normalizeAlbums, LIB_CAP.albums)),
+      settle(paged(call, ui, PLAYER.following(), 'following', SV.normalizeFollowing, LIB_CAP.artists)),
+    ]);
+    const all = { recent, playlists, liked, albums, following: artists };
+    const failed = Object.entries(all).filter(([, v]) => !v.res.ok);
+    // What failed and why goes to main's console (the card says only what the user can act on): a missing scope, or the status Spotify answered.
+    for (const [k, v] of failed) console.warn(`[spotify] library: ${k} answered ${v.res.status || 'no answer'}${SV.scopeError(v.res.status, v.res.body) ? ' (the account lacks a scope: sign in again)' : ''}${v.res.error ? ` (${String(v.res.error.message || v.res.error).slice(0, 120)})` : ''}`);
+    const ok = Object.values(all).some((v) => v.res.ok);
     ui.library = {
-      at, ok: recent.ok || playlists.ok || liked.ok,
-      liked: liked.ok ? bare(SV.normalizeLiked(liked.body)) : [],
-      recent: recent.ok ? bare(SV.normalizeRecent(recent.body)).slice(0, 10) : [],
-      playlists: playlists.ok ? bare(SV.normalizePlaylists(playlists.body)).slice(0, 25) : [],
+      at, ok,
+      why: ok ? '' : failed.every(([, v]) => SV.scopeError(v.res.status, v.res.body)) ? 'scope' : 'page', // (every list failed: for the scope the card offers Sign in again, else Try again)
+      liked: liked.items, recent: recent.items, playlists: playlists.items, albums: albums.items, artists: artists.items,
     };
     for (const p of ui.library.playlists) remember(ui, 'playlist', p.id, p.title);
+    for (const p of ui.library.albums) remember(ui, 'album', p.id, p.title);
     return;
   }
   if (name === 'devices') {
@@ -337,6 +370,10 @@ async function extras(call, ctx, playback) {
     recent: lib ? lib.recent : [],
     likedSongs: lib ? lib.liked || [] : [],
     playlists: lib ? lib.playlists : [],
+    albums: lib ? lib.albums || [] : [],
+    artists: lib ? lib.artists || [] : [],
+    libraryOk: !lib || lib.ok !== false,
+    libraryWhy: lib && lib.ok === false ? lib.why || 'page' : '',
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
     results: ui.search ? searchRows(ui.search.items) : [],
