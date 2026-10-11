@@ -673,6 +673,15 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .code-lang { font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
 .msg.assistant .code-copy { height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
 .msg.assistant .code-copy:hover, .msg.assistant .code-copy:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+/* Wrap (header button): long lines wrap instead of scrolling. */
+.msg.assistant .code-block.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.assistant .code-wrap[aria-pressed="true"] { color: var(--text); }
+/* A ```mermaid block drawn as a diagram (code-extras.js): the code is behind the Source button. */
+.msg.assistant .code-block.mermaid-ok:not(.show-source) pre { display: none; }
+.msg.assistant .code-block .mermaid-view { padding: 10px; overflow-x: auto; text-align: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block.show-source .mermaid-view { display: none; }
+.msg.assistant .mermaid-view svg { max-width: 100%; height: auto; }
+.tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 /* Regenerate, beside Copy on the latest reply. */
 .msg.assistant .reply-regen { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
@@ -792,6 +801,26 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant th, .msg.assistant td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
 .msg.assistant th { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .msg.assistant tr:last-child td { border-bottom: none; }
+/* Block quotes, rules, task lists, strikethrough, citations and footnotes in replies. */
+.msg.assistant blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.msg.assistant blockquote > :last-child { margin-bottom: 0; }
+.msg.assistant hr { border: none; border-top: 1px solid var(--hairline); margin: 12px 0; }
+.msg.assistant li > ul, .msg.assistant li > ol { margin: 2px 0 0; }
+.msg.assistant li > p { margin: 0 0 4px; }
+.msg.assistant li.task { list-style: none; margin-left: -18px; }
+.msg.assistant li.task input { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.msg.assistant del { color: var(--muted); text-decoration-thickness: 1px; }
+.msg.assistant a.md-cite { font-size: 0.78em; vertical-align: super; line-height: 0; padding: 0 1px; }
+.msg.assistant .fn-ref { color: var(--accent); cursor: help; font-weight: 500; }
+.msg.assistant .footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--hairline); font-size: 12px; color: var(--muted); }
+.msg.assistant .footnotes ol { margin: 0; }
+/* A wide table: each column keeps a readable width and the table scrolls sideways (or, with Fit, squeezes into the reply). */
+.msg.assistant .table-wrap table { width: max-content; min-width: 100%; }
+.msg.assistant .table-wrap td { min-width: 6em; max-width: 24em; }
+.msg.assistant .table-wrap.fit table { width: 100%; min-width: 0; }
+.msg.assistant .table-wrap.fit td, .msg.assistant .table-wrap.fit th { min-width: 0; padding-right: 6px; overflow-wrap: anywhere; white-space: normal; }
+.msg.assistant .table-fit { display: block; margin: 0 0 2px auto; height: 18px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+.msg.assistant .table-fit:hover, .msg.assistant .table-fit:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 .msg.assistant a:hover { color: var(--accent-bright); text-decoration: underline; text-underline-offset: 2px; }
 /* While text streams in, a soft caret breathes at the end of the newest line. */
 .msg.assistant.streaming > :is(p, h1, h2, h3, h4):last-child::after,
@@ -1716,23 +1745,29 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-actions { position: absolute; right: 4px; top: 3px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
 .chat-actions .icon-btn { width: 24px; height: 22px; }
-/* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
+/* The title gives way to the buttons (it never sits under them);. */
 .chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } /* (the title always keeps some width) */
-.chat-item:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w, 100px) + 56px), 70%); }
 /* A narrow list: a chat in another tab drops one button (the row's own click does the same). */
 .chat-items { container: chatlist / inline-size; }
 @container chatlist (max-width: 240px) {
   .chat-item.drops-one .chat-act-drop { display: none; }
   .chat-item.drops-one:hover .chat-title, .chat-item.drops-one:focus-within .chat-title { padding-right: min(var(--actions-w-narrow), 55%); }
-  .chat-item.drops-one:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w-narrow) + 56px), 70%); }
   @media (hover: none) { .chat-item.drops-one .chat-title { padding-right: min(var(--actions-w-narrow), 55%); } }
 }
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
 @media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
-.chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
-.chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
-.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
+/* Pinned chats: a small mark before the title; a search hit shows the words around the match under it. */
+.chat-item.pinned .chat-title::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-snippet { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-views { display: flex; gap: 4px; margin: 0 8px 6px; }
+.chat-view { flex: 1; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
+.chat-view.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.chat-view:focus-visible { outline: 2px solid var(--accent); }
+/* The Undo bar after a delete, fixed to the window so a redrawn list does not remove it. */
+.chat-undo-toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)), 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 13px; }
+.chat-undo-toast button { border: 0; border-radius: 6px; padding: 4px 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: default; }
+.chat-undo-toast button:focus-visible { outline: 2px solid var(--accent); }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
@@ -1787,7 +1822,8 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   .chat-badge .cm-glyph { stroke: Canvas; }
   .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
   .chat-actions { background: Canvas; border: 1px solid CanvasText; }
-  .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
+  .chat-undo-toast { background: Canvas; border: 1px solid CanvasText; }
+  .chat-view.on { border: 1px solid CanvasText; }
   .chat-stop-wait { color: LinkText; border-color: LinkText; forced-color-adjust: none; }
 }
 /* ---- translate.css */

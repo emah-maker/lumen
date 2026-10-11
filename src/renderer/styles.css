@@ -671,6 +671,15 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .code-lang { font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
 .msg.assistant .code-copy { height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
 .msg.assistant .code-copy:hover, .msg.assistant .code-copy:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+/* Wrap (header button): long lines wrap instead of scrolling. */
+.msg.assistant .code-block.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.assistant .code-wrap[aria-pressed="true"] { color: var(--text); }
+/* A ```mermaid block drawn as a diagram (code-extras.js): the code is behind the Source button. */
+.msg.assistant .code-block.mermaid-ok:not(.show-source) pre { display: none; }
+.msg.assistant .code-block .mermaid-view { padding: 10px; overflow-x: auto; text-align: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block.show-source .mermaid-view { display: none; }
+.msg.assistant .mermaid-view svg { max-width: 100%; height: auto; }
+.tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 /* Regenerate, beside Copy on the latest reply. */
 .msg.assistant .reply-regen { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
@@ -790,6 +799,26 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant th, .msg.assistant td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
 .msg.assistant th { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .msg.assistant tr:last-child td { border-bottom: none; }
+/* Block quotes, rules, task lists, strikethrough, citations and footnotes in replies. */
+.msg.assistant blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.msg.assistant blockquote > :last-child { margin-bottom: 0; }
+.msg.assistant hr { border: none; border-top: 1px solid var(--hairline); margin: 12px 0; }
+.msg.assistant li > ul, .msg.assistant li > ol { margin: 2px 0 0; }
+.msg.assistant li > p { margin: 0 0 4px; }
+.msg.assistant li.task { list-style: none; margin-left: -18px; }
+.msg.assistant li.task input { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.msg.assistant del { color: var(--muted); text-decoration-thickness: 1px; }
+.msg.assistant a.md-cite { font-size: 0.78em; vertical-align: super; line-height: 0; padding: 0 1px; }
+.msg.assistant .fn-ref { color: var(--accent); cursor: help; font-weight: 500; }
+.msg.assistant .footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--hairline); font-size: 12px; color: var(--muted); }
+.msg.assistant .footnotes ol { margin: 0; }
+/* A wide table: each column keeps a readable width and the table scrolls sideways (or, with Fit, squeezes into the reply). */
+.msg.assistant .table-wrap table { width: max-content; min-width: 100%; }
+.msg.assistant .table-wrap td { min-width: 6em; max-width: 24em; }
+.msg.assistant .table-wrap.fit table { width: 100%; min-width: 0; }
+.msg.assistant .table-wrap.fit td, .msg.assistant .table-wrap.fit th { min-width: 0; padding-right: 6px; overflow-wrap: anywhere; white-space: normal; }
+.msg.assistant .table-fit { display: block; margin: 0 0 2px auto; height: 18px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+.msg.assistant .table-fit:hover, .msg.assistant .table-fit:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 .msg.assistant a:hover { color: var(--accent-bright); text-decoration: underline; text-underline-offset: 2px; }
 /* While text streams in, a soft caret breathes at the end of the newest line. */
 .msg.assistant.streaming > :is(p, h1, h2, h3, h4):last-child::after,

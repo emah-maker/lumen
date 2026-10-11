@@ -13,6 +13,7 @@ class El {
   get classList() { const self = this; const set = () => new Set(String(self.className).split(/\s+/).filter(Boolean)); return { add: (...c) => { const s = set(); c.forEach((x) => s.add(x)); self.className = [...s].join(' '); }, remove: (...c) => { const s = set(); c.forEach((x) => s.delete(x)); self.className = [...s].join(' '); }, contains: (c) => set().has(c) }; }
   get style() { return { setProperty: (k, v) => { this.vars[k] = v; } }; }
   setAttribute(k, v) { this.attrs[k] = v; }
+  remove() { this.removed = true; }
   append(...n) { this.children.push(...n); }
   prepend(...n) { this.children.unshift(...n); }
   insertBefore(n) { this.children.unshift(n); }
@@ -193,7 +194,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const idleLi = make(api, idle), workLi = make(api, working), hereLi = make(api, here);
   check('narrow list: an idle chat in another tab drops "move here", a working one drops "open in its tab", a chat here drops nothing', drop(idleLi).join() === 'move' && drop(workLi).join() === 'tab' && drop(hereLi).length === 0 && !hereLi.classList.contains('drops-one'), `${drop(idleLi)} ${drop(workLi)} ${drop(hereLi)}`);
   const w = (l, k) => parseInt(l.vars[k], 10);
-  check('sizes: --actions-w and --actions-w-narrow are separate inline props, the narrow one a button (24px) smaller for chats elsewhere', w(idleLi, '--actions-w') === 5 * 24 + 8 && w(idleLi, '--actions-w-narrow') === 4 * 24 + 8 && w(workLi, '--actions-w-narrow') === 4 * 24 + 8 && w(hereLi, '--actions-w') === 3 * 24 + 8 && w(hereLi, '--actions-w-narrow') === w(hereLi, '--actions-w'), JSON.stringify([idleLi.vars, hereLi.vars]));
+  check('sizes: --actions-w and --actions-w-narrow are separate inline props, the narrow one a button (24px) smaller for chats elsewhere', w(idleLi, '--actions-w') === 7 * 24 + 8 && w(idleLi, '--actions-w-narrow') === 6 * 24 + 8 && w(workLi, '--actions-w-narrow') === 6 * 24 + 8 && w(hereLi, '--actions-w') === 5 * 24 + 8 && w(hereLi, '--actions-w-narrow') === w(hereLi, '--actions-w'), JSON.stringify([idleLi.vars, hereLi.vars]));
   check('the state word is in the row for a working chat and the badge is hidden from screen readers', workLi.find('chat-state')[0]?.textContent === 'Working' && workLi.find('chat-badge')[0]?.attrs['aria-hidden'] === 'true');
 
   // "Also show in this tab" and a chat shown in several tabs
@@ -255,10 +256,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   api = { exportChat: async () => ({ ok: true }), showTab: async () => {}, stopChat: async () => true, remove: async () => { if (removeFails) throw new Error('x'); return {}; } };
   li = make(api, base);
   const del = li.find('chat-actions')[0].children.find((b) => /delete/i.test(b.title));
-  await del.onclick(); // asks
-  await del.onclick(); // deletes (fails)
-  check('delete: a failure re-enables the button, drops the armed state and says it could not delete', del.disabled === false && !del.classList.contains('armed') && /Could not delete/.test(meta(li).textContent), `${del.disabled} ${del.className} ${meta(li).textContent}`);
+  await del.onclick(); // deletes at once (fails)
+  check('delete: a failure re-enables the button and says it could not delete', del.disabled === false && !del.classList.contains('armed') && /Could not delete/.test(meta(li).textContent), `${del.disabled} ${del.className} ${meta(li).textContent}`);
   await sleep(0);
+
+  { // library: pinned first, the Archived view, search hits, delete with Undo
+    const tools = sandbox.window.chatListTools;
+    const now = Date.now();
+    const chats = [{ id: 'a', title: 'Alpha', updated: now }, { id: 'p', title: 'Pinned one', pinned: true, updated: now - 9e9 }, { id: 'z', title: 'Zeta', archived: true, updated: now }, { id: 'm', title: 'Match by body', updated: now }];
+    check('library: the main list leaves archived chats out, the Archived view shows only them', tools.pick(chats, {}).map((c) => c.id).join() === 'a,p,m' && tools.pick(chats, { view: 'archived' }).map((c) => c.id).join() === 'z');
+    check('library: a pinned chat gets its own first group', tools.group(tools.pick(chats, {}), now)[0].label === 'Pinned' && tools.group(tools.pick(chats, {}), now)[0].chats[0].id === 'p');
+    check('library: a search matches titles at once and message hits later, across archived too', tools.pick(chats, { query: 'zet' }).map((c) => c.id).join() === 'z' && tools.pick(chats, { query: 'tram', hits: new Map([['m', '...tram 28...']]) }).map((c) => c.snippet).join() === '...tram 28...' && tools.pick(chats, { query: 'tram' }).length === 0);
+    const sent = [];
+    const search = tools.searcher({ search: async (q) => { sent.push(q); return q === 'tr' ? [] : [{ id: 'm', snippet: 's' }]; } }, () => {});
+    search.set('tr'); search.set('tram');
+    await sleep(300);
+    check('library: only the last typed query is searched and its hits kept', sent.join() === 'tram' && search.hits?.get('m') === 's' && search.query === 'tram', sent.join());
+    search.set('');
+    check('library: clearing the box drops the hits', search.hits === null && search.query === '');
+    let undone = 0;
+    api = { remove: async () => ({ cleared: false, undo: true, undoMs: 60 }), undoRemove: async () => { undone++; return true; }, exportChat: async () => ({ ok: true }) };
+    const body = { children: [], append(n) { this.children.push(n); } };
+    sandbox.document.body = body; sandbox.document.querySelector = () => null;
+    li = make(api, base);
+    await li.find('chat-actions')[0].children.find((b) => /delete/i.test(b.title)).onclick();
+    const toast = body.children[0];
+    check('delete: a saved chat gets an Undo bar at once, without a second click', Boolean(toast) && /Chat deleted/.test(toast.textContent) && toast.find('x').length === 0);
+    await toast.children[1].onclick();
+    check('delete: Undo asks main to bring the chat back', undone === 1);
+  }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
