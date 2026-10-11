@@ -20,7 +20,7 @@ module.exports = async function appleMusicUnits(check) {
   check('apple music: a stand-in origin (tests only) is the only extra address allowed', AM.isAllowedUrl('https://127.0.0.1:5/web', 'https://127.0.0.1:5') && !AM.isAllowedUrl('https://127.0.0.1:5/web') && !AM.isAllowedUrl('https://127.0.0.1:6/web', 'https://127.0.0.1:5') && !AM.isAllowedUrl('http://127.0.0.1:5/web', 'http://127.0.0.1:5'), '');
 
   check('apple music: the page probe looks for the Apple Music card\'s slot only (a constant script)', /\.w-card\.applemusic \.sp-web-slot/.test(AM.PROBE) && !/spotify/.test(AM.PROBE) && /\.w-card\.spotify \.sp-web-slot/.test(SW.PROBE) && !/applemusic/.test(SW.PROBE), AM.PROBE);
-  check('apple music: the probe hides the view while editing or with a picker open', /w-editing/.test(AM.PROBE) && /w-picker, dialog\[open\]/.test(AM.PROBE), '');
+  check('apple music: the probe hides the view while editing or with a picker open', /w-editing/.test(AM.PROBE) && /w-picker/.test(AM.PROBE) && /dialog\[open\]/.test(AM.PROBE) && /w-stack-panel/.test(AM.PROBE) && /role="menu"/.test(AM.PROBE), '');
 
   // The shared view helpers (the same ones Spotify's tests cover through spotify-web.js)
   check('web player: only protected media is permitted (camera, mic, location, notifications, clipboard are refused)', WP.permissionAllowed('mediaKeySystem') && WP.permissionAllowed('protectedMediaIdentifier') && ['media', 'geolocation', 'notifications', 'clipboard-read', 'fullscreen', 'openExternal', 'display-capture', '', undefined].every((p) => !WP.permissionAllowed(p)), '');

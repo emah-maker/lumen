@@ -66,6 +66,7 @@ function makeEl(spec, parent, log) {
   const el = {
     nodeType: 1, localName: spec.t, tagName: spec.t.toUpperCase(), attrs: { ...(spec.a || {}) }, parentNode: parent, clicks: 0, disabled: false, events: [],
     getAttribute(n) { return n in el.attrs ? el.attrs[n] : null; },
+    get parentElement() { return el.parentNode && el.parentNode.nodeType === 1 ? el.parentNode : null; },
     get src() { return el.attrs.src || ''; }, get alt() { return el.attrs.alt || ''; }, get max() { return el.attrs.max || ''; },
     get textContent() { return el.childNodes.map((c) => (c.nodeType === 3 ? c.text : c.textContent)).join(''); },
     get children() { return el.childNodes.filter((c) => c.nodeType === 1); },
@@ -77,6 +78,11 @@ function makeEl(spec, parent, log) {
     querySelector(sel) { return el.querySelectorAll(sel)[0] || null; },
   };
   el.childNodes = (spec.c || []).map((c) => makeEl(c, el, log));
+  if (spec.scroll) { // a list that scrolls (spec.scroll: { h: its content height, ch: its visible height }): setting scrollTop tells log.onScroll, which may swap the rows in
+    el.scrollHeight = spec.scroll.h; el.clientHeight = spec.scroll.ch;
+    let top = 0;
+    Object.defineProperty(el, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v; if (log.onScroll) log.onScroll(el, v); } });
+  }
   return el;
 }
 
@@ -113,8 +119,9 @@ function page({ tree = TREES.home, route = () => {}, md = null, typing = 80, typ
     },
     navigator: { mediaSession: { metadata: md } },
     history: { pushState: (s, t, url) => { log.pushed.push(url); location.pathname = url; } },
-    window: { dispatchEvent: (e) => { if (e.type === 'popstate') route(location.pathname, { after: (ms, t) => setTimeout_(() => swap(t), ms), swap, location }); } },
+    window: { getComputedStyle: (n) => ({ overflowY: n.scrollHeight ? 'auto' : 'visible' }), dispatchEvent: (e) => { if (e.type === 'popstate') route(location.pathname, { after: (ms, t) => setTimeout_(() => swap(t), ms), swap, location }); } },
     location, CustomEvent, PopStateEvent, Event, HTMLInputElement, MutationObserver,
+    MouseEvent: class MouseEvent { constructor(type) { this.type = type; } },
     Date: { now: () => clock },
     setTimeout: setTimeout_,
     clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.dead = true; },
@@ -193,7 +200,7 @@ function fakePlayer() {
 module.exports = async function spotifyDomUnits(check) {
   // ================= the selector table against the saved pages =================
   // Names that only a signed-in page (or an unplayed control) shows: written from public knowledge, not seen in the saved pages.
-  const ASSUMED = ['nowPlaying', 'title', 'artist', 'artistLinks', 'cover', 'connect', 'chrome', 'like', 'contextLink', 'menuItem', 'queueButton']; // (shuffle, repeat, volume, lyrics, the three-dots button and the track page's album link are seen)
+  const ASSUMED = ['nowPlaying', 'title', 'artist', 'artistLinks', 'cover', 'connect', 'chrome', 'like', 'contextLink', 'menuItem', 'queueButton', 'libraryTitleAlt', 'librarySubtitleAlt', 'libraryExpand']; // (shuffle, repeat, volume, lyrics, the three-dots button and the track page's album link are seen)
   const pages = Object.entries(TREES).map(([name, tree]) => [name, makeEl(clone(tree), null, { clicked: [] })]);
   const pieces = [['library', makeEl(clone(FIXTURES.library), null, { clicked: [] })], ['queue', makeEl(clone(FIXTURES.queue), null, { clicked: [] })]];
   const seen = (name) => [...pages, ...pieces].filter(([, root]) => SPB.SELECTORS[name].some((s) => root.querySelector(s) || root.matches(s))).map(([n]) => n);
@@ -419,6 +426,60 @@ module.exports = async function spotifyDomUnits(check) {
   lbOut.send({ cmd: 'list', kind: 'playlists', rid: 45 });
   lbOut.advance(1000);
   check('dom: signed out, the library is an ok, empty list marked signedOut', (lbOut.lists().find((l) => l.kind === 'playlists') || {}).signedOut === true, JSON.stringify(lbOut.lists()));
+
+  // ---- the library, as the real page makes it hard: a collapsed panel, rows that load while scrolling, an empty library, a renamed panel, lazy pictures ----
+  {
+  const libRow = (kind, id, title, img) => ({ t: 'div', a: { role: 'row' }, c: [{ t: 'div', a: { 'data-encore-id': 'listRow', role: 'group' }, c: [img || { t: 'img', a: { src: `https://i.scdn.co/image/${id}` } }, { t: 'p', a: { 'data-encore-id': 'listRowTitle', id: `listrow-title-spotify:${kind}:${id}` }, c: [title] }, { t: 'p', a: { 'data-encore-id': 'listRowSubtitle', id: `listrow-subtitle-spotify:${kind}:${id}` }, c: ['Playlist • Sam'] }] }] });
+  const libPanel = (rows, { extra = [], attrs = { 'aria-label': 'Your Library' }, scroll = null, tag = 'div' } = {}) => ({ t: tag, a: attrs, c: [...extra, { t: 'div', a: { role: 'grid' }, ...(scroll ? { scroll } : {}), c: rows }] });
+  const panelPage = (panel) => { const t = signedIn(TREES.home); const walk = (n) => (typeof n === 'string' ? n : (n.a && n.a['aria-label'] === 'Your Library' ? clone(panel) : { ...n, c: (n.c || []).map(walk) })); return walk(t); };
+  const asked = (pg, rid) => { pg.advance(1000); pg.send({ cmd: 'list', kind: 'playlists', rid }); };
+  const answer = (pg) => pg.lists().find((l) => l.kind === 'playlists');
+  const openBtn = { t: 'button', a: { 'aria-label': 'Open Your Library' }, c: [] };
+  // collapsed to the icon rail: no titles, only the button that opens it; pressed once, the page draws the rows
+  const colLib = page({ tree: panelPage(libPanel([], { extra: [openBtn] })) });
+  asked(colLib, 51);
+  colLib.advance(900);
+  const pressed = colLib.clicked.some((e) => e.getAttribute('aria-label') === 'Open Your Library');
+  colLib.swap(libTree);
+  colLib.advance(2500);
+  check('dom (collapsed library): the panel is opened by its own "Open Your Library" button, then its rows are read', pressed && answer(colLib) && answer(colLib).ok === true && answer(colLib).items.length === 4, JSON.stringify([pressed, answer(colLib)]).slice(0, 300));
+  // a panel that stays collapsed (the button does nothing) is a failure that says so
+  const stuckLib = page({ tree: panelPage(libPanel([], { extra: [openBtn] })) });
+  asked(stuckLib, 52);
+  stuckLib.advance(10000);
+  check('dom (collapsed library): a panel that cannot be opened ends as why "collapsed", not an empty list', answer(stuckLib) && answer(stuckLib).ok === false && answer(stuckLib).why === 'collapsed' && SPB.parseMessage(JSON.stringify(answer(stuckLib))).why === 'collapsed', JSON.stringify(answer(stuckLib)));
+  // lazy rows: the list is virtualised, so scrolling it draws the next rows and drops the first ones; all are collected
+  const batches = [[['playlist', 'LAZY000000000000000A', 'One'], ['playlist', 'LAZY000000000000000B', 'Two'], ['album', 'LAZY000000000000000C', 'Three']], [['album', 'LAZY000000000000000C', 'Three'], ['artist', 'LAZY000000000000000D', 'Four'], ['playlist', 'LAZY000000000000000E', 'Five']], [['playlist', 'LAZY000000000000000E', 'Five'], ['playlist', 'LAZY000000000000000F', 'Six']]];
+  const lazyTree = (n) => panelPage(libPanel(batches[n].map((r) => libRow(...r)), { scroll: { h: 3000, ch: 300 } }));
+  const lazyLib = page({ tree: lazyTree(0) });
+  let stage = 0;
+  lazyLib.log.onScroll = () => { if (stage < batches.length - 1) { stage++; lazyLib.swap(lazyTree(stage)); } };
+  asked(lazyLib, 53);
+  lazyLib.advance(6000);
+  check('dom (lazy library rows): rows the page draws only when the list is scrolled are collected as it is scrolled', answer(lazyLib) && answer(lazyLib).ok === true && answer(lazyLib).items.map((i) => i.title).join() === 'One,Two,Three,Four,Five,Six' && stage === 2, JSON.stringify([stage, answer(lazyLib) && answer(lazyLib).items.map((i) => i.title)]));
+  // an empty library says so in its own words: an answer (ok, no rows, not signed out), not a failure
+  const emptyLib = page({ tree: panelPage(libPanel([], { extra: [{ t: 'h2', c: ['Create your first playlist'] }, { t: 'p', c: ['It\u2019s easy, we\u2019ll help you'] }] })) });
+  asked(emptyLib, 54);
+  emptyLib.advance(3000);
+  check('dom (empty library): a panel that says "Create your first playlist" is an ok, empty list (not a failure, not signed out)', answer(emptyLib) && answer(emptyLib).ok === true && answer(emptyLib).items.length === 0 && answer(emptyLib).signedOut === false, JSON.stringify(answer(emptyLib)));
+  // no panel at all, or rows that never come with the player there: failures with their cause
+  const noPane = page({ tree: { t: 'div', c: [{ t: 'footer', c: [{ t: 'button', a: { 'data-testid': 'control-button-playpause', 'aria-label': 'Play' }, c: [] }] }] } });
+  asked(noPane, 55);
+  noPane.advance(10000);
+  check('dom (library gone): a page with its player but no library panel says why "noPanel" (the page changed), with a detail for the log', answer(noPane) && answer(noPane).ok === false && answer(noPane).why === 'noPanel' && /no panel/.test(answer(noPane).detail), JSON.stringify(answer(noPane)));
+  // a panel under another label (a translated page): the rows inside the page's own left side are found anyway
+  const deLib = page({ tree: panelPage(libPanel([libRow('playlist', 'DE0000000000000000001', 'Mein Mix')], { attrs: { 'aria-label': 'Deine Bibliothek' }, tag: 'nav' })) });
+  asked(deLib, 56);
+  deLib.advance(3000);
+  check('dom (renamed panel): rows under a different panel label are read through the side-bar fallback', answer(deLib) && answer(deLib).ok === true && answer(deLib).items.length === 1 && answer(deLib).items[0].title === 'Mein Mix', JSON.stringify(answer(deLib)));
+  // a lazy picture (no src until it scrolls in; srcset on Spotify's newer image host)
+  const lazyImg = { t: 'img', a: { src: '', srcset: 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851aaaa 64w, https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02aaaa 300w' }, c: [] };
+  const imgLib = page({ tree: panelPage(libPanel([libRow('album', 'IMG0000000000000000001', 'Pictured', lazyImg)])) });
+  asked(imgLib, 57);
+  imgLib.advance(3000);
+  check('dom (lazy pictures): a library row\'s picture is taken from srcset when src is empty, and image-cdn-*.spotifycdn.com is a picture host the message check accepts', answer(imgLib) && answer(imgLib).items[0].art === 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851aaaa' && SPB.parseMessage(JSON.stringify(answer(imgLib))).items[0].art === 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851aaaa' && SPB.artUrl('https://evil.example/x.jpg') === '' && SPB.artUrl('https://i.scdn.co/image/x') !== '' && SPB.artUrl('https://mosaic.scdn.co/640/x') !== '', JSON.stringify(answer(imgLib)));
+
+  }
 
   // add to queue: the item's page, the three-dots button, the menu's "Add to queue"
   const menuTree = (t) => { const walk = (n) => (typeof n === 'string' ? n : (n.a && n.a['data-testid'] === 'now-playing-bar' ? { ...n, c: [...(n.c || []), { t: 'div', a: { role: 'menu' }, c: [{ t: 'button', a: { role: 'menuitem' }, c: ['Add to playlist'] }, { t: 'button', a: { role: 'menuitem' }, c: ['Add to queue'] }] }] } : { ...n, c: (n.c || []).map(walk) })); return walk(signedIn(t)); };

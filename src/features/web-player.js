@@ -26,6 +26,8 @@ const MIN_SIDE = 60; // px: a card slot smaller than this (or mostly scrolled aw
 const RETRY_MS = 20e3; // a load that failed (offline, a site outage) is tried again after this, while the card is on screen
 const DRM_RETRY_MS = 5e3; // the Widevine component installs in the background on a first run: ask again until it is there
 const DRM_MAX_TRIES = 30;
+const PAINT_MS = 250; // a page that has just finished loading is shown this much later: its first frame is painted by then (never a white or black flash)
+const MAX_RADIUS = 40; // px: the card's corner radius the page may ask the view to be rounded to
 // Chromium's net error numbers (net/base/net_error_list.h) for "the network isn't there": the card says to
 // check the connection. -3 (ABORTED) is only a navigation that was replaced, never a failure.
 const OFFLINE_ERRORS = new Set([-7, -21, -100, -101, -102, -105, -106, -109, -118]);
@@ -55,6 +57,18 @@ const DRM_PROBE = `(async () => {
   } catch { return false; }
 })()`;
 
+// The identity providers a "Continue with ..." button on a sign-in page opens in a popup (the page needs the popup's opener, to be told the result): Apple, Google,
+// Facebook, Microsoft. A popup may also start as about:blank and be sent to one of these by the page. Only for a player whose spec has `popups`.
+const OAUTH_HOSTS = ['appleid.apple.com', 'idmsa.apple.com', 'accounts.google.com', 'www.facebook.com', 'm.facebook.com', 'facebook.com', 'login.live.com', 'login.microsoftonline.com'];
+const POPUP_SIZE = { width: 520, height: 720 };
+// May a sign-in popup show this address? The player's own hosts, an identity provider (https, default port), or the blank page a script opens first.
+function popupAllowed(url, hosts, testOrigin = '') {
+  const s = String(url || '');
+  if (s === '' || s === 'about:blank') return true;
+  if (isAllowedUrl(s, hosts, testOrigin)) return true;
+  try { const u = new URL(s); return u.protocol === 'https:' && !u.username && !u.password && !u.port && OAUTH_HOSTS.includes(u.hostname); } catch { return false; }
+}
+
 // Permissions the view is given: only what playing protected audio needs. 'mediaKeySystem' is Electron's
 // name for EME/Widevine key-system access ('protectedMediaIdentifier' is the older one). Autoplay is not
 // a permission: the view's autoplayPolicy covers it. Camera, microphone, location, notifications,
@@ -73,14 +87,16 @@ function layoutZoom(width) {
 // else goes into it (cardClass is one of our own constants). null when there is no Web-player card, or the page is being edited or has a picker open.
 const probeScript = (cardClass) => `(() => {
   const s = document.querySelector('.w-card.${cardClass} .sp-web-slot');
-  if (!s || document.body.classList.contains('w-editing') || document.querySelector('.w-picker, dialog[open]')) return null;
+  if (!s || document.body.classList.contains('w-editing') || document.querySelector('.w-picker, dialog[open]') || [...document.querySelectorAll('.w-stack-panel, .w-stack-menu, [role="menu"]')].some((n) => n.getClientRects().length > 0)) return null;
   const r = s.getBoundingClientRect();
-  return { x: r.left, y: r.top, w: r.width, h: r.height };
+  return { x: r.left, y: r.top, w: r.width, h: r.height, r: parseFloat(getComputedStyle(s).borderTopLeftRadius) || 0 };
 })()`;
 
 // The new-tab page tells main where the slots are (renderer/newtab-web-slot.js): a console message on the page, which needs no preload or channel
 // (a plain web page has none), is only read from the visible new-tab page, and only moves a view over it. The message is the prefix and
-// a JSON object { <cardClass>: { x, y, w, h } | null }, sent when a slot moves or changes size (and when the page is edited or a dialog opens).
+// a JSON object { <cardClass>: { x, y, w, h, r?, m? } | null }, sent when a slot moves or changes size (and when the page is edited or a dialog opens).
+// r: the slot's corner radius (the view is rounded to it); m: 1 while the page is scrolling or being resized (the view cannot move in the same frame as the
+// page does, so it is hidden for that moment and shown again, in place, when the page has settled).
 const SLOT_PREFIX = 'lumen-slot-rect ';
 // -> the rect for this card class ({ x, y, w, h } or null for "no usable slot"), or undefined when the message is not one of those.
 function parseSlotMessage(message, cardClass) {
@@ -90,7 +106,8 @@ function parseSlotMessage(message, cardClass) {
   if (!all || typeof all !== 'object' || Array.isArray(all) || !(cardClass in all)) return undefined;
   const r = all[cardClass];
   if (r === null) return null;
-  return r && typeof r === 'object' ? { x: r.x, y: r.y, w: r.w, h: r.h } : undefined;
+  if (!r || typeof r !== 'object') return undefined;
+  return { x: r.x, y: r.y, w: r.w, h: r.h, ...(Number.isFinite(r.r) ? { r: Math.max(0, Math.min(MAX_RADIUS, r.r)) } : {}), ...(r.m === 1 ? { m: 1 } : {}) };
 }
 
 // What the page reported -> where to put the view, in window coordinates: the slot cut to the page's
@@ -130,6 +147,9 @@ function createWebPlayer(deps, spec) {
   let failedAt = 0;
   let drmTimer = null;
   let drmTries = 0;
+  let readyAt = 0; // when the document last finished loading (0: it has not): the view is shown PAINT_MS after, so its first frame is on it
+  let paintTimer = null;
+  let lastPlace = null; // { rect, r }: where the card's slot was last said to be (shown again, in place, when the first paint is in)
   // Counts the main-frame documents the view has started loading (not in-page route changes): an engine's bridge belongs to the document it
   // ran in, so a command sent after a reload (or a sign-in round trip) must wait for the new document's bridge, not go to nobody.
   let generation = 0;
@@ -226,28 +246,42 @@ function createWebPlayer(deps, spec) {
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false, ...(spec.preload ? { preload: spec.preload } : {}) },
     });
     const wc = view.webContents;
+    // The page's own colour until it paints (never the white or black of an empty view), and no menu of the browser's own on a right click:
+    // it is a card, not a page (the player's own menus are drawn by the page).
+    try { if (typeof view.setBackgroundColor === 'function') view.setBackgroundColor(spec.background || '#121212'); } catch { /* an older shell */ }
+    wc.on('context-menu', (event) => { try { event.preventDefault?.(); } catch { /* nothing to prevent */ } });
     const leave = (url) => { if (deps.isWebUrl(url)) deps.openTab(url); };
     wc.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
     wc.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
     // A sign-in page the site opens (Apple's) is a real window, so it can tell the page that opened it when you are in; its own
     // navigation stays on the allowed hosts. Everything else opens as a tab, in the same session.
-    const guard = (child) => {
-      child.on('will-navigate', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
-      child.on('will-redirect', (event) => { if (!allowed(event.url)) { event.preventDefault(); leave(event.url); } });
-      child.setWindowOpenHandler(({ url }) => { leave(url); return { action: 'deny' }; });
-    };
-    wc.setWindowOpenHandler(({ url }) => {
-      if (spec.popups && allowed(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } } };
+    // The popup is a window of the browser's own session (the same cookies as the player: no partition), with the opener kept (window.opener, postMessage), a
+    // Chrome identity (Apple refuses "Electron" in it) and the player's own dark background, not white, while it loads.
+    const popupOptions = () => ({ ...POPUP_SIZE, autoHideMenuBar: true, backgroundColor: spec.background || '#121212', ...(deps.hideWindow ? { show: false } : {}), webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const popupPolicy = ({ url }) => {
+      if (spec.popups && popupAllowed(url, spec.hosts, testOrigin())) return { action: 'allow', overrideBrowserWindowOptions: popupOptions() };
       leave(url);
       return { action: 'deny' };
-    });
-    wc.on('did-create-window', (child) => guard(child.webContents));
+    };
+    const popupOk = (url) => popupAllowed(url, spec.hosts, testOrigin());
+    const guard = (child) => {
+      const cwc = child.webContents;
+      try { if (deps.userAgent) cwc.setUserAgent(deps.userAgent()); } catch { /* the default identity stays */ }
+      cwc.on('will-navigate', (event) => { if (!popupOk(event.url)) { event.preventDefault(); leave(event.url); } });
+      cwc.on('will-redirect', (event) => { if (!popupOk(event.url)) { event.preventDefault(); leave(event.url); } });
+      cwc.setWindowOpenHandler(popupPolicy); // (a popup's own popup: the same rule)
+      cwc.on('did-create-window', guard);
+      try { deps.hideWindow?.(child); } catch { /* the window is gone */ }
+    };
+    try { if (deps.userAgent) wc.setUserAgent(deps.userAgent()); } catch { /* the default identity stays */ }
+    wc.setWindowOpenHandler(popupPolicy);
+    wc.on('did-create-window', guard);
     wc.on('render-process-gone', () => destroy());
     // A blank frame says nothing: when the page can't load, the card says why (and tries again).
     let failedLoad = false; // Chromium finishes loading its own error page afterwards: that is not the site being ready
     wc.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
       const main = event?.isMainFrame ?? isMainFrame;
-      if (main && !(event?.isSameDocument ?? inPlace)) generation++;
+      if (main && !(event?.isSameDocument ?? inPlace)) { generation++; readyAt = 0; }
       if (main && !String(event?.url ?? url).startsWith('chrome-error:')) failedLoad = false;
     });
     wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => {
@@ -258,6 +292,7 @@ function createWebPlayer(deps, spec) {
     wc.on('did-navigate', (_e, _url, code) => { httpCode = Number(code) || 200; if (httpCode >= 500) setStatus('failed'); });
     wc.on('did-finish-load', () => {
       if (failedLoad || wc.getURL().startsWith('chrome-error:') || httpCode >= 500) return;
+      if (!readyAt) { readyAt = Date.now(); clearTimeout(paintTimer); paintTimer = setTimeout(() => { if (lastPlace && alive()) place(lastPlace.rect, lastPlace.r); }, PAINT_MS + 20); paintTimer.unref?.(); }
       setStatus('ready');
       if (drm !== 'ok') { drmTries = 0; checkDrm(); }
     });
@@ -275,7 +310,10 @@ function createWebPlayer(deps, spec) {
     emulating = false;
     clearTimeout(drmTimer);
     clearTimeout(retryTimer);
+    clearTimeout(paintTimer);
     retryTimer = null;
+    readyAt = 0;
+    lastPlace = null;
     state = 'loading';
     drm = 'unknown';
     failedAt = 0;
@@ -300,6 +338,7 @@ function createWebPlayer(deps, spec) {
     host = win;
     pinned = true;
     emulate(false);
+    try { if (v.webContents.getZoomFactor() !== 1) v.webContents.setZoomFactor(1); } catch { /* no page yet */ } // (a card's reduced zoom is not the sign-in page's)
     win.contentView.addChildView(v);
     v.setBounds(rect);
     v.setVisible(true);
@@ -316,9 +355,12 @@ function createWebPlayer(deps, spec) {
     setTimeout(() => { if (alive() && !host) { emulating = false; emulate(true); } }, 150).unref?.();
   }
 
-  function place(rect) {
+  // A page that has not painted yet (loading, or just done) is laid in place but kept hidden: the slot's own placeholder shows meanwhile.
+  const painted = () => state === 'ready' && readyAt > 0 && Date.now() - readyAt >= PAINT_MS;
+  function place(rect, radius = 0, moving = false) {
     if (pinned) return;
-    if (!rect || state === 'offline' || state === 'failed') { hide(); return; } // a failed load: the card's message shows, not an error page
+    if (!rect || state === 'offline' || state === 'failed') { lastPlace = null; hide(); return; } // a failed load: the card's message shows, not an error page
+    lastPlace = { rect, r: radius };
     const win = deps.getWindow();
     if (!win || win.isDestroyed()) return;
     const v = ensure();
@@ -329,9 +371,11 @@ function createWebPlayer(deps, spec) {
       win.once('closed', () => { if (host === win) destroy(); });
     }
     emulate(false);
+    if (moving) { v.setVisible(false); return; } // (the page is scrolling or resizing: shown again, in place, when it has settled)
     if (moved || !v.getVisible()) win.contentView.addChildView(v); // (re-)adding puts it above the page
     v.setBounds(rect);
-    v.setVisible(true);
+    try { if (typeof v.setBorderRadius === 'function') v.setBorderRadius(Math.round(radius)); } catch { /* an older shell: square corners */ } // (the card's corners, not the page's square ones)
+    v.setVisible(painted());
     const zoom = layoutZoom(rect.width);
     if (v.webContents.getZoomFactor() !== zoom) v.webContents.setZoomFactor(zoom);
   }
@@ -342,14 +386,14 @@ function createWebPlayer(deps, spec) {
     nt.executeJavaScript(PROBE).then((r) => {
       probing = false;
       if (deps.activeNewTab() !== nt) return;
-      place(viewBounds(r, deps.getBounds()));
+      place(viewBounds(r, deps.getBounds()), r && Number.isFinite(r.r) ? Math.max(0, Math.min(MAX_RADIUS, r.r)) : 0);
     }, () => { probing = false; });
   }
 
   // The page pushed where the slot is. Only the visible new-tab page is believed; anything else is ignored.
   function pushed(nt, rect) {
     if (pinned || !deps.hasWidget() || nt.isDestroyed() || deps.activeNewTab() !== nt) return;
-    place(viewBounds(rect, deps.getBounds()));
+    place(viewBounds(rect, deps.getBounds()), rect && Number.isFinite(rect.r) ? rect.r : 0, Boolean(rect && rect.m === 1));
   }
   function watch(nt) {
     if (watched.has(nt)) return;
@@ -389,4 +433,4 @@ function createWebPlayer(deps, spec) {
   };
 }
 
-module.exports = { MIN_LAYOUT_WIDTH, SLOT_PREFIX, parseSlotMessage, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };
+module.exports = { OAUTH_HOSTS, popupAllowed, MIN_LAYOUT_WIDTH, SLOT_PREFIX, parseSlotMessage, isAllowedUrl, permissionAllowed, layoutZoom, viewBounds, loadFailure, probeScript, DRM_PROBE, createWebPlayer };

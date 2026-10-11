@@ -85,6 +85,13 @@ const ENGINES = {
 // Why a search found nothing (main says: features/music-engine.js searchWhy), in words; the detail (the page's address and what it showed) is the hover text.
 const searchFailText = (o, d) => (d.searchWhy === 'busy' ? `${o.name} asked Lumen to slow down. Search will work again in a moment.` : d.searchWhy === 'signedOut' ? `Sign in to ${o.name} in Lumen to search and play.` : d.searchWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found. Is the web player signed in?` : d.searchWhy === 'timeout' ? `${o.name} didn’t show search results in time. Try again.` : `${o.name} didn’t answer the search. It may have changed its page; try again.`);
 
+// Why the library could not be read (main says: features/music-engine.js libraryWhy), in words.
+const LIBRARY_FAIL = (o, why) => (why === 'noPlayer' ? `${o.name}’s player controls weren’t found.`
+  : why === 'noPanel' ? `${o.name} changed its page, so Lumen can’t find your library. Try again; if it stays, switch this card to Now playing.`
+  : why === 'collapsed' ? 'Lumen couldn’t open your library panel. Try again.'
+  : why === 'timeout' ? `${o.name} didn’t show your library in time. Try again.`
+  : why === 'scope' ? 'Sign in again to show your library.'
+  : 'Couldn’t read your library.');
 const musicUi = new Map(); // widget id -> { tab, term, open, active, timer, asked: {tab: ms}, scroll: {tab: px} }: what the user did, kept for as long as the page lives
 const uiOf = (id) => { let u = musicUi.get(id); if (!u) { u = { tab: '', term: '', open: false, timer: null, active: -1, asked: {}, scroll: {} }; musicUi.set(id, u); } return u; };
 const recentSearches = (id) => { try { const v = JSON.parse(localStorage.getItem(`lumen-music-recent:${id}`) || '[]'); return Array.isArray(v) ? v.filter((t) => typeof t === 'string' && t.length > 0 && t.length <= 80).slice(0, RECENT_MAX) : []; } catch { return []; } };
@@ -415,7 +422,7 @@ function build(w, card, o) {
     box.append(p);
     if (button) { const b = el('button', 'w-btn', button); b.type = 'button'; b.addEventListener('click', onClick); box.append(b); }
   }
-  const retry = (name) => () => { ui.asked[name] = name === 'library' ? Date.now() : 0; act('etab', { arg: name }); if (name === 'library') drawLibrary(); }; // (the library shows "Loading…" again while it is read)
+  const retry = (name) => () => { ui.asked[name] = name === 'library' ? Date.now() : 0; if (name === 'library') ui.retried = Date.now(); act('etab', { arg: name, force: '1' }); if (name === 'library') drawLibrary(); }; // (the library shows "Loading…" again while it is read)
   function listRow(item, { onClick, label, current = false, index = null, acts = null, withThumbs = true }) {
     const r = el('div', `mc-row${current ? ' current' : ''}`);
     const b = el('button', 'mc-row-main');
@@ -452,18 +459,22 @@ function build(w, card, o) {
   }
   function drawLibrary() {
     const d = view.d;
-    const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs);
-    const out = d.signedIn === false;
+    const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs); const albums = rowsOf(d.albums); const artists = rowsOf(d.artists);
+    const any = recent.length || lists.length || liked.length || albums.length || artists.length;
+    const out = d.signedIn === false || (d.libraryOk === false && d.libraryWhy === 'signedOut'); // (the page's own Log in button is showing: signed out, whatever the cookie says)
     const failed = d.libraryOk === false; // (the engine's page could not be read: said, never "Loading…" or an empty list)
+    // Asked and not answered: "Loading…" (the engine says so; the Web API card is within a moment of the tab being opened). An answer, rows or a failure ends it,
+    // except just after Try again, which shows "Loading…" again for a moment whatever the old answer was (it really asks again; the new answer replaces it).
+    const waiting = d.libraryPending === true || (failed && Date.now() - (ui.retried || 0) < LOADING_MS) || (Date.now() - (ui.asked.library || 0) < LOADING_MS && d.libraryEmpty !== true && !failed);
     const op = ui.openList && cap('playlists') ? ui.openList : null; // (a playlist opened in the card: its songs take the panel until Back)
     if (op) { fill(tab.library.p, sig(['open', listSig(op)]), (box) => drawList(box, op, { onBack: () => { ui.openList = null; drawLibrary(); }, redraw: drawLibrary })); return; }
-    const state = out ? 'out' : d.needsScopes === true && !recent.length && !lists.length && !liked.length ? 'scope' : recent.length || lists.length || liked.length ? 'rows' : (Date.now() - (ui.asked.library || 0) < LOADING_MS ? 'loading' : failed ? 'err' : 'empty');
-    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), d.needsScopes === true, d.libraryWhy, pinsOf().map((p) => p.id), cap('playlists')]), (box) => {
-      if (state === 'err') { note(box, d.libraryWhy === 'noPlayer' ? `${o.name}’s player controls weren’t found.` : 'Couldn’t read your library.', { button: 'Try again', onClick: retry('library') }); return; }
+    const state = out ? 'out' : d.needsScopes === true && !any ? 'scope' : any ? 'rows' : waiting ? 'loading' : failed ? 'err' : 'empty';
+    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), albums.map((i) => i.id), artists.map((i) => i.id), d.needsScopes === true, d.libraryWhy, d.libraryEmpty === true, pinsOf().map((p) => p.id), cap('playlists')]), (box) => {
+      if (state === 'err') { note(box, LIBRARY_FAIL(o, d.libraryWhy), { button: 'Try again', onClick: retry('library') }); return; }
       if (state === 'out') { note(box, `Sign in to ${o.name} to see your library.`); if (o.signIn) { const b = el('button', 'w-btn primary am-signin', o.signIn); b.type = 'button'; b.addEventListener('click', () => act('esignin')); box.append(b); } return; }
       if (state === 'loading') { note(box, 'Loading your library…'); return; }
       if (state === 'scope') { reconnectNote(box); return; }
-      if (state === 'empty') { note(box, 'Nothing here yet.', { button: 'Try again', onClick: retry('library') }); return; }
+      if (state === 'empty') { note(box, d.libraryEmpty === true ? 'Nothing in your library yet. Save or follow something in Spotify and it shows up here.' : 'Nothing here yet.', { button: d.libraryEmpty === true ? 'Look again' : 'Try again', onClick: retry('library') }); return; }
       const group = (heading, items) => {
         if (!items.length) return;
         const g = el('div', 'am-group');
@@ -478,6 +489,8 @@ function build(w, card, o) {
       group('Recently played', recent);
       group('Liked Songs', liked);
       group(o.engine === 'spotify-lumen' ? 'Your library' : 'Your playlists', lists);
+      group('Saved albums', albums);
+      group('Followed artists', artists);
       if (d.needsScopes === true) reconnectNote(box);
     });
     if (state === 'loading') later(LOADING_MS + 50, drawLibrary);
@@ -498,7 +511,7 @@ function build(w, card, o) {
     return b;
   }
   function reconnectNote(box) {
-    note(box, 'Reconnect Spotify to use your library and likes here. Lumen asks for the extra permission once.', { button: 'Reconnect in Settings', onClick: () => act('configure') });
+    note(box, 'Sign in again to show your library. Spotify needs you to allow Lumen to read it once more.', { button: 'Sign in again', onClick: () => act('configure') });
   }
   function drawDevices() {
     const d = view.d; const list = (Array.isArray(d.devices) ? d.devices : []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string');
@@ -983,7 +996,7 @@ function searchController(view, { id, o, act, ui, cap }) {
       const b = byKey.get(`${item.kind}:${item.id}`);
       const slot = b && b.querySelector('.am-thumb.none');
       if (!slot) continue;
-      const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.decoding = 'async'; img.src = item.thumb;
+      const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = item.thumb;
       slot.replaceWith(img);
     }
   }

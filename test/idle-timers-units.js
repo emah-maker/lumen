@@ -113,11 +113,13 @@ function webPlayerChecks() {
   try {
     const views = [];
     const bounds = [];
+    const radii = [];
+    const backgrounds = [];
     function WebContentsView() {
       const wc = new EventEmitter();
       wc.isDestroyed = () => false; wc.loadURL = () => Promise.resolve(); wc.setWindowOpenHandler = () => {}; wc.getURL = () => 'https://open.spotify.com/'; wc.close = () => {};
       wc.executeJavaScript = () => Promise.resolve(false); wc.getZoomFactor = () => 1; wc.setZoomFactor = () => {};
-      this.webContents = wc; this.vis = false; this.setVisible = (v) => { this.vis = v; }; this.getVisible = () => this.vis; this.setBounds = (b) => { bounds.push(b); };
+      this.webContents = wc; this.vis = false; this.setVisible = (v) => { this.vis = v; }; this.getVisible = () => this.vis; this.setBounds = (b) => { bounds.push(b); }; this.setBorderRadius = (r) => { radii.push(r); }; this.setBackgroundColor = (c) => { backgrounds.push(c); };
       views.push(this);
     }
     const win = { isDestroyed: () => false, once() {}, contentView: { addChildView() {}, removeChildView() {} } };
@@ -160,6 +162,32 @@ function webPlayerChecks() {
     has = true;
     check('web player: parseSlotMessage: rects, null, and undefined for what is not ours', JSON.stringify(WP.parseSlotMessage(msg({ spotify: { x: 1, y: 2, w: 3, h: 4 } }), 'spotify')) === '{"x":1,"y":2,"w":3,"h":4}' && WP.parseSlotMessage(msg({ spotify: null }), 'spotify') === null && WP.parseSlotMessage(msg({ spotify: 5 }), 'spotify') === undefined && WP.parseSlotMessage('x', 'spotify') === undefined && WP.parseSlotMessage(msg([]), 'spotify') === undefined && WP.parseSlotMessage(msg({ applemusic: null }), 'spotify') === undefined, '');
     check('web player: no interval was created in all of that', intervals.length === 0, String(intervals.length));
+    // the view does not give itself away: its own background until painted, no first-frame flash, rounded like the card, hidden while the page moves
+    const realNow = Date.now;
+    const wc0 = views[0].webContents;
+    check('web player: the view has the player’s own background colour from the start (no white or black before the page paints)', backgrounds.length === 1 && /^#[0-9a-f]{6}$/i.test(backgrounds[0]), JSON.stringify(backgrounds));
+    check('web player: parseSlotMessage carries the slot’s corner radius and the moving flag (and clamps a silly radius)', JSON.stringify(WP.parseSlotMessage(msg({ spotify: { x: 1, y: 2, w: 3, h: 4, r: 10, m: 1 } }), 'spotify')) === '{"x":1,"y":2,"w":3,"h":4,"r":10,"m":1}' && WP.parseSlotMessage(msg({ spotify: { x: 1, y: 2, w: 3, h: 4, r: 999 } }), 'spotify').r === 40, '');
+    const slot = { x: 20, y: 130, w: 400, h: 300, r: 10 };
+    nt.emit('console-message', { message: msg({ spotify: slot }) });
+    check('web player: a view whose page has not finished loading is placed but not shown (the card’s own placeholder shows meanwhile)', views[0].vis === false && bounds[bounds.length - 1].y === 210, JSON.stringify([views[0].vis, bounds.slice(-1)]));
+    wc0.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://open.spotify.com/' });
+    wc0.emit('did-finish-load');
+    nt.emit('console-message', { message: msg({ spotify: slot }) });
+    check('web player: …and just after it finished loading it still waits for its first paint', views[0].vis === false, String(views[0].vis));
+    Date.now = () => realNow() + 400;
+    nt.emit('console-message', { message: msg({ spotify: slot }) });
+    check('web player: once the first paint is in it is shown, rounded to the card’s corner radius', views[0].vis === true && radii[radii.length - 1] === 10, JSON.stringify([views[0].vis, radii.slice(-1)]));
+    const nb = bounds.length;
+    nt.emit('console-message', { message: msg({ spotify: { ...slot, y: 90, m: 1 } }) });
+    check('web player: while the page is scrolling or resizing (m) the view is hidden and stays where it was', views[0].vis === false && bounds.length === nb, JSON.stringify([views[0].vis, bounds.length - nb]));
+    nt.emit('console-message', { message: msg({ spotify: { ...slot, y: 90 } }) });
+    check('web player: …and shown again at the new place when the page has settled', views[0].vis === true && bounds[bounds.length - 1].y === 170, JSON.stringify([views[0].vis, bounds.slice(-1)]));
+    active = null;
+    wp.sync();
+    check('web player: on another tab than the new-tab page the view is hidden', views[0].vis === false, String(views[0].vis));
+    active = nt;
+    Date.now = realNow;
+
     // a failed load is retried once after the delay, by one timer that exists only while it is failed
     const wc = views[0].webContents;
     timeouts.length = 0;

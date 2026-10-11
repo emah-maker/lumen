@@ -2494,6 +2494,7 @@ function createWidgets(deps) {
     if (action.do === 'etab') {
       action.arg = params.get('arg');
       if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
+      if (params.get('force') === '1') action.force = true; // (Try again: the tab is read again, not served from the last few seconds)
     }
     if (action.do === 'eopen' || action.do === 'pplay' || action.do === 'pin' || action.do === 'unpin') { // a playlist or album (kind, arg: its id): open its songs in the card, play it (pos: from that entry; with: which song; shuffle=1), pin it as a tab or unpin it
       action.kind = params.get('kind');

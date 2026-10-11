@@ -13,10 +13,10 @@ const SW = require('./spotify-web');
 const REDIRECT_PORT = 43917;
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`;
 // What the card needs: playback (read state, devices, the queue; control it), and for the bigger sizes the library: playlists, recent plays, saved
-// songs (the heart). An account signed in before these were added keeps working for the playback buttons; the calls that need a new one answer
+// songs (the heart), saved albums, followed artists. An account signed in before these were added keeps working for the playback buttons; the calls that need a new one answer
 // 403 "Insufficient client scope" and the card then offers to reconnect (scopeError() recognises that answer).
 const BASE_SCOPES = ['user-read-playback-state', 'user-modify-playback-state'];
-const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify'];
+const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify', 'user-follow-read'];
 const SCOPES = [...BASE_SCOPES, ...LIBRARY_SCOPES].join(' ');
 const MAX_ART_BYTES = 96e3; // the picture travels in the new-tab page's address, so it stays small
 const ACTIONS = { play: ['PUT', '/me/player/play'], pause: ['PUT', '/me/player/pause'], next: ['POST', '/me/player/next'], previous: ['POST', '/me/player/previous'] };
@@ -143,11 +143,11 @@ function scopeError(status, text) {
 }
 
 // ---- the picture ----
-// Only Spotify's own image host, over https.
+// Only Spotify's own image hosts (i.scdn.co, mosaic.scdn.co, image-cdn-*.spotifycdn.com), over https.
 function isImageUrl(u) {
   try {
     const url = new URL(u);
-    return url.protocol === 'https:' && !url.username && !url.password && /(^|\.)scdn\.co$/.test(url.hostname);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && /(^|\.)(scdn\.co|spotifycdn\.com)$/.test(url.hostname);
   } catch { return false; }
 }
 // Album art candidates: Spotify's own hosts only, the one nearest 300px first, then smaller ones.
@@ -291,7 +291,29 @@ function normalizeQueue(text) {
 // GET /me/playlists -> the account's playlists.
 function normalizePlaylists(text) {
   const b = parse(text);
-  return (Array.isArray(b?.items) ? b.items : []).map((p) => listItem(p, 'playlist')).filter(Boolean).slice(0, 40);
+  return (Array.isArray(b?.items) ? b.items : []).map((p) => listItem(p, 'playlist')).filter(Boolean);
+}
+// The address of the next page of a paged answer ({ next } or { artists: { next } }), as a path the card's own call can make: only Spotify's API host
+// and its /v1 paths count, whatever the answer says; '' when there is no next page.
+function nextPath(text) {
+  const b = parse(text);
+  const next = typeof b?.next === 'string' ? b.next : typeof b?.artists?.next === 'string' ? b.artists.next : '';
+  if (!next || next.length > 600) return '';
+  try {
+    const u = new URL(next);
+    if (u.protocol !== 'https:' || u.hostname !== 'api.spotify.com' || u.username || u.password || u.port || !u.pathname.startsWith('/v1/')) return '';
+    return u.pathname.slice(3) + u.search;
+  } catch { return ''; }
+}
+// GET /me/albums -> the saved albums (each { added_at, album }), newest first.
+function normalizeAlbums(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.items) ? b.items : []).map((e) => listItem(e?.album, 'album')).filter(Boolean);
+}
+// GET /me/following?type=artist -> the followed artists.
+function normalizeFollowing(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.artists?.items) ? b.artists.items : []).map((a) => listItem(a, 'artist')).filter(Boolean);
 }
 // GET /me/tracks -> the saved songs (Liked Songs), newest first.
 function normalizeLiked(text) {
@@ -302,7 +324,7 @@ function normalizeLiked(text) {
     const it = listItem(e?.track, 'track');
     if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
   }
-  return out.slice(0, 20);
+  return out;
 }
 // GET /me/player/recently-played -> the last songs, each once.
 function normalizeRecent(text) {
@@ -369,9 +391,11 @@ const enc = encodeURIComponent;
 const SEARCH_LIMIT = 10; // per kind (the most Spotify's search answers for an app in development mode)
 const PLAYER = {
   queue: () => ['GET', '/me/player/queue'],
-  playlists: () => ['GET', '/me/playlists?limit=40'],
+  playlists: () => ['GET', '/me/playlists?limit=50'],
+  albums: () => ['GET', '/me/albums?limit=50&market=from_token'], // (the saved albums: scope user-library-read)
+  following: () => ['GET', '/me/following?type=artist&limit=50'], // (the followed artists: scope user-follow-read; answers { artists: { items, next, cursors } })
   recent: () => ['GET', '/me/player/recently-played?limit=30'],
-  liked: () => ['GET', '/me/tracks?limit=20&market=from_token'], // (the saved songs, newest first: still there after Spotify's February 2026 changes)
+  liked: () => ['GET', '/me/tracks?limit=50&market=from_token'], // (the saved songs, newest first: still there after Spotify's February 2026 changes)
   devices: () => ['GET', '/me/player/devices'],
   // More songs for a search: the songs alone, the next page (Spotify's development mode answers 10 at most per request).
   searchMore: (term, offset) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track&limit=${SEARCH_LIMIT}&offset=${Math.max(0, Math.min(200, Math.round(offset)))}&market=from_token`],
@@ -401,7 +425,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

@@ -73,6 +73,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const placed = await app.evaluate(({ BrowserWindow }) => { const b = global.__appleMusicWeb.view().getBounds(); const [w, h] = BrowserWindow.getAllWindows()[0].getContentSize(); return { b, w, h }; });
     check('apple music: the view stays inside the window', placed.b.x >= 0 && placed.b.y >= 0 && placed.b.x + placed.b.width <= placed.w && placed.b.y + placed.b.height <= placed.h && placed.b.width > 0 && placed.b.height > 0, JSON.stringify(placed));
 
+    // (the shared web-player.js: the view does not show that it is a separate view; the same rules as Spotify's, test/spotify-ui.js)
+    const amVis = () => app.evaluate(() => Boolean(global.__appleMusicWeb.view() && global.__appleMusicWeb.view().getVisible()));
+    const amSettle = async (want) => { for (let i = 0; i < 40; i++) { if ((await amVis()) === want) return true; await sleep(100); } return false; };
+    await page("(() => { const d = document.createElement('div'); d.className = 'w-picker'; d.id = 'fx-picker'; document.body.append(d); })()");
+    check('apple music: an open picker hides the view, and it comes back when the picker closes', await amSettle(false) && (await page("document.getElementById('fx-picker').remove(), true")) && await amSettle(true), '');
+    const amTab = await app.evaluate(() => global.__agent.browser.activeTab().id);
+    await app.evaluate(() => { global.__agent.browser.openTab('about:blank'); });
+    check('apple music: on another tab than the new-tab page the view is hidden, and back on it it is shown again', await amSettle(false) && (await app.evaluate((_e, id) => { global.__agent.browser.switchTab(id); return true; }, amTab)) && await amSettle(true), '');
+
     // Two players, two views: Spotify's own card and view are independent of Apple's
     check('apple music: Spotify\'s Web player card next to it has its own view on its own page', await waitMain(() => { const s = global.__spotifyWeb.view(); const a = global.__appleMusicWeb.view(); return s && a && s !== a && s.webContents.getURL().endsWith('/spotify') && a.webContents.getURL().endsWith('/web'); }), '');
     check('apple music: …and the two cards do not overlap', await waitMain(() => { const s = global.__spotifyWeb.view().getBounds(); const a = global.__appleMusicWeb.view().getBounds(); return s.x >= a.x + a.width || a.x >= s.x + s.width || s.y >= a.y + a.height || a.y >= s.y + s.height; }), '');

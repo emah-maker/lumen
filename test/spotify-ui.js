@@ -283,6 +283,47 @@ async function partWeb(fake, base, scratch, shots) {
   await app.evaluate(() => { global.__spotifyDrmProbe = async () => true; });
   check('web player: once Widevine is there (it installs in the background) the note goes away by itself', await waitFor("!document.querySelector('.sp-drm')", 120) && (await status()).drm === 'ok', JSON.stringify(await status()));
   check('web player: Widevine present gives no warning, and the card has the Open link', !(await page("Boolean(document.querySelector('.sp-drm'))")) && (await page("Boolean(document.querySelector('.w-card.spotify a[title^=\"Open in Spotify\"], .w-card.spotify a[aria-label^=\"Open in Spotify\"]'))")), '');
+  // ---- the view must not show that it is a separate view: rounded like the card, hidden under overlays and on other tabs, hidden (not lagging) while the page moves ----
+  await app.evaluate(() => { global.__slotMsgs = []; global.__wtab.webContents.on('console-message', (e, level, msg) => { const m = typeof e?.message === 'string' ? e.message : msg; if (typeof m === 'string' && m.startsWith('lumen-slot-rect ')) global.__slotMsgs.push(JSON.parse(m.slice(16))); }); });
+  await page("window.dispatchEvent(new Event('resize'))"); // (says moving, then the settled place with the radius)
+  await sleep(500);
+  const rad = await app.evaluate(() => global.__slotMsgs.at(-1)?.spotify || null);
+  check('web player: the page reports the slot’s corner radius (the view is rounded to the card’s corners)', Boolean(rad) && rad.r >= 8 && rad.r <= 40 && rad.m === undefined, JSON.stringify(rad));
+  const vis = () => app.evaluate(() => Boolean(global.__spotifyWeb.view() && global.__spotifyWeb.view().getVisible()));
+  const settle = async (want, tries = 40) => { for (let i = 0; i < tries; i++) { if ((await vis()) === want) return true; await sleep(100); } return false; };
+  // overlays on the new-tab page: the native view would be drawn over them, so it hides
+  await page("(() => { const d = document.createElement('div'); d.className = 'w-picker'; d.id = 'fx-picker'; document.body.append(d); })()");
+  check('web player: an open picker hides the view (it would draw over it)', await settle(false), '');
+  await page("document.getElementById('fx-picker').remove()");
+  check('web player: …and it comes back when the picker closes', await settle(true), '');
+  await page("(() => { const d = document.createElement('div'); d.className = 'w-stack-menu'; d.id = 'fx-menu'; d.style.cssText = 'position:fixed;left:10px;top:10px;width:80px;height:40px'; document.body.append(d); })()");
+  check('web player: a stack’s menu or panel on the page hides the view', await settle(false), '');
+  await page("document.getElementById('fx-menu').remove()");
+  check('web player: …and it comes back when that closes', await settle(true), '');
+  await page("document.body.classList.add('w-editing')");
+  check('web player: the edit mode’s handles hide the view', await settle(false), '');
+  await page("document.body.classList.remove('w-editing')");
+  check('web player: …and it comes back when editing ends', await settle(true), '');
+  // scrolling: the view cannot follow in the same frame, so it hides while the page moves and is placed at the new spot once it settles
+  const before = await app.evaluate(() => global.__spotifyWeb.view().getBounds());
+  await page("(() => { if (!document.getElementById('fx-spacer')) { const s = document.createElement('div'); s.id = 'fx-spacer'; s.style.cssText = 'height:4000px;width:1px;position:absolute;top:0;left:0'; document.documentElement.append(s); } })()");
+  await app.evaluate(() => { global.__slotMsgs.length = 0; });
+  await page('window.scrollTo(0, 60)');
+  const scrolled = await page('window.scrollY');
+  await sleep(60);
+  const during = await app.evaluate(() => ({ moving: global.__slotMsgs.some((m) => m.spotify && m.spotify.m === 1), visible: Boolean(global.__spotifyWeb.view().getVisible()) }));
+  check('web player: when the page scrolls the card says it is moving, and the view is hidden meanwhile (no lagging copy over the wrong place)', scrolled > 0 && during.moving && during.visible === false, JSON.stringify([scrolled, during]));
+  check('web player: …and shown again, at the new place, when the page has settled', scrolled > 0 && await settle(true) && (await app.evaluate(() => global.__spotifyWeb.view().getBounds().y)) < before.y, JSON.stringify([scrolled, before, await app.evaluate(() => global.__spotifyWeb.view().getBounds())]));
+  await page('window.scrollTo(0, 0)');
+  await settle(true);
+  // another tab: the new-tab page is left, so the view is hidden (the music goes on); back on it, it is shown again
+  const newTabId = await app.evaluate(() => global.__agent.browser.activeTab().id);
+  await app.evaluate(() => { global.__agent.browser.openTab('about:blank'); });
+  check('web player: on another tab than the new-tab page the view is hidden (the page keeps playing)', await settle(false) && (await status()).state === 'ready', JSON.stringify(await status()));
+  await app.evaluate((_e, id) => { global.__agent.browser.switchTab(id); }, newTabId);
+  check('web player: back on the new-tab page it is shown again', await settle(true), '');
+  // the view is not a tab: no extra tab, and it is not in the tab list
+  check('web player: the player view is not listed as a tab', await app.evaluate(() => global.__agent.browser.listTabs().every((t) => !/\/web$/.test(String(t.url || '')))), JSON.stringify(await app.evaluate(() => global.__agent.browser.listTabs().map((t) => t.url))));
   if (shots) fs.writeFileSync(path.join(shots, 'web-small.png'), Buffer.from(await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.capturePage().then((i) => i.toPNG().toString('base64'))), 'base64'));
 
   // A load that fails: offline, then a 500 -> a message and Try again, never a blank frame

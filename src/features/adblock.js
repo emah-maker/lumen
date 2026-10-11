@@ -239,7 +239,7 @@ function createAdblock(deps) {
       const page = details.webContents?.getURL() || details.referrer || '';
       // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
-      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
+      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = engine.match(request);
@@ -288,7 +288,7 @@ function createAdblock(deps) {
     let headers = blocker.onHeadersReceived;
     blocker.onHeadersReceived = (details, callback) => {
       deps.onResponseHeaders(details); // [settings] sites asking for the color-scheme hint
-      return on(details.webContents?.getURL() || details.url) ? headers(details, callback) : callback({});
+      return on(details.webContents?.getURL() || details.url) && !challengeFor(details.webContents?.getURL() || '', details.url) ? headers(details, callback) : callback({});
     };
     serveStubs(deps.session.defaultSession);
     blocker.enableBlockingInSession(deps.session.defaultSession);
@@ -375,4 +375,10 @@ function createAdblock(deps) {
   };
 }
 
-module.exports = { createAdblock, hostOf, pageMemo };
+// The human checks of a sign-in page (Arkose / FunCaptcha, reCAPTCHA, hCaptcha, Cloudflare's) on Spotify: a filter list entry for one of them would leave the
+// person with a blank frame they cannot click. Let through for pages of Spotify's own sites only.
+const CHALLENGE = /^https:\/\/(([a-z0-9-]+\.)*(arkoselabs\.com|funcaptcha\.com|hcaptcha\.com|recaptcha\.net)|challenges\.cloudflare\.com|(www\.)?(google|gstatic)\.com\/recaptcha)(\/|$)/;
+const CHALLENGE_PAGE = /(^|\.)spotify\.com$/;
+const challengeFor = (page, url) => CHALLENGE.test(url) && CHALLENGE_PAGE.test(hostOf(page));
+
+module.exports = { createAdblock, hostOf, pageMemo, challengeFor };

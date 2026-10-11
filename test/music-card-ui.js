@@ -214,6 +214,38 @@ async function main() {
   navigations.length = 0;
   await js(`document.querySelectorAll('.mc-panel-library .mc-row-main')[3].click()`); await sleep(60);
   check('tabs: a library row plays that item', asks()[0] === 'playitem:p1:playlist' || asks()[0] === 'playitem:r1:song' || /^playitem:/.test(asks()[0] || ''), JSON.stringify(asks()));
+  // ---- the library tab in every state it can be in (main says which: libraryPending / libraryOk + libraryWhy / libraryEmpty / needsScopes) ----
+  await js(`document.querySelector('.mc-tab-library').click()`); await sleep(3700); // (the tab's own "Loading…" window after it was opened ends)
+  const lib = async (over) => { await render(widget(playing({ recent: [], playlists: [], likedSongs: [], ...over }))); await sleep(160); return q('.mc-panel-library'); };
+  let lt = await lib({ libraryPending: true });
+  check('library: while main is still reading it (libraryPending) the tab says Loading, never "nothing here"', /Loading your library/.test(lt) && !/Nothing/.test(lt), lt);
+  lt = await lib({ libraryOk: false, libraryWhy: 'noPanel' });
+  check('library: the page changed (noPanel): the card says so and offers Try again', /changed its page/.test(lt) && /Try again/.test(lt), lt);
+  lt = await lib({ libraryOk: false, libraryWhy: 'collapsed' });
+  check('library: a panel that could not be opened (collapsed) says that', /couldn.t open your library panel/.test(lt), lt);
+  lt = await lib({ libraryOk: false, libraryWhy: 'timeout' });
+  check('library: a page too slow to show it (timeout) says that', /didn.t show your library in time/.test(lt), lt);
+  lt = await lib({ libraryOk: false, libraryWhy: 'page' });
+  check('library: any other failure keeps the plain message with Try again', /Couldn.t read your library/.test(lt) && /Try again/.test(lt), lt);
+  navigations.length = 0;
+  await js(`[...document.querySelectorAll('.mc-panel-library button')].find((b) => /Try again/.test(b.textContent)).click()`); await sleep(120);
+  lt = await q('.mc-panel-library');
+  check('library: Try again asks main to read it again (etab:library) and shows Loading at once, not the old failure', asks().includes('etab:library') && navigations.some((u) => /force=1/.test(u)) && /Loading your library/.test(lt), JSON.stringify([asks(), lt]));
+  lt = await lib({ libraryOk: false, libraryWhy: 'signedOut' });
+  check('library: the page shows its Log in button (signedOut): the card says to sign in, with the Sign in button, not a generic failure', /Sign in to Spotify to see your library/.test(lt) && (await shown('.mc-panel-library .am-signin')), lt);
+  lt = await lib({ libraryOk: true, libraryEmpty: true });
+  check('library: a library with nothing in it is said to be empty (with Look again), not a failure', /Nothing in your library yet/.test(lt) && !/Couldn.t/.test(lt), lt);
+  lt = await lib({ needsScopes: true });
+  check('library: a token without the library permission: "Sign in again to show your library" with a Sign in again button that opens the settings', /Sign in again to show your library/.test(lt), lt);
+  navigations.length = 0;
+  await js(`[...document.querySelectorAll('.mc-panel-library button')].find((b) => /Sign in again/.test(b.textContent)).click()`); await sleep(80);
+  check('library: …the button asks for the settings (configure)', asks()[0] === 'configure', JSON.stringify(asks()));
+  lt = await lib({ playlists: [{ id: 'p1', kind: 'playlist', title: 'Mine', sub: 'You' }], albums: [{ id: 'al1', kind: 'album', title: 'Saved Album', sub: 'Ann · 2021' }], artists: [{ id: 'ar1', kind: 'artist', title: 'Followed Artist', sub: '' }] });
+  check('library: saved albums and followed artists are listed under their own headings', /Saved albums/.test(lt) && /Saved Album/.test(lt) && /Followed artists/.test(lt) && /Followed Artist/.test(lt), lt);
+  navigations.length = 0;
+  await js(`[...document.querySelectorAll('.mc-panel-library .mc-row-main')].find((b) => /Followed Artist/.test(b.textContent)).click()`); await sleep(60);
+  check('library: a followed artist plays (playitem, kind artist)', asks()[0] === 'playitem:ar1:artist', JSON.stringify(asks()));
+  await render(widget(playing()));
   await js(`document.querySelector('.mc-tab-devices').click()`); await sleep(80);
   check('tabs: Devices for "Play as Lumen" says this browser (nothing to pick)', /This browser/.test(await q('.mc-panel-devices')) && (await js(`document.querySelector('.mc-panel-devices .mc-device').disabled`)), await q('.mc-panel-devices'));
   await shot('spotify-lumen-large-devices');
