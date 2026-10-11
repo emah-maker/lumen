@@ -98,6 +98,8 @@ main { padding: 28px 40px 96px; max-width: calc(760px + 80px); width: 100%; marg
 .row[hidden] { display: none; }
 .sub { font-size: 12px; font-weight: 600; color: var(--muted); padding: 14px 16px 4px; }
 .note { color: var(--muted); font-size: 12px; }
+.note.empty-model { display: flex; align-items: center; gap: 10px; margin: 0; }
+.note.empty-model[hidden] { display: none; }
 .ok { color: var(--success); }
 .err { color: var(--danger); }
 .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; word-break: break-all; }

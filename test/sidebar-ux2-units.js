@@ -89,7 +89,7 @@ check('a message that is only "please" keeps its words', autoTitle(one('please')
   check('History lists an older chat by its first real text, not the markup it was saved with', again.list()[0].title === 'explain this graph', again.list()[0].title);
 }
 // the full chat page and the sidebar name the connected assistant (Lumen for Auto), never one provider by default
-check('the empty-state title says Lumen when Auto (no single assistant) is picked, and Auto across providers is the neutral identity', /emptyName = who === ASSISTANTS\.AI \? 'Lumen'/.test(core) && /current\?\.auto && !current\.autoScope/.test(core));
+check('the empty-state title says Lumen when Auto (no single assistant) is picked, and Auto across providers is the neutral identity', /emptyName = who === ASSISTANTS\.AI \|\| who === ASSISTANTS\.Auto \? 'Lumen'/.test(core) && /current\?\.auto && !current\.autoScope/.test(core));
 
 
 // ---- 6) step timing and the Stop button

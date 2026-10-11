@@ -8,6 +8,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - **A page that cannot load no longer loops.** If the "can't open this page" screen itself failed to load, Lumen tried to show an error page for the error page, hundreds of times over. It stops at the first.
 - **Quieter log.** Every tab used to print a "possible EventEmitter memory leak" warning to the log; the listener count is fixed per tab and the warning was only noise.
 - **A new test, `test/no-errors.js`**, drives a realistic session (15 tabs including a PDF, a deck and an error page, the sidebar, chat, the chat page and canvas, Organize, every Settings section, resize, dark mode, sleeping and waking tabs, quit) and fails on any console error, warning or uncaught exception from the main process or any page of the app.
+- **A clearer way in when no AI is connected yet.** The toolbar button now reads "Set up AI" instead of showing only a sparkle. The setup card in the sidebar and the welcome lead with the two choices that need nothing installed (sign in with OpenRouter, or add an API key), then Claude Code; Codex, Grok Build and Antigravity no longer get greyed-out rows when they are not on the computer, just one line saying how to bring them. Settings, AI and agents says "No AI connected yet." with a **Connect an AI** button, and no longer shows an empty model box beside it.
+- **The toolbar button no longer says "Set up AI" once an AI is connected.** With Auto picked (the default when you connect more than one AI), the button kept asking you to set up. It now says "Lumen".
+- **Deleting a saved login asks first.** In Settings, Delete on one saved password used to remove it at once with no way back; it now says "Delete? Click again", the same as Delete all. Clear list under Recent downloads asks the same way.
+- **A reopened chat still shows where you switched models.** The "Now using ..." line between messages used to vanish when you came back to the chat; it is drawn again before the first message the new model answered (not when Auto picked the model itself).
 
 ## 0.5.25 (2026-10-11)
 
