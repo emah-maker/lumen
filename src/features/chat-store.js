@@ -179,6 +179,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
   }
 
+  // Is the chat in the history list (whether or not its file can be read right now)?
+  const has = (id) => ID_RE.test(String(id)) && readIndex().chats.some((c) => c.id === id);
+
   // Writes the chat and its index entry. Returns false when nothing could be kept (no keychain).
   function save(id, snapshot) {
     if (!ID_RE.test(String(id))) throw new Error('bad chat id');
@@ -267,7 +270,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     known.clear(); foreign.clear(); fileChecks.clear();
   }
 
-  return { list, load, save, rename, remove, current, setCurrent, migrate, newId, clearAll };
+  return { list, has, load, save, rename, remove, current, setCurrent, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

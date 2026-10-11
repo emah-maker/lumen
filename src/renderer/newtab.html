@@ -213,6 +213,11 @@
     .mode button[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
     .mode button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .mode-hint { margin-left: 8px; font-size: 11.5px; color: var(--muted); }
+    .mode-connect { appearance: none; margin: 0 0 0 6px; min-height: 24px; padding: 2px 12px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; }
+    .mode-connect[hidden] { display: none; }
+    .mode-connect:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .section-hint { margin: 6px 2px 0; font-size: 11.5px; color: var(--muted); }
+    .section-hint kbd { display: inline-block; margin: 0 1px; padding: 0 4px; border-radius: 4px; font: 600 10.5px/16px system-ui, sans-serif; box-shadow: inset 0 0 0 1px var(--border); }
 
     section { margin-top: var(--gutter); }
     section:first-of-type { margin-top: 0; }
@@ -293,7 +298,7 @@
     @media (prefers-color-scheme: dark) { .w-card { --cloud: #9aa1ab; --drop: #64b5ff; --moon: #c9c7ff; --warn: #ff6961; } }
     body.on-media .w-card { --cloud: #eef1f5; --drop: #8fd0ff; --warn: #ff8a80; }
     .w-instant .w-card, .w-instant .w-ghost, body.calm .w-card, body.calm .w-ghost, body.calm main, .w-card.w-placing { transition: none; }
-    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; touch-action: none; user-select: none; flex: none; }
+    .w-head { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; touch-action: none; user-select: none; flex: none; }
     .w-head a, .w-head button:not(.w-grip) { cursor: default; }
     .w-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
     .w-card.weather .w-body, .w-card.embed .w-body { overflow: hidden; }
@@ -304,9 +309,9 @@
     /* Moving and resizing: a grip before the title and a corner handle, shown on hover; edit mode
        adds a handle on every corner and edge, a remove badge, a gear and size presets. */
     .w-grip, .w-resize { appearance: none; flex: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--faint); opacity: 0; outline: none; transition: opacity 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out; cursor: grab; }
-    .w-grip { display: grid; place-items: center; width: 14px; height: 22px; margin: 0 -4px 0 -8px; border-radius: 5px; }
+    .w-grip { display: grid; place-items: center; width: 24px; height: 24px; margin: 0 -10px 0 -12px; border-radius: 5px; }
     .w-grip svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
-    .w-resize { position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; border-radius: 0 0 14px 4px; cursor: nwse-resize; touch-action: none; z-index: 2; }
+    .w-resize { position: absolute; right: 0; bottom: 0; width: 24px; height: 24px; border-radius: 0 0 14px 4px; cursor: nwse-resize; touch-action: none; z-index: 2; }
     .w-resize svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
     .w-card:hover .w-grip, .w-card:hover .w-resize, .w-grip:focus-visible, .w-resize:focus-visible, .w-card.resizing .w-resize, body.w-editing .w-resize { opacity: 1; }
     .w-grip:hover, .w-resize:hover, .w-card.resizing .w-resize { color: var(--text); }
@@ -326,7 +331,7 @@
     body.w-editing .w-remove, body.w-editing .w-gear { display: grid; }
     body.w-editing .w-presets { display: none; }
     body.w-editing .w-card:hover .w-presets, body.w-editing .w-card:focus-within .w-presets { display: flex; }
-    .w-remove, .w-gear { position: absolute; z-index: 3; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
+    .w-remove, .w-gear { position: absolute; z-index: 3; place-items: center; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
     .w-remove { left: -8px; top: -8px; } .w-gear { right: -8px; top: -8px; }
     .w-remove svg, .w-gear svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
     .w-remove:hover, .w-gear:hover { background: var(--hover); }
@@ -406,7 +411,7 @@
     .w-stack-why { position: absolute; z-index: 3; left: 50%; top: -9px; translate: -50% 0; max-width: calc(100% - 32px); padding: 2px 9px; border-radius: 999px; background: var(--bg); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border), 0 2px 8px var(--shadow); font: 500 10.5px/16px system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-stack-why { animation: w-pop 180ms ease-out; } }
     body.w-editing .w-stack, body.w-editing .w-stack-why { display: none; }
-    .w-stack-edit { display: none; position: absolute; z-index: 3; left: 50%; top: -8px; translate: -50% 0; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
+    .w-stack-edit { display: none; position: absolute; z-index: 3; left: 50%; top: -8px; translate: -50% 0; place-items: center; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
     .w-stack-edit svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
     .w-stack-edit:hover { background: var(--hover); }
     .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
@@ -455,7 +460,7 @@
     .w-link { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 500; text-decoration: none; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
     .w-link:hover { background: var(--hover); color: var(--text); }
     .w-link svg, .w-icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     /* Hidden until the card is hovered or focused (and always on a failed card's pencil); touch has no hover, so it stays faintly there. */
     .w-card:hover .w-icon-btn, .w-card:focus-within .w-icon-btn, .w-icon-btn:hover, .w-icon-btn:focus-visible, .w-icon-btn.always { opacity: 1; }
     @media (hover: none) { .w-icon-btn { opacity: 0.6; } }
@@ -1193,7 +1198,7 @@
       <div class="mode" id="mode" role="radiogroup" aria-label="What the field does">
         <button type="button" role="radio" id="mode-search" data-mode="search" aria-checked="true" tabindex="0">Search</button>
         <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1">Ask AI</button>
-      </div><span class="mode-hint" id="mode-hint" role="status" aria-live="polite">Ctrl+/ to switch</span>
+      </div><span class="mode-hint" id="mode-hint" role="status" aria-live="polite">Ctrl+/ to switch</span><button type="button" class="mode-connect" id="mode-connect" hidden>Connect an AI</button>
     </form>
     <div id="sections"></div>
   </main>
@@ -1204,6 +1209,7 @@
   <script src="../features/widget-stacks.js"></script>
   <script src="../features/widget-stack-motion.js"></script>
   <script src="../features/widget-system.js"></script>
+  <script src="widget-summary.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
   <script src="../features/widget-card-key.js"></script>

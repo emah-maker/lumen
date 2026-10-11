@@ -17,6 +17,7 @@ const STRINGS = {
   'newtab.edit.done': 'Done',
   'newtab.edit.add': 'Add widget',
   'newtab.edit.add.title': 'Add a widget or show a section again',
+  'newtab.edit.setupOpening': 'Opening Settings to set up {title}. {note}',
   'newtab.edit.undo': 'Undo',
   'newtab.edit.undo.title': 'Undo the last change (Ctrl+Z)',
   'newtab.edit.reset': 'Reset layout',
@@ -27,6 +28,16 @@ const STRINGS = {
   'newtab.edit.tile.empty': 'Nothing here yet. Add the weather, your calendar, your tasks or any web page.',
   'newtab.edit.picker': 'Add to this page',
   'newtab.edit.picker.section': 'Show again',
+  'newtab.edit.picker.filter': 'Filter widgets',
+  'newtab.edit.picker.filter.ph': 'Search widgets',
+  'newtab.edit.picker.nomatch': 'No widget matches “{q}”.',
+  'newtab.edit.picker.group.stack': 'Starter',
+  'newtab.edit.picker.group.time': 'Time and weather',
+  'newtab.edit.picker.group.work': 'Work and mail',
+  'newtab.edit.picker.group.music': 'Music',
+  'newtab.edit.picker.group.news': 'News and markets',
+  'newtab.edit.picker.group.other': 'More',
+  'newtab.edit.picker.group.section': 'Show again',
   'newtab.edit.picker.none': 'Everything is already on the page.',
   'newtab.edit.picker.close': 'Close',
   'newtab.edit.firstRun': 'Make this page yours: move Favorites, or add the weather and your tasks.',
@@ -266,19 +277,41 @@ function guides(rect, others, limit = 8) {
 
 // ---- the Add widget picker ----
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+const PICKER_GROUPS = ['stack', 'time', 'work', 'music', 'news', 'other', 'section']; // the order the picker lists them in
+const TYPE_GROUP = {
+  weather: 'time', worldclock: 'time', countdown: 'time', timer: 'time',
+  calendar: 'work', todoist: 'work', gmail: 'work', slack: 'work', github: 'work', notes: 'work',
+  spotify: 'music', applemusic: 'music',
+  feed: 'news', stocks: 'news', crypto: 'news', tradingview: 'news',
+};
+const groupOf = (type) => TYPE_GROUP[type] || 'other';
+// Does an entry match what was typed in the picker's filter? Every word must appear in its name, line or group.
+function matchesFilter(entry, query) {
+  const words = String(query || '').toLowerCase().split(/[ \t]+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = `${entry.label} ${entry.hint} ${entry.groupLabel || ''}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+// What a kind that needs a key or a sign-in asks for, and where to get it: renderer/widget-summary.js (Settings shows it too).
+const WSUM = typeof module !== 'undefined' && module.exports ? require('../renderer/widget-summary') : globalThis.WidgetSummary;
+const SETUP_NOTES = WSUM ? WSUM.SETUP_NOTES : {};
+const setupNote = (type) => (WSUM ? WSUM.setupNote(type) : '');
+
 // types: the kinds of widget the page can draw; hidden: [{ id, label }] sections that are switched off;
 // table: the page's string table, if any; stack: offer a Smart Stack (a stack of starter widgets, first among the kinds).
-// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, label, hint }]
+// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, group, groupLabel, label, hint }] grouped (Starter, Time and weather, Work and mail,
+// Music, News and markets, More, Show again), each group in the order the kinds were given.
 function pickerEntries({ types = [], hidden = [], table, stack = false } = {}) {
   const out = [];
-  if (stack) out.push({ kind: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
+  if (stack) out.push({ kind: 'stack', group: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
   for (const type of types) {
     const info = TYPE_INFO[type];
-    out.push({ kind: 'widget', type, label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
+    out.push({ kind: 'widget', type, group: groupOf(type), label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
   }
   // After the widgets: a few "Show again" rows must not push real widgets below the fold.
-  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
-  return out;
+  for (const h of hidden) out.push({ kind: 'section', id: h.id, group: 'section', label: h.label, hint: text('newtab.edit.picker.section', null, table) });
+  for (const e of out) e.groupLabel = text(`newtab.edit.picker.group.${e.group}`, null, table);
+  return out.map((e, i) => [e, i]).sort((a, b) => PICKER_GROUPS.indexOf(a[0].group) - PICKER_GROUPS.indexOf(b[0].group) || a[1] - b[1]).map(([e]) => e);
 }
 
 // ---- where floating things go ----
@@ -372,7 +405,7 @@ function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, matchesFilter, setupNote, SETUP_NOTES, PICKER_GROUPS, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();
