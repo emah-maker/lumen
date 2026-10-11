@@ -2988,6 +2988,8 @@ function nameChat(id) {
   if (!id || shownChatId) return;
   drafts?.rename(null, id);
   shownChatId = id;
+  // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
+  if (!prompt.value && !pastes.length) restoreDraft();
 }
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
@@ -4857,6 +4859,7 @@ async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
   const text = window.chatDrafts.withPastes(typed, pastes);
+  const hadPastes = pastes.length > 0; // (a pasted block is the message's subject, not the words of a new topic)
   const images = attachments;
   attachments = [];
   pastes = [];
@@ -4867,7 +4870,7 @@ async function sendComposer({ now = false } = {}) {
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
   const screen = takeScreenMode(); // [screen context] the camera button's choice for this message
   if (running) { const entry = ask(text, images, tabs, screen); if (now && entry) sendNow(entry); } // (queued for after the reply, or Send now)
-  else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs, screen);
+  else if (hadPastes || !(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs, screen);
   updateSend();
 }
 
