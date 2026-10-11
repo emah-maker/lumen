@@ -83,8 +83,8 @@ async function answer(prompt) {
     return;
   }
   if (/\bFAIL\b/.test(prompt)) {
-    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'fake failure', errors: ['fake failure'], session_id: session, total_cost_usd: 0, usage: {} });
     log({ ev: 'reply', marker, failed: true });
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'fake failure', errors: ['fake failure'], session_id: session, total_cost_usd: 0, usage: {} });
     if (role === 'grok') process.exit(1);
     process.exit(1); // a Claude CLI that errors out ends its process too
   }
@@ -108,8 +108,9 @@ async function answer(prompt) {
     out({ type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } } });
     await sleep(Number(process.env.FAKE_RESULT_GAP_MS ?? 120));
   }
-  out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  // Logged BEFORE the result line: Lumen ends a Grok run at that line and kills the process, so a log written after it can be lost.
   log({ ev: 'reply', marker });
+  out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
 }
 
 if (role === 'grok') {

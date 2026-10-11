@@ -84,9 +84,10 @@ async function engineSuite(engine) {
   check(`${name}: each chat gets its own reply`, /reply from RUN-\wA/.test(turnText(lastAssistant(A))) && /reply from RUN-\wB/.test(turnText(lastAssistant(B))) && !/RUN-\wB/.test(textOf(ra.events)) && !/RUN-\wA/.test(textOf(rb.events)), J({ a: turnText(lastAssistant(A)), b: turnText(lastAssistant(B)) }));
 
   // ---- connections after finish ([warm per chat] Claude Code keeps one warm process per chat: S, A and B here)
-  await H.sleep(300);
   const tokensOfLive = () => new Set(readLog().filter((e) => e.ev === 'start' && live.has(e.pid)).map((e) => e.token));
   const orphans = () => gate.openNow().filter((t) => !tokensOfLive().has(t));
+  if (engine === 'grokbuild') await until(() => gate.openNow().length === 0 && live.size === 0, 5000); // (Lumen kills a Grok process in the background once its result is in)
+  else await until(() => orphans().length === 0, 5000);
   if (engine === 'grokbuild') check(`${name}: after both finish, both connections are closed`, gate.openNow().length === 0 && live.size === 0, J({ open: gate.openNow().length, live: live.size }));
   else check(`${name}: after both finish, no connection is left without its process, and at most one kept process per chat`, orphans().length === 0 && gate.openNow().length <= 3, J({ open: gate.openNow().length, orphans: orphans().length, live: live.size }));
 
@@ -121,9 +122,12 @@ async function engineSuite(engine) {
     const r2 = send(chats[(i + 1) % 3], `RUN-${P}L${i + 1} quick`, 2);
     await Promise.race([Promise.all([r1.done, r2.done]), H.sleep(15000)]);
   }
-  await H.sleep(500);
-  const replies = readLog().filter((e) => e.ev === 'reply' && new RegExp(`^RUN-${P}L`).test(e.marker)).length;
+  const repliesNow = () => readLog().filter((e) => e.ev === 'reply' && new RegExp(`^RUN-${P}L`).test(e.marker)).length;
+  await until(() => repliesNow() >= N, 10000); // (the real condition, not a pause: a loaded machine can be slow)
+  const replies = repliesNow();
   check(`${name}: ${N} runs in pairs all answered`, replies === N, `${replies} of ${N}`);
+  if (engine === 'grokbuild') await until(() => gate.openNow().length === 0 && live.size === 0, 5000);
+  else await until(() => orphans().length === 0 && gate.openNow().length <= 5 && live.size <= 5, 5000);
   if (engine === 'grokbuild') check(`${name}: after ${N} runs no connection and no process is left`, gate.openNow().length === 0 && live.size === 0, J({ open: gate.openNow().length, live: live.size }));
   else check(`${name}: after ${N} runs every open connection belongs to a live kept process, at most one per chat`, orphans().length === 0 && gate.openNow().length <= 5 && live.size <= 5, J({ open: gate.openNow().length, orphans: orphans().length, live: live.size }));
   H.agent.onEngineReset?.();
