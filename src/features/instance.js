@@ -86,19 +86,43 @@ function shortcutsIn(dir) {
 // shortcut to this exe on the Desktop or in the Start menu at Lumen's icon. Runs at startup; a
 // no-op once they're right. A shortcut naming an .ico that no longer exists (an update removed it)
 // counts as wrong too.
-function fixShortcutIcons(app, shell, exists = fs.existsSync) {
+function fixShortcutIcons(app, shell, exists = fs.existsSync, appId = null) {
   if (process.platform !== 'win32' || !app.isPackaged) return;
   const exe = path.resolve(process.execPath).toLowerCase();
   for (const dir of shortcutDirs(app)) {
     for (const file of shortcutsIn(dir)) {
       try {
         const link = shell.readShortcutLink(file);
-        const icon = String(link.icon || '').replace(/,\s*-?\d+$/, '');
-        if (path.resolve(link.target || '').toLowerCase() !== exe || (/\.ico$/i.test(icon) && exists(icon))) continue;
-        shell.writeShortcutLink(file, 'update', { icon: appIcon(), iconIndex: 0 });
+        if (path.resolve(link.target || '').toLowerCase() !== exe) continue;
+        const icon = String(link.icon || '').replace(/,s*-?d+$/, '');
+        const fix = {};
+        if (!(/.ico$/i.test(icon) && exists(icon))) Object.assign(fix, { icon: appIcon(), iconIndex: 0 });
+        if (appId && link.appUserModelId !== appId) fix.appUserModelId = appId; // see ensureStartMenuShortcut
+        if (Object.keys(fix).length) shell.writeShortcutLink(file, 'update', fix);
       } catch {} // someone else's shortcut, or one we can't read: leave it
     }
   }
+}
+
+// A toast is named and drawn from the Start menu shortcut that carries the same AppUserModelID as the process
+// (app.setAppUserModelId). Lumen.exe is Electron's unmodified binary, so with no such shortcut Windows falls back to
+// the exe's own description, "Electron" (and Electron's icon). The installer's shortcut can lack the ID (an older
+// install, an updated-in-place or unzipped copy, a shortcut remade by hand), so at startup the Start menu's own
+// Lumen.lnk is made, or given the ID if it is missing it. A shortcut to some other Lumen.exe is left alone.
+function ensureStartMenuShortcut(app, shell, appId) {
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  const exe = process.execPath;
+  const file = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Lumen.lnk');
+  const want = { target: exe, cwd: path.dirname(exe), icon: appIcon(), iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
+  try {
+    let link = null;
+    try { link = fs.existsSync(file) ? shell.readShortcutLink(file) : null; } catch { return false; }
+    if (!link) { shell.writeShortcutLink(file, 'create', want); return true; }
+    if (path.resolve(link.target || '').toLowerCase() !== path.resolve(exe).toLowerCase()) return false;
+    if (link.appUserModelId === appId) return false;
+    shell.writeShortcutLink(file, 'update', { appUserModelId: appId });
+    return true;
+  } catch { return false; }
 }
 
 // If the lock is held but no main process for this app is alive, it belongs to child processes
@@ -162,4 +186,4 @@ function acquireInstanceLock(app) {
   return false;
 }
 
-module.exports = { appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };
+module.exports = { appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances };
