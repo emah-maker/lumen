@@ -326,6 +326,69 @@ const fakeClient = (app) => app.evaluate(() => {
   await sleep(1500);
   check('and a reload of the page shows that chat too, not an empty one', await waitFor(async () => (await inPage("document.querySelectorAll('#messages .msg').length")) > 0), await pageText());
 
+  // ---- 15. Home: the page's way back to the normal homepage (the new-tab page), in place
+  const isNewTabUrl = (u) => /renderer[/\\]newtab\.html/.test(u || '');
+  const homeLabels = await inPage(`(() => { const b = document.getElementById('cp-home'); return { title: b?.title, aria: b?.getAttribute('aria-label'), icon: Boolean(b?.querySelector('svg')), same: b?.className === document.getElementById('open-settings').className }; })()`);
+  check('the header has a Home button: house icon, "New tab page" in its tooltip and aria-label, styled like the other header buttons', homeLabels?.aria === 'New tab page' && /^New tab page/.test(homeLabels.title) && homeLabels.icon && homeLabels.same, JSON.stringify(homeLabels));
+  const homeChat = await app.evaluate((_e, id) => global.__tabChats.bindings.chatOf(id), (await chatTab()).id);
+  const homeRunsBefore = await app.evaluate(() => global.__fake.runs.length);
+  await app.evaluate(() => { global.__fake.gate = new Promise((r) => { global.__fake.release = r; }); });
+  await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'still running when I left'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
+  check('a reply is running when Home is pressed', await waitFor(async () => (await inPage("document.getElementById('send').classList.contains('stop')")) === true), 'not running');
+  const beforeHome = await tabs();
+  const chatIndex = beforeHome.findIndex((t) => t.chat);
+  await inPage("document.getElementById('cp-home').click()");
+  check('Home turns the chat tab into the new-tab page', await waitFor(async () => !(await chatTab()) && isNewTabUrl((await app.evaluate(() => global.__chatPage.tabs().find((t) => t.id === global.__chatPage.activeId())))?.url)), JSON.stringify(await tabs()));
+  const afterHome = await tabs();
+  check('in place: same number of tabs, same position, no extra tab', afterHome.length === beforeHome.length && isNewTabUrl(afterHome[chatIndex]?.url) && afterHome.filter((t) => isNewTabUrl(t.url)).length === beforeHome.filter((t) => isNewTabUrl(t.url)).length + 1, JSON.stringify({ beforeHome, afterHome }));
+  await app.evaluate(() => global.__fake.release());
+  check('the reply carried on in the background', await waitFor(async () => (await app.evaluate(() => global.__fake.runs.length)) === homeRunsBefore + 1 && !(await app.evaluate(() => global.__chatPage.rt.runs.running()))), String(await app.evaluate(() => global.__fake.runs.length)));
+  await app.evaluate(() => { global.__fake.gate = null; });
+  const inHistory = await waitFor(async () => (await ui.evaluate(() => window.assistant.chats.list().then((l) => JSON.stringify(l)))).includes(homeChat), 6000);
+  check('and the chat is still in the history list', Boolean(homeChat) && Boolean(inHistory), String(homeChat));
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'Home', alt: true }));
+  await sleep(300);
+  check('Alt+Home on an ordinary page does nothing', (await tabs()).length === afterHome.length && !(await chatTab()), JSON.stringify(await tabs()));
+
+  // Alt+Home on the chat page
+  await app.evaluate(() => global.__chatPage.open());
+  const pageAgain = await waitFor(chatTab);
+  const beforeAlt = await tabs();
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), pageAgain.id);
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'Home', alt: true }));
+  check('Alt+Home turns the chat page into the new-tab page too', await waitFor(async () => !(await chatTab()) && isNewTabUrl((await app.evaluate(() => global.__chatPage.tabs().find((t) => t.id === global.__chatPage.activeId())))?.url) && (await tabs()).length === beforeAlt.length), JSON.stringify({ before: beforeAlt.map((t) => [t.id, t.chat]), after: (await tabs()).map((t) => [t.id, t.chat, t.url.slice(-20)]), front: await app.evaluate(() => global.__chatPage.activeId()) }));
+
+  // Back and Alt+Left: to the page it was opened from
+  const origin = await openWeb('origin'); // the page the chat is opened from
+  await app.evaluate((_e, id) => global.__chatPage.switchTab(id), origin);
+  await waitFor(async () => (await app.evaluate(() => global.__chatPage.activeId())) === origin);
+  await app.evaluate(() => global.__chatPage.open());
+  await waitFor(chatTab);
+  check('the toolbar can go back from the chat page', await ui.evaluate(() => !document.getElementById('back').disabled), 'Back button disabled');
+  await app.evaluate(({ ipcMain }) => ipcMain.emit('nav:back', {}));
+  check('toolbar Back goes to the page the chat was opened from', await waitFor(async () => !(await chatTab()) && (await app.evaluate(() => global.__chatPage.activeId())) === origin), JSON.stringify({ origin, front: await app.evaluate(() => global.__chatPage.activeId()), pick: await app.evaluate(() => global.__chatPage.pick()), tabs: (await tabs()).map((t) => [t.id, t.chat, t.viewedAt]) }));
+  await app.evaluate(() => global.__chatPage.open());
+  await waitFor(chatTab);
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'ArrowLeft', alt: true }));
+  check('and so does Alt+Left', await waitFor(async () => !(await chatTab()) && (await app.evaluate(() => global.__chatPage.activeId())) === origin), JSON.stringify({ origin, front: await app.evaluate(() => global.__chatPage.activeId()), pick: await app.evaluate(() => global.__chatPage.pick()), tabs: (await tabs()).map((t) => [t.id, t.chat, t.viewedAt]) }));
+
+  // an address typed on the chat page opens in its place
+  await app.evaluate(() => global.__chatPage.open());
+  await waitFor(chatTab);
+  const beforeGo = await tabs();
+  await app.evaluate(({ ipcMain }, u) => ipcMain.emit('nav:go', {}, u), `${base}/typed`);
+  check('an address typed on the chat page opens in its place, no extra tab', await waitFor(async () => { const t = await tabs(); return !t.some((x) => x.chat) && t.length === beforeGo.length && t.some((x) => x.url === `${base}/typed`); }), JSON.stringify(await tabs()));
+
+  // no page to go back to: Back goes to the new-tab page (never closes the window)
+  await app.evaluate(() => global.__chatPage.open());
+  await waitFor(chatTab);
+  const pageId = (await chatTab()).id;
+  for (let id = 1; id < pageId; id++) await app.evaluate((_e, i) => global.__closeTabInteractive(i), id); // (every earlier tab, a sleeping one too: tabs() lists only the live ones)
+  await waitFor(async () => (await tabs()).length === 1);
+  await app.evaluate(({ ipcMain }) => ipcMain.emit('nav:back', {}));
+  check('with no page to come from, Back goes to the new-tab page', await waitFor(async () => { const t = await tabs(); return t.length === 1 && isNewTabUrl(t[0].url); }), JSON.stringify(await tabs()));
+  check('the browser window is still open', (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length)) >= 0 && await ui.evaluate(() => document.querySelectorAll('.tab').length) === 1, 'window gone');
+
   // (last: it starts a fresh chat, so the restore checks above still see the saved one)
   // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
   await ui.click('#toggle-sidebar');

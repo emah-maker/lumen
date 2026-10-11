@@ -2046,11 +2046,12 @@ function finishLeaving(tab, keep = true) {
 // Back, and whether there is one: past the first page of a tab that left the new-tab page (above), a new-tab page.
 function goBack(wc) {
   if (!wc || wc.isDestroyed()) return;
-  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
   const tab = tabByContents(wc);
+  if (tab?.managerPage === 'chat') { chatPageRt?.back(); return; } // the full-page chat is locked to its page (no history of its own): back to where it was opened from, else the new-tab page
+  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
   if (tab?.backToNewTab) { tab.backToNewTab = false; wc.loadURL(newTabUrl()).catch(() => {}); }
 }
-const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
+const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab || tabByContents(wc)?.managerPage === 'chat'));
 if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
 
 // [agent window] The pages of an outside agent's own window (below, features/agent-windows.js). Nothing they do may reach the
@@ -4404,6 +4405,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') goBack(wc);
+  else if (input.alt && !mod && key === 'home' && activeTabIsChatPage()) chatPageRt.home(activeId); // Chrome's Home shortcut, on the full-page chat
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5' && !input.shift && !input.control && slidesViewer.isViewerUrl(wc?.getURL())) slidesRt.present(wc); // F5 presents a deck, as in PowerPoint
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control, always: true });
@@ -4439,6 +4441,7 @@ function newSidebarChat() {
 }
 
 // Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
+const activeTabIsChatPage = () => tabs.find((t) => t.id === activeId)?.managerPage === 'chat';
 function toggleChatPage() {
   if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
   else chatPageRt.open();
@@ -7181,6 +7184,7 @@ chatPageRt = chatPage.create({
   openTab: (url, opts) => openTab(url, opts),
   switchTab: (id) => switchTab(id),
   requestCloseTab: (id) => requestCloseTab(id),
+  goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
   managersOpen: () => managers.open('chat'),
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -7193,7 +7197,7 @@ chatPageRt = chatPage.create({
   },
 });
 chatPageRt.register();
-if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.

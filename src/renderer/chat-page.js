@@ -112,6 +112,7 @@
 
   // ---- back to the sidebar
   $('cp-back').onclick = () => window.assistant.backToSidebar();
+  $('cp-home').onclick = () => window.assistant.home(); // this tab becomes the new-tab page
 
   // ---- keep the window's own drops (files, links) from navigating the page; images go to the composer
   const editable = (el) => Boolean(el?.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]'));

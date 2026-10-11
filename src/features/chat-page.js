@@ -35,7 +35,7 @@ const CHAT_IPC = new Set([
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
-  'chatpage:state', 'chatpage:back', 'chatpage:link', 'tabs:ask-list',
+  'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', // the "/" menu (features/skills.js)
 ]);
 
@@ -85,7 +85,7 @@ function createRunTracker() {
   };
 }
 
-// deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id),
+// deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId),
 //         managersOpen(), isPrivateSender(event), chatView(), tabInfo(tab), agentOffLimits(tab) }
 function create(deps) {
   const runs = createRunTracker();
@@ -169,11 +169,22 @@ function create(deps) {
     deps.ui()?.send('chat:sidebar', false); // the sidebar folds away: the page has the whole conversation
     return id;
   }
+  // Back (the button, Ctrl+Shift+L, the toolbar's Back, Alt+Left): to the tab looked at last, before the page, and the page closes;
+  // with no such tab, this tab becomes the new-tab page (closing the only tab would close the window).
   function back() {
-    const to = pick(); // the tab looked at last, before the page
-    if (to != null) deps.switchTab(to);
-    for (const t of chatTabs()) deps.requestCloseTab(t.id);
+    const to = pick();
+    const pages = chatTabs();
+    if (to != null) { deps.switchTab(to); for (const t of pages) deps.requestCloseTab(t.id); }
+    else { if (pages.length) deps.goHome(pages[0].id); for (const t of pages.slice(1)) deps.requestCloseTab(t.id); }
     deps.ui()?.send('chat:sidebar', true);
+  }
+  // Home (the header button, Alt+Home): this tab turns into the new-tab page, in place, as leaving Settings does. A reply still
+  // running goes on in the background: the chat is main's, the page was only a view of it.
+  function home(tabId) {
+    if (tabId == null || !chatTabs().some((t) => t.id === tabId)) return false;
+    deps.goHome(tabId);
+    deps.ui()?.send('chat:sidebar', true);
+    return true;
   }
 
   function register() {
@@ -182,10 +193,11 @@ function create(deps) {
     ipcMain.on('chat:open-page', (event) => { if (!deps.isPrivateSender(event)) open(); });
     ipcMain.handle('chatpage:state', (event) => { deps.followPage?.(event); return { view: deps.chatView(), run: runs.get(), target: targetInfo() }; });
     ipcMain.on('chatpage:back', () => back());
+    ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 
-  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, pick, chatTabs, everyChatTab, surfaces, runs };
+  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, home, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
 module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
