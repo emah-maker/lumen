@@ -1644,15 +1644,33 @@ function labelReply(bubble, modelId, auto = null, extra = {}) {
   if (modelId && !bubble.querySelector('.reply-model')) addModelLabel(bubble, modelId, auto);
   window.chatActions?.replyMeta(bubble, extra);
 }
-function addModelLabel(bubble, modelId, auto) {
+// A model's name as the picker shows it; null until the picker has it (the list loads a moment after the page).
+function modelName(modelId) {
   const option = [...$('model').options].find((o) => o.value === modelId);
+  if (!option) return null;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
-  const group = modelGroups.get(modelId) ?? option?.parentElement?.label;
+  const group = modelGroups.get(modelId) ?? option.parentElement?.label;
   // Local engines (Claude Code, Grok Build) already name themselves.
-  const name = !option ? modelId
-    : group === 'Claude' ? `Claude ${option.textContent}`
+  return group === 'Claude' ? `Claude ${option.textContent}`
     : !group || /^Your .* account$/.test(group) ? option.textContent
     : `${group} · ${option.textContent}`;
+}
+// A reopened chat shows where you switched models, as the live chat did ("Now using X"): before the message whose reply came from a
+// different model than the reply before it. Replies Auto chose (the model can differ without you switching) never count.
+function markModelSwitches(entries) {
+  let prev = null;
+  for (const { bubble, item } of entries) {
+    if (item.auto || !item.model) { prev = null; continue; }
+    const name = prev && prev !== item.model ? modelName(item.model) : null;
+    prev = item.model;
+    if (!name) continue;
+    let ask = bubble.previousElementSibling;
+    while (ask && !ask.matches('.msg.user')) ask = ask.previousElementSibling;
+    if (ask) ask.before(Object.assign(document.createElement('div'), { className: 'notice model-switch restored', textContent: t('models.switched', { name }) }));
+  }
+}
+function addModelLabel(bubble, modelId, auto) {
+  const name = modelName(modelId) ?? modelId;
   // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 5.5"), and why in its tooltip.
   const span = Object.assign(document.createElement('span'), { className: 'reply-model', textContent: auto ? t('models.auto.reply', { name }) : name });
   if (auto?.reason) { span.title = auto.reason; span.dataset.auto = '1'; }
@@ -2254,6 +2272,7 @@ function showHistory(items) {
   }
   // Under each reply and message: model, time, thumbs, versions (chat-actions.js).
   for (const { bubble, item } of replyEntries) labelReply(bubble, item.model, item.auto, { at: item.at, feedback: item.feedback });
+  markModelSwitches(replyEntries);
   for (const { bubble, item } of userEntries) {
     let versions = item.versions && item.versions.n > 1 ? item.versions : null;
     if (versions && versions.same !== false) { // asked again (Regenerate): the switch goes on its reply
