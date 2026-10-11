@@ -7328,10 +7328,10 @@ function createTabEl(id) {
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
-  // [ai off-tab] a tab the user keeps the AI from acting on: a small slashed sparkle after the title (styles.css .tab-off-mark)
+  // [ai off-tab] a tab the user keeps the AI from acting on: a small shield after the title (styles.css .tab-off-mark)
   const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
   offMark.setAttribute('aria-hidden', 'true');
-  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/><path class="off-slash" d="M1.5 10.5 10.5 1.5"/></svg>';
+  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 10 2.4v3c0 2.3-1.6 3.9-4 5-2.4-1.1-4-2.7-4-5v-3Z"/><path class="off-spark" d="M6 3.7l.5 1.4 1.4.5-1.4.5L6 7.5l-.5-1.4-1.4-.5 1.4-.5Z"/></svg>';
   inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
@@ -8076,8 +8076,8 @@ function finishTabsRender(state, before, container, switched) {
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
   reader.title = t(active?.page === 'reader' ? 'toolbar.reader.leave' : 'toolbar.reader.title');
-  // [ai off-tab] The AI control (a sparkle, slashed once on): makes this tab read-only for every AI path (main.js setKeepOff). Shown on a page
-  // while the AI is in play (its panel is open or it is working) or the tab is already kept off, not on every page: syncAiOffTab.
+  // [ai off-tab] The AI control (a shield with a sparkle, filled once on): makes this tab read-only for every AI path (main.js setKeepOff).
+  // Always shown on a web page (not on Lumen's own pages); Settings can hide it (prefs.css pref-no-ai-off-button) unless the tab is kept off.
   const offTab = $('ai-off-tab');
   const kept = Boolean(active?.aiKeepOff);
   aiOffTabCtx = { page: Boolean(active?.url) && !currentError && !lumenPage, kept };
@@ -8332,14 +8332,29 @@ $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
 function syncAiOffTab() {
-  const body = document.body;
-  const inPlay = !body.classList.contains('sidebar-hidden') || body.classList.contains('agent-active') || body.classList.contains('mcp-active');
   const wasHidden = $('ai-off-tab').hidden;
-  $('ai-off-tab').hidden = !(aiOffTabCtx.page && (aiOffTabCtx.kept || inPlay));
+  $('ai-off-tab').hidden = !aiOffTabCtx.page;
   if (wasHidden !== $('ai-off-tab').hidden) $('omnibox').style.setProperty('--omnibox-end-w', `${Math.ceil($('omnibox').querySelector('.omnibox-end').offsetWidth)}px`);
 }
-new MutationObserver(syncAiOffTab).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-$('ai-off-tab').onclick = () => { if (lastTabState?.activeId != null) window.browser.toggleAiOffTab?.(lastTabState.activeId); }; // [ai off-tab]
+// The first time it is turned on, a short note says what it does (once per install: localStorage 'aiOffHintSeen').
+function showAiOffHint() {
+  try { if (localStorage.getItem('aiOffHintSeen')) return; localStorage.setItem('aiOffHintSeen', '1'); } catch { /* no storage: show it each time */ }
+  document.querySelector('.ai-off-hint')?.remove();
+  const r = $('ai-off-tab').getBoundingClientRect();
+  const note = Object.assign(document.createElement('div'), { className: 'ai-off-hint', textContent: t('toolbar.aiOffTab.hint') });
+  note.setAttribute('role', 'status');
+  note.style.top = `${Math.round(r.bottom + 6)}px`;
+  note.style.right = `${Math.max(8, Math.round(window.innerWidth - r.right - 4))}px`;
+  document.body.append(note);
+  const close = () => { note.remove(); document.removeEventListener('pointerdown', close, true); };
+  setTimeout(close, 7000);
+  document.addEventListener('pointerdown', close, true);
+}
+$('ai-off-tab').onclick = () => {
+  if (lastTabState?.activeId == null) return;
+  if (!aiOffTabCtx.kept) showAiOffHint(); // about to turn on
+  window.browser.toggleAiOffTab?.(lastTabState.activeId); // [ai off-tab]
+};
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 // The lock (or "Not secure") opens the site's page info under it.
 function openPageInfo() {
@@ -11744,6 +11759,7 @@ $('agent-stop')?.addEventListener('click', () => {
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
+    root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));

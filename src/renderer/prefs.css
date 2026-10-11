@@ -4,6 +4,7 @@
 .pref-compact-tabs .tab-indicator { height: 24px; } /* the active tab's surface matches the shorter tabs */
 .pref-compact-tabs .tab-inner { font-size: 12px; gap: 6px; }
 .pref-no-bookmark-button #bookmark { display: none !important; }
+.pref-no-ai-off-button #ai-off-tab:not([aria-pressed="true"]) { display: none !important; } /* a tab already kept off keeps its button, so it can be turned back on */
 .pref-reduce-motion *, .pref-reduce-motion *::before, .pref-reduce-motion *::after {
   animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important; scroll-behavior: auto !important;

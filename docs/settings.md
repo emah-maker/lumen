@@ -127,6 +127,7 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Zoom per site | `siteZoom` | none | `{ host: level }` for the sites you zoomed by hand (Chromium zoom levels, each a factor of 1.2), kept across restarts, at most 500. Actual Size (`Ctrl+0`) or the site's page info removes one; Reset settings clears them. |
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
+| Show the AI read-only button in the address bar | `showAiOffButton` | on | The shield in the address bar that keeps the AI from acting on a tab (it can still read it). Hidden on Lumen's own pages either way; the tab menu has the same choice, and a tab already kept off keeps its shield so you can turn it back on. |
 | Compact tabs | `compactTabs` | off | Shorter tabs in the tab strip. |
 | Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 

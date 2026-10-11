@@ -15,6 +15,7 @@
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
+    root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));

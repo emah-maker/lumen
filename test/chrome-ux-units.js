@@ -56,8 +56,8 @@ check('menus: no Title Case labels left (' + menuKeys.length + ' checked)', titl
 check('menus: a few labels in the chosen case', EN['menu.newTab'] === 'New tab' && EN['menu.closeOtherTabs'] === 'Close other tabs' && EN['menu.keepAiOffTab'] === 'Keep the AI from acting on this tab' && EN['menu.translate.google'] === 'Translate with Google Translate…' && EN['menu.github'] === 'Lumen on GitHub', '');
 
 // ---- tab state in the accessible name, the AI control, the set-up button
-for (const key of ['tabs.state.pinned', 'tabs.state.sleeping', 'tabs.state.muted', 'tabs.state.playing', 'toolbar.aiOffTab.chip', 'toolbar.aiSetup', 'private.security.local']) check('string: ' + key, typeof EN[key] === 'string' && EN[key].length > 0, key);
-check('the AI control is not called a shield any more', !/shield/i.test(EN['toolbar.aiOffTab.off']) && /read-only/.test(EN['toolbar.aiOffTab.off']) && /AI/.test(EN['toolbar.aiOffTab.off']), EN['toolbar.aiOffTab.off']);
+for (const key of ['tabs.state.pinned', 'tabs.state.sleeping', 'tabs.state.muted', 'tabs.state.playing', 'toolbar.aiOffTab.hint', 'toolbar.aiSetup', 'private.security.local']) check('string: ' + key, typeof EN[key] === 'string' && EN[key].length > 0, key);
+check('the AI control: tooltip and aria-label strings, off and on', EN['toolbar.aiOffTab.off'] === 'Keep the AI from acting on this tab' && EN['toolbar.aiOffTab.on'] === 'AI is read-only on this tab. Click to allow actions' && /can read.*click, type or navigate/.test(EN['toolbar.aiOffTab.hint']), EN['toolbar.aiOffTab.off'] + ' | ' + EN['toolbar.aiOffTab.on']);
 const SRC = path.join(__dirname, '..', 'src');
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
 const mainSrc = read('main.js');
@@ -65,8 +65,11 @@ const htmlSrc = read('renderer/index.src.html');
 const appSrc = read('renderer/app.js');
 check('tab menu: the merge rows are left out, not shown dead, when there is nothing to merge', /items\.push\(\.\.\.mergeWindowItems\(src, \{ hideDisabled: true \}\)\)/.test(mainSrc) && /if \(hideDisabled && !a\.enabled\) return \[\]/.test(mainSrc), '');
 check('the ⋯ menu still explains a disabled merge (no hideDisabled there)', /\.\.\.mergeWindowItems\(curRec\),/.test(mainSrc), '');
-check('address bar: the AI button is a sparkle (not a shield path) with a text chip', /id="ai-off-tab"[\s\S]*?M8 2\.2l1\.4 4\.1/.test(htmlSrc) && /class="ai-off-label"/.test(htmlSrc) && !/M8 1\.8 3 3\.6v3\.7/.test(htmlSrc), '');
-check('address bar: the AI button shows only while the AI is in play or the tab is kept off', /function syncAiOffTab/.test(appSrc) && /aiOffTabCtx\.kept \|\| inPlay/.test(appSrc), '');
+check('address bar: the AI button is a shield with a sparkle inside, and no text chip', /id="ai-off-tab"[\s\S]*?class="ai-off-shield"[\s\S]*?class="ai-off-spark"/.test(htmlSrc) && !/ai-off-label/.test(htmlSrc), '');
+const syncFn = appSrc.slice(appSrc.indexOf('function syncAiOffTab'), appSrc.indexOf('function syncAiOffTab') + 400);
+check('address bar: the AI button is always visible on a web page (not tied to the AI panel or a working agent)', /function syncAiOffTab/.test(appSrc) && /\.hidden = !aiOffTabCtx\.page;/.test(syncFn) && !/inPlay/.test(syncFn), syncFn);
+check('address bar: the setting hides it (class on <html>, default on, a settings row, a docs row); a tab already kept off keeps it', /showAiOffButton: true/.test(read('settings/settings-backend.js')) && /pref-no-ai-off-button', p\.showAiOffButton === false/.test(read('renderer/ui-prefs.js')) && /\.pref-no-ai-off-button #ai-off-tab:not\(\[aria-pressed="true"\]\)/.test(read('renderer/prefs.css')) && /toggle\('showAiOffButton'/.test(read('renderer/settings.js')) && /`showAiOffButton`/.test(fs.readFileSync(path.join(SRC, '..', 'docs', 'settings.md'), 'utf8')), '');
+check('the first turn-on shows a note once; the tab strip mark is a shield', /aiOffHintSeen/.test(appSrc) && /toolbar\.aiOffTab\.hint/.test(appSrc) && /offMark\.innerHTML = '<svg[^']*M6 1 10 2\.4/.test(appSrc), '');
 check('tab strip: state notes join the accessible name; no-favicon pages get a monogram', /tabs\.state\.pinned/.test(appSrc) && /monogramIcon\(monoHost\)/.test(appSrc), '');
 check('toolbar: the AI button says "Set up AI" until a model is connected', /who\.setup \? t\('toolbar\.aiSetup'\)/.test(appSrc) && /setup: true/.test(read('renderer/chat-core.js')), '');
 check('private window: a loopback http page is "local", not "Not secure"', /isLoopbackUrl\(state\.url\)/.test(read('renderer/private.js')) && /chrome-helpers\.js/.test(read('renderer/private.html')), '');
