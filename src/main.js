@@ -945,9 +945,11 @@ function setupPermissions() {
     const reason = PROMPTABLE[permission];
     const origin = SITE_PERMISSIONS.requestOrigin(wc, details); // '' unless http(s)
     if (!reason || !origin) return callback(false);
-    const key = `${origin}|${permission}`;
-    if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
-    if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
+    // What is still undecided (the camera and the microphone are decided separately): a device already refused refuses the request,
+    // and the prompt asks only about the ones with no answer yet.
+    const { deny, ask } = SITE_PERMISSIONS.plan(permissionDecisions, origin, permission, details, (p) => settingsBackend.permissionDefault(p) === 'block'); // [settings] default: Block
+    if (deny) return callback(false);
+    if (!ask.length) return callback(true);
     // Tied to the asking tab: it waits while that tab is in the background, and is dropped (not
     // remembered as a "no") if the tab navigates away or closes first.
     const { response, cancelled } = await dialog.showMessageBox(win, {
@@ -955,11 +957,11 @@ function setupPermissions() {
       buttons: [t('permission.deny'), t('permission.allow')],
       defaultId: 0,
       cancelId: 0,
-      message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, details)) }),
+      message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }),
       owner: wc,
     });
     if (cancelled) return callback(false);
-    permissionDecisions.set(key, response === 1);
+    for (const name of ask) permissionDecisions.set(`${origin}|${name}`, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
     SITE_PERMISSIONS.notify(ses); // open pages: PermissionStatus 'change'
@@ -967,7 +969,7 @@ function setupPermissions() {
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
-    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || permissionDecisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
   SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);

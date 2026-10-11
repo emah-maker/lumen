@@ -64,7 +64,7 @@ function install(bridgeKey) {
   const getter = (name, key, fn) => looksNative(`get ${key}`, Object.getOwnPropertyDescriptor({ get [key]() { return fn.call(this); } }, key).get);
   let states = {};
   try { states = Object.assign({}, bridge.get()); } catch { /* stay with Electron's answers */ }
-  const NAMES = { geolocation: 'geolocation', notifications: 'notifications', camera: 'media', microphone: 'media', 'clipboard-read': 'clipboard-read' };
+  const NAMES = { geolocation: 'geolocation', notifications: 'notifications', camera: 'camera', microphone: 'microphone', 'clipboard-read': 'clipboard-read' };
   const live = new Set(); // { ref: WeakRef(PermissionStatus), name, last }
   const stateOf = (name) => states[NAMES[name]] || 'prompt';
 

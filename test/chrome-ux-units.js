@@ -83,7 +83,8 @@ check('error hints name the menu the way the menu says it', !/Ad Blocker|Clear C
 // ---- round 2: lumen:// addresses, Undo on removals, a longer Downloads list, camera / microphone wording
 const SP = require('../src/browser/site-permissions');
 check('permission prompt: a camera-only request says camera, a microphone-only one microphone, both say both', EN[SP.promptKey('media', { mediaTypes: ['video'] })] === 'use your camera' && EN[SP.promptKey('media', { mediaTypes: ['audio'] })] === 'use your microphone' && EN[SP.promptKey('media', { mediaTypes: ['audio', 'video'] })] === 'use your camera and microphone' && EN[SP.promptKey('media', {})] === 'use your camera and microphone' && SP.promptKey('geolocation', {}) === 'permission.geolocation', '');
-check('permission prompt: the private window asks the same way', /SITE_PERMISSIONS\.promptKey\(permission, details\)/.test(read('features/private-window.js')) && /SITE_PERMISSIONS\.promptKey\(permission, details\)/.test(mainSrc), '');
+const askedLikeThis = (src) => src.includes("SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask");
+check("permission prompt: the private window and the main one ask the same way (promptKey for the undecided devices)", askedLikeThis(read("features/private-window.js")) && askedLikeThis(mainSrc), "");
 check('address bar: History, Bookmarks and Downloads show lumen:// addresses; Lumen pages get no star', /url\.startsWith\(HISTORY_URL\) \? 'lumen:\/\/history' : managerPageOf\(url\) \? `lumen:\/\/\$\{managerPageOf\(url\)\}`/.test(mainSrc) && /const lumenPage = Boolean\(active\?\.page\)/.test(appSrc), '');
 const { menuLabel } = require('../src/browser/menu-label');
 check('menus: a title keeps its & (written &&) and a long one is cut with an ellipsis', menuLabel('Q&A: Tom & Jerry') === 'Q&&A: Tom && Jerry' && menuLabel('x'.repeat(100)).length === 60 && menuLabel('x'.repeat(100)).endsWith('…') && menuLabel('  a \n b ') === 'a b' && menuLabel(undefined) === '', '');
