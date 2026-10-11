@@ -47,7 +47,7 @@
 
   // ---- the panel (the page only)
   const main = document.querySelector('.cp-main');
-  if (!main) { root.chatCanvas = { decorate() {} }; return; }
+  if (!main) { root.chatCanvas = { decorate() {}, frameDocument }; return; } // (the sidebar has no canvas; ai-files.js still draws previews with frameDocument)
   const say = (key, fallback) => { const v = root.t ? root.t(key) : key; return v === key ? fallback : v; };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
   let panel = null;
@@ -130,7 +130,7 @@
     frame.src = 'canvas-frame.html';
     panel.previewBox.replaceChildren(frame);
   }
-  function open({ lang, code, opener }) {
+  function open({ lang, code, opener, quiet = false }) { // quiet: opened for the user (a file the AI made), so focus stays in the message box
     panel ||= build();
     lastOpener = opener || null;
     const kind = kindOf(lang, code);
@@ -143,7 +143,7 @@
     panel.aside.hidden = false;
     document.body.classList.add('canvas-open');
     show(previewable(kind) ? 'preview' : 'code');
-    panel.aside.querySelector('.cv-tab.active, .cv-btn')?.focus();
+    if (!quiet) panel.aside.querySelector('.cv-tab.active, .cv-btn')?.focus();
   }
   function closePanel(restoreFocus) {
     if (!panel) return;

@@ -36,6 +36,11 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       copy: (id) => ipcRenderer.invoke('images:copy', id),
       remote: (url) => ipcRenderer.invoke('images:remote', url),
     },
+    // Files the AI made (renderer/ai-files.js): the file card's preview, and Open in a tab / the system app / Show in folder. By card id only.
+    files: {
+      preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
+      open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
+    },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),

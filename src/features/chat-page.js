@@ -33,6 +33,7 @@ const CHAT_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
+  'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',

@@ -232,6 +232,7 @@ const UI_ONLY_IPC = new Set([
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
+  'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
@@ -8827,6 +8828,35 @@ ipcMain.handle('images:remote', async (_e, url) => {
   const got = await genImages.fetchRemoteImage(String(url || ''), { fetchImpl: (u, init) => net.fetch(u, init) });
   const ref = got && imageStore().save(chatId, got.buffer, { alt: '' });
   return ref ? { id: ref.id, mime: ref.mime } : null;
+});
+// ---------- files the AI made (features/ai-files.js, renderer/ai-files.js) ----------
+// The chat only ever names a file by the id of a card main sent (aiFiles.shared): a path from a page or the renderer opens nothing.
+// A trusted card (a file the AI wrote in this chat) may preview and open; any other file a reply named asks first (confirmed: true).
+const aiFilesLib = require('./features/ai-files');
+ipcMain.handle('aifiles:preview', (_e, id) => aiFilesLib.previewOf(aiFilesLib.shared.get(String(id))));
+const aiFileAutoOpened = new Map(); // id -> when: the sidebar and the chat page both show a reply, and both ask to open its main file: one tab
+ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
+  const entry = aiFilesLib.shared.get(String(id));
+  try { if (!entry || !fs.statSync(entry.path).isFile()) return { ok: false, reason: 'gone' }; } catch { return { ok: false, reason: 'gone' }; }
+  if (!['tab', 'background', 'system', 'reveal'].includes(how)) return { ok: false, reason: 'bad' };
+  if (!entry.trusted && how !== 'reveal' && opts?.confirmed !== true) return { ok: false, reason: 'confirm' };
+  if (TEST && global.__aiFileShell && (how === 'reveal' || how === 'system')) return global.__aiFileShell(how, entry.path); // tests do not start the OS's programs
+  if (how === 'reveal') { shell.showItemInFolder(entry.path); return { ok: true }; }
+  if (how === 'system') {
+    if (!aiFilesLib.canOpenInSystem(entry.ext)) return { ok: false, reason: 'blocked' }; // a program or script: shown in its folder, never run from here
+    return (await shell.openPath(entry.path)) ? { ok: false, reason: 'failed' } : { ok: true };
+  }
+  if (!aiFilesLib.canOpenInTab(entry.ext)) return { ok: false, reason: 'no-tab' };
+  if (opts?.auto === true) {
+    if (Date.now() - (aiFileAutoOpened.get(entry.path) || 0) < 30000) return { ok: true, tabId: null };
+    aiFileAutoOpened.set(entry.path, Date.now());
+    if (aiFileAutoOpened.size > 200) aiFileAutoOpened.delete(aiFileAutoOpened.keys().next().value);
+  }
+  const href = aiFilesLib.fileUrlOf(entry.path);
+  const url = entry.kind === 'pdf' ? pdfViewer.viewerUrl(href) : slidesViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? slidesViewer.viewerUrl(href) : href;
+  const rec = recOfSender(event.sender);
+  const tab = rec ? withWindow(rec, () => openTab(url, { background: how === 'background' })) : openTab(url, { background: how === 'background' });
+  return { ok: true, tabId: tab?.id ?? null };
 });
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.

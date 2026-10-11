@@ -1015,6 +1015,26 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg-file { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 9px; border-radius: 999px; font-size: 12px; background: rgba(127,127,127,.18); }
 .msg-files:last-child { margin-bottom: 0; }
+/* ---------- files the AI made (renderer/ai-files.js) ---------- */
+.msg.ai-files { display: flex; flex-direction: column; gap: 8px; background: transparent; padding-left: 0; padding-right: 0; box-shadow: none; }
+.ai-file { display: flex; flex-direction: column; gap: 8px; max-width: 100%; padding: 10px; border-radius: 12px; background: var(--field); box-shadow: 0 0 0 1px var(--hairline); }
+.ai-file-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ai-file-icon { flex: none; display: grid; place-items: center; min-width: 38px; height: 38px; padding: 0 4px; box-sizing: border-box; border-radius: 9px; background: var(--hover); color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; }
+.ai-file-meta { display: flex; flex-direction: column; min-width: 0; }
+.ai-file-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-file-dir { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.ai-file-body:empty { display: none; }
+.ai-file-frame { display: block; width: 100%; height: 260px; border: 0; border-radius: 8px; background: #fff; box-shadow: 0 0 0 1px var(--hairline); resize: vertical; }
+.ai-file-thumb { display: block; max-width: 100%; max-height: min(320px, 50vh); margin: 0 auto; border-radius: 8px; object-fit: contain; }
+.ai-file-note { font-size: 12px; color: var(--muted); }
+.ai-file-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-file-btn { height: 26px; padding: 0 11px; border: none; border-radius: 13px; background: var(--hover); color: var(--text); font: inherit; font-size: 12px; transition: background-color var(--t-fast, 0.12s); }
+.ai-file-btn:hover, .ai-file-btn:focus-visible { background: var(--active, var(--hover)); filter: brightness(0.94); }
+.ai-file-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ai-file-primary { background: var(--accent); color: var(--accent-contrast, #fff); }
+.ai-file-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
+.ai-file-status { font-size: 12px; color: var(--muted); }
+.ai-file-status:empty { display: none; }
 /* ---------- pictures the AI made (renderer/gen-images.js) ---------- */
 .msg.gen-pics { display: flex; flex-direction: column; gap: 10px; background: transparent; padding-left: 0; padding-right: 0; box-shadow: none; }
 .gen-img { position: relative; margin: 0; max-width: 100%; display: flex; flex-direction: column; gap: 6px; }
