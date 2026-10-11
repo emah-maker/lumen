@@ -21,7 +21,7 @@ function shortUrl(url) {
 
 // A message as a title: no markup, a long address as its host, no slash-command word, no lead-in or sign-off, capitalised.
 function tidy(raw) {
-  let text = String(raw).replace(/https?:\/\/[^\s)]+/gi, (url) => (url.length > 28 ? shortUrl(url) : url)).replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim();
+  let text = String(raw).replace(/https?:\/\/[^\s)]+/gi, (url) => (url.length > 28 ? shortUrl(url) : url)).replace(/[*`#>]+|(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])/g, '').replace(/\s+/g, ' ').trim();
   const cmd = /^\/(?:think|deep|fast|btw)\b\s*([\s\S]*)$/i.exec(text); // a Lumen slash command is not part of the topic
   let trimmed = false;
   if (cmd && cmd[1]) { text = cmd[1]; trimmed = true; }
