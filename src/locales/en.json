@@ -721,7 +721,7 @@
   "models.loading": "Loading models…",
   "models.more": "More models…",
   "models.more.detail": "Search every model on OpenRouter",
-  "models.auto.detail": "Lumen picks per message: quick chat to a small, fast model, browsing and research to a reliable mid-size one, hard code to the strongest.",
+  "models.auto.detail": "Picks a model for each message: fast for chat, mid-size for browsing, strongest for hard code.",
   "models.auto.providerDetail": "Lumen picks between {name}'s models per message: small and fast for quick chat, mid-size for browsing and research, strongest for hard code.",
   "models.auto.reply": "Auto · {name}",
   "models.none": "No models match.",
