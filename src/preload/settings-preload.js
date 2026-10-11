@@ -161,6 +161,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       signedInSites: call('settings:signed-in-sites'), // [signed-in sites]
       removeSignedInSite: call('settings:remove-signed-in-site'),
       clearSignedInSites: call('settings:clear-signed-in-sites'),
+      sharedFiles: call('settings:shared-files'), // [screen context]
+      removeSharedFile: call('settings:remove-shared-file'),
+      clearSharedFiles: call('settings:clear-shared-files'),
       setSearchEngine: call('settings:set-search-engine'),
       cliStatus: call('cli:status'),
       cliLogin: call('cli:login'),

@@ -1884,6 +1884,7 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
+  if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
   // an MCP tool's, but "always" only lasts this chat (not a persisted Settings toggle), so its own copy.
   if (action === 'terminal') return showToolApproval(approvalId, host, { title: openTitle, args, terminal: true });
@@ -2030,6 +2031,40 @@ function showSignInApproval(approvalId, host, { noAlways = false } = {}) {
   scrollToBottom();
 }
 
+// [screen context] "Share <file> with the AI?": the message points at a file on this computer in the tab in front (agent.js screenAskFile).
+// Answers: Don't allow (false), Allow for this chat (true), Allow always for this file ('always', kept in Settings). Enter and Escape don't answer for
+// you: the card is about a file of yours, so it is only ever answered by a click.
+function showFileApproval(approvalId, host, { title: heading } = {}) {
+  const card = document.createElement('div');
+  card.className = 'approval approval-file';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  const shown = heading || t('approval.file', { file: host });
+  card.setAttribute('aria-label', shown);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: shown });
+  const detail = Object.assign(document.createElement('p'), { className: 'approval-detail', textContent: t('approval.detail.file') });
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const button = (text, cls) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text });
+  const deny = button(t('approval.file.no'), 'btn');
+  const once = button(t('approval.file.chat'), 'btn primary');
+  const always = button(t('approval.file.always'), 'btn approval-always');
+  const answer = (ok) => {
+    if (card.classList.contains('answered')) return;
+    card.classList.add('answered');
+    for (const b of [deny, once, always]) b.disabled = true;
+    window.assistant.approve?.(approvalId, ok);
+  };
+  deny.onclick = () => answer(false);
+  once.onclick = () => answer(true);
+  always.onclick = () => answer('always');
+  actions.append(deny, always, once);
+  card.append(title, detail, actions);
+  append(card, { force: true }); // waiting for you: always in view
+  approvals.set(approvalId, { card, host, file: true });
+  scrollToBottom();
+}
+
 // [uploads] upload_file (features/upload-files.js, agent.js uploadFile). Two cards:
 //   'upload'       the AI wants to put files the user attached to this chat into a page: the names and the site, Upload / Don't upload.
 //   'upload-pick'  it needs a file the user has not attached: "Choose file…" opens the OS picker (the user picks; the AI only learns
@@ -2095,12 +2130,13 @@ function resolveApproval(approvalId, ok, names) {
   if (!entry) return;
   approvals.delete(approvalId);
   if (names) entry.names = names; // [uploads] the file the user chose
-  const { card, host, tool, signin } = entry;
+  const { card, host, tool, signin, file } = entry;
   card.className = ok ? 'approval resolved' : 'approval resolved denied';
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
   card.textContent = entry.upload ? (entry.picking ? (ok ? t('approval.upload.chosen', { host, names: (entry.names || []).join(', ') }) : t('approval.upload.notChosen', { host })) : (ok ? t('approval.upload.allowed', { host }) : t('approval.upload.denied', { host })))
+    : file ? t(ok === 'always' ? 'approval.file.allowedAlways' : ok ? 'approval.file.allowed' : 'approval.file.denied', { host }) // [screen context]
     : signin ? t(ok === 'always' ? 'approval.signin.allowedAlways' : ok ? 'approval.signin.allowedOnce' : 'approval.signin.denied', { host }) // [signed-in sites]
     : tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
   syncWorking();

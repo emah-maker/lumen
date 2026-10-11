@@ -135,6 +135,7 @@ const DEFAULTS = {
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  aiSharedFiles: [], // [ai] local files the user let the sidebar's AI see with "Allow always for this file": their file:// addresses (features/shared-files.js); added only from its card
   claudeCodeSidebar: true, // [ai] Claude Code is offered in the sidebar's model menu once found (features/ai-agents.js modelOptions); off hides it without uninstalling
   grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
   antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
@@ -250,6 +251,7 @@ function validate(key, value) {
     case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
+    case 'aiSharedFiles': return require('../features/shared-files').clean(value);
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
@@ -732,6 +734,7 @@ function create(deps) {
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
+    if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);

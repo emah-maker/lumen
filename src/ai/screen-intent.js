@@ -43,6 +43,7 @@ const POSITIVE = [
   [/\b(?:what(?:'s| is)|what are|who(?:'s| is)|who are) (?:on|in) (?:this|the|my) (?:page|tab|screen|image|picture|photo|video|site|website)\b/i, 9, 'what is on'],
   // a question about "this"
   [/\bwhat(?:'s| is| are|s)? (?:this|these|that thing|that on)\b/i, 6, 'what is this'],
+  [/\bwhat (?:does |did )?(?:it|that) (?:say|says|said|mean|means|show|shows)\b[^.?!]{0,12}\b(?:here|there)\b/i, 6, 'what it says here'],
   [/\bwhat(?:'s| is)? (?:going on|happening|wrong|up|the (?:deal|point|catch)) (?:here|with this|on this|in this)\b/i, 7, 'what is going on here'],
   [/\bwhat (?:does|do|did) (?:this|these) (?:mean|say|do|show|represent|stand for|refer to|look like)\b/i, 7, 'what does this mean'],
   [/\b(?:what|who|where|why|how|when|which)\b[^.?!]{0,40}\b(?:this|these) (?:means?|says?|is|are|does|do|about|for|from|come from|work|works)\b/i, 5, 'wh-question about this'],

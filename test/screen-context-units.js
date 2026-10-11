@@ -45,13 +45,12 @@ const base = { text: 'what is this', url: WEB, vision: true };
     check('per-site AI off: never, whatever the button says', !sc.plan({ ...base, aiOff: true }).capture && !sc.plan({ ...base, aiOff: true, mode: 'on' }).capture && sc.plan({ ...base, aiOff: true, mode: 'on' }).why === 'ai-off');
     check('private window: never, whatever the button says', !sc.plan({ ...base, privateWindow: true }).capture && !sc.plan({ ...base, privateWindow: true, mode: 'on' }).capture);
     check('no tab: nothing', !sc.plan({ ...base, hasTab: false, url: '' }).capture && !sc.plan({ ...base, hasTab: false, url: '', mode: 'on' }).capture);
-    const internal = ['file:///C:/app/src/renderer/settings.html', 'file:///C:/app/src/renderer/passwords.html', 'lumen://settings', 'lumen://chat', 'about:blank', 'chrome://settings', 'chrome-extension://abcdefghijklmnop/popup.html', 'data:text/html,hi', 'devtools://devtools/bundled/inspector.html', 'view-source:https://example.com', 'file:///C:/Users/me/notes.txt', 'blob:https://example.com/1234', 'ftp://example.com/x', 'javascript:alert(1)', 'not a url'];
+    const internal = ['file:///C:/app/src/renderer/settings.html', 'file:///C:/app/src/renderer/passwords.html', 'lumen://settings', 'lumen://chat', 'chrome://settings', 'chrome-extension://abcdefghijklmnop/popup.html', 'data:text/html,hi', 'devtools://devtools/bundled/inspector.html', 'view-source:https://example.com', 'blob:https://example.com/1234', 'ftp://example.com/x', 'javascript:alert(1)', 'not a url'];
     for (const url of internal) {
       check(`internal page, words: not captured (${url})`, !sc.plan({ ...base, url }).capture);
       check(`internal page, button on: still not captured (${url})`, !sc.plan({ ...base, url, mode: 'on' }).capture && sc.plan({ ...base, url, mode: 'on' }).why === 'internal');
     }
-    check('a local PDF is captured', sc.plan({ ...base, url: 'file:///C:/Users/me/paper.pdf' }).capture);
-    check('Lumen\'s slide viewer is captured', sc.plan({ ...base, url: 'file:///C:/app/src/renderer/slides.html?u=x', viewer: true }).capture);
+    check('Lumen\'s slide viewer with no deck in it is one of its own pages: not captured', !sc.plan({ ...base, url: 'file:///C:/app/src/renderer/slides.html?u=x' }).capture);
     check('http pages are captured', sc.plan({ ...base, url: 'http://example.com/' }).capture);
     for (const url of ['https://shop.example.com/checkout', 'https://example.com/billing/cards', 'https://pay.example.com/', 'https://example.com/account/password', 'https://example.com/2fa/verify', 'https://example.com/settings/otp']) {
       check(`payment / password / one-time-code address: not captured by words alone (${url})`, !sc.plan({ ...base, url }).capture && sc.plan({ ...base, url }).why === 'sensitive');
@@ -59,6 +58,43 @@ const base = { text: 'what is this', url: WEB, vision: true };
     check('an ordinary address is not "sensitive"', !sc.sensitiveAddress('https://example.com/blog/paying-attention-to-prices') && !sc.sensitiveAddress('https://news.example.com/payments-industry-news-roundup'.replace('payments-industry', 'industry')));
     check('the setting "attach the current page" off: the words alone attach nothing', !sc.plan({ ...base, pageContext: false }).capture && sc.plan({ ...base, pageContext: false }).why === 'setting');
   }
+  // ---- Lumen's own pages, web PDFs, local files: what the decision says
+  {
+    const NEWTAB = 'file:///C:/app/src/renderer/newtab.html';
+    const VIEW_LOCAL = 'lumen-pdf://app/viewer.html?u=' + encodeURIComponent('file:///C:/Users/me/Downloads/Lecture%203.pdf');
+    const VIEW_WEB = 'lumen-pdf://app/viewer.html?u=' + encodeURIComponent('https://example.com/papers/a.pdf');
+    const nt = sc.plan({ ...base, url: NEWTAB });
+    check('new tab page, words: not captured, and the notice says so plainly', !nt.capture && nt.why === 'new-tab' && sc.refusal(nt) === "That's Lumen's new tab page, so there's nothing on it to read.", J(nt));
+    check('new tab page and a blank tab, button on: same', sc.plan({ ...base, url: NEWTAB, mode: 'on' }).why === 'new-tab' && sc.plan({ ...base, url: 'about:blank', mode: 'on' }).why === 'new-tab');
+    check('new tab page, no pointer in the words: refused with nothing said', sc.refusal(sc.plan({ ...base, url: NEWTAB, text: 'write a haiku' })) === '');
+    for (const page of ['settings', 'history', 'downloads', 'passwords', 'error']) {
+      const p = sc.plan({ ...base, url: `file:///C:/app/src/renderer/${page}.html` });
+      check(`Lumen's own page (${page}): never captured, the notice says what was left out`, !p.capture && p.why === 'internal' && /Lumen's own pages/.test(sc.refusal(p)) && !/does not share its own pages or files/.test(sc.refusal(p)), J(p));
+    }
+    check('lumen:// pages (chat) and the viewer\'s own other pages: never captured', ['lumen://chat', 'lumen-pdf://app/other.html', 'lumen-pdf://app/viewer.html'].every((url) => !sc.plan({ ...base, url, mode: 'on' }).capture));
+    const web = sc.plan({ ...base, url: VIEW_WEB });
+    check('a web PDF in the viewer is its source site: captured, no card', web.capture && !web.ask && !web.local, J(web));
+    check('a web PDF in the viewer follows its site\'s AI-off switch (the agent passes it)', sc.plan({ ...base, url: VIEW_WEB, aiOff: true, mode: 'on' }).why === 'ai-off');
+    check('a web PDF at a payment-looking address is still left alone by the words', sc.plan({ ...base, url: 'lumen-pdf://app/viewer.html?u=' + encodeURIComponent('https://pay.example.com/invoice.pdf') }).why === 'sensitive');
+    const loc = sc.plan({ ...base, url: VIEW_LOCAL });
+    check('a local PDF in the viewer: captured after one ask for that file', loc.capture && loc.ask === true && loc.local.name === 'Lecture 3.pdf' && loc.local.url === 'file:///C:/Users/me/Downloads/Lecture%203.pdf', J(loc));
+    check('...and not asked again once it was allowed', sc.plan({ ...base, url: VIEW_LOCAL, shared: true }).ask === false && sc.plan({ ...base, url: VIEW_LOCAL, shared: true }).capture);
+    check('the camera button on a local PDF: the same ask', (() => { const p = sc.plan({ ...base, url: VIEW_LOCAL, text: 'hello', mode: 'on' }); return p.capture && p.ask && p.forced; })());
+    check('the camera button off: a local PDF is left alone, and nothing is asked', (() => { const p = sc.plan({ ...base, url: VIEW_LOCAL, mode: 'off' }); return !p.capture && !p.ask && sc.refusal(p) === ''; })());
+    for (const url of ['file:///C:/Users/me/notes.txt', 'file:///C:/Users/me/paper.pdf', 'file:///C:/Users/me/pic.png', 'file:///C:/Users/me/page.html', 'file:///C:/app/src/renderer/slides.html?u=' + encodeURIComponent('file:///C:/d/deck.pptx')]) {
+      const p = sc.plan({ ...base, url });
+      check(`a local file (${url.split('/').pop().slice(0, 30)}): captured after the ask, naming the file`, p.capture && p.ask && p.local?.name && !/\\|:\//.test(p.local.name), J(p));
+    }
+    check('a local file in a folder called billing or passwords is not "sensitive": the user opened it', sc.plan({ ...base, url: 'file:///C:/Users/me/billing/passwords.pdf' }).ask === true);
+    const off = sc.plan({ ...base, url: VIEW_LOCAL, aiOff: true });
+    check('AI off for local files: nothing captured, no ask, and the message says exactly that and how to turn it back on', !off.capture && !off.ask && off.why === 'local-off' && /turned off AI for local files/.test(sc.refusal(off)) && /Turn on AI/.test(sc.refusal(off)) && /Settings/.test(sc.refusal(off)), sc.refusal(off));
+    check('AI off for local files, a plain message (no pointer): nothing said', sc.refusal(sc.plan({ ...base, url: VIEW_LOCAL, aiOff: true, text: 'write a haiku' })) === '');
+    check('AI off for a web site, words only: nothing said (the page state already says so); the button says it', sc.refusal(sc.plan({ ...base, aiOff: true })) === '' && /turned off AI on this site/.test(sc.refusal(sc.plan({ ...base, aiOff: true, mode: 'on' }))));
+    check('declined: names the file and says how to be asked again', /chose not to share Lecture 3\.pdf/.test(sc.refusal({ capture: false, why: 'declined', asked: true, local: { name: 'Lecture 3.pdf' } })) && /ask again/i.test(sc.refusal({ capture: false, why: 'declined', asked: true, local: { name: 'x' } })));
+    check('no refusal reads as the old vague line', Object.values(sc.WHY_NOT).every((m) => !/does not share its own pages or files/.test(m)));
+    check('classify: web, viewer-web, local, own, new tab', ['https://a.com/', VIEW_WEB, VIEW_LOCAL, 'file:///C:/app/src/renderer/settings.html', NEWTAB].map((u) => sc.classify(u).kind).join() === 'web,web,local,internal,new-tab');
+  }
+
   // ---- shrink and capture
   {
     let log = [];
@@ -81,11 +117,12 @@ const base = { text: 'what is this', url: WEB, vision: true };
   // ---- the agent: a message through runTask
   const SEES = 'claude-opus-5-5';
   const BLIND = 'openai:gpt-3.5-turbo'; // known text-only in ai/fallback.js CAPS
-  function makeAgent({ aiOff = () => false, pageContext = true, options = [] } = {}) {
-    const log = { events: [], pageReads: 0, ccImages: null, tools: [] };
+  function makeAgent({ aiOff = () => false, pageContext = true, options = [], fileShared = () => false, bypass = false } = {}) {
+    const log = { events: [], pageReads: 0, ccImages: null, tools: [], pageScreen: [], shared: [] };
     const agent = Object.assign(Object.create(Agent.prototype), {
       scopes: new Set(), runs: new Map(), approvedHosts: new Set(),
-      browser: { fallbackOptions: () => options, autoFallback: () => false, maxSteps: () => 0, aiOff, noTabReason: () => 'No tab open.', claudeCodeFullAccess: () => false },
+      pendingApprovals: new Map(), pendingUploads: new Map(), approvalSeq: 0,
+      browser: { fallbackOptions: () => options, autoFallback: () => false, maxSteps: () => 0, aiOff, fileShared, shareFile: (url) => log.shared.push(url), bypassPermissions: () => bypass, noTabReason: () => 'No tab open.', claudeCodeFullAccess: () => false },
       engines: { claudecode: { warm() {}, release() {} } },
       getOptions: () => ({ pageContext }),
       isExternalTool: () => false,
@@ -94,23 +131,25 @@ const base = { text: 'what is this', url: WEB, vision: true };
       closeSignedInTabs() {},
       guardRedirects: () => null,
       async runTool(name) { log.tools.push(name); return 'ok'; },
-      async pageContextFor() { log.pageReads++; return '<untrusted_page_content>page text</untrusted_page_content>\n\n'; },
+      async pageContextFor(_tab, o = {}) { log.pageReads++; log.pageScreen.push(Boolean(o.screen)); return '<untrusted_page_content>page text</untrusted_page_content>\n\n'; },
       newActionLog: () => ({}), undoSummary: () => null,
       async claudeTurn(messages) { return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', model: messages.settings.model }; },
       async otherTurn(messages) { return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', model: messages.settings.model }; },
       async claudeCodeTurn(messages, prompt, images) { log.ccImages = images; },
       captured: 0,
-      async screenCapture(tab) { this.captured++; return sc.capture(tab.webContents, { title: tab.webContents.getTitle(), url: tab.webContents.getURL(), capture: async () => fakeImage(1920, 1080) }); },
+      async screenCapture(tab) { this.captured++; return sc.capture(tab.webContents, { title: tab.webContents.getTitle(), url: this.shownUrl(tab.webContents.getURL()), capture: async () => fakeImage(1920, 1080) }); },
     });
     agent.execute = (name, input) => Agent.prototype.executeGuarded.call(agent, name, input);
     return { agent, log };
   }
   const tabAt = (url, title = 'Quarterly report') => ({ id: 7, webContents: { getURL: () => url, getTitle: () => title, isDestroyed: () => false } });
   const fresh = (model, prior = []) => { const m = [...prior]; m.settings = { model }; return m; };
-  const ask = async (agent, log, messages, text, { tab = tabAt(WEB), images = [], extra = {} } = {}) => {
+  // answers: what the user clicks on each approval card that shows, in order (false | true | 'always')
+  const ask = async (agent, log, messages, text, { tab = tabAt(WEB), images = [], extra = {}, answers = [] } = {}) => {
     const controller = new AbortController();
     log.events.length = 0;
-    await agent.inTask(tab?.id, controller.signal, () => agent.runTask(messages, tab, text, images, controller, (e) => log.events.push(e), extra), messages, null, {});
+    const emit = (e) => { log.events.push(e); if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, answers.shift()), 0); };
+    await agent.inTask(tab?.id, controller.signal, () => agent.runTask(messages, tab, text, images, controller, emit, extra), messages, null, {});
   };
   const userBlocks = (messages) => messages.find((m) => m.role === 'user').content;
   const shots = (messages) => userBlocks(messages).filter((b) => b.type === 'image');
@@ -188,6 +227,84 @@ const base = { text: 'what is this', url: WEB, vision: true };
     const m4 = fresh(SEES);
     await ask(q.agent, q.log, m4, 'what is this?', { tab: null });
     check('no tab open: nothing, no error', q.agent.captured === 0 && !q.log.events.some((e) => e.type === 'error'));
+  }
+  {
+    // a local PDF in Lumen's viewer: one card, then the picture and the text, and read_pdf asks nothing more
+    const FILE = 'file:///C:/Users/me/Downloads/paper.pdf';
+    const VIEW = 'lumen-pdf://app/viewer.html?u=' + encodeURIComponent(FILE);
+    const cards = (log) => log.events.filter((e) => e.type === 'approval');
+    const a = makeAgent();
+    const messages = fresh(SEES);
+    await ask(a.agent, a.log, messages, 'what ab what it says here', { tab: tabAt(VIEW, 'paper.pdf'), answers: [true] });
+    check('local PDF, words: one card "Share paper.pdf with the AI?" says what it is about', cards(a.log).length === 1 && cards(a.log)[0].action === 'file' && cards(a.log)[0].host === 'paper.pdf' && cards(a.log)[0].title === 'Share paper.pdf with the AI?', J(cards(a.log)));
+    check('local PDF, Allow: the screenshot and the PDF text go with the message (and it is the picture first, then the text)', shots(messages).length === 1 && a.agent.captured === 1 && a.log.pageScreen[0] === true && chipOf(a.log)?.kind === 'image', J(a.log.pageScreen));
+    check('local PDF, Allow: no notice, no refusal', !a.log.events.some((e) => e.type === 'notice'), J(a.log.events.filter((e) => e.type === 'notice')));
+    check('local PDF, Allow: read_pdf is allowed for this file in this chat', messages.pdfAllowed?.has(FILE) && messages.fileShared?.has(FILE), J([...(messages.pdfAllowed || [])]));
+    check('the model is told the tab has a file by name, not the folder', (() => { const t = userBlocks(messages).filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return /\(file on this computer\) paper\.pdf/.test(t) && !/Users[\\/]me|Downloads/.test(t); })(), userBlocks(messages).map((b) => b.text || b.type).join('|').slice(0, 300));
+    check('local PDF, Allow for this chat: nothing is stored for later', a.log.shared.length === 0);
+    await ask(a.agent, a.log, messages, 'and this page?', { tab: tabAt(VIEW, 'paper.pdf'), answers: [] });
+    check('the same file in the same chat is not asked again', cards(a.log).length === 0 && a.agent.captured === 2);
+    const fresher = fresh(SEES);
+    await ask(a.agent, a.log, fresher, 'what is this?', { tab: tabAt(VIEW, 'paper.pdf'), answers: [true] });
+    check('a new chat asks again', cards(a.log).length === 1);
+
+    const d = makeAgent();
+    const denied = fresh(SEES);
+    await ask(d.agent, d.log, denied, 'what does this say', { tab: tabAt(VIEW, 'paper.pdf'), answers: [false] });
+    check('local PDF, Don\'t allow: no picture, no capture, no chip, no PDF text, no read_pdf permission', shots(denied).length === 0 && d.agent.captured === 0 && !chipOf(d.log) && d.log.pageScreen[0] === false && !denied.pdfAllowed?.size && !denied.fileShared?.size, J(d.log.pageScreen));
+    check('local PDF, Don\'t allow: the user is told what was left out, and the message still goes', d.log.events.some((e) => e.type === 'notice' && /chose not to share paper\.pdf/.test(e.text)) && denied.some((m) => m.role === 'user'), J(d.log.events.filter((e) => e.type === 'notice')));
+    check('local PDF, Don\'t allow: the file\'s name and path are not in the message', !/paper\.pdf|Users/.test(userBlocks(denied).filter((b) => b.type === 'text').map((b) => b.text).join('\n')));
+
+    const al = makeAgent();
+    await ask(al.agent, al.log, fresh(SEES), 'what is this?', { tab: tabAt(VIEW, 'paper.pdf'), answers: ['always'] });
+    check('Allow always for this file: remembered through the app (the file\'s own address)', al.log.shared.join() === FILE);
+    const kept = makeAgent({ fileShared: (u) => u === FILE });
+    const m5 = fresh(SEES);
+    await ask(kept.agent, kept.log, m5, 'what is this?', { tab: tabAt(VIEW, 'paper.pdf'), answers: [] });
+    check('a file allowed always is not asked about again, in any chat', cards(kept.log).length === 0 && shots(m5).length === 1);
+
+    const b = makeAgent();
+    const m6 = fresh(SEES);
+    await ask(b.agent, b.log, m6, 'hello', { tab: tabAt(VIEW, 'paper.pdf'), extra: { screen: 'on' }, answers: [true] });
+    check('the camera button on a local file: the same card, then the picture', cards(b.log).length === 1 && shots(m6).length === 1 && b.log.events.some((e) => e.type === 'screen_attached' && e.words === 'button'));
+
+    const t = makeAgent();
+    const m7 = fresh(BLIND);
+    await ask(t.agent, t.log, m7, 'what is this?', { tab: tabAt(VIEW, 'paper.pdf'), answers: [true] });
+    check('a model that cannot see: the same card, then the text, no picture', cards(t.log).length === 1 && shots(m7).length === 0 && t.log.pageScreen[0] === true && chipOf(t.log)?.kind === 'text');
+
+    const w = makeAgent();
+    const m8 = fresh(SEES);
+    await ask(w.agent, w.log, m8, 'what is this?', { tab: tabAt('lumen-pdf://app/viewer.html?u=' + encodeURIComponent('https://example.com/a.pdf'), 'a.pdf'), answers: [] });
+    check('a web PDF in the viewer: captured with no card, and its text goes too', cards(w.log).length === 0 && shots(m8).length === 1 && w.log.pageScreen[0] === true);
+    const wp = makeAgent();
+    const m9 = fresh(SEES);
+    await ask(wp.agent, wp.log, m9, 'what is this?', { tab: tabAt(WEB), answers: [] });
+    check('a web page: never a card (a page can\'t make one)', cards(wp.log).length === 0 && shots(m9).length === 1);
+
+    const lo = makeAgent({ aiOff: () => true });
+    const m10 = fresh(SEES);
+    await ask(lo.agent, lo.log, m10, 'what does this say', { tab: tabAt(VIEW, 'paper.pdf'), answers: [] });
+    check('AI off for local files, words only: no card, no capture, and the specific message', cards(lo.log).length === 0 && lo.agent.captured === 0 && lo.log.events.some((e) => e.type === 'notice' && /turned off AI for local files/.test(e.text) && /Turn on AI/.test(e.text)), J(lo.log.events.filter((e) => e.type === 'notice')));
+    const nt = makeAgent();
+    const m11 = fresh(SEES);
+    await ask(nt.agent, nt.log, m11, 'what is this?', { tab: tabAt('file:///C:/app/src/renderer/newtab.html', 'New tab'), answers: [] });
+    check('the new tab: nothing captured, no card, its own wording', nt.agent.captured === 0 && cards(nt.log).length === 0 && nt.log.events.some((e) => e.type === 'notice' && e.text === "That's Lumen's new tab page, so there's nothing on it to read."), J(nt.log.events.filter((e) => e.type === 'notice')));
+    const by = makeAgent({ bypass: true });
+    const mb = fresh(SEES);
+    await ask(by.agent, by.log, mb, 'what is this?', { tab: tabAt(VIEW, 'paper.pdf'), answers: [] });
+    check('Bypass on: no card, the file is sent, and the step says "Allowed automatically: shared paper.pdf"', cards(by.log).length === 0 && shots(mb).length === 1 && by.log.pageScreen[0] === true && by.log.events.some((e) => e.type === 'tool' && e.name === 'auto_allowed' && e.label === 'Allowed automatically: shared paper.pdf'), J(by.log.events.filter((e) => e.type === 'tool')));
+    const byOff = makeAgent({ bypass: true, aiOff: () => true });
+    const mo = fresh(SEES);
+    await ask(byOff.agent, byOff.log, mo, 'what does this say', { tab: tabAt(VIEW, 'paper.pdf'), answers: [] });
+    check('Bypass on, AI off for local files: still refused with the specific message', byOff.agent.captured === 0 && shots(mo).length === 0 && byOff.log.events.some((e) => e.type === 'notice' && /turned off AI for local files/.test(e.text)));
+    const byNt = makeAgent({ bypass: true });
+    await ask(byNt.agent, byNt.log, fresh(SEES), 'what is this?', { tab: tabAt('file:///C:/app/src/renderer/settings.html', 'Settings'), answers: [] });
+    check('Bypass on: own pages are still never captured', byNt.agent.captured === 0);
+    const tx = makeAgent();
+    const m12 = fresh(SEES);
+    await ask(tx.agent, tx.log, m12, 'what is this?', { tab: tabAt('file:///C:/Users/me/notes.txt', 'notes.txt'), answers: ['always'] });
+    check('a text file on disk: the same card (file name), then the picture and its text', cards(tx.log)[0]?.host === 'notes.txt' && shots(m12).length === 1 && tx.log.pageScreen[0] === true);
   }
   {
     // a capture that fails: the message still goes (with the page text), the user is told only if they asked

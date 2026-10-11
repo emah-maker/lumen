@@ -16,6 +16,7 @@ const POSITIVE = [
   'what is on this page', 'can you see this?', 'do you see what I see', 'what do you see', 'is this email a scam', 'reply to this email',
   'who is this', 'where is this photo from', 'what is in this picture', 'debug this', 'proofread this', 'what is this table saying',
   'analyze this chart', 'what is this popup asking', 'how do I fill out this form', 'what does this button do', 'rewrite this paragraph',
+  'what ab what it says here', 'what does it say here', 'what does it say there?',
   'what is the answer to this question', 'explain what I am looking at', 'what is this code doing', 'explain this code', 'what is this website',
   'is this product worth it', 'compare the prices on this page', 'can you read the text in this image', 'what are these numbers', 'is this a good deal',
 ];
