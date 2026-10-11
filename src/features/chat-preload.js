@@ -23,6 +23,9 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
+    rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected),
+    switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target),
+    feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value),
     btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task
     btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
     onBtw: on('agent:btw-event'),
@@ -41,6 +44,10 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       stopChat: (id) => ipcRenderer.invoke('chats:stop', id),
       rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
       remove: (id) => ipcRenderer.invoke('chats:delete', id),
+      undoRemove: (id) => ipcRenderer.invoke('chats:undo-delete', id),
+      pin: (id, on) => ipcRenderer.invoke('chats:pin', id, on),
+      archive: (id, on) => ipcRenderer.invoke('chats:archive', id, on),
+      search: (query) => ipcRenderer.invoke('chats:search', query),
       exportChat: (id) => ipcRenderer.invoke('chats:export', id),
       closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners]
       onUsage: on('chats:usage'),

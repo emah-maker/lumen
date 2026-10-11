@@ -123,7 +123,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const info = async () => app.evaluate(async () => (await global.__basics.openPageInfo()).map((i) => ({ label: i.label || i.type, sub: (i.submenu || []).map((s) => `${s.checked ? '*' : ''}${s.label}`) })));
     let menu = await info();
     check('page info: the site, its (plain http) connection and its two cookies', menu[0].label === `127.0.0.1:${server.address().port}` && menu[1].label === 'Connection is not secure' && menu.some((i) => i.label === '2 cookies in use'), JSON.stringify(menu));
-    check('page info: every permission starts at Ask', menu.filter((i) => /: Ask$|: Block \(default\)$/.test(i.label)).length === 4, menu.map((i) => i.label).join(' | '));
+    check('page info: every permission starts at Ask (camera and microphone each have their own)', menu.filter((i) => /: Ask$|: Block \(default\)$/.test(i.label)).length === 5 && menu.some((i) => i.label === 'Camera: Ask') && menu.some((i) => i.label === 'Microphone: Ask'), menu.map((i) => i.label).join(' | '));
     await app.evaluate(async () => { const tpl = await global.__basics.openPageInfo(); tpl.find((i) => /^Location/.test(i.label || '')).submenu.find((s) => s.label === 'Block').click(); });
     const decided = await app.evaluate((_e, origin) => global.__settings.permissions.get(`${origin}|geolocation`), base);
     check('page info: Block saves a decision for the site', decided === false, String(decided));

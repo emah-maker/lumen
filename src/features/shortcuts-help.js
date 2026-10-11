@@ -30,7 +30,7 @@ const SECTIONS = [
   {
     id: 'navigation',
     entries: [
-      ['shortcuts.focusAddress', ['mod+l']],
+      ['shortcuts.focusAddress', ['mod+l', 'f6', { other: 'alt+d' }]],
       ['shortcuts.back', [{ mac: 'mod+[' }, 'alt+left']],
       ['shortcuts.forward', [{ mac: 'mod+]' }, 'alt+right']],
       ['shortcuts.reload', ['mod+r', 'f5']],
@@ -49,6 +49,7 @@ const SECTIONS = [
     id: 'page',
     entries: [
       ['shortcuts.find', ['mod+f']],
+      ['shortcuts.findNext', ['f3', 'mod+g']],
       ['shortcuts.zoomIn', ['mod+=']],
       ['shortcuts.zoomOut', ['mod+-']],
       ['shortcuts.actualSize', ['mod+0']],
@@ -58,7 +59,7 @@ const SECTIONS = [
       ['shortcuts.screenshot', ['mod+shift+s']],
       ['shortcuts.viewSource', ['mod+u']],
       ['shortcuts.fullScreen', [{ mac: 'mod+ctrl+f' }, { other: 'f11' }]],
-      ['shortcuts.devTools', ['f12', { mac: 'mod+alt+i' }]],
+      ['shortcuts.devTools', ['f12', { mac: 'mod+alt+i' }, { other: 'mod+shift+i' }]],
     ],
   },
   {

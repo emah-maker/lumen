@@ -44,6 +44,48 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     const shown = await inTab(`(() => { const w = { id: 'wxxxx0001', type: 'feed', title: 'Test', error: 'Couldn’t connect. Check your internet connection.', data: null }; const el = buildCard(w); document.body.append(el); const b = [...el.querySelectorAll('button')].find((x) => x.textContent === 'Try again'); if (!b) return 'no button'; b.click(); const out = [b.disabled, b.textContent]; el.remove(); return out; })()`).catch((e) => String(e));
     check('Try again goes to “Trying…” and disabled while it waits', Array.isArray(shown) && shown[0] === true && shown[1] === 'Trying…', JSON.stringify(shown));
 
+    // Gmail's button is named once ("Sign in to Gmail"), not "... for Gmail".
+    const gmailLabel = await inTab(`${card('wgmail001')}.querySelector('.w-btn.primary')?.getAttribute('aria-label')`);
+    check('Gmail sign-in button is labelled "Sign in to Gmail" (no "for Gmail")', gmailLabel === 'Sign in to Gmail', gmailLabel);
+
+    // A message that starts "Couldn't ..." is its own heading; other errors keep "Couldn't update" above them.
+    const heads = await inTab(`(() => { const out = []; for (const error of ['Couldn’t connect. Check your internet connection.', 'The feed answered 500.']) { const el = buildCard({ id: 'wxxxx0002', type: 'feed', title: 'Test', error, data: null }); out.push(el.querySelector('.w-note').textContent); } return out; })()`);
+    check('"Couldn’t connect" is not preceded by "Couldn’t update"', heads[0] === 'Couldn’t connect. Check your internet connection.', JSON.stringify(heads));
+    check('...but another failure still says "Couldn’t update"', heads[1] === 'Couldn’t updateThe feed answered 500.', JSON.stringify(heads));
+
+    // The greeting: night until 5 am.
+    const greets = await inTab(`[0, 4, 5, 11, 12, 17, 18, 23].map((h) => greeting(new Date(2026, 0, 5, h, 30)))`);
+    check('greeting: Good night until 5 am, then morning, afternoon, evening', greets.join() === 'Good night,Good night,Good morning,Good morning,Good afternoon,Good afternoon,Good evening,Good evening', greets.join());
+
+    // Favorites: the page says where they come from.
+    const fav = await inTab(`(() => { const s = document.querySelector('section[aria-label="Favorites"]'); const one = [{ url: 'https://example.com/', title: 'Example' }]; return { title: s ? s.querySelector('h2').title : '', empty: favorites([]).textContent, short: favorites(one).textContent, full: favorites(Array.from({ length: 6 }, (_, i) => ({ url: 'https://example.com/' + i, title: 'E' + i }))).textContent }; })()`);
+    check('Favorites says where it comes from: the heading tooltip, and a line on an empty or short list (not a full one)', /bookmarks/i.test(fav.title) && /Favorites are your bookmarks.*D on any page/.test(fav.empty) && /Favorites are your bookmarks/.test(fav.short) && !/bookmarks/.test(fav.full), JSON.stringify(fav));
+
+    // Ask AI: with nothing connected it is a setup prompt, otherwise it names the connected assistant.
+    await inTab(`document.getElementById('mode-ask').click(); 1`);
+    const ask = await inTab(`(() => { let a = null; try { a = JSON.parse(decodeURIComponent(location.hash.slice(1))).assistant; } catch {} return { a, ph: document.getElementById('q').placeholder, connect: !document.getElementById('mode-connect').hidden }; })()`);
+    check('Ask AI: a setup prompt when no AI is connected, else the assistant\'s own name', ask.a && ask.a.agentUsable === false ? ask.ph === 'Connect an AI to ask questions' && ask.connect : ask.ph === `Ask ${ask.a?.name || 'AI'}…` && !ask.connect, JSON.stringify(ask));
+    await inTab(`document.getElementById('mode-search').click(); 1`);
+
+    // Add widget outside Edit layout: visible, grouped, a filter, and a visible note before Settings opens.
+    const outside = await inTab(`(() => { const b = document.querySelector('.w-tb-add'); return { shown: !b.hidden && getComputedStyle(b).display !== 'none', editing: document.body.classList.contains('w-editing') }; })()`);
+    check('Add widget is there without Edit layout', outside.shown && !outside.editing, JSON.stringify(outside));
+    await inTab(`document.querySelector('.w-tb-add').click(); 1`);
+    await sleep(250);
+    const pick = await inTab(`(() => { const p = document.querySelector('.w-picker'); return { heads: [...p.querySelectorAll('h3')].map((h) => h.textContent), filter: Boolean(p.querySelector('input[type=search]')), focus: document.activeElement === p.querySelector('input'), rows: p.querySelectorAll('.w-pick').length }; })()`);
+    check('Add list is grouped, has a filter and starts in it', pick.heads.includes('Time and weather') && pick.heads.includes('Work and mail') && pick.heads.includes('Music') && pick.filter && pick.focus, JSON.stringify(pick));
+    await inTab(`(() => { const i = document.querySelector('.w-picker input'); i.value = 'todo'; i.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
+    const filtered = await inTab(`(() => { const p = document.querySelector('.w-picker'); return { rows: [...p.querySelectorAll('.w-pick:not([hidden])')].map((b) => b.querySelector('b').textContent), heads: [...p.querySelectorAll('h3:not([hidden])')].map((h) => h.textContent) }; })()`);
+    check('typing narrows the list to Todoist and its heading only', filtered.rows.join() === 'Todoist' && filtered.heads.join() === 'Work and mail', JSON.stringify(filtered));
+    await inTab(`[...document.querySelectorAll('.w-picker .w-pick')].find((b) => /Todoist/.test(b.textContent)).click(); 1`);
+    await sleep(250);
+    const note = await inTab(`document.querySelector('.w-toast')?.textContent || ''`);
+    check('choosing Todoist says on the page that Settings opens, and what to paste and where from', /Todoist/.test(note) && /Settings/.test(note) && /API token/.test(note) && /Developer/.test(note), note);
+
+    // Targets: icon buttons and handles are at least 24 px.
+    const sizes = await inTab(`['.w-icon-btn', '.w-grip', '.w-resize', '.w-gear', '.w-remove'].map((sel) => { const b = document.querySelector(sel); if (!b) return [sel, 'none']; const c = getComputedStyle(b); return [sel, parseFloat(c.width), parseFloat(c.height)]; })`);
+    check('card icon buttons and resize handles are at least 24 px', sizes.filter((s) => s[1] !== 'none').every((s) => s[1] >= 24 && s[2] >= 24) && sizes.some((s) => s[0] === '.w-resize' && s[1] !== 'none'), JSON.stringify(sizes));
+
     // The edit tip: short, and gone while the picker is open.
     await inTab(`document.querySelector('.w-edit-btn').click(); 1`);
     await sleep(300);

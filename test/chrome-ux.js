@@ -102,16 +102,23 @@ const os = require('os');
   await app.evaluate((_e, id) => global.__tabMenu(id, 'Unmute tab'), b);
   await app.evaluate((_e, id) => global.__tabMenu(id, 'Unpin tab'), b);
   await waitFor(async () => !/pinned|muted/.test(await nameOf(b)));
-  const mono = await waitFor(() => ui.evaluate((i) => { const e = document.querySelector(`#tabs .tab[data-id="${i}"] .tab-favicon`); return e && e.classList.contains('monogram') && { text: e.textContent, hue: e.style.getPropertyValue('--mono-hue') }; }, b), 6000);
-  check('a page with no icon gets a monogram of its site (a letter on a color), not the globe', Boolean(mono) && mono.text === '1' && mono.hue !== '', JSON.stringify(mono));
+  const iconOf = (id) => ui.evaluate((i) => { const e = document.querySelector(`#tabs .tab[data-id="${i}"] .tab-favicon`); return e && { mono: e.classList.contains('monogram'), text: e.textContent, hue: e.style.getPropertyValue('--mono-hue') }; }, id);
+  const lh = await open(`http://localhost:${new URL(base).port}/m`);
+  const mono = await waitFor(async () => { const i = await iconOf(lh); return i && i.mono && i; }, 6000);
+  check('a page with no icon gets a monogram of its site (a letter on a color), not the globe', Boolean(mono) && mono.text === 'L' && mono.hue !== '', JSON.stringify(mono));
+  const ipIcon = await iconOf(b);
+  check('an address of numbers (127.0.0.1) keeps the globe: no "1" tile', Boolean(ipIcon) && !ipIcon.mono, JSON.stringify(ipIcon));
   const aiBtn = await ui.evaluate(() => { const b = document.getElementById('toggle-sidebar'); return { who: b.dataset.assistant, title: b.title, label: b.getAttribute('aria-label'), setup: b.classList.contains('needs-setup') }; });
   check('the toolbar AI button names what it is for (set up, or the model)', aiBtn.who === 'AI' ? aiBtn.setup && /^Set up AI \(/.test(aiBtn.title) && aiBtn.label === 'Set up AI' : !aiBtn.setup && aiBtn.label === aiBtn.who, JSON.stringify(aiBtn));
   // the omnibox: plain words with a history page first pre-select it; an address typed in full is left alone
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), b);
+  // (the strip's own update for the switch rewrites the address field when it lands: typing before it does leaves 'bage', not 'page')
+  await waitFor(() => ui.evaluate(() => document.getElementById('address').value.endsWith('/b')));
+  await sleep(300);
   await ui.evaluate(() => document.getElementById('address').focus());
   await ui.keyboard.press('Control+A');
   await ui.keyboard.type('page');
-  const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, kinds: suggest.items.map((i) => i.kind) })'); return s.kinds.length && s; });
+  const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, typed: suggest.typed, kinds: suggest.items.map((i) => i.kind) })'); return s.typed === 'page' && s.kinds.length && s; }); // (not an earlier keystroke's list: 'p', 'pa' and 'pag' arrive first)
   check('typing plain words pre-selects the first row when it is a page from history', pre && pre.kinds[0] === 'history' && pre.selected === 0, JSON.stringify(pre));
   await ui.keyboard.press('Enter');
   const went = await waitFor(async () => { const u = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); return u.startsWith(base) && !/google/.test(u) && u; });
@@ -124,6 +131,14 @@ const os = require('os');
   check('typing a full address pre-selects nothing, so Enter goes to exactly what was typed', exact.selected === -1 && exact.value === `${base}/n1`, JSON.stringify(exact));
   await ui.keyboard.press('Escape');
   await ui.keyboard.press('Escape');
+
+  // ---- 7. polish pass: Ctrl+H twice is one History tab
+  const historyTabs = () => app.evaluate(({ webContents }) => webContents.getAllWebContents().filter((w) => !w.isDestroyed() && /\/renderer\/history\.html/.test(w.getURL())).length);
+  await app.evaluate(() => global.__openHistoryPage());
+  await waitFor(async () => (await historyTabs()) === 1);
+  await app.evaluate(() => global.__openHistoryPage());
+  await sleep(400);
+  check('opening History a second time goes back to the same tab', (await historyTabs()) === 1, await historyTabs());
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close().catch(() => {});

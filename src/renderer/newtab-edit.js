@@ -75,6 +75,11 @@
     .w-pick:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
     .w-pick b { font: 600 13px/1.3 system-ui, sans-serif; }
     .w-pick span { color: var(--muted); font: 400 11.5px/1.35 system-ui, sans-serif; }
+    .w-picker h3 { margin: 6px 0 0; padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
+    .w-pick[hidden], .w-picker h3[hidden], .w-picker p[hidden] { display: none; }
+    .w-pick-filter { position: sticky; top: -6px; z-index: 1; margin: -6px -6px 4px; padding: 8px 6px 6px; background: var(--bg); }
+    .w-pick-filter input { box-sizing: border-box; width: 100%; min-height: 28px; margin: 0; padding: 4px 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: 400 13px/1.4 system-ui, sans-serif; outline: none; }
+    .w-pick-filter input:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
     .w-picker p { margin: 0; padding: 8px 10px; color: var(--muted); font-size: 12px; }
 
     .w-toast { position: fixed; left: 50%; bottom: 76px; z-index: 25; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 6px 8px 6px 14px; border-radius: 12px; transform: translateX(-50%);
@@ -207,7 +212,7 @@
     setLabel(toggle, T(editing ? 'newtab.edit.done' : 'newtab.edit.toggle'));
     toggle.setAttribute('aria-pressed', String(editing));
     toggle.title = T('newtab.edit.toggle.title');
-    addBtn.hidden = !(editing || real === 0) || stacked;
+    addBtn.hidden = stacked; // always there: adding a widget should not need Edit layout first
     undoBtn.hidden = !editing;
     undoBtn.disabled = !history.some((e) => !staleEntry(e)); // only steps that would still do something
     resetBtn.hidden = !editing;
@@ -263,10 +268,30 @@
     picker.setAttribute('aria-label', T('newtab.edit.picker'));
     picker.append(el('h2', null, T('newtab.edit.picker')));
     if (!entries.length) picker.append(el('p', null, T('newtab.edit.picker.none')));
+    let filter = null;
+    const items = []; // { entry, button, heading }
+    const none = el('p', null, '');
+    none.hidden = true;
+    if (entries.length > 8) { // a long list: a filter first
+      const wrap = el('div', 'w-pick-filter');
+      filter = el('input');
+      filter.type = 'search';
+      filter.placeholder = T('newtab.edit.picker.filter.ph');
+      filter.setAttribute('aria-label', T('newtab.edit.picker.filter'));
+      filter.autocomplete = 'off';
+      filter.spellcheck = false;
+      wrap.append(filter);
+      picker.append(wrap);
+    }
+    let lastGroup = '';
     for (const entry of entries) {
+      let heading = null;
+      if (entry.group !== lastGroup && entry.group !== 'stack') { heading = el('h3', null, entry.groupLabel); picker.append(heading); }
+      lastGroup = entry.group;
       const b = el('button', 'w-pick');
       b.type = 'button';
       b.append(el('b', null, entry.label), el('span', null, entry.hint));
+      items.push({ entry, button: b, heading });
       b.addEventListener('click', () => {
         closePicker(false);
         if (entry.kind === 'section') {
@@ -279,14 +304,33 @@
         } else if (window.widgetSetup?.canAdd(entry.type)) {
           window.widgetSetup.open({ type: entry.type }); // set up right here on the page (renderer/newtab-setup.js)
         } else {
+          // Settings opens on that widget's form. Say so here, in words on the page, with what it needs (a key, a sign-in).
+          notify(T('newtab.edit.setupOpening', { title: entry.label, note: WE.setupNote(entry.type) }).trim());
           window.widgetAct('wcreate', 'create', { type: entry.type });
           say(T('newtab.edit.settingUp', { title: entry.label }));
         }
       });
       picker.append(b);
     }
+    picker.append(none);
+    // Heading and rows follow the filter: a heading with nothing under it goes too.
+    const applyFilter = () => {
+      const q = filter ? filter.value.trim() : '';
+      let shown = 0;
+      const groupShown = new Set();
+      for (const it of items) {
+        const ok = WE.matchesFilter(it.entry, q);
+        it.button.hidden = !ok;
+        if (ok) { shown++; groupShown.add(it.entry.group); }
+      }
+      for (const it of items) if (it.heading) it.heading.hidden = !groupShown.has(it.entry.group);
+      none.hidden = !(q && !shown);
+      none.textContent = none.hidden ? '' : T('newtab.edit.picker.nomatch', { q });
+    };
+    filter?.addEventListener('input', applyFilter);
     picker.addEventListener('keydown', (e) => {
-      const list = [...picker.querySelectorAll('.w-pick')];
+      const list = [...picker.querySelectorAll('.w-pick:not([hidden])')];
+      if (document.activeElement === filter && e.key !== 'ArrowDown' && e.key !== 'Escape') return; // typing in the filter: Home, End and ArrowUp are the field's
       const i = list.indexOf(document.activeElement);
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePicker(true); return; }
       const go = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: list.length - 1 }[e.key];
@@ -297,7 +341,7 @@
     document.body.append(picker);
     addBtn.setAttribute('aria-expanded', 'true');
     tile.setAttribute('aria-expanded', 'true');
-    picker.querySelector('.w-pick')?.focus();
+    (filter || picker.querySelector('.w-pick'))?.focus();
   }
   document.addEventListener('pointerdown', (e) => {
     if (picker && !e.target.closest?.('.w-picker, .w-add-tile, .w-tb-add')) closePicker(false);
@@ -309,12 +353,13 @@
   let toast = null;
   let toastTimer = 0;
   function hideToast() { clearTimeout(toastTimer); toast?.remove(); toast = null; }
-  function showToast(message) {
+  function showToast(message, { undoable = true } = {}) {
     hideToast();
     toast = el('div', 'w-toast w-ui');
     toast.setAttribute('role', 'status');
     toast.setAttribute('aria-live', 'polite');
     toast.append(el('span', null, message));
+    if (!undoable) { document.body.append(toast); placeToast(); toastTimer = setTimeout(hideToast, 12000); return; }
     const b = tb('w-toast-undo', T('newtab.edit.undo'), null);
     const hint = WE.undoHint(navigator.userAgentData?.platform || navigator.platform);
     b.title = T('newtab.edit.undo.title').replace('Ctrl+Z', hint); // Ctrl+Z works while the toast shows, in or out of Edit layout
@@ -327,6 +372,8 @@
     placeToast();
     toastTimer = setTimeout(hideToast, 8000);
   }
+  // A plain note in the same place (no Undo): what is about to happen, in words.
+  function notify(message) { showToast(message, { undoable: false }); }
   // The toast sits centered just above the toolbar and gets out of the way of the toolbar, the Edit stack panel and
   // the picker (features/widget-edit.js placeToast): it never covers them. Called when any of them moves.
   function placeToast() {

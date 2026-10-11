@@ -133,15 +133,16 @@ function createPrivateWindows(deps) {
       if (permission === 'openExternal') return callback(Boolean(await deps.askOpenExternal?.(wc, details, rec.externalDecisions)));
       const origin = SITE_PERMISSIONS.requestOrigin(wc, details);
       if (!PROMPTABLE.has(permission) || !origin) return callback(false);
-      const key = `${origin}|${permission}`;
-      if (rec.decisions.has(key)) return callback(rec.decisions.get(key));
-      if (deps.permissionDefault?.(permission) === 'block' || !alive(rec)) return callback(false); // [settings] default: Block
+      const { deny, ask } = SITE_PERMISSIONS.plan(rec.decisions, origin, permission, details, (p) => deps.permissionDefault?.(p) === 'block'); // (camera and microphone are decided separately)
+      if (deny) return callback(false);
+      if (!ask.length) return callback(true);
+      if (!alive(rec)) return callback(false);
       // Remembered for this window only; nothing is written to settings.json.
       const { response } = await dialog.showMessageBox(rec.win, {
         type: 'question', buttons: [t('permission.deny'), t('permission.allow')], defaultId: 0, cancelId: 0,
-        message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }), detail: t('private.permission.detail'),
+        message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }), detail: t('private.permission.detail'),
       });
-      rec.decisions.set(key, response === 1);
+      for (const name of ask) rec.decisions.set(`${origin}|${name}`, response === 1);
       callback(response === 1);
       SITE_PERMISSIONS.notify(ses);
     });
@@ -150,7 +151,7 @@ function createPrivateWindows(deps) {
     const devices = deps.deviceChooser?.();
     if (devices) devices.install(ses, { store: DEVICE_PERMISSIONS.createGrantStore(), windowOf: () => rec.win });
     ses.setPermissionCheckHandler((wc, permission, origin, details) => DEVICE_PERMISSIONS.TYPES.includes(permission) ? devices?.check(wc, permission, origin, details) === true :
-      SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) }) || rec.decisions.get(`${SITE_PERMISSIONS.checkOrigin(origin, details)}|${permission}`) === true);
+      SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) }) || SITE_PERMISSIONS.allowedNow(rec.decisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
     SITE_PERMISSIONS.register(ses, { decisions: rec.decisions, isBlocked: (permission) => deps.permissionDefault?.(permission) === 'block' });
     if (deps.pickScreen) ses.setDisplayMediaRequestHandler((request, callback) => deps.pickScreen(request, callback, rec.win));
     ses.on('will-download', (_event, item) => startDownload(rec, item));

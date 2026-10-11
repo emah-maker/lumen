@@ -673,8 +673,17 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .code-lang { font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
 .msg.assistant .code-copy { height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
 .msg.assistant .code-copy:hover, .msg.assistant .code-copy:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+/* Wrap (header button): long lines wrap instead of scrolling. */
+.msg.assistant .code-block.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.assistant .code-wrap[aria-pressed="true"] { color: var(--text); }
+/* A ```mermaid block drawn as a diagram (code-extras.js): the code is behind the Source button. */
+.msg.assistant .code-block.mermaid-ok:not(.show-source) pre { display: none; }
+.msg.assistant .code-block .mermaid-view { padding: 10px; overflow-x: auto; text-align: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block.show-source .mermaid-view { display: none; }
+.msg.assistant .mermaid-view svg { max-width: 100%; height: auto; }
+.tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 /* Regenerate, beside Copy on the latest reply. */
-.msg.assistant .reply-regen { position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.assistant .reply-regen { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
 .msg.assistant:has(> .reply-regen) .reply-regen, .msg.assistant:has(> .reply-regen) .reply-copy { opacity: 0.75; transform: none; } /* the latest reply: its actions always there */
 .msg.assistant:has(> .reply-regen):hover .reply-regen, .msg.assistant:has(> .reply-regen):hover .reply-copy { opacity: 1; }
@@ -792,6 +801,26 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant th, .msg.assistant td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
 .msg.assistant th { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .msg.assistant tr:last-child td { border-bottom: none; }
+/* Block quotes, rules, task lists, strikethrough, citations and footnotes in replies. */
+.msg.assistant blockquote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.msg.assistant blockquote > :last-child { margin-bottom: 0; }
+.msg.assistant hr { border: none; border-top: 1px solid var(--hairline); margin: 12px 0; }
+.msg.assistant li > ul, .msg.assistant li > ol { margin: 2px 0 0; }
+.msg.assistant li > p { margin: 0 0 4px; }
+.msg.assistant li.task { list-style: none; margin-left: -18px; }
+.msg.assistant li.task input { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.msg.assistant del { color: var(--muted); text-decoration-thickness: 1px; }
+.msg.assistant a.md-cite { font-size: 0.78em; vertical-align: super; line-height: 0; padding: 0 1px; }
+.msg.assistant .fn-ref { color: var(--accent); cursor: help; font-weight: 500; }
+.msg.assistant .footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--hairline); font-size: 12px; color: var(--muted); }
+.msg.assistant .footnotes ol { margin: 0; }
+/* A wide table: each column keeps a readable width and the table scrolls sideways (or, with Fit, squeezes into the reply). */
+.msg.assistant .table-wrap table { width: max-content; min-width: 100%; }
+.msg.assistant .table-wrap td { min-width: 6em; max-width: 24em; }
+.msg.assistant .table-wrap.fit table { width: 100%; min-width: 0; }
+.msg.assistant .table-wrap.fit td, .msg.assistant .table-wrap.fit th { min-width: 0; padding-right: 6px; overflow-wrap: anywhere; white-space: normal; }
+.msg.assistant .table-fit { display: block; margin: 0 0 2px auto; height: 18px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+.msg.assistant .table-fit:hover, .msg.assistant .table-fit:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 .msg.assistant a:hover { color: var(--accent-bright); text-decoration: underline; text-underline-offset: 2px; }
 /* While text streams in, a soft caret breathes at the end of the newest line. */
 .msg.assistant.streaming > :is(p, h1, h2, h3, h4):last-child::after,
@@ -865,7 +894,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
    blur behind the composer resample each frame; the glass is a flat veil for those few hundred milliseconds. */
 body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
-.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; max-height: 160px; padding: 4px 0; }
+.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; max-height: 240px; overflow-y: auto; scrollbar-width: thin; padding: 4px 0; }
 .composer textarea::placeholder { color: var(--muted); }
 .composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
@@ -956,6 +985,21 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .attachment-note { flex-basis: 100%; padding: 0 0 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .attachment-note[hidden] { display: none; }
 .attachment-note div + div { margin-top: 2px; }
+/* a line under a long paste: "Attach it as a file instead?" */
+.paste-offer { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+/* the character / attachment hint above the box: only when there is something to say (chat-extras.js) */
+.composer-hint { flex-basis: 100%; padding: 0 0 4px; font-size: 11.5px; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.composer-hint[hidden] { display: none; }
+.composer-hint.near { color: var(--warn, #d97706); }
+/* the shortcut sheet (? or Ctrl+/) */
+.shortcut-sheet { position: fixed; inset: 0; z-index: var(--z-modal, 1000); display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 0.35); }
+.shortcut-sheet[hidden] { display: none; }
+.shortcut-card { width: min(420px, 100%); max-height: 100%; overflow: auto; padding: 16px 18px; border-radius: 14px; background: var(--card, var(--bg)); color: var(--text); box-shadow: 0 16px 48px -12px rgba(0,0,0,.5), 0 0 0 1px var(--border); }
+.shortcut-card h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.shortcut-card dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; align-items: center; font-size: 12.5px; }
+.shortcut-card dd { margin: 0; display: flex; gap: 4px; justify-content: flex-end; }
+.shortcut-card kbd { min-width: 20px; padding: 1px 6px; border-radius: 5px; background: var(--field); box-shadow: 0 0 0 1px var(--hairline); font: 500 11.5px ui-monospace, "Cascadia Code", Consolas, monospace; text-align: center; }
+.shortcut-card .shortcut-close { margin-top: 12px; }
 .attachments { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 6px; }
 .attachment { position: relative; width: 52px; height: 52px; border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline), 0 4px 10px -4px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
 .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1082,11 +1126,13 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 
 /* Copy a reply: appears on hover/focus at the reply's corner. */
 .reply-copy {
-  position: absolute; right: -4px; bottom: -22px; width: 24px; height: 22px; display: grid; place-items: center;
+  position: absolute; right: -4px; bottom: -24px; width: 28px; height: 26px; display: grid; place-items: center;
   border: none; border-radius: 6px; background: transparent; color: var(--muted);
   opacity: 0; transform: translateY(-2px); transition: opacity 160ms ease-out, transform 220ms var(--spring-snappy, ease-out), color 120ms ease-out;
 }
-.reply-copy svg { width: 13px; height: 13px; }
+.reply-copy svg, .msg.assistant .reply-regen svg { width: 16px; height: 16px; }
+/* a word beside the icon on hover or focus (the icons alone were 14 px and unlabelled) */
+.reply-copy:is(:hover, :focus-visible)::after, .msg.assistant .reply-regen:not(.armed):is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .msg.assistant:hover .reply-copy, .reply-copy:focus-visible, .reply-copy.copied { opacity: 1; transform: none; }
 .reply-copy:hover { color: var(--text); background: var(--hover); }
 .reply-copy.copied { color: var(--accent); }
@@ -1238,12 +1284,7 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
-/* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
-.msg-user-actions { position: relative; z-index: var(--z-raised); height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
-.msg-user-actions[hidden] { display: none; }
-.msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
-.msg-user-actions .msg-edit { position: absolute; right: 2px; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
-.msg-user-actions .msg-edit:hover { background: var(--field); color: var(--text); }
+/* Each message you sent: its row under the bubble (time, Copy, Edit, versions) is styled in chat-actions.css. */
 body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
 .btn:disabled, .btn.primary:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
 .msg.user.editing .msg-images { margin-bottom: 6px; }
@@ -1704,23 +1745,29 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-actions { position: absolute; right: 4px; top: 3px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
 .chat-actions .icon-btn { width: 24px; height: 22px; }
-/* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
+/* The title gives way to the buttons (it never sits under them);. */
 .chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } /* (the title always keeps some width) */
-.chat-item:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w, 100px) + 56px), 70%); }
 /* A narrow list: a chat in another tab drops one button (the row's own click does the same). */
 .chat-items { container: chatlist / inline-size; }
 @container chatlist (max-width: 240px) {
   .chat-item.drops-one .chat-act-drop { display: none; }
   .chat-item.drops-one:hover .chat-title, .chat-item.drops-one:focus-within .chat-title { padding-right: min(var(--actions-w-narrow), 55%); }
-  .chat-item.drops-one:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w-narrow) + 56px), 70%); }
   @media (hover: none) { .chat-item.drops-one .chat-title { padding-right: min(var(--actions-w-narrow), 55%); } }
 }
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
 @media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
-.chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
-.chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
-.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
+/* Pinned chats: a small mark before the title; a search hit shows the words around the match under it. */
+.chat-item.pinned .chat-title::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-snippet { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-views { display: flex; gap: 4px; margin: 0 8px 6px; }
+.chat-view { flex: 1; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
+.chat-view.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.chat-view:focus-visible { outline: 2px solid var(--accent); }
+/* The Undo bar after a delete, fixed to the window so a redrawn list does not remove it. */
+.chat-undo-toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)), 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 13px; }
+.chat-undo-toast button { border: 0; border-radius: 6px; padding: 4px 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: default; }
+.chat-undo-toast button:focus-visible { outline: 2px solid var(--accent); }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
@@ -1775,7 +1822,8 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   .chat-badge .cm-glyph { stroke: Canvas; }
   .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
   .chat-actions { background: Canvas; border: 1px solid CanvasText; }
-  .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
+  .chat-undo-toast { background: Canvas; border: 1px solid CanvasText; }
+  .chat-view.on { border: 1px solid CanvasText; }
   .chat-stop-wait { color: LinkText; border-color: LinkText; forced-color-adjust: none; }
 }
 /* ---- translate.css */
@@ -2108,6 +2156,61 @@ button.rs-title:hover { color: var(--accent); text-decoration: underline; }
 .msg.assistant .reply-routine svg { width: 13px; height: 13px; }
 .msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
+/* ---- chat-actions.css */
+/* What sits on and under chat messages (renderer/chat-actions.js): the row under your message (time, Copy, Edit, versions), the strip
+   under a reply (versions, model, time, thumbs), long messages cut short, and a reopened chat's thinking and steps. */
+
+/* ---- under your message: no height of its own, so the gap under the bubble is the same with or without it */
+.msg-user-actions { position: relative; z-index: var(--z-raised); height: 0; margin: 0; }
+.msg-user-actions[hidden] { display: none; }
+.msg-user-tools { position: absolute; right: 2px; top: -17px; height: 16px; display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.msg-hover { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--t-fast) ease-out; }
+.msg.user:hover + .msg-user-actions .msg-hover, .msg-user-actions:hover .msg-hover, .msg-user-actions:focus-within .msg-hover,
+.msg.assistant:hover .reply-meta .msg-hover, .reply-meta:focus-within .msg-hover { opacity: 1; }
+.msg-time { font-size: 11px; color: var(--faint); white-space: nowrap; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.msg-user-tools .msg-edit { height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msg-user-tools .msg-edit:hover { background: var(--field); color: var(--text); }
+.msg-copy { width: 20px; height: 16px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg-copy svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.msg-copy:hover { background: var(--field); color: var(--text); }
+.msg-copy.copied { color: var(--accent); }
+body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
+
+/* ---- ‹ 2/3 ›: always visible; steps are off while a reply runs */
+.msg-versions { display: inline-flex; align-items: center; gap: 0; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.msg-version-step { width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg-version-step svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.msg-version-step:hover:not(:disabled) { background: var(--field); color: var(--text); }
+.msg-version-step:disabled { opacity: 0.35; cursor: default; }
+.msg-version-count { min-width: 26px; text-align: center; }
+body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
+
+/* ---- under a reply: versions, model, time and thumbs on the left (Copy and Regenerate stay at the right corner) */
+.reply-meta { position: absolute; left: 0; bottom: -22px; height: 22px; max-width: calc(100% - 56px); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.msg.assistant:has(> .reply-meta) { margin-bottom: 26px; }
+.reply-meta .reply-model { position: static; min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.reply-meta .msg-time { padding: 0; flex: none; }
+.reply-thumbs { display: inline-flex; align-items: center; flex: none; }
+.reply-thumb { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.reply-thumb svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.msg.assistant:hover .reply-thumb, .reply-thumb:focus-visible, .reply-thumbs.rated .reply-thumb[aria-pressed="true"] { opacity: 1; }
+.reply-thumb:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
+.reply-thumb[aria-pressed="true"] { color: var(--accent); }
+.reply-thumb[aria-pressed="true"] svg { fill: currentColor; fill-opacity: 0.18; }
+
+/* ---- a long message of yours: cut short; its Show more sits in the row under it */
+.msg.user.clamped:not(.expanded):not(.editing) { max-height: 11.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.msg-more { height: 16px; padding: 0 4px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.msg-more:hover { text-decoration: underline; }
+
+/* ---- a reopened chat: its thinking (collapsed) and the steps it took, as they were */
+.step-group { margin: 3px 0; }
+.step-group > summary { cursor: pointer; list-style: none; margin: 0; }
+.step-group > summary::-webkit-details-marker { display: none; }
+.step-group > summary .step-detail::after { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 0 2px 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--t-base) var(--spring-smooth); }
+.step-group[open] > summary .step-detail::after { transform: rotate(-135deg); }
+.step-items { margin: 2px 0 4px 14px; }
+.notice-continue { margin-left: 4px; }
 /* ---- macros.css */
 /* Macros in the main window (renderer/macros.js): the progress toast in the tab strip's row, and the form that asks
    for a macro's {{variables}} above the composer. Kept apart from styles.css so restyles there merge cleanly. */

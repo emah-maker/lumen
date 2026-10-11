@@ -1,0 +1,25 @@
+/* lumen://chat: the canvas side panel (chat-canvas.js). */
+.cv { position: relative; flex: none; min-width: 320px; max-width: calc(100% - 360px); display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--border); }
+.cv[hidden] { display: none; }
+.cv-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; }
+.cv-grip:hover, .cv.resizing .cv-grip, .cv-grip:focus-visible { background: var(--accent-soft); outline: none; }
+.cv.resizing { user-select: none; }
+.cv.resizing .cv-frame { pointer-events: none; }
+.cv-head { flex: none; display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--hairline); }
+.cv-title { font: 500 11px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
+.cv-spacer { flex: 1; }
+.cv-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--field); }
+.cv-tabs[hidden] { display: none; }
+.cv-tab, .cv-btn { height: 24px; padding: 0 10px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.cv-tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.cv-tab:hover, .cv-btn:hover, .cv-tab:focus-visible, .cv-btn:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+.cv-close { font-size: 16px; line-height: 1; padding: 0 8px; }
+.cv-code { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto; background: var(--field); font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
+.cv-code[hidden], .cv-preview[hidden] { display: none; }
+.cv-preview { flex: 1; min-height: 0; display: flex; background: #fff; }
+.cv-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.code-canvas { margin-right: 2px; }
+@media (max-width: 900px) {
+  .cv { position: absolute; right: 0; top: 0; bottom: 0; max-width: 100%; z-index: 5; box-shadow: -8px 0 24px rgba(0,0,0,.18); }
+}
+body.chat-page .cp-main { position: relative; }

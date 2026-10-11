@@ -39,6 +39,18 @@ const path = require('path');
   await app.evaluate(() => global.__agent.reset()); // settings apply to new chats
   check('ADHD rules back when turned on again', (await ask()).includes('short, focused answers; follow this'), 'missing');
 
+  // Custom instructions (Settings > AI): typed in the two boxes, sent in the system prompt of a new chat, off with the toggle.
+  check('Settings has the two instruction boxes and a toggle', (await inSettings("['ai-instructions-about', 'ai-instructions-style', 'pref-aiInstructionsOn'].every((id) => document.getElementById(id))")) === true, 'missing');
+  await inSettings("(() => { const b = document.getElementById('ai-instructions-about'); b.value = 'I am a marine biologist.'; b.dispatchEvent(new Event('change')); })()");
+  await ui.waitForTimeout(400);
+  await app.evaluate(() => global.__agent.reset());
+  const withNote = await ask();
+  check('the note is in the system prompt, as user preferences', /<user_preferences>[\s\S]*I am a marine biologist\.[\s\S]*<\/user_preferences>/.test(withNote), withNote.slice(-300));
+  await inSettings("document.getElementById('pref-aiInstructionsOn').click()");
+  await ui.waitForTimeout(400);
+  await app.evaluate(() => global.__agent.reset());
+  check('toggled off: not sent', !(await ask()).includes('marine biologist'), 'still sent');
+
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
   process.exit(failures ? 1 : 0);

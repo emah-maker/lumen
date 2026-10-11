@@ -1,7 +1,9 @@
-// The Downloads page: every download Lumen remembers this session (features/downloads.js keeps the
-// latest 50), with open, show in folder, pause, resume, cancel, retry and remove.
+// The Downloads page: every download Lumen remembers (features/downloads.js keeps the latest 1000; the page
+// shows 100 at a time), with open, show in folder, pause, resume, cancel, retry and remove (with Undo).
 const api = window.lumenDownloads;
 let entries = [];
+const PAGE = 100; // rows shown before "Show more"
+let shownLimit = PAGE;
 
 const $ = (id) => document.getElementById(id);
 const list = $('list');
@@ -20,6 +22,13 @@ const size = (n) => {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 };
 
+// When a finished download ended: a time today, a date before (as the toolbar's panel shows it).
+const when = (time) => {
+  if (!time) return '';
+  const d = new Date(time);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
 // The wording is locales/en.json (dlpage.*), through window.t (i18n.js).
 const t = window.t || ((key) => key);
 
@@ -36,7 +45,18 @@ function button(d, action, label = t(`dlpage.action.${action}`)) {
   const b = el('button', { type: 'button', textContent: label });
   b.dataset.action = action;
   b.setAttribute('aria-label', t('dlpage.action.label', { action: label, name: d.name }));
-  b.onclick = async () => { await api.act(d.id, action); await load(); };
+  b.onclick = async () => {
+    const removed = action === 'remove' && (await api.act(d.id, action));
+    if (action !== 'remove') await api.act(d.id, action);
+    if (removed) {
+      const name = d.name;
+      window.managersToast?.({
+        text: t('dlpage.removed', { name }), undoLabel: t('dlpage.undo'),
+        onUndo: async () => { if (await api.act(d.id, 'restore')) await load(); },
+      });
+    }
+    await load();
+  };
   return b;
 }
 
@@ -54,7 +74,7 @@ function row(d) {
   const failed = d.state === 'interrupted' || (d.state === 'completed' && !d.exists);
   const main = el('div', { className: 'main' },
     el('span', { className: 'title', textContent: d.name }),
-    el('span', { className: `detail${failed ? ' state-failed' : ''}`, textContent: [statusOf(d), host(d.url)].filter(Boolean).join(' · ') }));
+    el('span', { className: `detail${failed ? ' state-failed' : ''}`, textContent: [statusOf(d), host(d.url), d.state === 'progressing' ? '' : when(d.endedAt)].filter(Boolean).join(' · ') }));
   const r = el('div', { className: 'row' }, main, el('div', { className: `actions${d.state === 'progressing' ? ' always' : ''}` }, ...actions));
   r.dataset.id = String(d.id);
   r.dataset.state = d.state;
@@ -78,7 +98,10 @@ function render() {
     list.append(el('p', { className: 'empty', textContent: q ? t('dlpage.noMatch') : t('dlpage.none') }));
     return;
   }
-  list.append(el('section', {}, ...shown.map(row)));
+  list.append(el('section', {}, ...shown.slice(0, shownLimit).map(row)));
+  if (shown.length > shownLimit) {
+    list.append(el('button', { type: 'button', className: 'more', textContent: t('dlpage.showMore', { count: shown.length - shownLimit }), onclick: () => { shownLimit += PAGE; render(); } }));
+  }
   if (keep) list.querySelector(`.row[data-id="${keep.id}"] [data-action="${keep.action}"]`)?.focus();
 }
 
@@ -90,6 +113,6 @@ async function load() {
 // Progress arrives many times a second: refresh at most every 250 ms.
 api?.onChange(() => { if (!pending) pending = setTimeout(() => { pending = null; load(); }, 250); });
 $('folder').onclick = () => api.openFolder();
-query.addEventListener('input', render);
+query.addEventListener('input', () => { shownLimit = PAGE; render(); });
 query.focus();
 load();

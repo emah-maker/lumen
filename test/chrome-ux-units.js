@@ -71,4 +71,26 @@ check('tab strip: state notes join the accessible name; no-favicon pages get a m
 check('toolbar: the AI button says "Set up AI" until a model is connected', /who\.setup \? t\('toolbar\.aiSetup'\)/.test(appSrc) && /setup: true/.test(read('renderer/chat-core.js')), '');
 check('private window: a loopback http page is "local", not "Not secure"', /isLoopbackUrl\(state\.url\)/.test(read('renderer/private.js')) && /chrome-helpers\.js/.test(read('renderer/private.html')), '');
 
+// ---- polish pass: the suggestion list's selected row keeps its icon, History's time doesn't wrap, History reuses its tab, the Chrome DevTools key
+const suggestSrc = read('renderer/suggest.html');
+check("suggestions: --accent is defined in the list's own page (the selected row's icon uses it)", (suggestSrc.match(/--accent: #/g) || []).length === 2 && /li\.selected svg \{ stroke: var\(--accent\)/.test(suggestSrc), '');
+check('History: the time column fits "12:49 AM" on one line', /\.time \{[^}]*width: 68px;[^}]*white-space: nowrap/.test(read('renderer/history.html')), '');
+check('History: Ctrl+H goes back to the open History tab instead of opening another', /function openHistoryPage\(\) \{[\s\S]*?existing[\s\S]*?switchTab\(existing\.id\)/.test(mainSrc), '');
+check('DevTools: Ctrl+Shift+I opens them on Windows / Linux, and the shortcuts sheet lists it', /key === 'i'\) wc\?\.toggleDevTools\(\)/.test(mainSrc) && /\{ other: 'mod\+shift\+i' \}/.test(read('features/shortcuts-help.js')), '');
+check('tab strip: an address of numbers keeps the globe (no "1" tile)', /!\/\^\[\\d\.\]\+\$\/\.test\(host\)/.test(appSrc) && /!host\.startsWith\('\['\)/.test(appSrc), '');
+check('error hints name the menu the way the menu says it', !/Ad Blocker|Clear Cookies and Site Data/.test(EN['errorPage.kind.ERR_BLOCKED_BY_CLIENT.hint'] + EN['errorPage.kind.ERR_TOO_MANY_REDIRECTS.hint']), '');
+
+// ---- round 2: lumen:// addresses, Undo on removals, a longer Downloads list, camera / microphone wording
+const SP = require('../src/browser/site-permissions');
+check('permission prompt: a camera-only request says camera, a microphone-only one microphone, both say both', EN[SP.promptKey('media', { mediaTypes: ['video'] })] === 'use your camera' && EN[SP.promptKey('media', { mediaTypes: ['audio'] })] === 'use your microphone' && EN[SP.promptKey('media', { mediaTypes: ['audio', 'video'] })] === 'use your camera and microphone' && EN[SP.promptKey('media', {})] === 'use your camera and microphone' && SP.promptKey('geolocation', {}) === 'permission.geolocation', '');
+const askedLikeThis = (src) => src.includes("SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask");
+check("permission prompt: the private window and the main one ask the same way (promptKey for the undecided devices)", askedLikeThis(read("features/private-window.js")) && askedLikeThis(mainSrc), "");
+check('address bar: History, Bookmarks and Downloads show lumen:// addresses; Lumen pages get no star', /url\.startsWith\(HISTORY_URL\) \? 'lumen:\/\/history' : managerPageOf\(url\) \? `lumen:\/\/\$\{managerPageOf\(url\)\}`/.test(mainSrc) && /const lumenPage = Boolean\(active\?\.page\)/.test(appSrc), '');
+const { menuLabel } = require('../src/browser/menu-label');
+check('menus: a title keeps its & (written &&) and a long one is cut with an ellipsis', menuLabel('Q&A: Tom & Jerry') === 'Q&&A: Tom && Jerry' && menuLabel('x'.repeat(100)).length === 60 && menuLabel('x'.repeat(100)).endsWith('…') && menuLabel('  a \n b ') === 'a b' && menuLabel(undefined) === '', '');
+const dlSrc = read('features/downloads.js');
+check('Downloads: remembers up to 1000, the toolbar panel only its latest 50', /const KEEP = 1000;/.test(dlSrc) && /const PANEL_ROWS = 50;/.test(dlSrc) && !/downloads\.map\(panelEntry\)/.test(dlSrc), '');
+check('Downloads: a removed row can be restored (the page offers Undo)', /action === 'restore'\) return restore\(id\)/.test(dlSrc) && /managersToast/.test(read('renderer/downloads.js')) && /managersToast/.test(read('renderer/bookmarks.js')) && /bookmarks:restore/.test(read('features/managers.js')), '');
+check('warning pages: certificate, HTTPS-only and Safe Browsing wording is in en.json', ['certError.heading', 'certError.reason.authorityInvalid', 'httpsOnly.heading', 'httpsOnly.lead', 'safeBrowsing.malware.summary', 'safeBrowsing.lead'].every((k) => typeof EN[k] === 'string'), '');
+
 process.exit(failures ? 1 : 0);
