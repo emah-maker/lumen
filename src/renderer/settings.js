@@ -376,7 +376,7 @@ async function buildAi(card) {
   const permWarn = h('span', { class: 'note error', id: 'perm-warn' });
   const showPermWarn = (v) => { permWarn.textContent = v === 'bypass' ? tr('sidebar.perm.bypass.desc', 'The AI won’t ask before acting, reading PDFs, using your signed-in accounts, or sending what it read anywhere.') : ''; };
   const permissionRow = select('aiPermissionMode', tr('settings.ai.permissionMode', 'Asking before it acts'), tr('settings.ai.permissionModeDesc', 'Ask, Auto-allow actions, or Bypass permissions (the AI never asks).'),
-    ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: showPermWarn });
+    ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: (v) => { showPermWarn(v); window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'bypassBackground' } })); } }); // (leaving Bypass switches the background option off: its row follows)
   permissionRow.querySelector('.text').append(permWarn);
   showPermWarn(st.prefs.aiPermissionMode);
   // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).
@@ -393,6 +393,7 @@ async function buildAi(card) {
   );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
+    toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
