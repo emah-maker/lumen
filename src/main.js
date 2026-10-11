@@ -6,6 +6,9 @@ try { require('module').enableCompileCache?.(require('path').join(require('os').
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
+// A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
+// throwaway folder. First, before anything reads userData ("--mcp" is only the stdio bridge and sets its own below).
+if (!process.argv.includes('--mcp')) require('./features/profile-guard').apply(app, { test: TEST });
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
@@ -174,7 +177,7 @@ const APP_ID = 'com.lumen.browser';
 
 // Lumen was "Claude Browser": carry the old profile (settings, history, bookmarks, extensions,
 // saved chat) over to the new name once, before anything opens it.
-if (!TEST) {
+if (!TEST && (app.isPackaged || process.env.LUMEN_DEV_REAL_PROFILE === '1')) {
   const oldProfile = path.join(app.getPath('appData'), 'Claude Browser');
   const newProfile = app.getPath('userData');
   if (!fs.existsSync(newProfile) && fs.existsSync(oldProfile)) {
@@ -189,9 +192,7 @@ if (!TEST) {
 // group or the name Windows shows on its notifications.)
 if (process.platform === 'win32') app.setAppUserModelId(TEST ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
 
-if (TEST) {
-  app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
-}
+// (A test run's userData was set by the profile guard at the top: CLAUDE_BROWSER_PROFILE, else a temp folder, never the real profile.)
 
 
 // A stray error in the main process must not take the browser (and every open tab) down, or
@@ -4486,7 +4487,9 @@ function saveChat(generation = chatGeneration) {
   if (generation !== chatGeneration) return;
   clearTimeout(saveChatTimer);
   try {
-    if (!safeStorage.isEncryptionAvailable()) { chats().clearAll(); fs.rmSync(CHAT_FILE(), { force: true }); return; }
+    // No keychain (or not yet: Electron says so until the app is ready, which is where a copy of Lumen that quits because another
+    // one is running ends up): nothing is saved, and nothing already on disk is deleted.
+    if (!app.isReady() || !safeStorage.isEncryptionAvailable()) return;
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
@@ -8348,7 +8351,7 @@ ipcMain.handle('chats:list', (event) => {
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
-      const saved = chats().list();
+      const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));

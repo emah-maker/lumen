@@ -6,6 +6,11 @@
 //
 // The store keeps the newest `limit` chats; older ones are deleted as new ones are saved. An empty
 // chat (no messages yet) is never written, so New chat doesn't fill the list with blank entries.
+//
+// Chat files are only ever deleted one at a time, for a reason (the user deleted the chat, or it fell past the limit),
+// after the index on disk has been read again, and never for a chat another writer's index lists (a second Lumen, or a
+// test run, on the same profile). Nothing here removes the whole folder: a "clear everything" once ran from a second
+// process that quit before the keychain was ready, and took every chat with it.
 
 const fs = require('fs');
 const path = require('path');
@@ -35,6 +40,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   };
 
   let index = null; // { current, chats: [{ id, title, renamed, created, updated, model, usage }] }
+  const known = new Set(); // chat ids in the index as this store last read or wrote it
+  const foreign = new Set(); // ids another writer added to the index on disk meanwhile: never pruned or deleted here
+  const MAX_PRUNE = 3; // files one save may delete: more than that means something is wrong (a changed limit, a clobbered index), not that the list grew
   // The index can be lost to a half-written file, a locked keychain or another machine's keys. Only a
   // missing file means "no chats yet"; anything else must never become an empty index that the next
   // write would save over the real one (that orphaned every chat file).
@@ -75,18 +83,67 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     if (data) {
       index = { current: ID_RE.test(data.current) ? data.current : null, chats: Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [] };
+      remember(index);
       return index;
     }
     // No index (never written, or just set aside as corrupt): rebuild it from the chat files.
     const { chats, unreadable } = rebuildIndex();
     if (!chats.length && unreadable) return { current: null, chats: [], degraded: true }; // chats exist but can't be read now: retry next call
     index = { current: null, chats };
+    remember(index);
     if (chats.length && available()) { try { writeAtomic(indexFile, index); } catch { /* retried on the next write */ } }
     return index;
   }
-  const writeIndex = () => { const idx = readIndex(); if (!idx.degraded && available()) writeAtomic(indexFile, idx); };
+  // The index as it is on disk right now (null: it can't be read: locked, undecryptable, half-written). A missing file is an empty list.
+  function readDiskChats() {
+    let raw;
+    try { raw = fs.readFileSync(indexFile, 'utf8'); } catch (err) { return err?.code === 'ENOENT' ? [] : null; }
+    try {
+      const outer = JSON.parse(raw);
+      const data = outer.enc ? JSON.parse(decrypt(outer.enc)) : outer;
+      return Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [];
+    } catch { return null; }
+  }
+  // Another writer on this profile may have added chats to the index since we read it. They join ours (and are never
+  // pruned by us) so that our next write doesn't drop them and our prune doesn't delete their files.
+  // Returns false when the disk index can't be read: then nothing may be deleted.
+  function syncFromDisk(idx) {
+    const disk = readDiskChats();
+    if (!disk) return false;
+    for (const c of disk) {
+      if (known.has(c.id) || idx.chats.some((x) => x.id === c.id)) continue;
+      idx.chats.push(c);
+      known.add(c.id);
+      foreign.add(c.id);
+    }
+    return true;
+  }
+  const remember = (idx) => { known.clear(); for (const c of idx.chats) known.add(c.id); };
+  const writeIndex = () => {
+    const idx = readIndex();
+    if (idx.degraded || !available()) return;
+    syncFromDisk(idx);
+    writeAtomic(indexFile, idx);
+    remember(idx);
+  };
 
   const newId = () => crypto.randomBytes(8).toString('hex');
+
+  // An entry whose chat file is gone (deleted by something else, a synced folder that lost it) is marked `missing`: the
+  // History list must not show a row that opens empty (main.js leaves it out). Checked at most every few seconds per chat; the
+  // entry stays in the index, so a file that comes back (a restored backup) or is only held by a scanner shows again. A file missing at one look is looked at again after a moment
+  // (Windows can report a file being replaced by a rename as missing).
+  const FILE_CHECK_MS = 3000;
+  const fileChecks = new Map(); // id -> { at, ok }
+  function fileExists(id) {
+    const t = Date.now();
+    const seen = fileChecks.get(id);
+    if (seen && t - seen.at < FILE_CHECK_MS) return seen.ok;
+    let ok = fs.existsSync(chatFile(id));
+    if (!ok) { pause(25); ok = fs.existsSync(chatFile(id)); }
+    fileChecks.set(id, { at: t, ok });
+    return ok;
+  }
 
   // Newest first.
   function list() {
@@ -99,7 +156,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       try { fresh = autoTitle(load(c.id)); } catch { /* unreadable: the cleaned saved title below */ }
       c.title = fresh && fresh !== 'New chat' ? fresh : cleanSaved(c.title) || 'Screen capture';
     }
-    return [...chats].sort((a, b) => b.updated - a.updated);
+    return chats.map((c) => (fileExists(c.id) ? c : { ...c, missing: true })).sort((a, b) => b.updated - a.updated);
   }
 
   // A listed chat is read from disk, and on Windows a file that was just written or replaced can be unreadable for a
@@ -130,6 +187,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     const idx = readIndex();
     if (idx.degraded) return false; // the index can't be read right now: leave everything on disk as it is
     writeAtomic(chatFile(id), snapshot);
+    fileChecks.delete(id);
     let entry = idx.chats.find((c) => c.id === id);
     if (!entry) {
       entry = { id, title: '', renamed: false, created: now() };
@@ -144,12 +202,18 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return true;
   }
 
-  // Oldest chats past the limit go (never the open one).
+  // Oldest chats past the limit go (never the open one, never one another writer's index lists), a few per save at most,
+  // and only once the index on disk has been read again: if it can't be, nothing is deleted this time.
   function prune(idx) {
+    if (idx.chats.length <= limit) return;
+    if (!syncFromDisk(idx)) return;
     const keep = new Set([...idx.chats].sort((a, b) => b.updated - a.updated).slice(0, limit).map((c) => c.id));
     if (idx.current) keep.add(idx.current);
-    for (const c of idx.chats.filter((c) => !keep.has(c.id))) fs.rmSync(chatFile(c.id), { force: true });
-    idx.chats = idx.chats.filter((c) => keep.has(c.id));
+    for (const id of foreign) keep.add(id);
+    const doomed = idx.chats.filter((c) => !keep.has(c.id)).sort((a, b) => a.updated - b.updated).slice(0, MAX_PRUNE);
+    for (const c of doomed) fs.rmSync(chatFile(c.id), { force: true });
+    const gone = new Set(doomed.map((c) => c.id));
+    idx.chats = idx.chats.filter((c) => !gone.has(c.id));
   }
 
   function rename(id, title) {
@@ -167,7 +231,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!idx.chats.some((c) => c.id === id)) return false;
     idx.chats = idx.chats.filter((c) => c.id !== id);
     if (idx.current === id) idx.current = null;
-    fs.rmSync(chatFile(id), { force: true });
+    fs.rmSync(chatFile(id), { force: true }); // (one file: the chat the user deleted)
+    fileChecks.delete(id);
     writeIndex();
     return true;
   }
@@ -193,10 +258,13 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return id;
   }
 
-  // Everything off disk (the keychain went away): same as the old chat.json behaviour.
+  // The keychain is not available: stop keeping chats, but never delete what is on disk. (This used to remove the whole
+  // folder. "Not available" is also what Electron answers before the app is ready, and a second copy of Lumen, or a
+  // development run, on the same profile quits in that state: it wiped every chat of the running one.) The chats already
+  // on disk stay, unreadable until the keychain is back; save() refuses while it is not.
   function clearAll() {
-    fs.rmSync(dir, { recursive: true, force: true });
-    index = { current: null, chats: [] };
+    index = null; // forgotten in memory only; read again from disk when needed
+    known.clear(); foreign.clear(); fileChecks.clear();
   }
 
   return { list, load, save, rename, remove, current, setCurrent, migrate, newId, clearAll };
