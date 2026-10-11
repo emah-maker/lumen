@@ -229,7 +229,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -4496,6 +4496,28 @@ const chats = () => (chatStore ||= createChatStore({
   legacyFile: CHAT_FILE(),
 }));
 let chatId = null; // the open chat
+// [temporary chat] Chats started with "Temporary chat" on the chat page: never written to disk, never listed (they live only in
+// memory until the user leaves them). Ids are random, so the set simply stays for the session.
+const temporaryChats = new Set();
+// [projects] A chat's project (features/chat-store.js) puts its instructions in the chat's system prompt (ai/project-instructions.js).
+const pendingProject = new Map(); // chat id -> project id: a new chat started inside a project, recorded when it is first saved
+const projectBlockFor = (id) => {
+  try {
+    const pid = pendingProject.get(id);
+    return require('./ai/project-instructions').block(pid ? chats().projects().find((p) => p.id === pid) : chats().projectOf(id));
+  } catch { return ''; }
+};
+// The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
+function syncProjectInstructions() {
+  const settings = agent.messages.settings;
+  if (!settings) return;
+  const block = projectBlockFor(chatId);
+  if (block) settings.projectInstructions = block; else delete settings.projectInstructions;
+}
+function keepPendingProject(id) {
+  const pid = pendingProject.get(id);
+  if (pid && chats().has(id)) { chats().setProject(id, pid); pendingProject.delete(id); }
+}
 const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
 // Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
 // after a restart starts with none, as before).
@@ -4520,6 +4542,7 @@ function chatSnapshot(messages) {
 
 function saveChat(generation = chatGeneration) {
   if (generation !== chatGeneration) return;
+  if (chatId && temporaryChats.has(chatId)) return; // [temporary chat] not kept
   clearTimeout(saveChatTimer);
   try {
     // No keychain (or not yet: Electron says so until the app is ready, which is where a copy of Lumen that quits because another
@@ -4529,6 +4552,7 @@ function saveChat(generation = chatGeneration) {
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
     chats().save(chatId, snapshot);
+    keepPendingProject(chatId);
     if (chats().current() !== chatId) chats().setCurrent(chatId);
   } catch (err) {
     console.error('Could not save chat:', err.message);
@@ -4595,6 +4619,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   announceModelIfChanged(); // each chat keeps its own model: the picker and the placeholders follow the chat now open
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
+  syncProjectInstructions();
   return chatView();
 }
 
@@ -4604,7 +4629,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
+  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -4619,11 +4644,12 @@ ipcMain.on('chat:sidebar-state', (event, open) => {
 });
 // Saves a chat left running into its own file (the open chat goes through saveChat).
 function saveChatOf(id, messages) {
+  if (temporaryChats.has(id)) return; // [temporary chat] not kept
   if (id === chatId && messages === agent.messages) { saveChat(); return; }
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) chats().save(id, snapshot);
+    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); }
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
@@ -7159,7 +7185,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -8300,16 +8326,21 @@ ipcMain.handle('agent:btw', async (event, id, text) => {
   }
 });
 ipcMain.on('agent:btw-cancel', (event, id) => { btwRuns.get(`${event.sender.id}:${id}`)?.abort(); });
-ipcMain.on('agent:reset', (event) => {
+// New chat; `temporary`: one that is never saved (chats:temporary).
+function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);
   switchChat(null);
+  if (temporary) temporaryChats.add(chatId);
   const forTab = pageTabOf(event.sender)?.id ?? activeId; // (a chat page's New chat is its own tab's)
   carriedTabs.delete(forTab);
   chatBind.bind(forTab, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
   if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
   pushAttention();
   chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
-});
+}
+ipcMain.on('agent:reset', (event) => startNewChat(event));
+// [temporary chat] A new chat that is not saved or listed; gone once the user leaves it. Returns the view.
+ipcMain.handle('chats:temporary', (event) => { startNewChat(event, { temporary: true }); return chatView(); });
 
 // ---- the sidebar's chat history list (features/chat-store.js)
 // [chat per tab] Where a chat lives: the tab it is bound to (or, while it works, the tab it works in).
@@ -8461,13 +8492,14 @@ ipcMain.handle('chats:list', (event) => {
     currentUsage: describeUsage(agent.messages.settings?.usage),
     currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
+    projects: chats().projects(), // [projects]
     chats: (() => {
       const badges = chatBadges();
       const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
+      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), ...(c.project ? { project: c.project } : {}), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
 });
@@ -8511,6 +8543,19 @@ ipcMain.handle('chats:show-tab', (event, id) => {
   withWindow(place.rec, () => { switchTab(place.tid); });
   if (rcAlive(place.rec)) { if (place.rec.win.isMinimized()) place.rec.win.restore(); place.rec.win.focus(); }
   return true;
+});
+// [projects] The list, and every change: a new one, an edit, delete (its chats stay, out of any project), a chat moved in or out,
+// and a new chat that starts inside a project.
+const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000) });
+ipcMain.handle('chats:project-save', (_e, project) => { const out = chats().saveProject(projectFields(project)); if (out) syncProjectInstructions(); return out; });
+ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; });
+ipcMain.handle('chats:project-set', (_e, id, projectId) => { const ok = chats().setProject(String(id), projectId ? String(projectId) : null); if (ok) syncProjectInstructions(); return ok; });
+ipcMain.handle('chats:new-in-project', (event, projectId) => {
+  if (!chats().projects().some((p) => p.id === String(projectId))) return null;
+  startNewChat(event);
+  pendingProject.set(chatId, String(projectId));
+  syncProjectInstructions();
+  return chatView();
 });
 ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
 // Deleting the open chat leaves an empty one in its place. A saved chat is only hidden for UNDO_MS (the Undo toast); then it is
@@ -8605,16 +8650,38 @@ function chatMarkdown(id, folder = null) {
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a
 // save dialog, so nothing is written anywhere the user didn't pick.
-ipcMain.handle('chats:export', async (_e, id) => {
+// "Copy as Markdown" (the chat page's menu): the text goes to the page, which puts it on the clipboard.
+ipcMain.handle('chats:markdown', (_e, id) => {
+  const out = chatMarkdown(String(id));
+  return out ? { ok: true, markdown: out.markdown } : { ok: false, reason: 'empty' };
+});
+// The chat as a PDF: its Markdown drawn by the same renderer the chat uses, in a window nobody sees (no scripts, no network), then printed.
+async function chatPdf(out) {
+  const body = require('./renderer/markdown.js').render(out.markdown);
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const css = 'body{font:11pt/1.5 system-ui,Segoe UI,sans-serif;color:#111;margin:0}h1{font-size:20pt}h2{font-size:12pt;margin:1.4em 0 .3em;color:#555;text-transform:uppercase;letter-spacing:.04em}pre{background:#f4f4f4;padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-word}code{font-family:Consolas,monospace;font-size:10pt}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:3px 8px}blockquote{margin:0;padding-left:12px;border-left:3px solid #ccc;color:#555}';
+  const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><title>${esc(out.title)}</title><style>${css}</style><body>${body}</body>`;
+  const view = new BrowserWindow({ show: false, webPreferences: { javascript: false, sandbox: true, contextIsolation: true } });
+  try {
+    await view.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    return await view.webContents.printToPDF({ printBackground: true });
+  } finally { view.destroy(); }
+}
+ipcMain.handle('chats:export', async (_e, id, format) => {
+  const pdf = format === 'pdf';
   const out = chatMarkdown(String(id));
   if (!out) return { ok: false, reason: 'empty' };
-  const fileName = `${cleanTitle(out.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 60).trim() || 'Chat'}.md`;
+  const fileName = `${cleanTitle(out.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 60).trim() || 'Chat'}.${pdf ? 'pdf' : 'md'}`;
   const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
     title: t('dialog.exportChat.title'),
     defaultPath: path.join(app.getPath('documents'), fileName),
-    filters: [{ name: 'Markdown', extensions: ['md'] }],
+    filters: [pdf ? { name: 'PDF', extensions: ['pdf'] } : { name: 'Markdown', extensions: ['md'] }],
   });
   if (canceled || !filePath) return { ok: false, reason: 'canceled' };
+  if (pdf) {
+    await fs.promises.writeFile(filePath, await chatPdf(out));
+    return { ok: true, filePath };
+  }
   // Pictures the AI made go in a folder beside the file, named in it (the Markdown links them).
   const folder = `${path.basename(filePath, path.extname(filePath))} pictures`;
   const withPictures = chatMarkdown(String(id), folder) || out;
@@ -8626,6 +8693,8 @@ ipcMain.handle('chats:export', async (_e, id) => {
   }
   return { ok: true, filePath };
 });
+if (TEST) global.__chatFiles = () => fs.readdirSync(path.join(app.getPath('userData'), 'chats')).length;
+if (TEST) global.__chatPdf = (id) => { const out = chatMarkdown(String(id)); return out ? chatPdf(out) : null; };
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 
 // ---------- pictures the AI made (features/gen-images.js) ----------

@@ -378,7 +378,7 @@ $('model').addEventListener('change', async (e) => {
   if (switched === 'next-message') {
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switchNext', { name: label }) }));
   } else if (messages.querySelector('.msg')) {
-    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switched', { name: label }) }));
+    append(Object.assign(document.createElement('div'), { className: 'notice model-switch', textContent: t('models.switched', { name: label }) })); // (the chat page draws it as a divider)
   }
   prompt.focus();
 });
@@ -2208,6 +2208,7 @@ function applySync(view) {
   showHistory(view?.items);
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
+  chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   chatHost.chatChanged?.();
 }
 window.assistant.onSync?.(({ view } = {}) => applySync(view));
