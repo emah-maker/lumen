@@ -287,7 +287,8 @@ const { openSettingsTab } = require('./settings-tab');
     const url = await waitFor(() => app.evaluate((_e, u) => { const now = global.__agent.browser.activeTab().webContents.getURL(); return now === `${u}/start` ? now : null; }, on));
     check('clicking it takes the tab back', url === `${on}/start`, url);
     const listedResult = await waitFor(() => ui.evaluate(() => document.querySelector('.run-undo-result')?.textContent || null));
-    check('and lists what it did', /Took a tab back to 127\.0\.0\.1/.test(listedResult || ''), listedResult);
+    // (The AI navigate now loads in a background tab of its own, so undoing it closes that tab; it used to take the user tab back.)
+    check('and lists what it did', /Closed the tab it opened \(127\.0\.0\.1\)/.test(listedResult || ''), listedResult);
   }
 
   check('no page errors in the UI', errors.length === 0, errors.join('; '));
