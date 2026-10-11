@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.24 (2026-10-11)
+
 - **A long paste no longer splits your chat.** Sending a message with a pasted block attached ("summarize the paste") in a chat could start a new chat, because the pasted words looked like a new topic. It now stays in the chat you are in. Reopening a chat and coming back after a restart also keeps its unsent draft in the right place.
 
 ## 0.5.23 (2026-10-11)
