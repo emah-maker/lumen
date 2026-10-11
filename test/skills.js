@@ -225,8 +225,9 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   }, code);
   await waitFor(async () => (await inChat('window.slashCommands?.list().length')) > 5);
   await inChat(`(() => { const p = document.getElementById('prompt'); p.focus(); p.value = '/tl'; p.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  const chatMenu = await waitFor(async () => { const n = await inChat("[...document.querySelectorAll('#slash-menu .slash-name')].map((e) => e.textContent).join()"); return n === '/tldr' && n; });
-  check('the full-page chat has the "/" menu too', chatMenu === '/tldr' && Boolean(chatTab), String(chatMenu));
+  const chatMenu = await waitFor(async () => { const n = await inChat("[...document.querySelectorAll('#slash-menu .slash-name')].map((e) => e.textContent).join()"); return n.split(',')[0] === '/tldr' && n; });
+  // (the menu matches loosely: "/tl" also lists /outlier-finder after /tldr, which comes first)
+  check('the full-page chat has the "/" menu too', String(chatMenu).split(',')[0] === '/tldr' && Boolean(chatTab), String(chatMenu));
   const chatApi = await inChat(`({ menu: typeof window.skillsApi?.menu, save: typeof window.skillsApi?.save, list: typeof window.skillsApi?.list, settings: typeof window.lumenSettings })`);
   check('and its bridge has the run calls only', chatApi.menu === 'function' && chatApi.save === 'undefined' && chatApi.list === 'undefined' && chatApi.settings === 'undefined', JSON.stringify(chatApi));
 

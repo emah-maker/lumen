@@ -218,7 +218,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   await shot(ui.locator('.approval-upload'), 'upload-card.png');
   const req0 = await app.evaluate(() => JSON.stringify(global.__reqs[0]));
   check('the model was told the file\'s name and ref, with the instruction to use upload_file', /<attached_files>/.test(req0) && /resume\.pdf/.test(req0) && /f_[0-9a-f]{24}/.test(req0) && /upload_file/.test(req0), req0.slice(-700));
-  check('the model was sent no file contents and no path (only the picture, which goes as a picture as before)', !/my resume, private/.test(req0) && (req0.match(/"type":"image"/g) || []).length === 1 && !req0.includes(work.replace(/\\/g, '\\\\')) && !req0.includes('"path"'), req0.slice(-500));
+  check('the model was sent no file contents and no path (only the picture, which goes as a picture as before; the auto screen capture of the page, since "this job form" refers to the screen, is not a file)', !/my resume, private/.test(req0) && (req0.replace(/<\/screen_capture>"},{"type":"image"/, '').match(/"type":"image"/g) || []).length === 1 && !req0.includes(work.replace(/\\/g, '\\\\')) && !req0.includes('"path"'), req0.slice(-500));
   await ui.locator('.approval-upload .btn.primary').click();
   await waitFor(async () => /plain: resume\.pdf/.test(await pageLog()) && (await pageLog()) !== logBefore);
   check('allowing it puts the file in the page\'s field', (await pageLog()).replace(logBefore, '').includes('plain: resume.pdf'), await pageLog());

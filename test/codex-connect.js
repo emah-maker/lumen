@@ -95,10 +95,14 @@ const os = require('os');
       const read = await ask('tools/call', { name: 'read_page', arguments: {} }, 60000);
       const readText = (read.result?.content || []).map((c) => c.text || '').join('\n');
       check('Codex calls read_page and reads the page', !read.result?.isError && /Hello from the fixture/.test(readText), readText.slice(0, 300));
-      const pill = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent }));
-      check('the "driven by" pill names Codex', pill.active && pill.text === 'Lumen is being driven by Codex', JSON.stringify(pill));
-      const steps = await ui.$$eval('.mcp-step', (els) => els.map((e) => e.textContent));
-      check('the calls show in the sidebar as Codex\'s steps', steps.some((x) => x.startsWith('Codex:')), JSON.stringify(steps));
+      // [agents out of sight] Codex works in a window of its own: its pill is there, never in the user's window.
+      let aui = null;
+      for (let i = 0; i < 100 && !aui; i++) { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window')).catch(() => false)) aui = p; if (!aui) await ui.waitForTimeout(100); }
+      const snap = () => (aui || ui).evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent, steps: [...document.querySelectorAll('.mcp-step')].map((e) => e.textContent) }));
+      const pill = await snap();
+      check('the pill in the agent window names Codex and what it is doing', Boolean(aui) && pill.active && /^Codex: /.test(pill.text), JSON.stringify(pill));
+      const mine = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), steps: document.querySelectorAll('.mcp-step').length }));
+      check('the user window shows neither the pill nor the steps', !mine.active && mine.steps === 0, JSON.stringify(mine));
     } catch (e) {
       check('Codex-style session against the running Lumen', false, e.message);
     } finally {
