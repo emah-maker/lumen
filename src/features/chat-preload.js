@@ -23,6 +23,9 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
+    rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected),
+    switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target),
+    feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value),
     btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task
     btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
     onBtw: on('agent:btw-event'),

@@ -52,6 +52,8 @@ module.exports = [
   { files: ['src/renderer/chat-page.js'], languageOptions: { globals: { t: 'readonly', $: 'readonly', chatHost: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', loadModels: 'readonly', refreshSetup: 'readonly', startChat: 'readonly', beginTurn: 'readonly', resumeLive: 'readonly', turn: 'readonly', runId: 'writable', shownChatId: 'writable' } } },
   // chat-commands.js (the chat's "/" commands) opens chat-core.js's model picker.
   { files: ['src/renderer/chat-commands.js'], languageOptions: { globals: { modelPicker: 'readonly' } } },
+  // chat-actions.js (message actions, versions, thumbs) is loaded after chat-core.js and uses its helpers when something is clicked.
+  { files: ['src/renderer/chat-actions.js'], languageOptions: { globals: { t: 'readonly', messages: 'readonly', running: 'readonly', applySync: 'readonly', askOf: 'readonly', editBubble: 'readonly', TOOL_LABELS: 'readonly' } } },
   // tabs-ask.js ("@" tabs in the composer) is loaded after chat-core.js and uses t and updateSend.
   { files: ['src/renderer/tabs-ask.js'], languageOptions: { globals: { t: 'readonly', updateSend: 'readonly' } } },
   // chats.js is loaded after app.js and uses its helpers.

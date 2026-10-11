@@ -2638,5 +2638,16 @@
   "usage.todayTotal": "{usage} today",
   "chats.usage.line": "This chat: {usage}",
   "chat.step.took": "Took {time}",
-  "composer.stop.short": "Stop"
+  "composer.stop.short": "Stop",
+  "chat.copyMessage": "Copy message",
+  "chat.versions": "Versions of this message",
+  "chat.versionPrev": "Previous version",
+  "chat.versionNext": "Next version",
+  "chat.versionOf": "{n}/{total}",
+  "chat.rateReply": "Rate this reply",
+  "chat.goodReply": "Good reply",
+  "chat.badReply": "Bad reply",
+  "chat.showMore": "Show more",
+  "chat.showLess": "Show less",
+  "chat.thought": "Thought process"
 }

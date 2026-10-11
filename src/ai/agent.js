@@ -15,6 +15,7 @@ const effortLib = require('./effort'); // Settings → AI → AI providers: reas
 const providerUsage = require('../features/provider-usage'); // [usage] an API turn's tokens, estimated cost and rate-limit headers
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
+const branches = require('../features/chat-branches'); // [versions] per-message details and regenerate/edit versions
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const annotate = require('./annotate'); // [annotate] the annotate tool: marks drawn over the page (or the PDF viewer, or a screenshot)
@@ -1387,11 +1388,35 @@ async function searchWebInView(query) {
 // Also used for chats in the history list and for exporting one (main.js).
 const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 // settings.compactedItems: turns an API chat's /compact replaced with a summary (features/chat-compact.js), still shown.
-function transcriptFor(chatMessages, settings = chatMessages.settings) {
+// The extra fields of a transcript item (see transcriptFor).
+function itemExtras(chatMessages, m, mi) {
+  const meta = branches.getMeta(m) || {};
+  const out = {};
+  if (meta.id) out.id = meta.id;
+  if (meta.at) out.at = meta.at;
+  if (m.role === 'user') {
+    const versions = branches.forkView(chatMessages, mi);
+    if (versions) out.versions = versions;
+    return out;
+  }
+  const model = producedBy.get(m);
+  if (model) out.model = model;
+  if (meta.thinking) { out.thinking = meta.thinking; if (meta.thinkingMs) out.thinkingMs = meta.thinkingMs; }
+  if (meta.tools) out.tools = meta.tools;
+  if (meta.auto) out.auto = meta.auto;
+  if (meta.feedback) out.feedback = meta.feedback;
+  return out;
+}
+function transcriptFor(chatMessages, settings = chatMessages.settings, track = null) {
   const items = Array.isArray(settings?.compactedItems) ? settings.compactedItems.map((it) => ({ ...it, images: [] })) : [];
+  if (track) for (let k = 0; k < items.length; k++) track.push(-1); // (turns /compact replaced belong to no message)
   let steps = 0;
   let acted = false;
-  for (const m of chatMessages) {
+  // [versions] What a message carries beyond its text (chat-branches.js): its id and time, the model, the thinking and the steps it took,
+  // the thumb it got; a user message that was asked again, its versions. `track` gets each item's message index.
+  const push = (item, m, mi) => { items.push({ ...item, ...itemExtras(chatMessages, m, mi) }); if (track) track.push(mi); };
+  for (let mi = 0; mi < chatMessages.length; mi++) {
+    const m = chatMessages[mi];
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(uploadFiles.FILES_BLOCK, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '').replace(screenContext.SCREEN_BLOCK, '').replace(screenContext.DROPPED_NOTE, '')).join('\n').trim();
@@ -1405,8 +1430,8 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       // mid-tool) must not lend its step count or "acted" to the next.
       if (text || images.length || files.length) { steps = 0; acted = false; }
       const fileField = { ...(files.length ? { files } : {}), ...(shot ? { screen: { id: shot.id, kind: shot.kind, title: shot.title, ...(shotBlock ? { image: `data:${shotBlock.source.media_type};base64,${shotBlock.source.data}` } : {}) } } : {}) };
-      if (text === 'The user attached the image(s) above without a message.' || text === uploadFiles.FILES_ONLY_TEXT) items.push({ role: 'user', text: '', images, ...fileField });
-      else if (text || images.length || files.length) items.push({ role: 'user', text, images, ...fileField });
+      if (text === 'The user attached the image(s) above without a message.' || text === uploadFiles.FILES_ONLY_TEXT) push({ role: 'user', text: '', images, ...fileField }, m, mi);
+      else if (text || images.length || files.length) push({ role: 'user', text, images, ...fileField }, m, mi);
     } else {
       steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
       acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
@@ -1417,13 +1442,13 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       const name = authorName(producedBy.get(m));
       if (name) pictures.by = name;
       if (text && final) {
-        items.push({ role: 'assistant', text, images: [], ...pictures, steps, ...(acted ? { acted: true } : {}) });
+        push({ role: 'assistant', text, images: [], ...pictures, steps, ...(acted ? { acted: true } : {}) }, m, mi);
         steps = 0;
         acted = false;
       } else if (text) {
-        items.push({ role: 'assistant', text, images: [], ...pictures });
+        push({ role: 'assistant', text, images: [], ...pictures }, m, mi);
       } else if (generated.length) {
-        items.push({ role: 'assistant', text: '', images: [], ...pictures, ...(final ? { steps, ...(acted ? { acted: true } : {}) } : {}) });
+        push({ role: 'assistant', text: '', images: [], ...pictures, ...(final ? { steps, ...(acted ? { acted: true } : {}) } : {}) }, m, mi);
         if (final) { steps = 0; acted = false; }
       }
     }
@@ -1592,19 +1617,25 @@ class Agent {
   // Serializable copy of the conversation, for saving between app launches.
   // `messages`: another chat's array (one left running, see detach), or the open chat's.
   snapshot(messages = this.messages) {
+    const ser = (m) => ({ role: m.role, content: m.content, author: producedBy.get(m) || null });
+    const forks = branches.serializeForks(messages.forks, ser); // [versions] only a chat that has some carries the field
     return {
       settings: messages.settings || null,
-      messages: messages.map((m) => ({ role: m.role, content: m.content, author: producedBy.get(m) || null })),
+      messages: branches.serializeMessages(messages, ser),
+      ...(forks ? { forks } : {}),
     };
   }
 
   restore(snapshot) {
     if (!snapshot || !Array.isArray(snapshot.messages)) return;
-    const messages = snapshot.messages.map(({ role, content, author }) => {
+    const hyd = ({ role, content, author }) => {
       const message = { role, content };
       if (author) producedBy.set(message, author);
       return message;
-    });
+    };
+    const messages = branches.hydrateMessages(snapshot.messages, hyd);
+    const forks = branches.hydrateForks(snapshot.forks, hyd);
+    if (forks.length) messages.forks = forks;
     if (snapshot.settings) messages.settings = snapshot.settings;
     this.settleStandIn(messages.settings);
     repairHistory(messages); // saved mid-task: answer the tool calls that never got a result
@@ -1618,7 +1649,7 @@ class Agent {
   // stack a second copy of it. True when there was one.
   // expected: the user's text of that exchange. 'rewound' | 'absent' (that message never reached the history, e.g.
   // it failed while the page was being read: nothing to take back) .
-  rewindLast(expected = '') {
+  rewindLast(expected = '', { version = false } = {}) {
     const m = this.messages;
     const want = String(expected || '').trim().slice(0, 200);
     for (let i = m.length - 1; i >= 0; i--) {
@@ -1626,18 +1657,92 @@ class Agent {
       if (m[i].role !== 'user' || !blocks.some((b) => b.type === 'text' || b.type === 'image')) continue;
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
       if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
-      const summary = compactLib.summaryBlockOf(m[i]); // [context] a /compact summary rides on the first message: it stays
-      m.splice(i);
-      if (summary) m.push({ role: 'user', content: [summary] }); // (the next message extends it, as after a stop)
-      m.simpleTurn = null;
-      this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
-      repairHistory(m);
-      // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
-      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; delete m.settings.cxSession; }
-      this.onEngineReset?.('rewind'); // its kept Claude Code process holds the old session (features/ai-agents.js)
-      return 'rewound';
+      return this.rewindAt(i, { version });
     }
     return 'absent';
+  }
+
+  // [versions] Regenerate and Edit on any user message of the chat (`ordinal`: its place among the user messages the sidebar shows):
+  // that message and everything after it is taken back, and kept as a version unless `version` is false. `expected`: its text, so a
+  // view that is out of step with the chat never cuts the wrong place. Returns { result: 'rewound' | 'absent', versions }.
+  rewindUser(ordinal, expected = '', { version = true } = {}) {
+    const found = this.userItemAt(ordinal);
+    if (!found) return { result: 'absent' };
+    const want = String(expected || '').trim().slice(0, 200);
+    if (want && !String(found.item.text || '').includes(want)) return { result: 'absent' };
+    const result = this.rewindAt(found.index, { version });
+    return { result, ...(result === 'rewound' ? { versions: (() => { const fork = this.messages.forks?.find((x) => x.at === found.index); return fork ? { at: fork.at, n: fork.tails.length, cur: fork.cur + 1 } : null; })() } : {}) };
+  }
+
+  // The `ordinal`-th user item of the transcript and the index of its message.
+  userItemAt(ordinal, messages = this.messages) {
+    const track = [];
+    const items = transcriptFor(messages, messages.settings, track);
+    let n = 0;
+    for (let k = 0; k < items.length; k++) if (items[k].role === 'user' && n++ === ordinal) return { item: items[k], index: track[k], k, items, track };
+    return null;
+  }
+
+  // The messages from `i` on are taken back (see rewindLast). Never mid-run: the callers check.
+  rewindAt(i, { version = false } = {}) {
+    const m = this.messages;
+    const summary = compactLib.summaryBlockOf(m[i]); // [context] a /compact summary rides on the first message: it stays
+    const tail = m.splice(i);
+    if (version && !summary) branches.keepVersion(m, i, tail); // (a summary-carrying first message: the old answer is not kept)
+    if (summary) m.push({ role: 'user', content: [summary] }); // (the next message extends it, as after a stop)
+    this.afterCut(m);
+    return 'rewound';
+  }
+
+  // The chat's messages changed under a local engine's feet (a rewind, another version): it starts over from ours.
+  afterCut(m) {
+    m.simpleTurn = null;
+    this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
+    repairHistory(m);
+    if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; delete m.settings.cxSession; }
+    this.onEngineReset?.('rewind'); // its kept Claude Code process holds the old session (features/ai-agents.js)
+  }
+
+  // [versions] Another version of the exchange at message `at` becomes the chat (and the one the next message continues). `target`: 0-based.
+  switchVersion(at, target) {
+    if (this.running) return false;
+    const m = this.messages;
+    if (!branches.switchVersion(m, at, target)) return false;
+    this.afterCut(m);
+    return true;
+  }
+
+  // The thumb under a reply: the reply that closes the exchange after the user message `ordinal`. value: 'up' | 'down' | null.
+  setFeedback(ordinal, value) {
+    const found = this.userItemAt(ordinal);
+    if (!found) return false;
+    const { items, track, k } = found;
+    let last = -1;
+    for (let j = k + 1; j < items.length && items[j].role !== 'user'; j++) if (items[j].role === 'assistant' && items[j].text) last = track[j];
+    const message = this.messages[last];
+    if (!message) return false;
+    branches.setMeta(message, { feedback: value === 'up' || value === 'down' ? value : undefined });
+    return true;
+  }
+
+  // [versions] After a run (or part of one): gives the messages added since `from` their id and time, and the final reply what it did
+  // (thinking, steps, the model Auto chose). `info`: { at, thinking, thinkingMs, tools, auto }. Safe to call again.
+  stampMessages(messages, from, info = {}) {
+    const now = info.at || Date.now();
+    for (let i = Math.max(0, from); i < messages.length; i++) {
+      const m = messages[i];
+      const meta = branches.getMeta(m);
+      if (!meta?.id || !meta?.at) branches.setMeta(m, { id: meta?.id || branches.newId(), at: meta?.at || now });
+    }
+    let last = -1;
+    for (let i = messages.length - 1; i >= Math.max(0, from); i--) {
+      if (messages[i].role !== 'assistant') continue;
+      const blocks = Array.isArray(messages[i].content) ? messages[i].content : [];
+      if (blocks.some((b) => b.type === 'text' && b.text?.trim()) || blocks.some((b) => b.type === 'generated_image')) { last = i; break; }
+    }
+    if (last < 0) return;
+    const patch = branches.cleanMeta({ thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, auto: info.auto });
+    if (patch) branches.setMeta(messages[last], patch);
   }
 
   // What the sidebar shows for a restored chat (see transcriptFor).
@@ -5417,6 +5522,14 @@ function toolError(err) {
   return /object has been destroyed|webcontents.*destroyed/i.test(text) ? TAB_CLOSED : text;
 }
 
+// The API's own sentence (error.message of its JSON body), not the raw body the SDK puts in err.message.
+function apiErrorText(err) {
+  const body = err?.error;
+  const inner = body?.error?.message ?? body?.message;
+  if (typeof inner === 'string' && inner.trim()) return inner.trim();
+  return String(err?.message || '').replace(/^\d{3}\s*/, '');
+}
+
 // auth: how Claude is reached ('key' | 'env' | 'cli' | null), from the browser adapter.
 function describeError(err, auth = null) {
   // Errors from OpenAI, Grok or Gemini are tagged with their provider in otherTurn().
@@ -5429,7 +5542,7 @@ function describeError(err, auth = null) {
   if (err instanceof sdk().RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
   if (err instanceof sdk().APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
   if (err instanceof sdk().InternalServerError || err?.status === 529) return { text: 'The Claude API is overloaded or having trouble right now. Try again in a minute.' };
-  if (err instanceof sdk().APIError) return { text: `The Claude API returned an error${err.status ? ` (${err.status})` : ''}: ${String(err.message || '').replace(/^\d{3}\s*/, '')}` };
+  if (err instanceof sdk().APIError) return { text: `The Claude API returned an error${err.status ? ` (${err.status})` : ''}: ${apiErrorText(err)}` };
   if (/object has been destroyed/i.test(err?.message || '')) return { text: TAB_CLOSED };
   if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
   return { text: String(err.message || err) };
