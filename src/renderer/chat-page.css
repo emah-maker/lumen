@@ -129,7 +129,8 @@ body.chat-page .cp-menu .icon-btn:hover { background: var(--hover); }
 body.chat-page.agent-active .cp-main { box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* ---------- the conversation: a centred column ---------- */
-body.chat-page .chat-usage { max-width: none; margin: 0; padding: 0 max(var(--cp-4), calc((100% - var(--cp-col)) / 2)) var(--cp-1); box-sizing: border-box; }
+/* the composer's Context meter says it; the sidebar keeps this line */
+body.chat-page .chat-usage { display: none; }
 body.chat-page .messages {
   max-width: none; margin: 0; width: 100%; box-sizing: border-box; line-height: 1.6; font-size: 15px;
   padding: var(--cp-2) max(var(--cp-4), calc((100% - var(--cp-col)) / 2)) calc(var(--composer-h) + var(--cp-bottom) + 56px);
