@@ -7504,6 +7504,7 @@ const widgets = createWidgets({
     clearTimeout(widgetRefreshTimer);
     widgetRefreshTimer = setTimeout(() => {
       refreshNewTabs();
+      spotifyWeb.sync(); appleMusicWeb.sync(); // a web card added, removed or switched to another mode: its view is placed, hidden or dropped now (the page only pushes a slot while it has one)
       for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
     }, 60);
   },
