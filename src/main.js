@@ -113,6 +113,7 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
 const slidesRt = slidesViewer.create();
+const sessionFiles = require('./features/session-files'); // file tabs in the saved session, and the "moved or deleted" page
 const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
 const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
 const pdfHandler = pdfViewer.createHandler({ netFetchFor: (ses) => (url, init) => ses.fetch(url, init) });
@@ -2443,7 +2444,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   } else if (!loaded) { // an adopted page is already on its way to its address
     // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
     // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
-    const first = pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
+    const absent = sessionFiles.loadTarget(url, ERROR_URL, fs.existsSync); // a file that is not there (moved, deleted): the page that says so, not a blank viewer
+    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
     wc.loadURL(first).catch(() => {});
   }
   return wc;
@@ -3023,10 +3025,11 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
-  if (url && !isInternal(url) && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
-    closedTabs.push(url);
+  const reopenUrl = isInternal(url) ? sessionFiles.savedUrl(url) : url; // (a file in its viewer reopens from the file's own address)
+  if (reopenUrl && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
+    closedTabs.push(reopenUrl);
     closedInfo.push(closedTabsKept.snapshot({ pinned: tab.pinned, groupId: tab.groupId, index, history: tab.pendingCloseHistory ?? navSnapshot(tab) }));
-    tabTools.noteClosed(url, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
+    tabTools.noteClosed(reopenUrl, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
   }
   if (closedTabs.length > 50) { closedTabs.splice(0, closedTabs.length - 50); closedInfo.splice(0, closedInfo.length - 50); } // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
@@ -3650,7 +3653,12 @@ function closeTabs(keepId, list) {
   for (const t of list) requestCloseTab(t.id);
 }
 
+// Ctrl+Shift+T brings back whichever was closed last, a tab or a whole window (as Chrome does): a window closed while others stayed open,
+// with its tabs, their order, groups, pins and the file tabs among them. `after` is how many closed tabs there were when it closed.
+const closedWindows = [];
 function reopenLastClosed() {
+  const last = closedWindows[closedWindows.length - 1];
+  if (last && closedTabs.length <= last.after) { closedWindows.pop(); createWindow({ restore: last.entry }); return; }
   if (closedTabs.length) reopenClosedTab(closedTabs.pop(), closedInfo.pop());
 }
 
@@ -5306,8 +5314,11 @@ function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
-  const saved = tabs.filter((t) => !t.isolated && (isWebUrl(urlOf(t)) || chatPage.isChatUrl(urlOf(t)))); // web pages, and lumen://chat (not research tabs: they would come back in the user's session)
-  const urls = saved.map(urlOf);
+  // What a tab keeps in the session: web pages, lumen://chat, and the file a file tab shows (a PDF or deck in its viewer is saved as the file's own
+  // address: the viewer's moves with an update). Not research tabs: they would come back in the user's session.
+  const savedOf = (t) => { const u = urlOf(t); return isWebUrl(u) || chatPage.isChatUrl(u) ? u : sessionFiles.savedUrl(u); };
+  const saved = tabs.filter((t) => !t.isolated && savedOf(t));
+  const urls = saved.map(savedOf);
   const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
   return {
     urls,
@@ -6733,7 +6744,15 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
-  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1 ? rec : null }); });
+  w.on('close', () => {
+    if (quitting) return;
+    const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
+    if (several && !rec.agent && !isSpare(rec) && !rec.mergedAway && !rec.pendingRestore) { // kept for Reopen Closed Window (Ctrl+Shift+T)
+      const entry = withWindow(rec, sessionEntry);
+      if (entry.urls.length) { closedWindows.push({ entry, rec, after: closedTabs.length }); if (closedWindows.length > 10) closedWindows.shift(); }
+    }
+    saveSession({ excluding: several ? rec : null });
+  });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
@@ -6742,6 +6761,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     freezeTimers.delete(rec);
     dropDeadWindowViews();
     winRecs.delete(rec);
+    const kept = closedWindows.find((c) => c.rec === rec);
+    if (kept) kept.after = closedTabs.length; // (its own tabs closing with it are not "closed after" it)
     if (rec === spareRec) spareRec = null;
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
@@ -7453,6 +7474,8 @@ if (TEST) {
     return items.map((i) => i.label);
   };
   global.__closedTabs = () => closedTabs.slice();
+  global.__closedWindows = () => closedWindows.length;
+  global.__reopenLastClosed = reopenLastClosed;
   // The tab strip's right-click menu (test/tabmenu.js): its items as { label, enabled }, and with
   // `label`, that item clicked.
   global.__tabMenu = (id, label) => {
@@ -8080,6 +8103,24 @@ ipcMain.on('pages:strings', (event) => {
 });
 ipcMain.handle('settings:strings',() => ({ locale: i18n().locale, strings: i18n().strings }));
 if (TEST) global.__i18n = () => i18n(); // test/a11y.js
+// "This file was moved or deleted" (features/session-files.js): the page is a tab's own, and the file is the one its address names.
+const missingFileOf = (event) => (event.senderFrame === event.sender.mainFrame ? sessionFiles.missingTarget(event.senderFrame?.url, ERROR_URL) : '');
+ipcMain.on('missingfile:folder', (event) => {
+  const target = missingFileOf(event);
+  let dir = sessionFiles.localPath(target);
+  while (dir && !fs.existsSync(dir)) { const up = path.dirname(dir); if (up === dir) { dir = ''; break; } dir = up; } // the nearest folder that is still there
+  if (dir) shell.openPath(dir).catch?.(() => {});
+});
+ipcMain.on('missingfile:choose', async (event) => {
+  const target = missingFileOf(event);
+  const wc = event.sender;
+  if (!target || wc.isDestroyed()) return;
+  const owner = BrowserWindow.fromWebContents(wc) || win;
+  const wanted = sessionFiles.localPath(target);
+  const { canceled, filePaths } = await electronDialog.showOpenDialog(owner, { title: t('dialog.missingFile.choose'), defaultPath: path.dirname(wanted), properties: ['openFile'] });
+  if (canceled || !filePaths[0] || wc.isDestroyed()) return;
+  wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
+});
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
