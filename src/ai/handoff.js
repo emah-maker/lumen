@@ -9,7 +9,7 @@ const RETRY_CLOSE = '</lumen_retry>';
 const RETRY_BLOCK = /<lumen_retry>[\s\S]*?<\/lumen_retry>\s*/g;
 
 // What the AI is told on the follow-up turn. Never shown in the chat (transcriptFor drops the block).
-const FOLLOWUP = `${RETRY_OPEN}Your last reply handed the work back to me. Don't. In one line, list what you tried. Then try a different approach with the tools you have: another tool, another page or source, a script, or a different route to the same result. Don't ask me to paste, open, copy, click or do any step you can do. Stop only if you are blocked by a sign-in only I can do, a purchase, a message to send, a CAPTCHA, a choice only I can make, or a destructive change that needs my OK, and say which.${RETRY_CLOSE}`;
+const FOLLOWUP = `${RETRY_OPEN}Your last reply handed the work back to me. Don't. In one line, list what you tried. Then try a different approach with the tools you have: another tool, another page or source, or a different route to the same result. Don't ask me to paste, open, copy, click or do any step you can do. If the answer is a script, command or formula, giving it to me is complete: don't go hunting for MATLAB, Octave, Python or any other program on this computer just to run it yourself. Stop only if you are blocked by a sign-in only I can do, a purchase, a message to send, a CAPTCHA, a choice only I can make, or a destructive change that needs my OK, and say which.${RETRY_CLOSE}`;
 
 // Reasons that need the user. Checked first: a reply that has one is never a handoff.
 const LEGIT = [
@@ -51,6 +51,26 @@ function bodyOf(reply) {
     .trim();
 }
 
+// A reply that delivers code, a script, a command or a formula as the answer ends with "run it", "save it as x.m",
+// "paste it into your terminal": that is how the answer is used, not the AI handing the work back.
+const RUN_VERB = /\b(?:run|runs|running|execute|executing|paste|pasting|save|saving|copy|copying|type|enter|compile|launch|load|import|source|call|use|put|drop|open (?:matlab|octave|python|a terminal|your terminal|the terminal|the command|the editor|an editor|your editor|a shell|powershell|cmd|the console|a console|your ide))\b/i;
+const RUN_TARGET = /\b(?:it|this|that|these|those|them|script|code|command|commands|snippet|program|function|macro|query|file|below|above|terminal|command window|command prompt|shell|console|editor|prompt|matlab|octave|python|node|bash|powershell|cmd)\b|\.\w{1,4}\b/i;
+const ASK_BACK = /\bhere\b|\bto me\b|\bin (?:the )?chat\b|\bsend me\b|\bshare\b|\bgive me\b|\b(?:text|contents?) of\b/i;
+const DELIVERS = /\b(?:here(?:'s| is| are)|below (?:is|are)|this is|i(?:'ve| have)? (?:wrote|written|made|put together|created|prepared|drafted))\b[^.!?\n]{0,60}\b(?:script|code|command|commands|snippet|function|macro|formula|equation|query|program|solution|steps?|instructions)\b/i;
+
+// The reply's text with the "run it / save it as / paste it into your terminal" sentences taken out, when the reply does
+// deliver something to use. What is left is judged as before. Returns { text, delivers, codeMain }.
+function withoutUsage(raw, body) {
+  const src = String(raw || '');
+  const code = (src.match(/```[\s\S]*?(?:```|$)/g) || []).join('');
+  const hasCode = code.replace(/```\w*/g, '').trim().length >= 3 || /`[^`\n]{3,}`/.test(src);
+  const delivers = hasCode || DELIVERS.test(body);
+  const codeMain = code.length >= 40 && code.length >= src.trim().length * 0.5;
+  if (!delivers) return { text: body, delivers, codeMain };
+  const text = body.split(/(?<=[.!?])\s+|\n+/).filter((sent) => !(RUN_VERB.test(sent) && RUN_TARGET.test(sent) && !ASK_BACK.test(sent))).join('\n').trim();
+  return { text, delivers, codeMain };
+}
+
 const STRONG_WINDOW = 700; // the last stretch of a reply, where the handoff usually is
 const SHORT_REPLY = 900; // a reply this short that says "I can't" is a give-up
 
@@ -58,9 +78,11 @@ const SHORT_REPLY = 900; // a reply this short that says "I can't" is a give-up
 // { handoff: boolean, kind: 'paste'|'access'|'user-step'|'open-elsewhere'|'cannot'|null, legit: string|null }.
 // `legit` is set when the reply stops for a reason that needs the user, and then `handoff` is false.
 function classify(reply, request = '') {
-  const body = bodyOf(reply);
+  const full = bodyOf(reply);
+  const used = withoutUsage(reply, full);
+  const body = used.text;
   const none = { handoff: false, kind: null, legit: null };
-  if (!body || body.length < 12) return none;
+  if (!full || full.length < 12 || !body) return none;
   // The last paragraph is what the user is asked to do; earlier text may be the answer's own substance.
   const tail = body.slice(-STRONG_WINDOW);
   const head = body.slice(0, STRONG_WINDOW);
@@ -77,6 +99,8 @@ function classify(reply, request = '') {
   const lastLine = body.split(/\n+/).filter(Boolean).pop() || '';
   if (/\?\s*$/.test(lastLine) && CHOICE.test(lastLine) && !kinds.some(([k]) => k === 'paste' || k === 'access')) return { handoff: false, kind: null, legit: 'choice' };
   if (!kinds.length) return none;
+  // A reply that is mostly code is the answer, unless it also says it can't or lacks access.
+  if (used.codeMain && !kinds.some(([k]) => k === 'cannot' || k === 'access')) return none;
   // A long reply with only a weak line is an answer with a caveat. A long one with a strong handoff in its tail is not.
   const strong = kinds.find(([, s]) => s);
   if (!strong && kinds.length < 2 && body.length >= SHORT_REPLY) return none;

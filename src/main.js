@@ -1978,11 +1978,17 @@ function makeSpareNewTab() {
 }
 // Every minute: the spare is dropped while memory is tight, and made again (once start-up is over) when it is not.
 scheduler.every('spare-policy', 60 * 1000, async () => {
-  if (TEST && !spareForTest) return;
+  if (TEST && !spareForTest && !spareChatForTest) return;
   const memory = await scheduler.memorySample(); // (shared with the tab-sleep sweep)
-  const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: Object.keys(memory).length ? memory : spareMemory() });
-  if (action === 'drop') closeSpareNewTab();
-  else if (action === 'make') makeSpareNewTab();
+  const facts = Object.keys(memory).length ? memory : spareMemory();
+  if (!TEST || spareForTest) {
+    const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: facts });
+    if (action === 'drop') closeSpareNewTab();
+    else if (action === 'make') makeSpareNewTab();
+  }
+  // the spare chat page: dropped with the new-tab one when memory is tight, and when no chat page has been used for half an hour
+  if (spareChat && (Date.now() - chatPageUsedAt > SPARE_CHAT_IDLE_MS || sparePolicy.spareAction({ hasSpare: true, firstTabDone, memory: facts }) === 'drop')) closeSpareChat();
+  else if (!spareChat && chatPageUsedAt) makeSpareChat();
 }, { whenHidden: 2 * 60 * 1000 });
 // { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
@@ -1997,6 +2003,48 @@ function takeSpareNewTab() {
 // it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
 if (TEST) global.__spareNewTab = { enable: (on = true) => { spareForTest = on; spareForced = on; if (on) makeSpareNewTab(); else closeSpareNewTab(); }, ready: () => Boolean(spareNewTab?.ready) };
 const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
+// ---- a chat page made ready before it is asked for, as the spare new-tab page is: opening the full-page chat (the Chat button,
+// Ctrl+Shift+L, a restored chat tab waking) used to wait for a new renderer process and ~30 scripts (about 250 ms). The spare loads
+// hidden, its calls held back (chat-preload.js) until a chat tab takes it ('chat:adopt'); then it starts as a fresh page does. Made only
+// for someone who uses the chat page (one opened or restored in the last half hour), one at a time, and dropped while memory is tight.
+let spareChat = null; // { view, prefs, locale, committed, at }
+let chatPageUsedAt = 0; // when a chat page was last opened (or found in the restored session)
+let spareChatForTest = false; // tests: off unless asked (test/chat-tab-speed.js)
+const SPARE_CHAT_IDLE_MS = 30 * 60 * 1000;
+function closeSpareChat() {
+  const s = spareChat;
+  spareChat = null;
+  if (s && !s.view.webContents.isDestroyed()) { try { s.view.webContents.close(); } catch {} }
+}
+function makeSpareChat() {
+  if ((TEST && !spareChatForTest) || spareChat || !chatPageUsedAt || Date.now() - chatPageUsedAt > SPARE_CHAT_IDLE_MS || !app.isReady()) return;
+  if (!spareChatForTest && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory() }) !== 'make') return; // (still starting up, or short of memory: the policy job makes it later)
+  const prefs = settingsBackend.tabWebPreferences(false);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs, preload: managers.preloadFor('chat'), additionalArguments: [chatPage.SPARE_FLAG] } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {}
+  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {}
+  const s = { view, prefs: JSON.stringify(prefs), locale: i18n().locale, committed: false, at: Date.now() };
+  view.webContents.once('dom-ready', () => { s.committed = true; }); // (its preload is in by then: it can be handed to a tab)
+  view.webContents.once('render-process-gone', () => { if (spareChat === s) { closeSpareChat(); setTimeout(makeSpareChat, 2000).unref?.(); } });
+  view.webContents.loadURL(chatPage.CHAT_URL).catch(() => {});
+  spareChat = s;
+}
+let spareChatTimer = null;
+const spareChatSoon = () => { clearTimeout(spareChatTimer); spareChatTimer = setTimeout(makeSpareChat, 1500); spareChatTimer.unref?.(); }; // (a moment after a page took the last one: not while that page starts)
+// A chat page was opened, or is in the session just restored: the next one is made ready.
+function noteChatPage() { chatPageUsedAt = Date.now(); spareChatSoon(); }
+// The spare's view for a chat tab (null: none, still loading, or made for other settings or another language).
+function takeSpareChat() {
+  const s = spareChat;
+  if (!s || !s.committed) return null;
+  spareChat = null;
+  const wc = s.view.webContents;
+  const fresh = !wc.isDestroyed() && !wc.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)) && s.locale === i18n().locale;
+  if (!fresh) { try { wc.close(); } catch {} return null; }
+  return s.view;
+}
+const adoptSpareChat = (view) => { if (!view.webContents.isDestroyed()) view.webContents.send('chat:adopt'); };
+if (TEST) global.__spareChat = { enable: (on = true) => { spareChatForTest = on; if (on) { chatPageUsedAt = Date.now(); makeSpareChat(); } else closeSpareChat(); }, ready: () => Boolean(spareChat?.committed), has: () => Boolean(spareChat), contents: () => spareChat?.view.webContents || null };
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
 // A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
@@ -2126,7 +2174,9 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (plainNewTab) spareSoon();
   const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && isWebUrl(url);
   const warm = webPage ? takeWarmTab() : null; // (its process is already up: see makeWarmTab)
-  const view = adopted || spare || warm || new WebContentsView({
+  if (managerPage === 'chat') noteChatPage();
+  const chatSpare = managerPage === 'chat' && !adopted && !history?.entries?.length && chatPage.isChatUrl(url) ? takeSpareChat() : null; // (a chat page that has already loaded)
+  const view = adopted || spare || chatSpare || warm || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -2137,7 +2187,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     },
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
-  if ((plainNewTab || settings || historyPage || managerPage) && !spare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
+  if ((plainNewTab || settings || historyPage || managerPage) && !spare && !chatSpare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
     try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
@@ -2146,7 +2196,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
-  const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
+  const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare || chatSpare) }); // `history`: Duplicate's copy of back/forward
+  if (chatSpare) adoptSpareChat(chatSpare); // its held calls go out: it starts as this tab's chat page
   if (curRec?.agent) prepareAgentTab(wc); // [agent window]
   // The spare page gets this tab's data in place (no reload, no extra history entry): hidden until it has drawn it (a
   // frame of the old data would flash otherwise). Usually it already shows the same data (its address says so) and is
@@ -2546,7 +2597,9 @@ function wakeTab(tab) {
   tab.lastActiveAt = Date.now(); // woken (even in the background): its idle clock starts again, so the next sweep doesn't put it straight back
   // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
   const warm = !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
-  const view = warm || new WebContentsView({
+  if (tab.managerPage === 'chat') noteChatPage();
+  const chatSpare = tab.managerPage === 'chat' && !tab.sleepHistory?.entries?.length && chatPage.isChatUrl(tab.sleepUrl || '') ? takeSpareChat() : null; // (a chat page that has already loaded)
+  const view = warm || chatSpare || new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
       ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
@@ -2564,8 +2617,9 @@ function wakeTab(tab) {
   raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
-  if (!warm) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
-  wireView(tab, tab.sleepUrl || newTabUrl(), history);
+  if (!warm && !chatSpare) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
+  wireView(tab, tab.sleepUrl || newTabUrl(), history, { loaded: Boolean(chatSpare) });
+  if (chatSpare) adoptSpareChat(chatSpare);
 }
 
 // A tab from the saved session that hasn't been opened yet: a sleeping tab (above) with no view,
@@ -5387,6 +5441,7 @@ function restoreTabsFrom(saved) {
     return;
   }
   tabGroups.restore(saved.groups);
+  if (saved.urls.some((u) => chatPage.isChatUrl(u))) chatPageUsedAt = Date.now(); // (the spare is made once start-up is over: firstTabLoaded)
   const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
   const live = require('./features/session-restore').liveIndices(saved.urls.length, active);
   let activeTabId = null;
@@ -6665,7 +6720,7 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
 let firstTabDone = false;
-firstTabLoaded.then(() => { firstTabDone = true; });
+firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSoon(); }); // (a session with a chat page in it: its next one is made now start-up is over)
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
@@ -7411,6 +7466,7 @@ chatPageRt = chatPage.create({
   goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
   goChat: (id) => { const { id: page } = openTab(chatPage.CHAT_URL, { managerPage: 'chat' }); takePlace(page, id); return page; }, // and the way back: the new-tab page becomes the chat page
   managersOpen: () => managers.open('chat'),
+  spareContents: () => spareChat?.view.webContents || null, // (the spare chat page, before a tab takes it: the strings it asks for at load)
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
   chatOf: (tabId) => chatBind.chatOf(tabId), // [chat per tab] the chat a chat page tab was left on
@@ -8462,7 +8518,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     const leftOut = chatImages.rejectionNotice(rejected);
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
@@ -8500,7 +8556,7 @@ ipcMain.on('agent:stop', (event, id) => {
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
-  else agent.stop();
+  else { agent.stop(); if (run?.messages) agent.stopFor(run.messages); } // [stop always works] the chat's own run, even when the agent's open conversation is another
 });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });

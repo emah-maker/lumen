@@ -166,6 +166,12 @@ const WATCHDOG_MS = 90 * 1000;
 // API or a big result takes minutes without one line of output. A tool call that is running (Lumen's own, or the CLI's in
 // full access) switches the watchdog off altogether; see turn().
 const AFTER_TOOL_FACTOR = 4;
+// [reply never ends] After the reply's last model call ended its turn (end_turn), a CLI that then goes quiet without a `result` line (a
+// Stop hook's extra turn, a background task, a tool result that never came back) would leave the reply "running" for ever: the watchdog is off
+// while a tool is in flight, and a quiet CLI that is not hung has nothing to say. This long with no line and no tool running, the reply is
+// ended as it stands (finalIdleMs). Long-running tools are never cut: while one is in flight (a Lumen call, or a CLI tool the model is
+// still waiting on) this does not run.
+const FINAL_IDLE_MS = 30 * 1000;
 // A fresh process that has not printed its first line yet is only starting (the CLI loads its settings and connects its MCP
 // servers, slowly on a machine busy with other Claude Code sessions), so it gets this much longer before it counts as hung.
 // Slowness alone is never a failure, and never a reason to hand the message to another model.
@@ -317,7 +323,7 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
     this.prewarmIdleMs = prewarmIdleMs;
     this.warmBackoffMs = warmBackoffMs;
@@ -327,6 +333,7 @@ class ClaudeCodeEngine {
     this.startupWatchdogMs = startupWatchdogMs;
     this.slowStartMs = slowStartMs;
     this.retryDelayMs = retryDelayMs;
+    this.finalIdleMs = finalIdleMs;
     this.interruptMs = interruptMs;
     this.onFresh = onFresh;
     this.gen = 0; // bumped by release(): a warm() started before it disposes its process when it lands
@@ -723,8 +730,14 @@ class ClaudeCodeEngine {
     let afterTool = false;
     const pending = new Map();
     let stall = null; // { ms, heard, tool, said } of the silence that ended the turn
+    // [reply never ends] finalSeen: the reply's last model call ended its turn (markFinal) and nothing has started since.
+    let finalSeen = false;
+    let finalTimer = null;
+    let forced = false; // the turn was ended by finalIdleMs of quiet, not by the CLI's `result`
+    let armFinal = () => {};
     const waitMs = () => (heard ? this.watchdogMs * (afterTool ? AFTER_TOOL_FACTOR : 1) : Math.max(this.watchdogMs, this.startupWatchdogMs));
     active.arm = () => {
+      armFinal();
       clearTimeout(active.dog);
       if (!this.watchdogMs || over || active.inflight > 0) return;
       const ms = waitMs();
@@ -736,6 +749,32 @@ class ClaudeCodeEngine {
     // (agent.js run: a run that is settling is waited for, not aborted). Never while a tool call is in flight, in a
     // subagent's own turn, or while compacting.
     let early = false;
+    const stepId = (id) => `cc-${String(id).replace(/[^w-]/g, '').slice(0, 60)}`;
+    // The model said it is done (end_turn, not a subagent's): a CLI tool still shown as running can only be one whose result never reached
+    // us (the model could not have ended its turn waiting on it), so its step is closed and it no longer keeps the watchdog off.
+    const markFinal = (msg) => {
+      if (msg.parent_tool_use_id || compacting || over || signal.aborted) return;
+      for (const id of [...active.builtin]) {
+        active.builtin.delete(id);
+        pending.delete(id);
+        active.inflight = Math.max(0, active.inflight - 1);
+        emit({ type: 'tool_done', id: stepId(id), ok: true });
+      }
+      finalSeen = true;
+      replyComplete(msg);
+    };
+    armFinal = () => {
+      clearTimeout(finalTimer);
+      if (!finalSeen || !this.finalIdleMs || over || active.inflight > 0 || active.builtin.size) return;
+      finalTimer = setTimeout(() => {
+        if (over || signal.aborted || active.inflight > 0 || active.builtin.size) return;
+        forced = true;
+        if (!result) result = { type: 'result', subtype: 'success', is_error: false, result: finalText || text, session_id: newSession, total_cost_usd: 0, usage: {} };
+        if (!early) { early = true; emit({ type: 'reply_complete' }); } // (once: a second one would end the next message's turn on screen)
+        settle({ code: null });
+      }, this.finalIdleMs);
+      finalTimer.unref?.();
+    };
     const replyComplete = (msg) => {
       if (early || msg.parent_tool_use_id || active.inflight > 0 || active.builtin.size || compacting || over || signal.aborted) return;
       early = true;
@@ -746,6 +785,7 @@ class ClaudeCodeEngine {
       clearTimeout(slow);
       if (msg.type === 'stream_event' || msg.type === 'assistant') afterTool = false; // the model is answering again
       else if (msg.type === 'user' && (Array.isArray(msg.message?.content) ? msg.message.content : []).some((b) => b.type === 'tool_result')) afterTool = true;
+      if (finalSeen && ((msg.type === 'stream_event' && /^(message_start|content_block_start)$/.test(msg.event?.type)) || (msg.type === 'assistant' && !msg.parent_tool_use_id && (msg.message?.content || []).some((b) => b.type === 'tool_use')) || (msg.type === 'user' && !msg.parent_tool_use_id && afterTool))) finalSeen = false; // (the model is at work again)
       active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
         rateLimit = msg.rate_limit_info;
@@ -767,7 +807,7 @@ class ClaudeCodeEngine {
         const e = msg.event || {};
         // The reply's last model call ended its turn (message_delta end_turn, no tool call of this turn still running): the
         // text is complete. `result` follows 0.8-1.1 s later (post_turn_summary in between); the screen need not wait for it.
-        if (e.type === 'message_delta' && e.delta?.stop_reason === 'end_turn') replyComplete(msg);
+        if (e.type === 'message_delta' && e.delta?.stop_reason === 'end_turn') { markFinal(msg); armFinal(); }
         // Each text block (one per turn around a tool call) starts a new paragraph, on screen and in
         // the saved reply alike; joined bare they ran together ("I'll check.The price is…").
         if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
@@ -777,7 +817,7 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
-        if (msg.message?.stop_reason === 'end_turn') replyComplete(msg); // (a CLI that puts it on the message itself)
+        if (msg.message?.stop_reason === 'end_turn') { markFinal(msg); armFinal(); } // (a CLI that puts it on the message itself)
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (b.type === 'tool_use' && b.id && !msg.parent_tool_use_id) pending.set(b.id, String(b.name || '').replace(/^mcp__lumen__/, ''));
@@ -828,6 +868,7 @@ class ClaudeCodeEngine {
     const { code } = await ended;
     over = true;
     clearTimeout(active.dog);
+    clearTimeout(finalTimer);
     clearTimeout(slow);
     signal.removeEventListener('abort', onAbort);
     if (proc.turn === current) proc.turn = null; // (not an interrupt's drain, which clears itself)
@@ -836,7 +877,7 @@ class ClaudeCodeEngine {
     const ok = Boolean(result && !result.is_error && result.subtype === 'success');
     if (ok) this.warmBlock = { until: 0, delay: 0 }; // a working CLI: pre-warming is worth trying again
     if (!proc.single) {
-      if (ok && !signal.aborted && !proc.exited) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
+      if (ok && !signal.aborted && !proc.exited && !forced) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
       else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining
     } else if (ok && this.keepAlive && !signal.aborted && prestart) {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
@@ -880,7 +921,7 @@ class ClaudeCodeEngine {
     // Sent again on a fresh process only when nothing ran: a turn that called a tool may have acted already.
     if (!result && reused && !fresh && !text && !finalText && active.tools === 0) return { retry: true };
     // What this message cost, not the process's running total (perTurnResult in cli-utils.js).
-    const counted = result ? perTurnResult(result, proc.usage) : null;
+    const counted = result ? (forced ? result : perTurnResult(result, proc.usage)) : null;
     const usage = usageOf(counted);
     // [context] Like Grok's (grok-build.js grokUsage): the last call's whole input, for the Usage log and the chat's meter.
     if (usage && lastCall) usage.contextTokens = (Number(lastCall.input_tokens) || 0) + (Number(lastCall.cache_read_input_tokens) || 0) + (Number(lastCall.cache_creation_input_tokens) || 0);
