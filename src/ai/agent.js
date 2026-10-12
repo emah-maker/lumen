@@ -1924,7 +1924,8 @@ class Agent {
 
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
       // (a chat that waited for a free slot); otherwise in the front tab.
-      const tab = (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
+      // [working-on chip] A chat-page run (extra.fromPage) about something other than the page in front starts with no tab: its tools take one when they need it.
+      const tab = extra.fromPage === true && !this.aboutCurrentPage(userText, extra) ? null : (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
       // [stop always works] Stop aborts the run's signal and every engine and tool wait honours it; a wait that somehow does not (a CLI that
       // went quiet mid-hook, a step stuck on something the abort never reaches) is given stopGraceMs and then left behind, so this run
       // still ends with its 'done' (below), the screen clears, and the next message does not wait for it for ever.

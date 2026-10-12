@@ -1560,12 +1560,15 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 
 /* Helpers is a labelled row in the sidebar's More menu now (styles.css .more-menu .menu-state): "Helpers  On". */
 
-/* Auto-allow actions (sidebar head): the bolt fills in accent while on. */
+/* The permission button (sidebar head, full-page chat header): the icon and name of the mode, one click to the next ([mode cycle], chat-core.js).
+   Ask is neutral, Auto is the accent colour, Bypass is a red-outlined pill with normal text (only Bypass is red). */
+.icon-btn.auto-allow { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: auto; min-width: 30px; padding: 0 9px 0 7px; white-space: nowrap; }
 .icon-btn.auto-allow svg path { fill: none; }
-.icon-btn.auto-allow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.icon-btn.auto-allow[aria-pressed="true"] svg path { fill: currentColor; }
-.icon-btn.auto-allow[data-mode="bypass"] { color: var(--danger); background: var(--danger-soft); }
-.icon-btn.auto-allow[data-mode="bypass"] svg path { fill: currentColor; }
+.icon-btn.auto-allow[data-mode="auto"] { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.auto-allow[data-mode="auto"] svg path { fill: currentColor; }
+.icon-btn.auto-allow[data-mode="bypass"], .icon-btn.auto-allow[data-mode="bypass"]:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--danger); }
+.icon-btn.auto-allow[data-mode="bypass"] svg { color: var(--danger); }
+.icon-btn.auto-allow.armed { box-shadow: inset 0 0 0 1.5px var(--text); }
 /* The bolt's menu (renderer/chat-core.js): Ask / Auto-allow actions / Bypass permissions. */
 .perm-menu { position: absolute; top: calc(100% + 4px); right: 8px; z-index: var(--z-menu); width: min(300px, calc(100vw - 16px)); padding: 4px; border-radius: 10px; background: var(--card, var(--surface-raised, var(--field))); box-shadow: 0 10px 28px -8px rgba(0,0,0,.32), 0 0 0 0.5px var(--border); }
 .perm-menu[hidden] { display: none; }
@@ -1578,10 +1581,13 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .perm-item.armed { background: var(--danger-soft); }
 .perm-item.armed .perm-desc { color: var(--text); font-weight: 600; }
 .perm-note { margin: 4px 10px 6px; font-size: 11px; line-height: 1.35; color: var(--muted); }
-.bypass-badge { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: 8px; background: var(--danger-soft); color: var(--danger); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.bypass-badge { flex-basis: 100%; display: flex; justify-content: flex-start; min-width: 0; margin: 0 0 6px; padding: 0; border: none; background: none; font: inherit; cursor: pointer; }
 .bypass-badge[hidden] { display: none; }
-.bypass-badge:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }
-.bypass-badge svg { flex: none; width: 12px; height: 12px; fill: currentColor; stroke: none; }
+.bypass-badge .bb-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; max-width: 100%; box-sizing: border-box; padding: 0 10px 0 8px; border-radius: 12px; background: color-mix(in srgb, var(--danger) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--danger); color: var(--text); font-size: 12px; font-weight: 600; line-height: 1; }
+.bypass-badge .bb-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bypass-badge:hover .bb-pill { background: color-mix(in srgb, var(--danger) 22%, var(--surface)); }
+.bypass-badge:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; border-radius: 12px; }
+.bypass-badge svg { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--danger); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Update prompt in the toolbar (renderer/updates.js): the same quiet pill as "Lumen is using this tab". */
 .update-pill {

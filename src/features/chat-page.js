@@ -138,8 +138,15 @@ function create(deps) {
     id: t.id, chat: t.managerPage === 'chat', offLimits: deps.agentOffLimits(t), closing: Boolean(t.closing), viewedAt: t.viewedAt, lastActiveAt: t.lastActiveAt,
   }));
   const pick = () => pickTargetTab(summaries());
+  // [working-on chip] A run the agent no longer has (it ended or was cancelled without the page hearing of it) is not a run: it is dropped
+  // here, so a tab never stays marked as worked on. deps.runLive(runId) is main's word on whether that run is still going.
+  const liveRun = () => {
+    const r = runs.get();
+    if (r && deps.runLive && deps.runLive(r.runId) === false) { runs.end(); return false; }
+    return Boolean(r);
+  };
   function targetInfo() {
-    const id = runs.running() ? runs.get().target : pick();
+    const id = liveRun() ? runs.get().target : null; // [working-on chip] only a live run's tab; idle, nothing is "worked on"
     const tab = id == null ? null : deps.tabs().find((t) => t.id === id);
     return tab ? deps.tabInfo(tab) : null;
   }
@@ -156,19 +163,15 @@ function create(deps) {
   // tab is opened if there is none. Other views hear about it so they show the same turn.
   function beginRun(event, { text, runId, images, files, chatId = null }) {
     const fromChat = isChatSender(event);
-    let pinned = null;
-    if (fromChat) {
-      pinned = pick();
-      if (pinned == null) pinned = deps.openTab(undefined, { background: true, openedBy: {} }).id; // [ai manners] the tab the run works in is the AI's (kept out of the strip when "hide tabs the AI opened" is on)
-    }
-    runs.start({ runId, text, fromChat, target: pinned });
+    runs.start({ runId, text, fromChat, target: null }); // [working-on chip] no tab until a tool takes one (retarget)
     if (fromChat) pushTarget();
     broadcast('chat:run-start', { text, runId, chatId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })), files: files || [] }, event.sender);
     return fromChat;
   }
   const endRun = () => { runs.end(); pushTarget.last = null; pushTarget(); };
   // The tab a chat-page run's tools act on (null: the run does not come from the page).
-  const runTarget = () => { const r = runs.get(); return r && r.fromChat ? r.target : null; };
+  const runTarget = () => { const r = liveRun() ? runs.get() : null; return r && r.fromChat ? r.target : null; };
+  const runFromPage = () => { const r = liveRun() ? runs.get() : null; return Boolean(r && r.fromChat); };
   function retarget(id) { runs.setTarget(id); pushTarget(); }
 
   // ---- opening and leaving the page
@@ -221,7 +224,7 @@ function create(deps) {
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 
-  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
+  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, runFromPage, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
 module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC, SPARE_FLAG, SPARE_IPC };

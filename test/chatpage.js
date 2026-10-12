@@ -127,8 +127,8 @@ const fakeClient = (app) => app.evaluate(() => {
     fs.writeFileSync(path.join(process.env.LUMEN_CHATPAGE_SHOTS, 'chat-page.png'), Buffer.from(shot, 'base64'));
   }
 
-  // ---- 3. Which tab the AI works in, shown in the header
-  check('the header names the tab the AI will work in: the one looked at last', await waitFor(async () => /Fixture beta/.test(await inPage("document.getElementById('cp-target-text').textContent"))), await inPage("document.getElementById('cp-target-text').textContent"));
+  // ---- 3. Which tab the AI works in, shown in the header (test/working-on-chip.js covers the chip during a reply)
+  check('the header names no tab while no reply is working in one (the chip is hidden)', await waitFor(async () => (await inPage("document.getElementById('cp-target').hidden")) === true), await inPage("document.getElementById('cp-target-text').textContent"));
 
   // ---- 4. Send from the page (held back, to see the running state in both views)
   let release;

@@ -226,14 +226,16 @@
   function showTarget(info) {
     const text = $('cp-target-text');
     const icon = $('cp-target-icon');
+    $('cp-target').hidden = !info; // [working-on chip] only while a reply is acting on a tab
     if (info) {
       const label = info.title || info.url || t('chatpage.target.untitled');
       text.textContent = t('chatpage.target', { title: label });
-      $('cp-target').title = info.url || '';
+      $('cp-target').title = info.url ? `${label}
+${info.url}` : label; // the full name, when the pill shows it cut short
       icon.hidden = !info.favicon;
       if (info.favicon && icon.getAttribute('src') !== info.favicon) icon.src = info.favicon;
     } else {
-      text.textContent = t('chatpage.target.none');
+      text.textContent = '';
       $('cp-target').title = '';
       icon.hidden = true;
     }
