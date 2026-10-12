@@ -152,6 +152,32 @@ const readIndexFile = (dir) => JSON.parse(dec(JSON.parse(fs.readFileSync(path.jo
   check('search: tool results are not searched', ids('secretpage') === '');
 }
 
+// ---- the list's order is the chat's last activity: new messages and touch() move a chat up; viewing, saving unchanged, rename and pin do not
+{
+  const dir = path.join(root, 'recency');
+  const store = mk(dir);
+  const [a, b, c] = [hexId(11), hexId(12), hexId(13)];
+  for (const id of [a, b, c]) store.save(id, snap(`chat ${id}`));
+  const order = () => store.list().map((x) => x.id).join();
+  check('recency: newest saved first', order() === [c, b, a].join(), order());
+  store.save(a, snap(`chat ${a}`)); // (what leaving a chat does: the same messages written again)
+  check('recency: saving the same messages again does not move the chat', order() === [c, b, a].join(), order());
+  const withReply = snap(`chat ${a}`); withReply.messages.push({ role: 'user', content: [{ type: 'text', text: 'more' }] });
+  store.save(a, withReply);
+  check('recency: a saved new message moves the chat to the top', order() === [a, c, b].join(), order());
+  store.rename(b, 'Renamed'); store.setPinned(c, true); store.setArchived(c, false);
+  check('recency: rename and pin leave the order alone', order() === [a, c, b].join(), order());
+  check('recency: touch() moves a listed chat to the top (index only, no file write)', store.touch(b) === true && order() === [b, a, c].join(), order());
+  check('recency: touch() on an unknown or trashed chat does nothing', store.touch(hexId(99)) === false && (store.trash(c), store.touch(c)) === false, order());
+  store.restore(c);
+  const old = mk(path.join(root, 'recency-old'));
+  old.save(a, snap('x')); const idx = readIndexFile(path.join(root, 'recency-old')); delete idx.chats[0].sig;
+  fs.writeFileSync(path.join(root, 'recency-old', 'index.json'), JSON.stringify({ enc: enc(JSON.stringify(idx)) }));
+  const before = mk(path.join(root, 'recency-old')).list()[0].updated;
+  mk(path.join(root, 'recency-old')).save(a, snap('x'));
+  check('recency: an entry saved before the activity stamp is not moved by an unchanged save', mk(path.join(root, 'recency-old')).list()[0].updated === before);
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
 console.log('\nall passed');

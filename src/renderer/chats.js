@@ -33,11 +33,14 @@
   let searchBox = null;
   let redraw = () => {};
   const search = tools.searcher(api, () => redraw());
+  const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats } = await api.list();
+    const { current, chats: fresh } = await api.list();
+    const chats = live.order(fresh);
+    const play = live.flip();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
     const title = Object.assign(document.createElement('h2'), { textContent: window.chatTr('chats.title', 'Chats') });
@@ -66,6 +69,7 @@
     redraw = drawList;
     drawList();
     panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

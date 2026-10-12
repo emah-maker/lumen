@@ -113,13 +113,16 @@
   const search = tools.searcher(api, () => drawItems());
   let lastChats = [];
   let lastCurrent = null;
+  const live = tools.liveOrder(items, () => { if (!items.querySelector('.chat-rename-input')) renderList(); });
   function drawItems() {
     const query = search.query;
-    let shown = tools.pick(lastChats, { query, view, hits: search.hits });
+    const play = live.flip();
+    let shown = tools.pick(live.order(lastChats), { query, view, hits: search.hits });
     if (projectView && !query && view !== 'archived') shown = shown.filter((c) => c.project === projectView);
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
+    play();
     if (!shown.length && (query || view === 'archived' || projectView)) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : projectView ? tr('chatpage.project.empty', 'No chats in this project yet. Start one here, or move a chat in from its ⋯ menu.') : tr('chats.noArchived', 'No archived chats') }));
   }
   // The tab's title is the chat's.
