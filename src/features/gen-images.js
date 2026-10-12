@@ -133,72 +133,6 @@ function pictureIntent(text) {
   return { prompt: t, explicit: false, loose: true };
 }
 
-// ---------- "this", "that", "it": the reply just above ----------
-// "generate an image to show this" means the assistant's latest reply (then the user's own latest message), never something
-// earlier in the chat. A request that points at something ("this", "above", "what you just said", "the last one", "show it") or
-// names no subject at all ("generate an image please") gets that reply as the subject of the picture; older turns are background only.
-const POINTS = /\b(?:this|these|those|above|(?:what|everything|all)\s+(?:you|we)\s+(?:just\s+)?(?:said|wrote|explained|showed|did|covered)|the\s+(?:last|previous|latest|above)\s+(?:one|answer|reply|response|part|step)|the\s+(?:answer|solution|reply|response|explanation|result)|(?:show|illustrate|visuali[sz]e|depict|of|for)\s+(?:that|it|them))\b/i;
-const FILLER = new Set(['to', 'show', 'illustrate', 'visualize', 'visualise', 'explain', 'depict', 'of', 'for', 'me', 'us', 'please', 'a', 'an', 'the', 'some', 'another', 'new', 'quick', 'simple', 'nice', 'and', 'pls', 'plz', 'can', 'you', 'could', 'would', 'also', 'now', 'then', 'with', 'about', 'on', 'in', 'as', 'so', 'i', 'see', 'understand', 'help', 'make', 'generate', 'create', 'draw', 'produce', 'render', 'design', 'paint', 'sketch', 'this', 'that', 'it', 'these', 'those', 'them', 'above', ...LOOSE_NOUN.split('|')]);
-const SLASH_HEAD = /^\s*\/(?:image|imagine|draw)\s+/i;
-function pointsAtChat(text) {
-  const t = String(text || '').replace(SLASH_HEAD, '').trim();
-  if (!t) return true;
-  if (POINTS.test(t)) return true;
-  const words = t.toLowerCase().replace(/[^a-z0-9'\s-]/g, ' ').split(/\s+/).filter(Boolean);
-  return !words.some((w) => !FILLER.has(w) && !FILLER.has(w.replace(/s$/, '')));
-}
-
-const SUBJECT_CHARS = 3200;
-const QUESTION_CHARS = 400;
-const clip = (text, n) => {
-  const t = String(text || '').trim();
-  if (t.length <= n) return t;
-  const head = Math.min(500, Math.floor(n / 5)); // the opening names what the reply is about, the tail is where it got to
-  return `${t.slice(0, head).trimEnd()} […] ${t.slice(-(n - head)).trimStart()}`;
-};
-
-// items: the chat as transcriptFor makes it ({ role, text }); the message that asks for the picture may be last (it is left off).
-// -> { text, question } for the latest assistant reply that has words, or null when there is none. (No reply yet: the user's own
-// latest earlier message, the question or the attachment's note, is the subject.)
-function chatSubject(items) {
-  const list = (items || []).filter((m) => m && String(m.text || '').trim());
-  while (list.length && list[list.length - 1].role === 'user') list.pop(); // the request itself is not its own subject
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].role === 'user') continue;
-    const q = list.slice(0, i).reverse().find((m) => m.role === 'user');
-    return { text: clip(list[i].text, SUBJECT_CHARS), question: q ? clip(q.text, QUESTION_CHARS) : '' };
-  }
-  return null;
-}
-
-// What goes to the picture provider (it has no chat of its own): the user's words, then the latest reply as the subject. "draw a cat"
-// is left alone. -> { prompt, shown } (shown: the words the picture is captioned with).
-function imagePromptFrom(askPrompt, items) {
-  const own = String(askPrompt || '').trim();
-  if (!pointsAtChat(own)) return { prompt: own, shown: own };
-  const asked = own.replace(SLASH_HEAD, '');
-  let subject = chatSubject(items);
-  if (!subject) { // nothing was answered yet: the user's own latest earlier message
-    const before = (items || []).filter((m) => m?.role === 'user' && String(m.text || '').trim());
-    before.pop(); // the request
-    const last = before[before.length - 1];
-    if (!last) return { prompt: own, shown: own };
-    subject = { text: clip(last.text, SUBJECT_CHARS), question: '', user: true };
-  }
-  const prompt = [
-    asked || 'Make a picture',
-    '',
-    subject.user
-      ? 'Subject (the user\'s latest earlier message, which "this", "that" and "it" in the request mean):'
-      : 'Subject (the assistant\'s latest reply, which "this", "that" and "it" in the request mean; draw this, nothing from earlier in the conversation):',
-    '"""',
-    subject.text,
-    '"""',
-    ...(subject.question ? ['', `Background only (the question that reply answered): ${subject.question}`] : []),
-  ].join('\n');
-  return { prompt, shown: asked || subject.text.slice(0, 200) };
-}
-
 // ![alt](url) in a reply: [{ alt, url }] (any url; the renderer and main decide what may load).
 function markdownImages(text) {
   const out = [];
@@ -398,6 +332,6 @@ async function fetchRemoteImage(url, { fetchImpl = globalThis.fetch, max = MAX_B
 }
 
 module.exports = {
-  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, pictureIntent, pointsAtChat, chatSubject, imagePromptFrom, markdownImages,
+  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, pictureIntent, markdownImages,
   createImageStore, pathsIn, toolImagePaths, fromFileUrl, findLocalImages, publicHost, fetchRemoteImage,
 };
