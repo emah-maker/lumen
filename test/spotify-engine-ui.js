@@ -302,6 +302,24 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   lib = await askLib('rows');
   check('spotify engine library: …Try again after the page is fine reads the rows again (the failure was not kept)', lib.ok === true && lib.titles.length === 2, JSON.stringify(lib));
 
+  // ---- the same, the way the user does it: a big card on the new-tab page, its Library tab clicked, the rows on the card (card -> main -> engine -> page and back) ----
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (!/Sign in/.test(w.getTitle())) w.setSize(1700, 1100); const l = global.__widgets.list().filter((x) => x.type === 'spotify'); global.__widgets.layout([{ id: l[0].id, x: 0, y: 0, w: 8, h: 7 }]); });
+  await waitFor(`${card}.dataset.tier === 'xl' || ${card}.dataset.tier === 'large'`, 60);
+  const libText = () => pageJs(`(() => { const p = [...${card}.querySelectorAll('[role=tabpanel]')].find((x) => !x.hidden); return p ? { rows: p.querySelectorAll('.mc-row').length, text: p.textContent.slice(0, 80) } : { rows: -1, text: '' }; })()`);
+  await engine('window.__sp.setLib("rows")');
+  await pageJs(`${card}.querySelector('.mc-tab-queue').click()`);
+  await pageJs(`${card}.querySelector('.mc-tab-library').click()`);
+  check('spotify engine library, in the card: clicking the Library tab shows the rows (the playlist and the album)', await waitFor(`${card}.querySelector('.mc-tab-library')?.getAttribute('aria-selected') === 'true' && ${card}.querySelectorAll('[role=tabpanel]:not([hidden]) .mc-row').length >= 2 && /Road mix/.test(${card}.textContent)`, 100), JSON.stringify(await libText()));
+  // a page whose library cannot be read: the card says so with Try again, and Try again reads it again and shows the rows
+  await engine('window.__sp.setLib("none")');
+  await sleep(4300); // (the card asks a tab again only after a few seconds)
+  await pageJs(`${card}.querySelector('.mc-tab-queue').click()`);
+  await pageJs(`${card}.querySelector('.mc-tab-library').click()`);
+  check('spotify engine library, in the card: a page whose library panel is gone ends in a clear message with Try again (never "Loading…" for ever)', await waitFor(`/changed its page|Try again/.test([...${card}.querySelectorAll('[role=tabpanel]:not([hidden])')].map((p) => p.textContent).join(' '))`, 140), JSON.stringify(await libText()));
+  await engine('window.__sp.setLib("rows")');
+  await pageJs(`(() => { const b = [...${card}.querySelectorAll('[role=tabpanel]:not([hidden]) button')].find((x) => /Try again/.test(x.textContent)); if (b) b.click(); })()`);
+  check('spotify engine library, in the card: …Try again, with the page fine again, shows the rows', await waitFor(`/Road mix/.test(${card}.textContent)`, 100), JSON.stringify(await libText()));
+
   // ---- junk from the page ----
   const before = JSON.stringify(await status());
   await engine(`(() => { for (const d of ['nope', '{"t":"list","kind":"recent","items":[{"id":"../x","kind":"song","title":"Bad"}]}', '[]', '{"t":"error","message":"' + 'x'.repeat(5000) + '"}', '{"t":"state","state":2,"item":{"title":"Forged","art":"https://evil.example/a.png"},"device":"x","player":true}']) document.dispatchEvent(new CustomEvent('lumen-engine-out', { detail: d })); })()`);

@@ -334,6 +334,30 @@ async function apiChecks(check) {
   check('api helpers: cover art is taken from every Spotify picture host (i.scdn.co, mosaic.scdn.co, image-cdn-*.spotifycdn.com), https only, no port, nobody else', ['https://i.scdn.co/image/a', 'https://mosaic.scdn.co/640/a', 'https://image-cdn-ak.spotifycdn.com/image/a', 'https://image-cdn-fa.spotifycdn.com/image/a'].every((u) => SV.isImageUrl(u)) && ['http://i.scdn.co/a', 'https://evil.example/a', 'https://i.scdn.co.evil.example/a', 'https://i.scdn.co:8443/a', 'https://spotifycdn.com.evil.example/a'].every((u) => !SV.isImageUrl(u)) && SV.thumbUrls([{ url: 'https://image-cdn-ak.spotifycdn.com/image/a', width: 64 }, { url: 'https://evil.example/b', width: 64 }]).join() === 'https://image-cdn-ak.spotifycdn.com/image/a', '');
   void SAC;
   void updates;
+
+  // the engine's card ("Play as Lumen") on an account that is also connected to the Web API: the Library comes from the API; when the API fails, from the page
+  {
+    const sid = 'wstat0001';
+    world.libDown = false;
+    const asked = [];
+    const engineCard = { mode: 'status', state: 'playing', title: 'Night Shift', artist: 'Ann', album: 'Quiet Hours', progressMs: 0, durationMs: 200000, at: Date.now(), source: 'engine', kind: 'track', reason: '', art: '', signedIn: true, recent: [], likedSongs: [], playlists: [{ id: 'PAGEPLAYLIST', kind: 'playlist', title: 'From the page' }], albums: [], artists: [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: false };
+    const ws = createWidgets({
+      readSettings: () => ({ homeWidgets: [{ id: sid, type: 'spotify', mode: 'status', clientId: CLIENT, art: false, x: 0, y: 0, w: 8, h: 7 }] }), writeSettings: () => {}, fetch: imageFetchOk(api.fetch),
+      getSecret: (n) => secrets.get(n) || null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}), rateMax: () => 1e6,
+      spotifyEngine: { read: async () => ({ ...engineCard }), command: (name, arg) => { asked.push(`${name}:${arg}`); return true; }, refreshLists: () => {}, control: async () => true },
+    });
+    const sdata = () => ws.cache.get(sid).data;
+    const slook = async () => { const e = ws.cache.get(sid); if (e) e.at = 0; await ws.refresh(ws.list()[0], { force: true }); return sdata(); };
+    await slook();
+    await ws.act({ id: sid, do: 'etab', arg: 'library', force: true });
+    let sd = await slook();
+    check('engine card + Web API: the Library tab is read from the Web API (its playlists, saved songs, albums, artists are on the card) and the page\'s list is not asked', sd.playlists.length > 0 && sd.playlists[0].id !== 'PAGEPLAYLIST' && sd.libraryOk === true && sd.libraryPending === false && !asked.includes('tab:library'), JSON.stringify([sd.playlists.map((p) => p.id), asked]));
+    world.libDown = true;
+    await ws.act({ id: sid, do: 'etab', arg: 'library', force: true });
+    sd = await slook();
+    check('engine card + Web API: when the API cannot answer, the page\'s own library is asked and shown instead (no Web API rows are left over)', asked.includes('tab:library') && sd.playlists.length === 1 && sd.playlists[0].id === 'PAGEPLAYLIST', JSON.stringify([asked, sd.playlists.map((p) => p.id)]));
+    world.libDown = false;
+  }
   console.warn = realWarn;
 }
 
@@ -458,6 +482,12 @@ async function engineChecks(check) {
     e.unload?.();
     await e.read();
     check(`${svc.name} engine: a tab opened while the page is loading says loading, and is asked once the page says ready`, e.command('tab', 'queue') === true && (await e.read()).queue.pending === true && (e.onMessage('{"t":"ready"}'), sent().some((c) => c.cmd === 'list' && c.kind === 'queue')), JSON.stringify(sent()));
+    // the Library tab opened while the page is still loading: "Loading…" (not "Nothing here yet"), the page is woken, and the library is asked once the page says ready
+    player.destroy();
+    e.unload?.();
+    await e.read();
+    const libBefore = sent().filter((c) => c.cmd === 'list' && c.kind === 'playlists').length;
+    check(`${svc.name} engine: the Library tab opened while the page is loading says loading, and the library is asked once the page says ready`, e.command('tab', 'library') === true && (await e.read()).libraryPending === true && (e.onMessage('{"t":"ready"}'), sent().filter((c) => c.cmd === 'list' && c.kind === 'playlists').length === libBefore + 1), JSON.stringify(sent()));
     void not;
   }
 }

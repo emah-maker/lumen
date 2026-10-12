@@ -388,4 +388,11 @@ async function extras(call, ctx, playback) {
   };
 }
 
-module.exports = { listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+// The library the Web API read, for the engine's card when the account is connected (the page's own library list is the fallback): null until a read answered.
+function directLibrary(ui) {
+  const lib = ui && ui.library;
+  if (!lib || lib.ok !== true) return null;
+  return { recent: lib.recent, likedSongs: lib.liked || [], playlists: lib.playlists, albums: lib.albums || [], artists: lib.artists || [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: !(lib.recent.length || lib.liked.length || lib.playlists.length || lib.albums.length || lib.artists.length) };
+}
+
+module.exports = { directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
