@@ -685,7 +685,9 @@ module.exports = async function spotifyDomUnits(check) {
   check('dom (search rows): every row picture is taken from its media cell (the link is not where the image is), and the message check accepts them', rsList.length === 5 && rsList.every((i) => /^https:[/][/]/.test(i.art)) && SPB.parseMessage(JSON.stringify(rs.lists().find((l) => l.kind === 'search'))).items.every((i) => i.art !== ''), JSON.stringify(rsList.map((i) => i.art)));
   rs.send({ cmd: 'playItem', kind: 'song', id: '3pepZAOvUCBt3qWi9Ax6Aq' });
   const rsBtn = rs.clicked[0];
-  check('dom (search rows): a song listed on the page is played by its own row\'s Play button, not the first row\'s (no page change)', rs.pushed.length === 0 && rs.clicked.length === 1 && /^Play/.test(rsBtn.getAttribute('aria-label')) && rsBtn.closest('[role="row"]').querySelector('a[href^="/track/"]').getAttribute('href') === '/track/3pepZAOvUCBt3qWi9Ax6Aq', JSON.stringify(rs.clicked.map((c) => c.getAttribute('aria-label'))));
+  check('dom (search rows): a song is played from its own page by its track id (the route is opened), never by a row\'s button on the results page', rs.pushed[0] === '/track/3pepZAOvUCBt3qWi9Ax6Aq' && !rs.clicked.some((c) => c.closest('[role="row"]')), JSON.stringify([rs.pushed, rs.clicked.map((c) => c.getAttribute('aria-label'))]));
+  const rsArt = (rs.lists().find((l) => l.kind === 'search') || { items: [] }).items.map((i) => i.kind + ':' + i.art);
+  check('dom (search rows): each row\'s art is the address in its own media cell (the fixture\'s entity-image src), song, album, artist and playlist alike', JSON.stringify(rsArt) === JSON.stringify(['song:https://i.scdn.co/image/ab67616d0000e1a315ebbedaacef61af244262a8'].concat(rsArt.slice(1))) && rsArt.length === 5 && rsArt.every((a) => /^[a-z]+:https:\/\/(i\.scdn\.co|image-cdn-[a-z0-9]+\.spotifycdn\.com|mosaic\.scdn\.co)\//.test(a)), JSON.stringify(rsArt));
 
   // ================= playing an item =================
   const song = page({ tree: signedIn(TREES['search-tracks']), route: () => {} });
@@ -693,9 +695,7 @@ module.exports = async function spotifyDomUnits(check) {
   const row = song.all('[data-testid="tracklist-row"]').find((r) => r.querySelector('a[href^="/track/"]'));
   const rowId = row.querySelector('a[href^="/track/"]').getAttribute('href').split('/')[2];
   song.send({ cmd: 'playItem', kind: 'song', id: rowId });
-  check('dom: a song that is listed on the page is played by its own row\'s Play button (no page change)', song.pushed.length === 0 && song.clicked.length === 1 && /^Play /.test(song.clicked[0].getAttribute('aria-label')), JSON.stringify(song.clicked.map((c) => c.getAttribute('aria-label'))));
-  const clickedRow = song.clicked[0].closest('[data-testid="tracklist-row"]');
-  check('dom: …and it is the right row\'s button (the title in its label is that row\'s)', clickedRow === row, '');
+  check('dom: a song listed on the page is played from its own page by its track id (the route is opened), not by a row button', song.pushed[0] === '/track/' + rowId && !song.clicked.some((c) => c.closest('[data-testid="tracklist-row"]')), JSON.stringify([song.pushed, song.clicked.map((c) => c.getAttribute('aria-label'))]));
 
   for (const [kind, name, id] of [['album', 'album', '2noRn2Aes5aoNVsU6iWThc'], ['playlist', 'playlist', '37i9dQZF1DX6mvEU1S6INL'], ['song', 'track', '0DiWol3AO6WpXZgp0goxAV']]) {
     const pg = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p === `/${name}/${id}`) h.after(700, signedIn(TREES[name])); } });

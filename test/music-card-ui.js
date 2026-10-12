@@ -290,7 +290,7 @@ async function main() {
   await sleep(300);
   check('pictures: rows with no picture on screen are asked for together, by id (ethumb)', asks().some((a) => /^ethumb:p1,p2$/.test(a)), JSON.stringify(asks()));
   await render(widget(playing({ query: 'pics', results: bare2.map((r) => ({ ...r, thumb: ART })) })));
-  check('pictures: a picture that arrives is drawn lazily (loading=lazy)', (await js(`[...document.querySelectorAll('.mc-panel-search img.am-thumb')].every((i) => i.loading === 'lazy') && document.querySelectorAll('.mc-panel-search img.am-thumb').length`)) === 2, '');
+  check('pictures: a picture that arrives (a data: URL already fetched) is drawn eagerly (loading=eager)', (await js(`[...document.querySelectorAll('.mc-panel-search img.am-thumb')].every((i) => i.loading === 'eager') && document.querySelectorAll('.mc-panel-search img.am-thumb').length`)) === 2, '');
   await typeIn('night');
   await render(widget(playing({ query: 'night', results })));
   navigations.length = 0;
