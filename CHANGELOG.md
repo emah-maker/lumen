@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Opening the sidebar keeps a chat that is busy on that tab.** With "Sidebar button starts a new chat" on, the sidebar button (and Ctrl+J) used to start an empty chat even when the AI was working on the tab, so you lost sight of it. Now, if this tab's chat is working, waiting for your OK, or finished a reply while the sidebar was closed, the sidebar opens on that chat with its live stream, steps and approval card. This includes a tab the AI opened on its own. Only when nothing is running or unread does the button start a new chat. New chat inside the sidebar still starts one, and the running chat carries on and stays in the list.
 - **PDFs and slide decks you open from your computer load cleanly.** Opening a PDF or a .pptx file (File > Open, drag and drop, a file link) loaded the file first and then swapped in Lumen's viewer, which sometimes failed on the first try and left a spurious load error behind. They now go straight to the viewer.
 - **A page that cannot load no longer loops.** If the "can't open this page" screen itself failed to load, Lumen tried to show an error page for the error page, hundreds of times over. It stops at the first.
 - **Quieter log.** Every tab used to print a "possible EventEmitter memory leak" warning to the log; the listener count is fixed per tab and the warning was only noise.
