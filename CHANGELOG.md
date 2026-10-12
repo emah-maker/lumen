@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A widget's Refresh button always refreshes now.** Pressing Refresh on the Todoist card (or any other widget) did nothing if the card had loaded in the last 15 seconds, or sat on a rate-limit pause, and gave no sign it had been pressed. A press is now always a real refresh: the arrows turn and the button is off while it runs, a second press joins the run instead of being dropped, and the list updates, or keeps the old list with a note, or shows Try again. A request that never answers is given up on after 45 seconds instead of leaving the card stuck.
+
 ## 0.5.26 (2026-10-12)
 
 - **If a notification still says "Electron" after updating, sign out of Windows and back in once.** Lumen registers its name and icon for notifications, but Windows keeps the old name it saw until you sign in again.
