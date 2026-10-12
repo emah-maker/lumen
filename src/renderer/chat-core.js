@@ -486,7 +486,9 @@ messages.addEventListener('scroll', () => {
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
 }, { passive: true });
+let restoring = false; // showHistory is adding a whole chat: one scroll at its end, not a layout per message (that was O(n^2) on a long chat)
 function scrollToBottom(force = false) {
+  if (restoring) return;
   if (force) stuck = true;
   if (stuck && (force || Date.now() - jumping >= 700)) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
@@ -1141,7 +1143,7 @@ function startTurn(text, images, tabs = null) {
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
-  for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  dropReplyActions(); // only the latest reply can be regenerated
   for (const b of messages.querySelectorAll('.notice-continue')) b.remove(); // (a Continue left under an earlier reply)
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
@@ -1152,8 +1154,14 @@ function startTurn(text, images, tabs = null) {
   turn.versions = versions; // (a Regenerate: the switch goes on its reply, see labelReply)
 }
 
+// Regenerate and Retry (with another model) of an earlier reply, and the actions-only row of one that said nothing: none while a reply runs.
+function dropReplyActions() {
+  for (const b of messages.querySelectorAll('.reply-regen, .reply-retry, .reply-actions-only')) b.remove();
+}
+
 // The working line and turn state of a reply that is now running (its user bubble already shown).
 function beginTurn() {
+  dropReplyActions(); // (also a chat opened mid-run: its history ended on your message, so it showed the actions-only row)
   const working = document.createElement('div');
   working.className = 'working';
   working.setAttribute('role', 'status');
@@ -2256,6 +2264,11 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
+  restoring = true;
+  try { renderHistory(items); } finally { restoring = false; }
+  scrollToBottom(); // (the "jump to latest" button follows where the view ended)
+}
+function renderHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
   const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
   const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
