@@ -29,7 +29,7 @@
     "koffi": "^3.3.2",
     "openai": "^7.30.1",
     "qrcode-generator": "^2.0.4",
-    "tldts-experimental": "^7.4.16"
+    "tldts-experimental": "^7.4.18"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.3",
