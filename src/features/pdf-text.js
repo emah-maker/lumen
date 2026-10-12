@@ -23,6 +23,7 @@ const READ_PDF_DESCRIPTION = 'Read a PDF or .pptx deck in a tab (asks the user o
 const READ_PDF_PROPERTIES = {
   tab_id: { type: 'integer' },
   pages: { type: 'string', description: 'e.g. "3", "1-5", "4-"' },
+  from: { type: 'integer' },
   query: { type: 'string', description: 'Case-insensitive' },
 };
 
@@ -396,6 +397,25 @@ ${lines.join('\n')}`
   return { numPages: total, pages: done, text: parts.join('\n\n'), truncated, next };
 }
 
+// The page range read_pdf was asked for: pages, else from:N as "N-" (a bad or missing from reads from page 1).
+function pagesArg(input = {}) {
+  const spec = input.pages;
+  if (spec !== undefined && spec !== null && String(spec).trim() !== '') return String(spec);
+  const from = Math.floor(Number(input.from));
+  return Number.isFinite(from) && from > 1 ? `${from}-` : undefined;
+}
+
+// What the answer says about where it stopped, so the model asks for the rest instead of giving up:
+// "Pages 1-4 of 6 shown. Call read_pdf again with from:5 for the rest." '' when the last page was shown (or for a query).
+function continuation(out, { cut = false } = {}) {
+  if (!out.pages.length || out.hits) return '';
+  const last = out.pages[out.pages.length - 1];
+  const next = out.next ?? (last < out.numPages ? last + 1 : null);
+  if (!next) return '';
+  const first = out.pages[0];
+  return `Pages ${first === last ? first : `${first}-${last}`} of ${out.numPages} shown${cut ? ` (cut off at ${MAX_CHARS} characters)` : ''}. Call read_pdf again with from:${next} for the rest, or use query to find a page.`;
+}
+
 function extractPdfText(buf, opts = {}) {
   return formatPages(extractPages(buf), opts);
 }
@@ -480,4 +500,4 @@ async function loadPdfBytes(session, url) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
+module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
