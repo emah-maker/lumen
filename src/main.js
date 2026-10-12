@@ -201,7 +201,10 @@ if (!TEST && (app.isPackaged || process.env.LUMEN_DEV_REAL_PROFILE === '1')) {
 }
 // (A test run, electron.exe from a checkout, takes an ID of its own: it must not share the installed Lumen's taskbar
 // group or the name Windows shows on its notifications.)
-if (process.platform === 'win32') app.setAppUserModelId(TEST ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
+// (The stock electron binary made to look packaged, test/hardening.js, is a test too: its own ID, and no relaunch, which
+// would start electron.exe on a temp entry script the test has already deleted: "Error launching app" on the user's screen.)
+if (app.isPackaged && !instance.isInstalledExe()) app.relaunch = () => {};
+if (process.platform === 'win32') app.setAppUserModelId(TEST || !instance.isInstalledExe() ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
 
 // (A test run's userData was set by the profile guard at the top: CLAUDE_BROWSER_PROFILE, else a temp folder, never the real profile.)
 
@@ -6694,7 +6697,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   else if (agentOf) showBehind(w); // [agent window] on screen (so it paints) but never in front of what the user is doing
   if (agentOf) w.on('page-title-updated', (e) => e.preventDefault()); // (its title says whose window it is)
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
-  if (process.platform === 'win32' && app.isPackaged) {
+  if (process.platform === 'win32' && app.isPackaged && instance.isInstalledExe()) {
     // Set again once the UI has loaded: the taskbar can read the window's properties before the first
     // call lands (or after the shell recreates the button), and a repeat is harmless.
     const taskbarDetails = () => {

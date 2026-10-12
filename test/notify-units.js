@@ -22,7 +22,7 @@ const setAt = main.search(/app\.setAppUserModelId\(/);
 const idAt = main.search(/^const APP_ID = /m);
 const readyAt = main.search(/app\.whenReady\(\)/);
 check('app ID: set at the top level, after APP_ID is defined and before the app is ready (so before any Notification)', idAt > -1 && setAt > idAt && setAt < readyAt, `${idAt} ${setAt} ${readyAt}`);
-check('app ID: a real run sets exactly APP_ID (only a test run adds a suffix)', /setAppUserModelId\(TEST \? `\$\{APP_ID\}\.test` : APP_ID\)/.test(main) && !/setAppUserModelId\((?!TEST \?)/.test(main), '');
+check('app ID: a real run sets exactly APP_ID (only a test run adds a suffix)', /setAppUserModelId\(TEST(?: \|\| !instance\.isInstalledExe\(\))? \? `\$\{APP_ID\}\.test` : APP_ID\)/.test(main) && !/setAppUserModelId\((?!TEST( \|\| !instance\.isInstalledExe\(\))? \?)/.test(main), '');
 check('app ID: nothing sets it again later', (main.match(/setAppUserModelId\(/g) || []).length === 1, String((main.match(/setAppUserModelId\(/g) || []).length));
 check('app ID: the shortcut writers get the same APP_ID', /installShortcuts\(app, shell, APP_ID\)/.test(main) && /ensureStartMenuShortcut\(app, shell, APP_ID\)/.test(main) && /fixShortcutIcons\(app, shell, undefined, APP_ID\)/.test(main) && /fixAppName\(app, APP_ID\)/.test(main), '');
 check('app ID: the taskbar details use it too', /appId: APP_ID/.test(main), '');

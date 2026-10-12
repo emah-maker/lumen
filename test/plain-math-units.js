@@ -31,7 +31,7 @@ const { appNameValues } = require('../src/features/instance');
 const rows = appNameValues('C:\\Apps\\Lumen\\Lumen.exe', 'com.lumen.browser', 'C:\\Apps\\Lumen\\resources\\app\\src\\assets\\icon.ico');
 check('notifications: the app ID gets DisplayName "Lumen" and an icon', rows.some(([k, n, d]) => k === 'HKCU\\Software\\Classes\\AppUserModelId\\com.lumen.browser' && n === 'DisplayName' && d === 'Lumen') && rows.some(([k, n, d]) => /AppUserModelId\\com\.lumen\.browser$/.test(k) && n === 'IconUri' && /icon\.ico$/.test(d)), JSON.stringify(rows));
 const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
-check('a test run uses an app ID of its own (not the installed Lumen\'s)', /setAppUserModelId\(TEST \? `\$\{APP_ID\}\.test` : APP_ID\)/.test(main) && /fixAppName\(app, APP_ID\)/.test(main), '');
+check('a test run uses an app ID of its own (not the installed Lumen\'s)', /setAppUserModelId\(TEST(?: \|\| !instance\.isInstalledExe\(\))? \? `\$\{APP_ID\}\.test` : APP_ID\)/.test(main) && /fixAppName\(app, APP_ID\)/.test(main), '');
 
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall plain-math checks passed');
 process.exit(failures ? 1 : 0);
