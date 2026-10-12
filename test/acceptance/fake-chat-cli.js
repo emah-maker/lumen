@@ -13,6 +13,12 @@
 //   HOLD-<name>     wait until <log dir>/release-<name> exists before answering
 //   PARTIAL         say "partial output from RUN-<id>" and then never finish (until killed or interrupted)
 //   FAIL            end the turn with an error result (Grok: and exit 1)
+//   SENDFILE        (Claude, full access) the model calls the CLI's own SendUserFile tool, which never returns a tool_result, then says its text and ends
+//                   its turn; the CLI then goes quiet: no `result` line, process kept (a turn that looks done and never closes)
+//   HOOKTURN        the turn ends (end_turn), then a Stop hook adds a second turn (more text, end_turn again) and the CLI goes quiet with no `result`
+//   NORESULT        the turn ends (end_turn) and the CLI says nothing more: no `result` line (a hung CLI, a result in a shape Lumen does not handle)
+//   HANDOFFTEXT     the reply is the AI handing the work back (ai/handoff.js reads it as a give-up, so agent.js holds its reply_complete)
+//   STUCKTOOL       the CLI starts its own tool and never finishes it (a long-running tool, or one whose result is lost): quiet, until interrupted or killed
 //
 // Everything goes to FAKE_CHAT_LOG (jsonl): { ev: 'start' | 'msg' | 'interrupt' | 'reply', role, pid, token, session, resume, marker, prompt, t }.
 const fs = require('fs');
@@ -62,7 +68,7 @@ async function answer(prompt) {
   const sessionKnown = role === 'claude' && session && fs.existsSync(memory) ? fs.readFileSync(memory, 'utf8').split('\n').filter(Boolean) : [];
   const handed = [...(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/.exec(prompt)?.[0].matchAll(/RUN-[A-Za-z0-9]+/g) || [])].map((m) => m[0]);
   // NOREC (after the marker): the CLI fails before it records the message, so its session never holds it.
-  const recorded = !/NOREC/.test(all.length ? prompt.slice(all[all.length - 1].index) : prompt);
+  const recorded = !/NOREC/.test(all.length ? prompt.slice(all[all.length - 1].index) : prompt);
   if (role === 'claude' && session && recorded) fs.appendFileSync(memory, `${[...new Set([...handed, marker])].join('\n')}\n`);
   log({ ev: 'msg', marker, prompt, model: current, known: [...new Set([...sessionKnown, ...handed])], resumedMissing: Boolean(resume && !sessionKnown.length) });
   prompt = all.length ? prompt.slice(all[all.length - 1].index) : prompt;
@@ -100,8 +106,39 @@ async function answer(prompt) {
     out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-pic', content: JSON.stringify({ type: 'ImageGen', path: file, filename: '1.jpg', session_folder: 'images' }), is_error: false }] } });
     text = 'images/1.jpg';
   }
+  if (role === 'claude' && /STUCKTOOL/.test(prompt)) {
+    out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'tool_use', id: 'call-stuck', name: 'Bash', input: { command: 'sleep 9999' } }] } });
+    const keep = setInterval(() => {}, 1000);
+    await new Promise((resolve) => { interrupted = resolve; });
+    clearInterval(keep);
+    log({ ev: 'interrupt', marker });
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '', session_id: session, total_cost_usd: 0, usage: {} });
+    return;
+  }
+  if (role === 'claude' && /HANDOFFTEXT/.test(prompt)) text = "I couldn't open the document. Please paste the full text of your report here and I'll summarize it.";
+  if (role === 'claude' && /SENDFILE/.test(prompt)) {
+    text = `reply from ${marker}: the worked solution is in ${path.join(DIR, 'solution.html')}`;
+    out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'tool_use', id: 'call-file', name: 'SendUserFile', input: { file_path: path.join(DIR, 'solution.html') } }] } });
+    fs.writeFileSync(path.join(DIR, 'solution.html'), '<!doctype html><title>solution</title><p>worked solution');
+  }
   say(text);
   out({ type: 'assistant', message: { model: 'fake-model', content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  if (role === 'claude' && /(SENDFILE|HOOKTURN|NORESULT)/.test(prompt)) {
+    out({ type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } } });
+    if (/HOOKTURN/.test(prompt)) {
+      await sleep(150);
+      out({ type: 'stream_event', event: { type: 'message_start', message: {} } });
+      say('Fixed: the hook asked for a second look, done.');
+      out({ type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } } });
+    }
+    log({ ev: 'reply', marker, quiet: true });
+    const keep = setInterval(() => {}, 1000); // (kept alive, silent: only a kill or an interrupt ends it)
+    await new Promise((resolve) => { interrupted = resolve; });
+    clearInterval(keep);
+    log({ ev: 'interrupt', marker });
+    out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, total_cost_usd: 0, usage: {} });
+    return;
+  }
   // Claude Code: the model call ends its turn here, and `result` follows a moment later (the real one takes 0.8-1.1 s): Lumen shows the reply as
   // complete at the end_turn (reply_complete) and finishes its run at the result. FAKE_RESULT_GAP_MS sets the moment (default 120).
   if (role === 'claude') {

@@ -1,7 +1,16 @@
 // Preload for the lumen://chat tab only (features/chat-page.js). main.js gives it to that one tab,
 // it exposes the chat calls and nothing else (no generic privileged IPC), and main checks every
 // call again: it must come from the top frame of a chat tab showing renderer/chat-page.html.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer: electronIpc } = require('electron');
+
+// A spare page (main.js makeSpareChat) loads in the background before any chat tab needs it, so its scripts are parsed and its
+// markup laid out by the time a tab takes it. It is no tab yet, so its calls wait (main would refuse them) until main hands it to
+// one ('chat:adopt'); from then on it starts exactly as a page opened fresh does.
+const spare = process.argv.includes('--lumen-spare-chat'); // (features/chat-page.js SPARE_FLAG)
+const adopted = spare ? new Promise((resolve) => electronIpc.once('chat:adopt', () => resolve())) : null;
+const ipcRenderer = spare
+  ? { on: (...args) => electronIpc.on(...args), sendSync: (...args) => electronIpc.sendSync(...args), invoke: (...args) => adopted.then(() => electronIpc.invoke(...args)), send: (...args) => { adopted.then(() => electronIpc.send(...args)); } }
+  : electronIpc;
 
 if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(location.pathname)) {
   const on = (channel) => (callback) => ipcRenderer.on(channel, (_e, payload) => callback(payload));
@@ -35,6 +44,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       save: (id) => ipcRenderer.invoke('images:save', id),
       copy: (id) => ipcRenderer.invoke('images:copy', id),
       remote: (url) => ipcRenderer.invoke('images:remote', url),
+      openTab: (dataUrl) => ipcRenderer.invoke('images:open-tab', dataUrl), // the viewer's "Open in a tab"
     },
     // Files the AI made (renderer/ai-files.js): the file card's preview, and Open in a tab / the system app / Show in folder. By card id only.
     files: {

@@ -65,11 +65,12 @@ const SRC = path.join(__dirname, '..', 'src').split(path.sep).join('/');
   // enlarge: a dialog, Escape closes it and returns focus
   await ui.locator('.gen-img-open').focus();
   await ui.keyboard.press('Enter');
-  const dialog = ui.locator('.gen-lightbox[role=dialog]');
+  const dialog = ui.locator('.civ[role=dialog]'); // (the viewer, chat-image-viewer.js, loads on this first click)
+  await dialog.waitFor({ timeout: 8000 }).catch(() => {});
   check('Enter on the picture enlarges it in a labelled dialog', (await dialog.count()) === 1 && (await dialog.getAttribute('aria-modal')) === 'true' && Boolean(await dialog.getAttribute('aria-label')), await dialog.count());
-  check('focus moves into the dialog', await ui.evaluate(() => document.activeElement?.closest('.gen-lightbox') !== null), 'focus outside');
+  check('focus moves into the dialog', await ui.evaluate(() => document.activeElement?.closest('.civ') !== null), 'focus outside');
   await ui.keyboard.press('Escape');
-  check('Escape closes it and gives focus back to the picture', (await ui.locator('.gen-lightbox').count()) === 0 && await ui.evaluate(() => document.activeElement?.classList.contains('gen-img-open')), 'still open');
+  check('Escape closes it and gives focus back to the picture', (await ui.locator('.civ').count()) === 0 && await ui.evaluate(() => document.activeElement?.classList.contains('gen-img-open')), 'still open');
 
   // right-click menu and copy
   await ui.locator('.gen-img-open').click({ button: 'right' });

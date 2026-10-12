@@ -16,6 +16,10 @@ const { pathToFileURL } = require('url');
 
 const CHAT_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'chat-page.html')).href;
 const PRELOAD = path.join(__dirname, 'chat-preload.js');
+// A spare chat page (main.js makeSpareChat) is made in the background so a chat tab opens at once. The preload (chat-preload.js) holds
+// its calls back until main hands it to a tab; the one call it makes at once is the interface strings (SPARE_IPC).
+const SPARE_FLAG = '--lumen-spare-chat';
+const SPARE_IPC = new Set(['ui:strings']);
 
 // Local file URLs compare without case (Windows paths do) and ignore the query and hash.
 const bare = (url) => { try { const u = new URL(String(url)); u.search = ''; u.hash = ''; return u.protocol === 'file:' ? u.href.toLowerCase() : ''; } catch { return ''; } };
@@ -32,7 +36,7 @@ const CHAT_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
-  'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
+  'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
@@ -87,7 +91,7 @@ function createRunTracker() {
 }
 
 // deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId), goChat(tabId),
-//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab) }
+//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab), spareContents() }
 function create(deps) {
   const runs = createRunTracker();
   const drafts = new Map(); // chat tab id -> text carried from the new-tab page's box, handed to the page once (chatpage:state)
@@ -101,7 +105,9 @@ function create(deps) {
     return Boolean(wc) && event.senderFrame === wc.mainFrame && isChatUrl(event.senderFrame?.url)
       && everyChatTab().some((t) => t.view.webContents === wc);
   };
-  const allows = (event, channel) => CHAT_IPC.has(channel) && isChatSender(event);
+  // (the spare page, before a tab has taken it: the interface strings only)
+  const isSpareSender = (event) => { const wc = deps.spareContents?.(); return Boolean(wc) && event?.sender === wc && event.senderFrame === wc.mainFrame && isChatUrl(event.senderFrame?.url); };
+  const allows = (event, channel) => (CHAT_IPC.has(channel) && isChatSender(event)) || (SPARE_IPC.has(channel) && isSpareSender(event));
 
   // The sidebar plus every open chat page; nothing but the sender itself when there is no page, so
   // the sidebar behaves exactly as it always did until a page exists.
@@ -218,4 +224,4 @@ function create(deps) {
   return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
-module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
+module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC, SPARE_FLAG, SPARE_IPC };

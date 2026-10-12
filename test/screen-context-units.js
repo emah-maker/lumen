@@ -357,7 +357,7 @@ const base = { text: 'what is this', url: WEB, vision: true };
   // ---- prompt budget and guidance
   {
     const sys = systemFor({ model: SEES });
-    check('the system prompt tells the model to screenshot when the user says "this"', /screenshot first/.test(sys) && /never ask the user to describe/.test(sys));
+    check('the system prompt tells the model to screenshot when the user says "this"', /screenshot first/.test(sys) && /never ask (the user|them) to describe/.test(sys));
     check('the rule is one short line (under 160 characters)', (sys.split('\n').find((l) => /screenshot first/.test(l)) || '').length < 160, sys.split('\n').find((l) => /screenshot first/.test(l)));
     check('the CLI engines get the rule through the same prompt', /screenshot first/.test(require('../src/ai/agent').cliSystemPrompt({ model: 'grokbuild:default', adhdMode: true }, 'grokbuild')) && /screenshot first/.test(require('../src/ai/agent').cliSystemPrompt({ model: 'claudecode:default' }, 'claudecode')));
     const mcp = fs.readFileSync(path.join(__dirname, '..', 'src', 'automation', 'mcp.js'), 'utf8');
@@ -366,10 +366,10 @@ const base = { text: 'what is this', url: WEB, vision: true };
   // ---- wiring (strings only: main and the preloads are Electron files)
   {
     const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-    check('main: agent:ask takes the button\'s choice and hands it to the agent', /'agent:ask', \(event, text, runId, images = \[\], tabIds = \[\], fileRefs = \[\], screenMode = null\)/.test(read('src/main.js')) && /screen: screenMode === 'on' \|\| screenMode === 'off'/.test(read('src/main.js')));
+    check('main: agent:ask takes the button\'s choice and hands it to the agent', /'agent:ask', \(event, text, runId, images = \[\], tabIds = \[\], fileRefs = \[\], screenMode = null\)/.test(read('src/main.js')) && /screen: !fromChatPage && \(screenMode === 'on' \|\| screenMode === 'off'\)/.test(read('src/main.js')));
     check('the sidebar and chat-page preloads pass it on, and expose the chip\'s ×', /screen\) => ipcRenderer\.send\('agent:ask'.*screen\)/.test(read('src/preload/preload.js')) && /screen\) => ipcRenderer\.send\('agent:ask'.*screen\)/.test(read('src/features/chat-preload.js')) && /dropScreen/.test(read('src/preload/preload.js')) && /dropScreen/.test(read('src/features/chat-preload.js')));
     check('agent:screen-drop is allowed for the sidebar and the chat page only', /'agent:screen-drop'/.test(read('src/main.js').split('const UI_ONLY_IPC')[1].split(']);')[0]) && /'agent:screen-drop'/.test(read('src/features/chat-page.js')));
-    check('both composers have the camera button and load the detector', ['src/renderer/index.src.html', 'src/renderer/chat-page.html'].every((f) => /id="screen-btn"/.test(read(f)) && /ai\/screen-intent\.js/.test(read(f))));
+    check('the sidebar composer has the camera button and loads the detector; the full-page chat has no camera button (it never attaches the tab)', /id="screen-btn"/.test(read('src/renderer/index.src.html')) && /ai\/screen-intent\.js/.test(read('src/renderer/index.src.html')) && !/id="screen-btn"/.test(read('src/renderer/chat-page.html')));
     const en = JSON.parse(read('src/locales/en.json'));
     check('the strings exist', ['composer.screen.idle', 'composer.screen.auto', 'composer.screen.on', 'composer.screen.off', 'composer.screen.label', 'chat.screen.image', 'chat.screen.text', 'chat.screen.remove', 'chat.screen.removed', 'chat.screen.untitled'].every((k) => typeof en[k] === 'string' && en[k]));
   }
