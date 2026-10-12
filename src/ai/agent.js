@@ -467,7 +467,7 @@ const TOOLS = [
   },
   {
     name: 'document',
-    description: 'Google Docs without retyping: outline, select_section, move_section, replace, style, insert_markdown, verify, undo, read.',
+    description: 'Edit a Google Doc by moving real ranges, never retyping. Start with outline.',
     input_schema: {
       type: 'object',
       properties: {

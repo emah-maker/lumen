@@ -19,7 +19,7 @@ const MAX_ROWS = 80;
 async function readDoc(host) {
   const [txt, html] = [await host.fetchExport('txt'), await host.fetchExport('html')];
   if (txt == null || html == null) throw new Error('Could not read this document through its export (is it open, and do you have access?). Use read_page instead.');
-  const text = String(txt).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const text = String(txt).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const parsed = d.parseDocHtml(html);
   return { text, html, parsed, loc: locate(text, parsed.headings) };
 }
@@ -201,7 +201,6 @@ async function moveSection(host, input) {
   const f = d.findHeading(hs, input.heading);
   const { span } = await selectSection(host, doc, f.index, { includeBreak: true });
   // The destination, worked out from the text before the cut (the export lags behind an edit): the heading the section goes ahead of.
-  const rest = plan.order.filter((i) => i < span.from || i > span.to);
   const pos = plan.order.indexOf(span.from);
   const successor = plan.order.slice(pos + (span.to - span.from + 1)).find((i) => i !== undefined);
   const cutFrom = doc.loc[span.from].offset;
@@ -211,9 +210,8 @@ async function moveSection(host, input) {
   const goneHeads = hs.map((h, i) => ({ h, i })).filter(({ i }) => i < span.from || i > span.to);
   const goneLoc = locate(gone, goneHeads.map(({ h }) => h));
   const where = (i) => goneLoc[goneHeads.findIndex((g) => g.i === i)];
-  let atEnd = false, dest = null;
-  if (successor === undefined) atEnd = true;
-  else { dest = where(successor); if (!dest) throw new Error('Could not work out where to paste. Nothing was changed.'); }
+  const atEnd = successor === undefined;
+  if (!atEnd && !where(successor)) throw new Error('Could not work out where to paste. Nothing was changed.');
   const goneDoc = { text: gone, parsed: { headings: goneHeads.map(({ h }) => h) }, loc: goneLoc };
   let tidied = 0;
   await host.cutPaste(async () => {
@@ -376,8 +374,7 @@ async function rawEditGuard(host, state, name, input) {
   if (!DESTROYS(name, input)) { if (name === 'click' || name === 'click_at' || name === 'press_key') state.selAll = false; return null; }
   const wasAll = state.selAll;
   state.selAll = false;
-  let info = null;
-  try { info = await host.selectionInfo(); } catch { info = null; }
+  const info = await Promise.resolve(host.selectionInfo()).catch(() => null);
   if (!info) return wasAll ? WHOLE : null;
   if (!info.words && !info.images && !info.tables && !info.equations) return null; // nothing selected: an ordinary key
   let run = host.state.doc && host.state.doc.id === host.docId() ? host.state.doc : null;
@@ -389,4 +386,4 @@ async function rawEditGuard(host, state, name, input) {
   return gate.confirm ? gate.message : null;
 }
 
-module.exports = { run, readDoc, locate, occurrences, sectionText, rawEditGuard, DESTROYS };
+module.exports = { run, readDoc, locate, occurrences, sectionText, sectionObjects, sectionParagraphs, rawEditGuard, DESTROYS };

@@ -4,7 +4,7 @@
 // editor's own export before the first edit, check each planned action against it (destructive?), and verify afterwards that
 // nothing was lost. Nothing here touches the page; agent code feeds it the export text/html.
 
-const clean = (s) => String(s || '').replace(/&nbsp;| /g, ' ').replace(/\s+/g, ' ').trim();
+const clean = (s) => String(s || '').replace(/&nbsp;|\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 const decode = (s) => String(s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
   .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
 const stripTags = (s) => decode(String(s || '').replace(/<[^>]*>/g, ' '));
@@ -119,6 +119,13 @@ function checkAction(plan, snap, { userAsked = false } = {}) {
   return { allow: true, confirm: false, refuse: false };
 }
 
+// A document's export as one region for the content guard (ai/content-guard.js snapshot shape), which cannot read a canvas editor.
+function guardSnapshot({ text, html, region = 'gdoc' }) {
+  const p = parseDocHtml(html || '');
+  const body = String(text != null ? text : p.text);
+  return { region, kind: 'rich', tag: 'gdoc', chars: body.length, text: body, truncated: false, images: p.images, tables: p.tables, equations: p.equations, items: 0, rows: 0, styled: 0, selChars: 0, selImages: 0, selTables: 0 };
+}
+
 // ---- outline / sections ----
 
 const norm = (s) => clean(s).toLowerCase();
@@ -217,6 +224,6 @@ function markdownToHtml(md) {
 }
 
 module.exports = {
-  DESTRUCTIVE_FRACTION, clean, parseDocHtml, countOmml, words, takeSnapshot, compareSnapshots, verifyMessage, describeLoss, checkAction,
+  DESTRUCTIVE_FRACTION, clean, parseDocHtml, countOmml, words, takeSnapshot, guardSnapshot, compareSnapshots, verifyMessage, describeLoss, checkAction,
   findHeading, sectionSpan, planMove, parseStyle, styleShortcut, detectEditor, gdocsExportUrl, markdownToHtml,
 };

@@ -73,5 +73,22 @@ check('a section move (cut+paste of the same words) is not destructive', d.check
 check('markdown to html', d.markdownToHtml('# Title\n\nSome **bold** and *it* [x](https://a.com)\n\n- one\n- two\n\n1. a') === '<h1>Title</h1><p>Some <b>bold</b> and <i>it</i> <a href="https://a.com">x</a></p><ul><li>one</li><li>two</li></ul><ol><li>a</li></ol>');
 check('markdown escapes html', d.markdownToHtml('<script>x</script>') === '<p>&lt;script&gt;x&lt;/script&gt;</p>');
 
+// the document tool's pure helpers: where headings sit in the text export, paragraphs and objects per section
+const T = require('../src/ai/document-tool');
+const TXT = 'Abstract\nWe measured the spring.\nMethods\nA mass.\nSetup\nClamp.\n\nResults\nSee Methods above.\n\n\nDiscussion\nDone.\n';
+const hs2 = [{ level: 1, text: 'Abstract' }, { level: 1, text: 'Methods' }, { level: 2, text: 'Setup' }, { level: 1, text: 'Results' }, { level: 1, text: 'Discussion' }];
+const loc = T.locate(TXT, hs2);
+check('locate: each heading is the next line that is exactly its text', loc.map((l) => l.line).join() === '0,2,4,7,11', JSON.stringify(loc));
+check('locate: the Find ordinal counts earlier mentions (the word Methods in Results is a later match)', T.occurrences(TXT, 'Methods', TXT.length) === 2 && loc[1].ordinal === 1, JSON.stringify(loc[1]));
+const doc2 = { text: TXT, loc, parsed: { headings: hs2.map((h, i) => ({ ...h, offset: i * 100 })), src: 'x'.repeat(500) } };
+check('paragraphs of a section include empty ones (a picture\'s paragraph)', T.sectionParagraphs(doc2, 3, 3) === 4 && T.sectionParagraphs(doc2, 4, 4) === 2 && T.sectionParagraphs(doc2, 1, 2) === 5, [T.sectionParagraphs(doc2, 3, 3), T.sectionParagraphs(doc2, 4, 4), T.sectionParagraphs(doc2, 1, 2)].join());
+const src3 = '<h1>A</h1><p><img src=a></p><img src=b><table></table><h1>B</h1><img src=c>';
+const doc3 = { parsed: { headings: [{ offset: 0 }, { offset: src3.indexOf('<h1>B') }], src: src3 } };
+check('objects of a section stop at the next heading', JSON.stringify(T.sectionObjects(doc3, 0, 0)) === '{"pictures":2,"tables":1}', JSON.stringify(T.sectionObjects(doc3, 0, 0)));
+
+// the content guard's region shape (for Google Docs, which it cannot measure itself)
+const g = d.guardSnapshot({ text: 'hello world', html: '<img src=a><table></table>' });
+check('guardSnapshot: the content guard\'s region shape from an export', g.kind === 'rich' && g.chars === 11 && g.images === 1 && g.tables === 1 && g.text === 'hello world' && g.selChars === 0, JSON.stringify(g));
+
 console.log(failures ? `\n${failures} failed` : '\nAll passed');
 process.exit(failures ? 1 : 0);
