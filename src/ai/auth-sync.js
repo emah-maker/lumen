@@ -22,8 +22,8 @@ function serial(key, fn) {
 }
 
 // Atomic copy (temp file + rename) that keeps the source's mtime, so "newest" stays comparable across copies.
-async function copyAtomic(from, to, srcStat) {
-  await fs.promises.mkdir(path.dirname(to), { recursive: true });
+async function copyAtomic(from, to, srcStat, { mkdir = true } = {}) {
+  if (mkdir) await fs.promises.mkdir(path.dirname(to), { recursive: true });
   const tmp = `${to}.lumen-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   try {
     await fs.promises.copyFile(from, tmp);
@@ -51,14 +51,15 @@ function copyAtomicSync(from, to, srcStat) {
 }
 
 // Copies `from` to `to` when `from` is strictly newer (or `to` is missing). True when it copied.
-async function copyIfNewer(from, to) {
+// `mkdir: false` never creates the destination folder: a copy that arrives after that folder was deleted fails quietly instead of bringing it back.
+async function copyIfNewer(from, to, opts) {
   try {
     const src = await statOrNull(from);
     if (!src) return false;
     return await serial(path.resolve(to), async () => {
       const dst = await statOrNull(to);
       if (dst && ms(dst) >= ms(src)) return false;
-      await copyAtomic(from, to, src);
+      await copyAtomic(from, to, src, opts);
       return true;
     });
   } catch { return false; }
@@ -66,7 +67,7 @@ async function copyIfNewer(from, to) {
 
 // Makes every path hold the newest of them: the newest existing file is copied over each older (or missing) one. Returns how many
 // were written. Paths that cannot be written are skipped (never throws).
-async function syncNewest(paths) {
+async function syncNewest(paths, opts) {
   const unique = [...new Set(paths.filter(Boolean).map((p) => path.resolve(p)))];
   const stats = await Promise.all(unique.map(statOrNull));
   let best = -1;
@@ -76,7 +77,7 @@ async function syncNewest(paths) {
   for (let i = 0; i < unique.length; i++) {
     if (i === best) continue;
     if (stats[i] && ms(stats[i]) >= ms(stats[best])) continue;
-    if (await copyIfNewer(unique[best], unique[i])) n++;
+    if (await copyIfNewer(unique[best], unique[i], opts)) n++;
   }
   return n;
 }
