@@ -230,7 +230,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
-  'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
+  'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
@@ -4982,6 +4982,34 @@ ipcMain.handle('chat:resync', (event) => {
     if (runIsLive(run)) run.sender = wc;
     return { view: chatView() };
   });
+});
+// [sidebar keeps the run] The sidebar button is about to open the sidebar on the front tab: is a chat there working, waiting for an OK,
+// or finished unread while the sidebar was closed? Then that chat is the one to show, whatever "Sidebar button starts a new chat"
+// says. The chat is the tab's own, or the one whose run works in this tab (a tab the AI opened). Answers { id, reason, view } with the
+// chat taken as the open one, or null when nothing is there to keep.
+ipcMain.handle('chat:sidebar-target', (event) => {
+  const wc = event.sender;
+  if (!wc || wc.isDestroyed() || chatPageRt.isChatSender(event)) return null;
+  syncToSender(event);
+  const rec = recOfSender(wc) || curRec;
+  const front = rec ? activeIdOf(rec) : null;
+  if (front == null) return null;
+  const reasonOf = (id) => {
+    const run = chatRuns.get(id);
+    if (run && !run.deleted && run.pending.size) return 'approval';
+    if (chatBusy(id)) return 'running';
+    return unreadChats.has(id) ? 'unread' : null;
+  };
+  const ownsFront = [...chatRuns.values()].filter((r) => runIsLive(r) && !r.queued && agent.runTabIdFor(r.messages) === front).map((r) => r.chatId);
+  const hits = [chatBind.chatOf(front), ...ownsFront].filter(Boolean).map((id) => ({ id, reason: reasonOf(id) })).filter((h) => h.reason);
+  const hit = hits.find((h) => h.reason === 'approval') || hits.find((h) => h.reason === 'running') || hits[0];
+  if (!hit) return null;
+  if (hit.id !== chatId && !switchChat(hit.id, { ensure: true, quiet: true })) return null;
+  if (chatBind.chatOf(front) == null) chatBind.bind(front, hit.id);
+  shownChat.set(wc, chatId);
+  const run = chatRuns.get(chatId);
+  if (runIsLive(run)) run.sender = wc;
+  return { id: chatId, reason: hit.reason, view: chatView() };
 });
 // Every other window's sidebar follows its own tab again (a chat moved away from a tab it was showing in).
 function refreshSidebars() {
