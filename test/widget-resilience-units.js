@@ -290,7 +290,7 @@ module.exports = async function widgetResilienceUnits(check) {
     const quickCall = r.state.log.find((l) => l.url.endsWith('/tasks/quick'));
     check('add: the words go to Todoist’s quick add as typed (it reads “tomorrow 5pm” itself)', done === true && quickCall && quickCall.method === 'POST' && quickCall.body.text === 'Pay rent tomorrow 5pm', JSON.stringify(quickCall));
     r.state.api.tasks = [...r.state.api.tasks, task(900, 'Pay rent tomorrow 5pm')];
-    await settle(r, 'wtodo0001');
+    await r.W.refresh(r.W.list()[0], { force: true, user: true }); // (a press: under load the add's own delayed read may already have run)
     check('add: the new task is on the card after the next read', r.card('wtodo0001').data.groups.flatMap((g) => g.tasks).some((t) => t.id === '900'), '');
     check('add: works with the box set to “Button” (quick: off was Lumen’s old default and used to refuse)', (() => { const w = r.W.list()[0]; return w.todo.quick === 'top' || w.todo.quick === 'off'; })(), '');
   }

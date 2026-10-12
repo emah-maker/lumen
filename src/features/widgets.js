@@ -1852,8 +1852,13 @@ function createWidgets(deps) {
   }
   // user: a person pressed Refresh or Try again. That is always a real fetch: no minimum interval, no cached answer, no rate-limit
   // pause that hides it (the failure is shown instead), and it joins a refresh already running (the button spins until it ends).
-  function refresh(w, { force = false, retry = false, user = false } = {}) {
+  function refresh(w, { force = false, retry = false, user = false, after = false } = {}) {
     if (user) force = true;
+    if (after) { // after a write (an added task): a run that began before the write has the old list, so wait for it and ask again
+      const run = cache.get(w.id)?.pending;
+      if (run) return run.then(() => refresh(w, { after: true, user }), () => refresh(w, { after: true, user }));
+      force = true;
+    }
     const c = connector(w);
     let entry = cache.get(w.id);
     if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, tries: 0, undo: entry?.undo }; cache.set(w.id, entry); }
@@ -1875,7 +1880,7 @@ function createWidgets(deps) {
       deps.onUpdate?.();
       return Promise.resolve(false);
     }
-    if (!user && fresh && (!force || age < floor)) return Promise.resolve(false);
+    if (!user && !after && fresh && (!force || age < floor)) return Promise.resolve(false);
     if (user) { entry.userAsked = true; entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } forget('projects:'); }
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     let capTimer;
@@ -2748,7 +2753,7 @@ function createWidgets(deps) {
       if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
+      setTimeout(() => refresh(w, { after: true }).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);

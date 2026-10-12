@@ -23,11 +23,12 @@ module.exports = async function widgetRefreshPressUnits(check) {
       const u = new URL(url);
       if (u.pathname.endsWith('/projects')) return j({ results: [{ id: 'p1', name: 'Home', color: 'blue' }], next_cursor: null });
       state.asks++;
+      const snap = state.tasks; // what the server holds when the request arrives
       if (state.hang) return new Promise(() => {});
       if (state.gate) await state.gate;
       if (state.fail) throw state.fail;
       if (state.status !== 200) return j({ error: 'x' }, state.status);
-      return j({ results: state.tasks, next_cursor: null });
+      return j({ results: snap, next_cursor: null });
     };
     const W = createWidgets({
       readSettings: () => store.settings, writeSettings: (s) => { store.settings = JSON.parse(JSON.stringify(s)); },
@@ -175,6 +176,22 @@ module.exports = async function widgetRefreshPressUnits(check) {
     const afterAuto = r.state.asks;
     await r.W.act(a);
     check('act: an automatic refresh inside the floor is skipped, a press is not', afterAuto === asks && r.state.asks === asks + 1, JSON.stringify([asks, afterAuto, r.state.asks]));
+  }
+
+  // ---- after a write (an added task) the list is read again after the write, never from a run that began before it ----
+  {
+    const r = rig();
+    let open;
+    r.state.gate = new Promise((res) => { open = res; });
+    const early = r.W.refresh(r.widget()); // began before the write: it carries the old list
+    await tick();
+    r.state.tasks = [task(1, 'First'), task(2, 'Added')]; // the write
+    const later = r.W.refresh(r.widget(), { after: true });
+    check('a read after a write does not join the run that began before it', later !== early && r.state.asks === 1, String(r.state.asks));
+    r.state.gate = null;
+    open();
+    await later;
+    check('...it asks again once that run is over, and the card has the added task', r.state.asks === 2 && r.names() === 'First,Added', JSON.stringify({ a: r.state.asks, n: r.names() }));
   }
 
   // ---- the other widgets share the path: a card that fetches by another connector gets the same press ----
