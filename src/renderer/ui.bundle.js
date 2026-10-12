@@ -6061,6 +6061,45 @@ function startChat() {
       if (months) { out.pop(); out.push(...monthly.values()); }
       return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
+    // A list that follows the chats' last activity live (a chat in use moves to the top). `host` holds the list (it may be rebuilt on every
+    // draw); `redraw` draws it again. The row under the pointer or the keyboard stays where it is: while the pointer is moving over the
+    // list, or focus is inside it, rows keep the order they were drawn in (new rows go on top) and the true order is drawn when the
+    // pointer rests, leaves or focus moves out. Rows that moved slide to their place (a short FLIP; none with reduced motion).
+    //   const live = tools.liveOrder(host, redraw);  chats = live.order(chats);  const play = live.flip();  ...redraw the DOM...;  play();
+    liveOrder(host, redraw) {
+      let ids = [], lastMove = 0, timer = null;
+      const HOLD_MS = 1200;
+      const held = () => host.contains(document.activeElement) && document.activeElement !== host || (host.matches(':hover') && Date.now() - lastMove < HOLD_MS);
+      const release = () => { clearTimeout(timer); timer = null; if (!held()) redraw(); else if (host.matches(':hover') && !host.contains(document.activeElement)) timer = setTimeout(release, HOLD_MS - (Date.now() - lastMove) + 30); };
+      host.addEventListener('pointermove', () => { lastMove = Date.now(); clearTimeout(timer); timer = setTimeout(release, HOLD_MS + 30); });
+      host.addEventListener('pointerleave', () => { lastMove = 0; clearTimeout(timer); timer = setTimeout(release, 0); });
+      host.addEventListener('focusout', (e) => { if (!host.contains(e.relatedTarget)) { clearTimeout(timer); timer = setTimeout(release, 0); } });
+      const rows = () => [...host.querySelectorAll('.chat-item[data-id]')];
+      return {
+        held,
+        order(chats) {
+          if (held() && ids.length) {
+            const at = new Map(ids.map((id, i) => [id, i]));
+            chats = [...chats].sort((a, b) => (at.has(a.id) ? at.get(a.id) : -1) - (at.has(b.id) ? at.get(b.id) : -1));
+          }
+          ids = chats.map((c) => c.id);
+          return chats;
+        },
+        flip() {
+          const before = new Map(rows().map((r) => [r.dataset.id, r.getBoundingClientRect().top]));
+          return () => {
+            if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !before.size) return;
+            for (const r of rows()) {
+              const was = before.get(r.dataset.id);
+              if (was === undefined || !r.animate) continue;
+              const dy = was - r.getBoundingClientRect().top;
+              if (Math.abs(dy) < 2) continue;
+              r.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+            }
+          };
+        },
+      };
+    },
     // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
     // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
     pick(chats, { query = '', view = 'chats', hits = null } = {}) {
@@ -9642,11 +9681,14 @@ $('agent-stop')?.addEventListener('click', () => {
   let searchBox = null;
   let redraw = () => {};
   const search = tools.searcher(api, () => redraw());
+  const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats } = await api.list();
+    const { current, chats: fresh } = await api.list();
+    const chats = live.order(fresh);
+    const play = live.flip();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
     const title = Object.assign(document.createElement('h2'), { textContent: window.chatTr('chats.title', 'Chats') });
@@ -9675,6 +9717,7 @@ $('agent-stop')?.addEventListener('click', () => {
     redraw = drawList;
     drawList();
     panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

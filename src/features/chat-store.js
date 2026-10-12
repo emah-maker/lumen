@@ -196,16 +196,22 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     writeAtomic(chatFile(id), snapshot);
     fileChecks.delete(id);
     let entry = idx.chats.find((c) => c.id === id);
+    const isNew = !entry;
     if (!entry) {
       entry = { id, title: '', renamed: false, created: now() };
       idx.chats.push(entry);
     }
     if (!entry.renamed) entry.title = autoTitle(snapshot);
-    entry.updated = now();
+    // `updated` is the chat's last activity and the list's order. A save that changed nothing (leaving the chat, a research
+    // pin, a setting) leaves it alone; new messages, or a changed last message, move the chat to the top.
+    const count = snapshot.messages.length;
+    const sig = `${count}:${JSON.stringify(snapshot.messages[count - 1].content).length}`;
+    // (an entry saved before `sig` existed is compared by message count only)
+    if (isNew || (entry.sig === undefined ? entry.msgs !== count : entry.sig !== sig)) entry.updated = now();
+    entry.sig = sig;
     entry.model = snapshot.settings?.model || null;
     entry.usage = snapshot.settings?.usage || null;
     // A chat that is used again (more messages than when it was archived) comes back to the main list.
-    const count = snapshot.messages.length;
     if (entry.archived && (entry.autoArchived || (entry.msgs !== undefined && count > entry.msgs))) { entry.archived = false; delete entry.autoArchived; }
     entry.msgs = count;
     delete entry.trashed; // (saved again: it was not deleted after all)
@@ -248,6 +254,16 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!entry || entry.trashed || readIndex().degraded) return false;
     if (on) entry[key] = true; else delete entry[key];
     delete entry.autoArchived; // (once the user chooses, it is theirs, no longer an automatic archive)
+    writeIndex();
+    return true;
+  }
+  // The chat is in use (a message was sent, a reply started): it moves to the top of the list now, before anything is saved.
+  // Index only, and only for a chat that is already listed (a new chat is listed by its first save). True when it moved.
+  function touch(id, at = now()) {
+    const entry = entryOf(id);
+    if (!entry || entry.trashed || readIndex().degraded) return false;
+    if (entry.updated >= at) return false;
+    entry.updated = at;
     writeIndex();
     return true;
   }
@@ -415,7 +431,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     known.clear(); foreign.clear(); fileChecks.clear();
   }
 
-  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
+  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

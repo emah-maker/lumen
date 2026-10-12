@@ -4734,6 +4734,11 @@ function saveChatOf(id, messages) {
     console.error('Could not save chat:', err.message);
   }
 }
+// A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
+// once (one small write, nothing per streamed token) and every open list redraws. Viewing, renaming and pinning never call this.
+function bumpChat(id) {
+  try { if (id && !temporaryChats.has(id) && chats().touch(id)) pushAttention(); } catch { /* the list keeps its order */ }
+}
 const detachedSaves = new Map();
 function saveChatOfSoon(id, messages) {
   clearTimeout(detachedSaves.get(id));
@@ -8389,6 +8394,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
+  bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
   chatPageRt.beginRun(event, { text: askText, runId, chatId: runChat, images: valid, files: attachedFiles }); // pins a chat-page run to the tab last looked at; the other view mirrors it
@@ -8463,6 +8469,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    bumpChat(runChat); // (a run that waited for a slot is in use again now)
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
