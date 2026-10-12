@@ -4010,7 +4010,7 @@ function startTurn(text, images, tabs = null) {
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
-  for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  dropReplyActions(); // only the latest reply can be regenerated
   for (const b of messages.querySelectorAll('.notice-continue')) b.remove(); // (a Continue left under an earlier reply)
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
@@ -4021,8 +4021,14 @@ function startTurn(text, images, tabs = null) {
   turn.versions = versions; // (a Regenerate: the switch goes on its reply, see labelReply)
 }
 
+// Regenerate and Retry (with another model) of an earlier reply, and the actions-only row of one that said nothing: none while a reply runs.
+function dropReplyActions() {
+  for (const b of messages.querySelectorAll('.reply-regen, .reply-retry, .reply-actions-only')) b.remove();
+}
+
 // The working line and turn state of a reply that is now running (its user bubble already shown).
 function beginTurn() {
+  dropReplyActions(); // (also a chat opened mid-run: its history ended on your message, so it showed the actions-only row)
   const working = document.createElement('div');
   working.className = 'working';
   working.setAttribute('role', 'status');

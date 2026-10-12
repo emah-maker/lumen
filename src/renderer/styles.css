@@ -1325,7 +1325,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .msg-edit-box { display: block; width: 100%; box-sizing: border-box; min-height: 36px; max-height: 240px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface, var(--bg)); color: var(--text); font: inherit; line-height: 1.45; resize: none; outline: none; }
 .msg-edit-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 /* A reply that ended without text (stopped, or on a step): only its Regenerate. */
-.msg.assistant.reply-actions-only { height: 22px; margin: 4px 0 16px; }
+.msg.assistant.reply-actions-only { display: flex; align-items: center; gap: 2px; min-height: 26px; margin: 4px 0 16px; } /* Regenerate and Retry side by side, not stacked over the row below */
 .msg.assistant.reply-actions-only .reply-regen { position: static; opacity: 0.75; }
 
 /* First-run welcome (renderer/chat-core.js showWelcome): three steps, each can be skipped. */
