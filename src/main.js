@@ -242,7 +242,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
-  'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
+  'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -9091,6 +9091,22 @@ ipcMain.handle('images:copy', (_e, id) => {
   if (!image || image.isEmpty()) return false;
   copyImage(image);
   return true;
+});
+// "Open in a tab" in the chat's picture viewer (renderer/chat-image-viewer.js): a picture's data URL is too long to be a tab's address (Chromium
+// refuses one over 2 MB), so it is written to a file in the temp folder and that opens. PNG, JPEG, GIF and WebP only; files a day old are cleared.
+ipcMain.handle('images:open-tab', (_e, dataUrl) => {
+  const m = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+  if (!m || m[2].length > 40e6) return false;
+  try {
+    const dir = path.join(require('os').tmpdir(), 'lumen-pictures');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of fs.readdirSync(dir)) { try { const old = path.join(dir, name); if (Date.now() - fs.statSync(old).mtimeMs > 86400000) fs.unlinkSync(old); } catch { /* in use or gone */ } }
+    const buffer = Buffer.from(m[2], 'base64');
+    const file = path.join(dir, `picture-${require('crypto').createHash('sha256').update(buffer).digest('hex').slice(0, 16)}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`);
+    fs.writeFileSync(file, buffer);
+    openTab(pathToFileURL(file).href);
+    return true;
+  } catch { return false; }
 });
 // A web picture in a reply ("![](https://…)") loads only when the user asks (a click): https, no cookies, no private
 // addresses, a real image of a known type. It is then kept with the open chat like a made one.

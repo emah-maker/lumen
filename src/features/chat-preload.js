@@ -44,6 +44,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       save: (id) => ipcRenderer.invoke('images:save', id),
       copy: (id) => ipcRenderer.invoke('images:copy', id),
       remote: (url) => ipcRenderer.invoke('images:remote', url),
+      openTab: (dataUrl) => ipcRenderer.invoke('images:open-tab', dataUrl), // the viewer's "Open in a tab"
     },
     // Files the AI made (renderer/ai-files.js): the file card's preview, and Open in a tab / the system app / Show in folder. By card id only.
     files: {
