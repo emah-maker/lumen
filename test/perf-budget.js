@@ -94,7 +94,8 @@ const CEILING = { requireMs: 2500, modules: 335, preloadKB: 40, uiKB: 950, idleI
     check('the main process is not blocked for over 500 ms while a new tab opens', lagMax <= 500, `${Math.round(lagMax)} ms`);
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+    // (Windows can still hold a file of the closed app's profile: a leftover temp folder is not a budget failure)
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* left in the temp folder */ }
   }
   console.log(failures ? `${failures} failed` : 'all passed');
   process.exit(failures ? 1 : 0);
