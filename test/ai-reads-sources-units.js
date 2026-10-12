@@ -88,7 +88,7 @@ const { PDF, HTML_TABLE, startServer } = require('./fixtures/steam-table');
     const note = (engine) => cliSystemPrompt({ model: `${engine}:default`, adhdMode: false }, engine, {});
     for (const engine of ['claudecode', 'grokbuild', 'codex', 'antigravity']) {
       const p = note(engine);
-      check(`${engine}: the prompt says to go find a source, read PDFs with read_urls / read_pdf, and not to answer from memory`, /read_urls/.test(p) && /read_pdf/.test(p) && /never download and run local programs/i.test(p) && /from memory/.test(p) && /ask the user only after several real attempts/.test(p), p.length);
+      check(`${engine}: the prompt says to go find a source, read PDFs with read_urls / read_pdf, and not to answer from memory`, /read_urls/.test(p) && /read_pdf/.test(p) && /never download and run local programs/i.test(p) && /from memory/.test(p) && /never ask the user to paste what you can read/.test(p), p.length);
     }
     const agentSrc = require('fs').readFileSync(require.resolve('../src/ai/agent'), 'utf8');
     check('every full-access note tells the CLI to read pages and PDFs with Lumen\'s tools, not WebFetch / a downloaded file', (agentSrc.match(/not (?:WebFetch, WebSearch or )?a downloaded file run through (?:Bash|the shell)/g) || []).length >= 4, '');

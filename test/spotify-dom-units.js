@@ -17,7 +17,13 @@ const { createEngine } = require('../src/features/spotify-engine');
 
 const fixture = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spotify', `${name}.json`), 'utf8'));
 const TREES = {};
-const FIXTURES = { library: fixture('library').tree, queue: fixture('queue').tree }; // (pieces of the signed-in page, 2026-10-08)
+const FIXTURES = { library: fixture('library').tree, queue: fixture('queue').tree, searchRows: fixture('search-rows').tree }; // (pieces of the signed-in page, 2026-10-08; the library's panel as seen again 2026-10-11)
+// The library widened by its "Expand Your Library" button (seen 2026-10-11): ul[role=treegrid] > li[role=row] > div[data-encore-id=card], ids card-title-spotify:<kind>:<id> on an <a>.
+const wideLibrary = (rows) => ({ t: 'nav', a: { 'aria-label': 'Main' }, c: [
+  { t: 'header', c: [{ t: 'div', c: [{ t: 'button', a: { 'aria-label': 'Create' }, c: [] }, { t: 'button', a: { 'aria-label': 'Minimize Your Library' }, c: [] }] }] },
+  { t: 'div', a: { 'data-overlayscrollbars-viewport': 'scrollbarHidden' }, c: [{ t: 'ul', a: { role: 'treegrid', 'aria-label': 'Your Library', 'aria-rowcount': '13', 'aria-colcount': '6' }, c: rows.map(([kind, id, title, sub]) => ({ t: 'li', a: { role: 'row', 'aria-level': '1', draggable: 'true' }, c: [{ t: 'div', a: { role: 'gridcell' }, c: [{ t: 'div', a: { 'data-encore-id': 'card', role: 'group', 'aria-labelledby': 'card-title-spotify:' + kind + ':' + id }, c: [{ t: 'img', a: { src: 'https://i.scdn.co/image/' + id, 'data-testid': 'card-image', alt: '' }, c: [] }, { t: 'a', a: { 'data-encore-id': 'cardTitle', id: 'card-title-spotify:' + kind + ':' + id, href: '/' + kind + '/' + id }, c: [{ t: 'span', c: [title] }] }, { t: 'p', a: { 'data-encore-id': 'cardSubtitle', id: 'card-subtitle-spotify:' + kind + ':' + id }, c: [{ t: 'span', c: [sub] }] }] }] }] })) }] },
+] });
+FIXTURES.libraryWide = wideLibrary([['collection', 'tracks', 'Liked Songs', 'Pinned' + 'Playlist • 2,763 songs'], ['playlist', 'WIDE0000000000000000A', 'Road trip', 'Pinned' + 'Playlist • Sam'], ['album', 'WIDE0000000000000000B', 'Discovery', 'Album • Daft Punk']]);
 for (const n of ['home', 'search-all', 'search-tracks', 'track', 'album', 'playlist']) TREES[n] = fixture(n).tree;
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -202,7 +208,7 @@ module.exports = async function spotifyDomUnits(check) {
   // Names that only a signed-in page (or an unplayed control) shows: written from public knowledge, not seen in the saved pages.
   const ASSUMED = ['nowPlaying', 'title', 'artist', 'artistLinks', 'cover', 'connect', 'chrome', 'like', 'contextLink', 'menuItem', 'queueButton', 'libraryTitleAlt', 'librarySubtitleAlt', 'libraryExpand']; // (shuffle, repeat, volume, lyrics, the three-dots button and the track page's album link are seen)
   const pages = Object.entries(TREES).map(([name, tree]) => [name, makeEl(clone(tree), null, { clicked: [] })]);
-  const pieces = [['library', makeEl(clone(FIXTURES.library), null, { clicked: [] })], ['queue', makeEl(clone(FIXTURES.queue), null, { clicked: [] })]];
+  const pieces = [['library', makeEl(clone(FIXTURES.library), null, { clicked: [] })], ['libraryWide', makeEl(clone(FIXTURES.libraryWide), null, { clicked: [] })], ['queue', makeEl(clone(FIXTURES.queue), null, { clicked: [] })], ['searchRows', makeEl(clone(FIXTURES.searchRows), null, { clicked: [] })]];
   const seen = (name) => [...pages, ...pieces].filter(([, root]) => SPB.SELECTORS[name].some((s) => root.querySelector(s) || root.matches(s))).map(([n]) => n);
   const unseen = Object.keys(SPB.SELECTORS).filter((n) => !ASSUMED.includes(n) && seen(n).length === 0);
   check('dom: every selector name in the table (but the marked, signed-in-only ones) matches in at least one saved open.spotify.com page', unseen.length === 0, `not found in any saved page: ${unseen.join(', ')}`);
@@ -430,13 +436,16 @@ module.exports = async function spotifyDomUnits(check) {
   // ---- the library, as the real page makes it hard: a collapsed panel, rows that load while scrolling, an empty library, a renamed panel, lazy pictures ----
   {
   const libRow = (kind, id, title, img) => ({ t: 'div', a: { role: 'row' }, c: [{ t: 'div', a: { 'data-encore-id': 'listRow', role: 'group' }, c: [img || { t: 'img', a: { src: `https://i.scdn.co/image/${id}` } }, { t: 'p', a: { 'data-encore-id': 'listRowTitle', id: `listrow-title-spotify:${kind}:${id}` }, c: [title] }, { t: 'p', a: { 'data-encore-id': 'listRowSubtitle', id: `listrow-subtitle-spotify:${kind}:${id}` }, c: ['Playlist • Sam'] }] }] });
-  const libPanel = (rows, { extra = [], attrs = { 'aria-label': 'Your Library' }, scroll = null, tag = 'div' } = {}) => ({ t: tag, a: attrs, c: [...extra, { t: 'div', a: { role: 'grid' }, ...(scroll ? { scroll } : {}), c: rows }] });
+  // The panel as the page makes it (2026-10-11): nav[aria-label="Main"] > header (the buttons) + the scrolling viewport > the grid labelled "Your Library". `header`: its buttons
+  // (the open page has Collapse / Create / Expand), `beside`: what else sits in the viewport next to the list (the empty library's words).
+  const hdr = (...labels) => ({ t: 'header', c: [{ t: 'div', c: labels.map((l) => ({ t: 'button', a: { 'aria-label': l }, c: [] })) }] });
+  const libPanel = (rows, { header = [hdr('Collapse Your Library', 'Create', 'Expand Your Library')], beside = [], attrs = { 'aria-label': 'Your Library' }, scroll = null } = {}) => ({ t: 'nav', a: { 'aria-label': 'Main' }, c: [...header, { t: 'div', a: { 'data-overlayscrollbars-viewport': 'scrollbarHidden' }, ...(scroll ? { scroll } : {}), c: [...beside, { t: 'div', a: { role: 'grid', ...attrs }, c: rows }] }] });
   const panelPage = (panel) => { const t = signedIn(TREES.home); const walk = (n) => (typeof n === 'string' ? n : (n.a && n.a['aria-label'] === 'Your Library' ? clone(panel) : { ...n, c: (n.c || []).map(walk) })); return walk(t); };
   const asked = (pg, rid) => { pg.advance(1000); pg.send({ cmd: 'list', kind: 'playlists', rid }); };
   const answer = (pg) => pg.lists().find((l) => l.kind === 'playlists');
-  const openBtn = { t: 'button', a: { 'aria-label': 'Open Your Library' }, c: [] };
+  const openHeader = [hdr('Open Your Library', 'Create')];
   // collapsed to the icon rail: no titles, only the button that opens it; pressed once, the page draws the rows
-  const colLib = page({ tree: panelPage(libPanel([], { extra: [openBtn] })) });
+  const colLib = page({ tree: panelPage(libPanel([], { header: openHeader })) });
   asked(colLib, 51);
   colLib.advance(900);
   const pressed = colLib.clicked.some((e) => e.getAttribute('aria-label') === 'Open Your Library');
@@ -444,7 +453,7 @@ module.exports = async function spotifyDomUnits(check) {
   colLib.advance(2500);
   check('dom (collapsed library): the panel is opened by its own "Open Your Library" button, then its rows are read', pressed && answer(colLib) && answer(colLib).ok === true && answer(colLib).items.length === 4, JSON.stringify([pressed, answer(colLib)]).slice(0, 300));
   // a panel that stays collapsed (the button does nothing) is a failure that says so
-  const stuckLib = page({ tree: panelPage(libPanel([], { extra: [openBtn] })) });
+  const stuckLib = page({ tree: panelPage(libPanel([], { header: openHeader })) });
   asked(stuckLib, 52);
   stuckLib.advance(10000);
   check('dom (collapsed library): a panel that cannot be opened ends as why "collapsed", not an empty list', answer(stuckLib) && answer(stuckLib).ok === false && answer(stuckLib).why === 'collapsed' && SPB.parseMessage(JSON.stringify(answer(stuckLib))).why === 'collapsed', JSON.stringify(answer(stuckLib)));
@@ -458,7 +467,7 @@ module.exports = async function spotifyDomUnits(check) {
   lazyLib.advance(6000);
   check('dom (lazy library rows): rows the page draws only when the list is scrolled are collected as it is scrolled', answer(lazyLib) && answer(lazyLib).ok === true && answer(lazyLib).items.map((i) => i.title).join() === 'One,Two,Three,Four,Five,Six' && stage === 2, JSON.stringify([stage, answer(lazyLib) && answer(lazyLib).items.map((i) => i.title)]));
   // an empty library says so in its own words: an answer (ok, no rows, not signed out), not a failure
-  const emptyLib = page({ tree: panelPage(libPanel([], { extra: [{ t: 'h2', c: ['Create your first playlist'] }, { t: 'p', c: ['It\u2019s easy, we\u2019ll help you'] }] })) });
+  const emptyLib = page({ tree: panelPage(libPanel([], { beside: [{ t: 'h2', c: ['Create your first playlist'] }, { t: 'p', c: ['It\u2019s easy, we\u2019ll help you'] }] })) });
   asked(emptyLib, 54);
   emptyLib.advance(3000);
   check('dom (empty library): a panel that says "Create your first playlist" is an ok, empty list (not a failure, not signed out)', answer(emptyLib) && answer(emptyLib).ok === true && answer(emptyLib).items.length === 0 && answer(emptyLib).signedOut === false, JSON.stringify(answer(emptyLib)));
@@ -468,7 +477,7 @@ module.exports = async function spotifyDomUnits(check) {
   noPane.advance(10000);
   check('dom (library gone): a page with its player but no library panel says why "noPanel" (the page changed), with a detail for the log', answer(noPane) && answer(noPane).ok === false && answer(noPane).why === 'noPanel' && /no panel/.test(answer(noPane).detail), JSON.stringify(answer(noPane)));
   // a panel under another label (a translated page): the rows inside the page's own left side are found anyway
-  const deLib = page({ tree: panelPage(libPanel([libRow('playlist', 'DE0000000000000000001', 'Mein Mix')], { attrs: { 'aria-label': 'Deine Bibliothek' }, tag: 'nav' })) });
+  const deLib = page({ tree: panelPage(libPanel([libRow('playlist', 'DE0000000000000000001', 'Mein Mix')], { attrs: { 'aria-label': 'Deine Bibliothek' } })) });
   asked(deLib, 56);
   deLib.advance(3000);
   check('dom (renamed panel): rows under a different panel label are read through the side-bar fallback', answer(deLib) && answer(deLib).ok === true && answer(deLib).items.length === 1 && answer(deLib).items[0].title === 'Mein Mix', JSON.stringify(answer(deLib)));
@@ -478,6 +487,25 @@ module.exports = async function spotifyDomUnits(check) {
   asked(imgLib, 57);
   imgLib.advance(3000);
   check('dom (lazy pictures): a library row\'s picture is taken from srcset when src is empty, and image-cdn-*.spotifycdn.com is a picture host the message check accepts', answer(imgLib) && answer(imgLib).items[0].art === 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851aaaa' && SPB.parseMessage(JSON.stringify(answer(imgLib))).items[0].art === 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851aaaa' && SPB.artUrl('https://evil.example/x.jpg') === '' && SPB.artUrl('https://i.scdn.co/image/x') !== '' && SPB.artUrl('https://mosaic.scdn.co/640/x') !== '', JSON.stringify(answer(imgLib)));
+
+  // the real header (2026-10-11): "Expand Your Library" is there while the panel is OPEN and only widens the list into cards, so it is never pressed; the rows are read as they are
+  const realLib = page({ tree: panelPage(libPanel(FIXTURES.library.c[2].c[0].c)) });
+  asked(realLib, 61);
+  realLib.advance(3000);
+  check('dom (real library panel): the rows are read from nav > viewport > the grid labelled "Your Library", and no header button is pressed (Expand Your Library would widen the list into cards)', answer(realLib) && answer(realLib).ok === true && answer(realLib).items.length === 4 && realLib.clicked.length === 0, JSON.stringify([answer(realLib) && answer(realLib).items.length, realLib.clicked.map((e) => e.getAttribute('aria-label'))]));
+  const noRows = page({ tree: panelPage(libPanel([])) });
+  asked(noRows, 62);
+  noRows.advance(10000);
+  check('dom (real library panel): an open panel whose list never draws a row ends as why "timeout" (not "collapsed"), and Expand Your Library is not pressed', answer(noRows) && answer(noRows).ok === false && answer(noRows).why === 'timeout' && !noRows.clicked.some((e) => /^Expand/.test(e.getAttribute('aria-label') || '')) && /grid/.test(answer(noRows).detail), JSON.stringify([answer(noRows), noRows.clicked.length]));
+  const railLib = page({ tree: panelPage(libPanel(FIXTURES.library.c[2].c[0].c, { header: openHeader })) });
+  asked(railLib, 63);
+  railLib.advance(3000);
+  check('dom (library closed to its icon rail): the rows are there, so they are read and the panel is left closed', answer(railLib) && answer(railLib).ok === true && answer(railLib).items.length === 4 && railLib.clicked.length === 0, JSON.stringify([answer(railLib) && answer(railLib).items.length, railLib.clicked.length]));
+  const wideLib = page({ tree: panelPage(FIXTURES.libraryWide) });
+  asked(wideLib, 64);
+  wideLib.advance(3000);
+  const wideMsg = answer(wideLib);
+  check('dom (library widened into cards): the card ids are read like the list rows (kind, id, title, with "Pinned" and the kind word dropped from the subtitle); Liked Songs is left out', wideMsg && wideMsg.ok === true && wideMsg.items.map((i) => i.kind + ':' + i.id + ':' + i.title + ':' + i.sub).join('|') === 'playlist:WIDE0000000000000000A:Road trip:Sam|album:WIDE0000000000000000B:Discovery:Daft Punk' && /^https:\/\/i\.scdn\.co\//.test(wideMsg.items[0].art), JSON.stringify(wideMsg));
 
   }
 
@@ -644,15 +672,30 @@ module.exports = async function spotifyDomUnits(check) {
   const boxPage = page({ tree: signedIn(TREES.home), route: () => {} });
   check('dom: the search box of the saved page is found by the table own selectors (the second way in)', SPB.SELECTORS.searchInput.some((sel) => boxPage.el(sel)), '');
 
+  // the search page as the signed-in page makes it (2026-10-11, test/fixtures/spotify/search-rows.json): every kind is a div[role=row] > div[data-encore-id=listRow] (no
+  // data-testid="tracklist-row"), the picture in the media cell, the entity's link in the title cell
+  const rowsTree = (() => { const t = signedIn(TREES['search-all']); const walk = (n) => (typeof n === 'string' ? n : (n.t === 'main' ? clone(FIXTURES.searchRows) : { ...n, c: (n.c || []).map(walk) })); return walk(t); })();
+  const rs = page({ tree: rowsTree, route: () => {} });
+  rs.location.pathname = '/search/Never%20Gonna%20Give%20You%20Up';
+  rs.send({ cmd: 'search', term: 'Never Gonna Give You Up', rid: 70 });
+  rs.advance(3000);
+  const rsList = (rs.lists().find((l) => l.kind === 'search') || {}).items || [];
+  const rsDesc = rsList.map((i) => i.kind + ':' + i.id + ':' + i.title + ':' + i.sub);
+  check('dom (search rows, 2026-10-11): songs, an album, an artist and a playlist are listed from their rows (in the page order), a song and an album with their artists', rsDesc.join('|') === ['song:4PTG3Z6ehGkBFwjybzWkR8:Never Gonna Give You Up:Rick Astley', 'song:3pepZAOvUCBt3qWi9Ax6Aq:Never, Never Gonna Give Ya Up:Barry White', 'playlist:6HXpFwuNqwiWCLAU55LjHG:Never Gonna Give You Up:', 'album:1fWMQOAKIqdgzQgE311HK8:Never Gonna Give You Up:Mac Beez', 'artist:0gxyHStUsqpMadRV0Di1Qt:Rick Astley:'].join('|'), JSON.stringify(rsDesc));
+  check('dom (search rows): every row picture is taken from its media cell (the link is not where the image is), and the message check accepts them', rsList.length === 5 && rsList.every((i) => /^https:[/][/]/.test(i.art)) && SPB.parseMessage(JSON.stringify(rs.lists().find((l) => l.kind === 'search'))).items.every((i) => i.art !== ''), JSON.stringify(rsList.map((i) => i.art)));
+  rs.send({ cmd: 'playItem', kind: 'song', id: '3pepZAOvUCBt3qWi9Ax6Aq' });
+  const rsBtn = rs.clicked[0];
+  check('dom (search rows): a song is played from its own page by its track id (the route is opened), never by a row\'s button on the results page', rs.pushed[0] === '/track/3pepZAOvUCBt3qWi9Ax6Aq' && !rs.clicked.some((c) => c.closest('[role="row"]')), JSON.stringify([rs.pushed, rs.clicked.map((c) => c.getAttribute('aria-label'))]));
+  const rsArt = (rs.lists().find((l) => l.kind === 'search') || { items: [] }).items.map((i) => i.kind + ':' + i.art);
+  check('dom (search rows): each row\'s art is the address in its own media cell (the fixture\'s entity-image src), song, album, artist and playlist alike', JSON.stringify(rsArt) === JSON.stringify(['song:https://i.scdn.co/image/ab67616d0000e1a315ebbedaacef61af244262a8'].concat(rsArt.slice(1))) && rsArt.length === 5 && rsArt.every((a) => /^[a-z]+:https:\/\/(i\.scdn\.co|image-cdn-[a-z0-9]+\.spotifycdn\.com|mosaic\.scdn\.co)\//.test(a)), JSON.stringify(rsArt));
+
   // ================= playing an item =================
   const song = page({ tree: signedIn(TREES['search-tracks']), route: () => {} });
   song.location.pathname = '/search/daft%20punk/tracks';
   const row = song.all('[data-testid="tracklist-row"]').find((r) => r.querySelector('a[href^="/track/"]'));
   const rowId = row.querySelector('a[href^="/track/"]').getAttribute('href').split('/')[2];
   song.send({ cmd: 'playItem', kind: 'song', id: rowId });
-  check('dom: a song that is listed on the page is played by its own row\'s Play button (no page change)', song.pushed.length === 0 && song.clicked.length === 1 && /^Play /.test(song.clicked[0].getAttribute('aria-label')), JSON.stringify(song.clicked.map((c) => c.getAttribute('aria-label'))));
-  const clickedRow = song.clicked[0].closest('[data-testid="tracklist-row"]');
-  check('dom: …and it is the right row\'s button (the title in its label is that row\'s)', clickedRow === row, '');
+  check('dom: a song listed on the page is played from its own page by its track id (the route is opened), not by a row button', song.pushed[0] === '/track/' + rowId && !song.clicked.some((c) => c.closest('[data-testid="tracklist-row"]')), JSON.stringify([song.pushed, song.clicked.map((c) => c.getAttribute('aria-label'))]));
 
   for (const [kind, name, id] of [['album', 'album', '2noRn2Aes5aoNVsU6iWThc'], ['playlist', 'playlist', '37i9dQZF1DX6mvEU1S6INL'], ['song', 'track', '0DiWol3AO6WpXZgp0goxAV']]) {
     const pg = page({ tree: signedIn(TREES.home), route: (p, h) => { if (p === `/${name}/${id}`) h.after(700, signedIn(TREES[name])); } });

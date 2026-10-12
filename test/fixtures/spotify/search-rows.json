@@ -1,0 +1,1520 @@
+{
+ "url": "https://open.spotify.com/search/Never%20Gonna%20Give%20You%20Up",
+ "title": "Spotify - Search",
+ "capturedFrom": "open.spotify.com, desktop layout, signed in, 2026-10-11, five of the result rows (two songs, an album, an artist, a playlist), each a div[role=row] > div[data-encore-id=listRow]",
+ "tree": {
+  "t": "main",
+  "a": {
+   "aria-label": "Spotify - Search"
+  },
+  "c": [
+   {
+    "t": "div",
+    "c": [
+     {
+      "t": "div",
+      "a": {
+       "role": "grid",
+       "aria-colcount": "6"
+      },
+      "c": [
+       {
+        "t": "div",
+        "a": {
+         "role": "row",
+         "aria-rowindex": "1"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-spotify:track:4PTG3Z6ehGkBFwjybzWkR8"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "data-testid": "mouse-only-link"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "id": "onClickHintspotify:track:4PTG3Z6ehGkBFwjybzWkR8"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "1",
+                 "data-testid": "media"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "img",
+                      "a": {
+                       "aria-hidden": "true",
+                       "src": "https://i.scdn.co/image/ab67616d0000e1a315ebbedaacef61af244262a8",
+                       "data-testid": "entity-image",
+                       "alt": "Never Gonna Give You Up"
+                      }
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "2",
+                 "data-testid": "title"
+                },
+                "c": [
+                 {
+                  "t": "a",
+                  "a": {
+                   "aria-label": "Never Gonna Give You Up",
+                   "href": "/track/4PTG3Z6ehGkBFwjybzWkR8"
+                  },
+                  "c": [
+                   {
+                    "t": "p",
+                    "a": {
+                     "data-encore-id": "listRowTitle",
+                     "id": "listrow-title-spotify:track:4PTG3Z6ehGkBFwjybzWkR8",
+                     "aria-hidden": "true"
+                    },
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Never Gonna Give You Up"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "3",
+                 "data-testid": "subtitle"
+                },
+                "c": [
+                 {
+                  "t": "p",
+                  "a": {
+                   "data-encore-id": "listRowSubtitle",
+                   "id": "listrow-subtitle-spotify:track:4PTG3Z6ehGkBFwjybzWkR8"
+                  },
+                  "c": [
+                   {
+                    "t": "span",
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       {
+                        "t": "svg"
+                       }
+                      ]
+                     },
+                     {
+                      "t": "span",
+                      "c": [
+                       "Song"
+                      ]
+                     },
+                     {
+                      "t": "span",
+                      "c": [
+                       {
+                        "t": "a",
+                        "a": {
+                         "dir": "auto",
+                         "href": "/artist/0gxyHStUsqpMadRV0Di1Qt"
+                        },
+                        "c": [
+                         "Rick Astley"
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "data-testid": "trailing",
+                 "role": "presentation"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "a": {
+                   "role": "presentation"
+                  },
+                  "c": [
+                   {
+                    "t": "div",
+                    "a": {
+                     "role": "gridcell",
+                     "aria-colindex": "4",
+                     "data-testid": "context-menu-button"
+                    },
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-haspopup": "menu",
+                       "data-testid": "more-button",
+                       "aria-label": "More options for Never Gonna Give You Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "a": {
+                     "role": "gridcell",
+                     "aria-colindex": "5",
+                     "data-testid": "save-button"
+                    },
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-checked": "false",
+                       "aria-label": "Add to Liked Songs",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "a": {
+                     "role": "gridcell",
+                     "aria-colindex": "6",
+                     "data-testid": "play-button"
+                    },
+                    "c": [
+                     {
+                      "t": "div",
+                      "a": {
+                       "role": "div"
+                      },
+                      "c": [
+                       {
+                        "t": "button",
+                        "a": {
+                         "data-testid": "play-button",
+                         "aria-label": "Play",
+                         "data-encore-id": "buttonPrimary",
+                         "data-is-icon-only": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "span",
+                          "c": [
+                           {
+                            "t": "span",
+                            "a": {
+                             "aria-hidden": "true"
+                            },
+                            "c": [
+                             {
+                              "t": "svg"
+                             }
+                            ]
+                           }
+                          ]
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "div",
+        "a": {
+         "role": "row",
+         "aria-rowindex": "2"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-:r8k:"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "data-testid": "mouse-only-link"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "id": "onClickHint:r8k:"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "1",
+                 "data-testid": "media"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "img",
+                      "a": {
+                       "aria-hidden": "true",
+                       "src": "https://i.scdn.co/image/ab67616d000011ebe7bfd1f47a4afd9b4b0caed5",
+                       "data-testid": "entity-image",
+                       "alt": "Never, Never Gonna Give Ya Up"
+                      }
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-label": "Play Never, Never Gonna Give Ya Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "2",
+                 "data-testid": "preTitle"
+                },
+                "c": [
+                 {
+                  "t": "span",
+                  "a": {
+                   "data-encore-id": "text"
+                  },
+                  "c": [
+                   "Lyrics match"
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "3",
+                 "data-testid": "title"
+                },
+                "c": [
+                 {
+                  "t": "a",
+                  "a": {
+                   "aria-label": "Never, Never Gonna Give Ya Up",
+                   "href": "/track/3pepZAOvUCBt3qWi9Ax6Aq"
+                  },
+                  "c": [
+                   {
+                    "t": "p",
+                    "a": {
+                     "data-encore-id": "listRowTitle",
+                     "id": "listrow-title-:r8k:",
+                     "aria-hidden": "true"
+                    },
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Never, Never Gonna Give Ya Up"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "4",
+                 "data-testid": "subtitle"
+                },
+                "c": [
+                 {
+                  "t": "p",
+                  "a": {
+                   "data-encore-id": "listRowSubtitle",
+                   "id": "listrow-subtitle-:r8k:"
+                  },
+                  "c": [
+                   {
+                    "t": "span",
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Song"
+                      ]
+                     },
+                     {
+                      "t": "span",
+                      "c": [
+                       {
+                        "t": "a",
+                        "a": {
+                         "dir": "auto",
+                         "href": "/artist/3rfgbfpPSfXY40lzRK7Syt"
+                        },
+                        "c": [
+                         "Barry White"
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "5",
+                 "data-testid": "trailing"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "span",
+                      "a": {
+                       "data-encore-id": "tag"
+                      },
+                      "c": [
+                       "Song"
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-haspopup": "menu",
+                       "data-testid": "more-button",
+                       "aria-label": "More options for Never, Never Gonna Give Ya Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-checked": "false",
+                       "aria-label": "Add to Liked Songs",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "div",
+        "a": {
+         "role": "row",
+         "aria-rowindex": "5"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-:r8q:"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "data-testid": "mouse-only-link"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "id": "onClickHint:r8q:"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "1",
+                 "data-testid": "media"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "img",
+                      "a": {
+                       "aria-hidden": "true",
+                       "src": "https://image-cdn-ak.spotifycdn.com/image/ab67706c0000dec52be362a09549b4f6e95ec1ea",
+                       "data-testid": "entity-image",
+                       "alt": "Never Gonna Give You Up"
+                      }
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-label": "Play Never Gonna Give You Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "2",
+                 "data-testid": "preTitle"
+                }
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "3",
+                 "data-testid": "title"
+                },
+                "c": [
+                 {
+                  "t": "a",
+                  "a": {
+                   "aria-label": "Never Gonna Give You Up",
+                   "href": "/playlist/6HXpFwuNqwiWCLAU55LjHG"
+                  },
+                  "c": [
+                   {
+                    "t": "p",
+                    "a": {
+                     "data-encore-id": "listRowTitle",
+                     "id": "listrow-title-:r8q:",
+                     "aria-hidden": "true"
+                    },
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Never Gonna Give You Up"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "4",
+                 "data-testid": "subtitle"
+                },
+                "c": [
+                 {
+                  "t": "p",
+                  "a": {
+                   "data-encore-id": "listRowSubtitle",
+                   "id": "listrow-subtitle-:r8q:"
+                  },
+                  "c": [
+                   {
+                    "t": "span",
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Playlist"
+                      ]
+                     },
+                     {
+                      "t": "span",
+                      "c": [
+                       {
+                        "t": "a",
+                        "a": {
+                         "dir": "auto",
+                         "href": "/user/31knwkg4r7pb6bxggpzl5ybdfnji"
+                        },
+                        "c": [
+                         "nerdoji"
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "5",
+                 "data-testid": "trailing"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "span",
+                      "a": {
+                       "data-encore-id": "tag"
+                      },
+                      "c": [
+                       "Playlist"
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-haspopup": "menu",
+                       "data-testid": "more-button",
+                       "aria-label": "More options for Never Gonna Give You Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-checked": "false",
+                       "data-testid": "add-button",
+                       "aria-label": "Save Never Gonna Give You Up to Your Library",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "div",
+        "a": {
+         "role": "row",
+         "aria-rowindex": "10"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-:r96:"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "data-testid": "mouse-only-link"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "id": "onClickHint:r96:"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "1",
+                 "data-testid": "media"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "img",
+                      "a": {
+                       "aria-hidden": "true",
+                       "src": "https://i.scdn.co/image/ab67616d000011ebc8b4f331e78c938da44b185e",
+                       "data-testid": "entity-image",
+                       "alt": "Never Gonna Give You Up"
+                      }
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-label": "Play Never Gonna Give You Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "2",
+                 "data-testid": "preTitle"
+                }
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "3",
+                 "data-testid": "title"
+                },
+                "c": [
+                 {
+                  "t": "a",
+                  "a": {
+                   "aria-label": "Never Gonna Give You Up",
+                   "href": "/album/1fWMQOAKIqdgzQgE311HK8"
+                  },
+                  "c": [
+                   {
+                    "t": "p",
+                    "a": {
+                     "data-encore-id": "listRowTitle",
+                     "id": "listrow-title-:r96:",
+                     "aria-hidden": "true"
+                    },
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Never Gonna Give You Up"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "4",
+                 "data-testid": "subtitle"
+                },
+                "c": [
+                 {
+                  "t": "p",
+                  "a": {
+                   "data-encore-id": "listRowSubtitle",
+                   "id": "listrow-subtitle-:r96:"
+                  },
+                  "c": [
+                   {
+                    "t": "span",
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Single"
+                      ]
+                     },
+                     {
+                      "t": "span",
+                      "c": [
+                       {
+                        "t": "a",
+                        "a": {
+                         "dir": "auto",
+                         "href": "/artist/4BlBvAGQrqv3vWmx8GWTds"
+                        },
+                        "c": [
+                         "Mac Beez"
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "5",
+                 "data-testid": "trailing"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "span",
+                      "a": {
+                       "data-encore-id": "tag"
+                      },
+                      "c": [
+                       "Single"
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-haspopup": "menu",
+                       "data-testid": "more-button",
+                       "aria-label": "More options for Never Gonna Give You Up",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-checked": "false",
+                       "data-testid": "add-button",
+                       "aria-label": "Save Never Gonna Give You Up to Your Library",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "div",
+        "a": {
+         "role": "row",
+         "aria-rowindex": "45"
+        },
+        "c": [
+         {
+          "t": "div",
+          "a": {
+           "data-encore-id": "listRow",
+           "role": "group",
+           "aria-labelledby": "listrow-title-:rbc:"
+          },
+          "c": [
+           {
+            "t": "div",
+            "a": {
+             "data-testid": "mouse-only-link"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "id": "onClickHint:rbc:"
+            }
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "1",
+                 "data-testid": "media"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "img",
+                      "a": {
+                       "aria-hidden": "true",
+                       "src": "https://i.scdn.co/image/ab6761610000101f854861dff9a24a1ed3dfdc7d",
+                       "data-testid": "entity-image",
+                       "alt": "Rick Astley"
+                      }
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-label": "Play Rick Astley",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "t": "div",
+            "a": {
+             "role": "presentation"
+            },
+            "c": [
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "2",
+                 "data-testid": "preTitle"
+                }
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "3",
+                 "data-testid": "title"
+                },
+                "c": [
+                 {
+                  "t": "a",
+                  "a": {
+                   "aria-label": "Rick Astley",
+                   "href": "/artist/0gxyHStUsqpMadRV0Di1Qt"
+                  },
+                  "c": [
+                   {
+                    "t": "p",
+                    "a": {
+                     "data-encore-id": "listRowTitle",
+                     "id": "listrow-title-:rbc:",
+                     "aria-hidden": "true"
+                    },
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Rick Astley"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "4",
+                 "data-testid": "subtitle"
+                },
+                "c": [
+                 {
+                  "t": "p",
+                  "a": {
+                   "data-encore-id": "listRowSubtitle",
+                   "id": "listrow-subtitle-:rbc:"
+                  },
+                  "c": [
+                   {
+                    "t": "span",
+                    "c": [
+                     {
+                      "t": "span",
+                      "c": [
+                       "Artist"
+                      ]
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     },
+                     {
+                      "t": "span"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "div",
+              "a": {
+               "role": "presentation"
+              },
+              "c": [
+               {
+                "t": "div",
+                "a": {
+                 "role": "gridcell",
+                 "aria-colindex": "5",
+                 "data-testid": "trailing"
+                },
+                "c": [
+                 {
+                  "t": "div",
+                  "c": [
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "span",
+                      "a": {
+                       "data-encore-id": "tag"
+                      },
+                      "c": [
+                       "Artist"
+                      ]
+                     }
+                    ]
+                   },
+                   {
+                    "t": "div",
+                    "c": [
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-haspopup": "menu",
+                       "data-testid": "more-button",
+                       "aria-label": "More options for Rick Astley",
+                       "data-encore-id": "buttonTertiary"
+                      },
+                      "c": [
+                       {
+                        "t": "span",
+                        "a": {
+                         "aria-hidden": "true"
+                        },
+                        "c": [
+                         {
+                          "t": "svg"
+                         }
+                        ]
+                       }
+                      ]
+                     },
+                     {
+                      "t": "button",
+                      "a": {
+                       "aria-label": "Follow Rick Astley",
+                       "data-encore-id": "buttonSecondary"
+                      },
+                      "c": [
+                       "Follow"
+                      ]
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
