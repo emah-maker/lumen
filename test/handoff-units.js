@@ -51,6 +51,27 @@ check('a long answer with one caveat is not a handoff', verdict(`${'The market g
 check('empty and tiny replies are not handoffs', verdict('').handoff === false && verdict('OK').handoff === false);
 check('kinds: paste, access, user-step', verdict('Please paste the text here.').kind === 'paste' && verdict('Please give me clipboard access.').kind === 'access' && verdict('You\'ll need to click Save yourself.').kind === 'user-step');
 
+// Delivering code, a script, a command or a formula is a complete answer, even when it ends "run it" or "paste it".
+const F = '```';
+const DELIVERED = [
+  ['MATLAB script to run', `Here's a MATLAB script that solves problem 3. You can run it in MATLAB to see the plot.\n\n${F}matlab\nx = linspace(0,1,100);\ny = x.^2;\nplot(x,y)\n${F}\n\nSave this as hw3.m and run it yourself, or paste it into the command window.`, 'Solve problem 3 of my MATLAB homework'],
+  ['bash command', `Run this in your terminal:\n\n${F}bash\nnpm install\n${F}\n\nPaste this into your terminal and press Enter.`, 'Install the dependencies'],
+  ['save as file and run', `Save this as solve.m and run it in MATLAB:\n\n${F}matlab\ndisp(1)\n${F}`, 'Do my homework'],
+  ['inline command', 'Use `git status` to see what changed. Copy it into your terminal and run it.', 'Show me what changed'],
+  ['code block only', `${F}matlab\nx = 1;\ndisp(x)\n${F}`, 'Write the script'],
+  ['formula', 'Here\'s the formula: `A = pi * r^2`. Type it into a cell and fill it down.', 'Get the area of the circle'],
+];
+for (const [label, reply, request] of DELIVERED) check(`delivered answer, not a handoff: ${label}`, verdict(reply, request).handoff === false, JSON.stringify(verdict(reply, request)));
+// ...but a refusal that happens to carry a small snippet is still a handoff.
+const REFUSALS = [
+  `I can't do that from here. You'll need to open the site and click Export yourself:\n\n${F}\nExport > CSV\n${F}`,
+  'I can\'t open the page. Run `curl` on the URL yourself and paste the output here.',
+  `I wasn't able to read the file. Please paste its contents here:\n\n${F}\n(paste here)\n${F}`,
+];
+for (const reply of REFUSALS) check(`still a handoff: ${reply.slice(0, 50).replace(/\n/g, ' ')}`, verdict(reply, 'Export my data').handoff === true, JSON.stringify(verdict(reply, 'Export my data')));
+check('a browser step without a refusal still counts after a code block', verdict(`${F}\nok\n${F}\nYou can open the site and click Export yourself.`, 'Export my data').handoff === true);
+check('follow-up: does not push the model to find and run local interpreters', !/a script, or a different/.test(handoff.FOLLOWUP) && /MATLAB, Octave/.test(handoff.FOLLOWUP) && /don't go hunting/.test(handoff.FOLLOWUP));
+
 // finalReply: only a run that ended on an assistant text.
 check('finalReply: the last assistant text', handoff.finalReply([{ role: 'user', content: 'a' }, { role: 'assistant', content: [{ type: 'text', text: 'hello there' }] }]) === 'hello there');
 check('finalReply: nothing after a tool call or a user turn', handoff.finalReply([{ role: 'assistant', content: [{ type: 'tool_use', id: '1', name: 'x', input: {} }] }]) === '' && handoff.finalReply([{ role: 'assistant', content: 'x' }, { role: 'user', content: 'y' }]) === '');

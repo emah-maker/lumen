@@ -83,10 +83,24 @@
     return svg;
   }
 
+  // A chat opened with many diagrams does not draw them all at once: loading Mermaid and laying each one out held the page's one thread
+  // for a second or more while the chat was already there to read. A diagram is drawn when it comes near the view, and when the page is idle.
+  // (One already drawn this session comes straight back from the cache; with no IntersectionObserver it is drawn at once.)
+  const NEAR = '900px 0px';
+  function whenNear(box, source, run) {
+    if (typeof IntersectionObserver === 'undefined' || cache.has(`${isDark() ? 'd' : 'l'}|${source}`)) { run(); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1500 }); else setTimeout(run, 50);
+    }, { rootMargin: NEAR });
+    io.observe(box);
+  }
+
   function diagram(box, pre, source) {
     if (source.trim() === '' || source.length > MAX_SOURCE || box.dataset.diagram) return;
     box.dataset.diagram = 'pending';
-    draw(source).then((svg) => {
+    whenNear(box, source, () => draw(source).then((svg) => {
       if (!box.isConnected) return;
       const view = Object.assign(document.createElement('div'), { className: 'mermaid-view' });
       view.innerHTML = svg;
@@ -100,7 +114,7 @@
         toggle.textContent = showing ? (window.t?.('chat.showDiagram') || 'Diagram') : (window.t?.('chat.showSource') || 'Source');
       });
       head?.insertBefore(toggle, head.querySelector('.code-copy'));
-    }).catch((e) => { box.dataset.diagram = 'failed'; }); // the code block stays as it is
+    }).catch((e) => { box.dataset.diagram = 'failed'; })); // the code block stays as it is
   }
 
   // ---------- wrap ----------

@@ -66,6 +66,7 @@ const deviceAccess = require('../features/device-access'); // [device access] up
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
 // page; switch_tab and open_tab move the pin on purpose. Outside a task, tools use the active tab.
 const taskScope = new AsyncLocalStorage();
+const STOP_GRACE_MS = 8000; // how long a stopped run may take to wind down before it is ended without waiting (runOnce)
 const REDISPATCH = new Error('model fallback: another engine takes the turn'); // thrown by loop() to runTask, never shown
 const nestedCall = new AsyncLocalStorage(); // [ai controls] set inside execute(): tools a tool runs
 const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user what to do next.';
@@ -1845,6 +1846,7 @@ class Agent {
   stop() {
     const rec = this.runs.get(this.messages);
     if (rec) rec.controller.abort();
+    else if (this.runs.size === 1) [...this.runs.values()][0].controller.abort(); // [stop always works] the open conversation was swapped (detach, reset) under a run that is still going: the only live run is the one Stop means
     else if (this.controller && this.runs.size === 0) this.controller.abort();
   }
 
@@ -1918,7 +1920,18 @@ class Agent {
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
       // (a chat that waited for a free slot); otherwise in the front tab.
       const tab = (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra) });
+      // [stop always works] Stop aborts the run's signal and every engine and tool wait honours it; a wait that somehow does not (a CLI that
+      // went quiet mid-hook, a step stuck on something the abort never reaches) is given stopGraceMs and then left behind, so this run
+      // still ends with its 'done' (below), the screen clears, and the next message does not wait for it for ever.
+      const ended = new Promise((_, reject) => {
+        const giveUp = () => { const t = setTimeout(() => reject(controller.signal.reason || new Error('Stopped')), this.stopGraceMs ?? STOP_GRACE_MS); t.unref?.(); };
+        if (controller.signal.aborted) giveUp(); else controller.signal.addEventListener('abort', giveUp, { once: true });
+      });
+      ended.catch(() => {});
+      await Promise.race([
+        this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra) }),
+        ended,
+      ]);
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });

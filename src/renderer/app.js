@@ -2241,7 +2241,7 @@ $('app-menu').onclick = () => {
     window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
   });
 }
-$('agent-stop').onclick = () => window.assistant.stop();
+$('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
 // from --omnibox-end-w. A fixed 62px only cleared two, and the URL ran under the rest.
