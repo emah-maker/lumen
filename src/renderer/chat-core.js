@@ -2324,12 +2324,16 @@ async function reconcile() {
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
+  return takeView(view);
+}
+function takeView(view) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
   if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
+window.chatTakeView = takeView; // app.js: the sidebar opens on this tab's chat that is working / waiting / unread (assistant.sidebarTarget)
 
 // Links in replies open in a new tab.
 messages.addEventListener('click', (e) => {
