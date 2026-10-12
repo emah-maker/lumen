@@ -3390,7 +3390,7 @@ ${prompt}` : prompt), historyImages: [] };
       throw Object.assign(new Error(err.userMessage || err.message), err.provider ? { __provider: err.provider } : {});
     }
     emit({ type: 'status', text: '' });
-    const blocks = await this.keepImages(made.images.map((i) => ({ ...i, credit: made.credit })), emit, { alt: ask.prompt });
+    const blocks = await this.keepImages(made.images.map((i) => ({ ...i, credit: made.credit })), emit, { alt: ask.shown || ask.prompt });
     const content = [...(made.said ? [{ type: 'text', text: made.said }] : []), ...blocks];
     if (made.said) emit({ type: 'text', text: made.said });
     if (blocks.length) reply(content);
@@ -3411,8 +3411,11 @@ ${prompt}` : prompt), historyImages: [] };
   // the reply (true). Otherwise the user is told this model can't make pictures: an explicit "/image …" is answered with
   // that alone (true); "draw a cat" goes on to the model as text (false) after one notice per chat and model.
   async imageTurn(messages, userText, signal, emit) {
-    const ask = genImages.imageRequest(userText);
-    if (!ask) return false;
+    const asked = genImages.imageRequest(userText);
+    if (!asked) return false;
+    // "show this" / "draw it" / no subject: the picture is of the latest reply, not of whatever the chat started with (gen-images.js imagePromptFrom).
+    const built = genImages.imagePromptFrom(asked.prompt, transcriptFor(messages));
+    const ask = { ...asked, prompt: built.prompt, shown: built.shown };
     const picked = String(messages.settings.model);
     const viaEngine = /^(claudecode|grokbuild|antigravity|codex):/.test(picked);
     const { provider, model } = viaEngine ? { provider: null, model: picked } : providers.splitModel(picked);
@@ -3453,7 +3456,7 @@ ${prompt}` : prompt), historyImages: [] };
       throw err;
     }
     emit({ type: 'status', text: '' });
-    const blocks = await this.keepImages(made.images, emit, { alt: ask.prompt });
+    const blocks = await this.keepImages(made.images, emit, { alt: ask.shown || ask.prompt });
     const content = [...(made.said ? [{ type: 'text', text: made.said }] : []), ...blocks];
     if (made.said) emit({ type: 'text', text: made.said });
     if (!blocks.length) return true; // (keepImages said why)

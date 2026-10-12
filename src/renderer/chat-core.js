@@ -1134,6 +1134,7 @@ function startTurn(text, images, tabs = null) {
       const img = document.createElement('img');
       img.src = a.url;
       img.alt = t('chat.imageN', { n: i + 1 });
+      window.genImages?.zoomable(img);
       row.append(img);
     }
     bubble.append(row);
@@ -2305,7 +2306,7 @@ function renderHistory(items) {
       if (images.length) {
         const row = document.createElement('div');
         row.className = 'msg-images';
-        images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) })));
+        images.forEach((src, i) => { const im = Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) }); window.genImages?.zoomable(im); row.append(im); });
         bubble.append(row);
       }
       const files = restoredFiles(item.files);

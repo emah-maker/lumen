@@ -242,7 +242,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
-  'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
+  'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -4788,6 +4788,11 @@ function saveChatOf(id, messages) {
     console.error('Could not save chat:', err.message);
   }
 }
+// A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
+// once (one small write, nothing per streamed token) and every open list redraws. Viewing, renaming and pinning never call this.
+function bumpChat(id) {
+  try { if (id && !temporaryChats.has(id) && chats().touch(id)) pushAttention(); } catch { /* the list keeps its order */ }
+}
 const detachedSaves = new Map();
 function saveChatOfSoon(id, messages) {
   clearTimeout(detachedSaves.get(id));
@@ -8461,6 +8466,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
+  bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
   chatPageRt.beginRun(event, { text: askText, runId, chatId: runChat, images: valid, files: attachedFiles }); // pins a chat-page run to the tab last looked at; the other view mirrors it
@@ -8539,6 +8545,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).
     if (fromChatPage && agent.aboutCurrentPage(askText, askExtra)) { const cand = chatPageRt.pick(); if (cand != null) chatPageRt.retarget(cand); }
     agent.run(askText, emit, valid, askExtra, skillRun);
+    bumpChat(runChat); // (a run that waited for a slot is in use again now)
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
@@ -9111,6 +9118,22 @@ ipcMain.handle('images:copy', (_e, id) => {
   if (!image || image.isEmpty()) return false;
   copyImage(image);
   return true;
+});
+// "Open in a tab" in the chat's picture viewer (renderer/chat-image-viewer.js): a picture's data URL is too long to be a tab's address (Chromium
+// refuses one over 2 MB), so it is written to a file in the temp folder and that opens. PNG, JPEG, GIF and WebP only; files a day old are cleared.
+ipcMain.handle('images:open-tab', (_e, dataUrl) => {
+  const m = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+  if (!m || m[2].length > 40e6) return false;
+  try {
+    const dir = path.join(require('os').tmpdir(), 'lumen-pictures');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of fs.readdirSync(dir)) { try { const old = path.join(dir, name); if (Date.now() - fs.statSync(old).mtimeMs > 86400000) fs.unlinkSync(old); } catch { /* in use or gone */ } }
+    const buffer = Buffer.from(m[2], 'base64');
+    const file = path.join(dir, `picture-${require('crypto').createHash('sha256').update(buffer).digest('hex').slice(0, 16)}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`);
+    fs.writeFileSync(file, buffer);
+    openTab(pathToFileURL(file).href);
+    return true;
+  } catch { return false; }
 });
 // A web picture in a reply ("![](https://…)") loads only when the user asks (a click): https, no cookies, no private
 // addresses, a real image of a known type. It is then kept with the open chat like a made one.
