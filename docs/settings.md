@@ -143,6 +143,7 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Setting | Key | Default | What it does |
 |---|---|---|---|
 | What Lumen opens when it starts | `startup` | `restore` | `restore` (continue where you left off), `newtab` or `pages`. |
+| Open files | — | — | A PDF, deck, text file or image that is open when you close the window or quit comes back with "continue where you left off" (the PDF on the page you were reading); one whose file was moved or deleted shows "This file was moved or deleted" with Choose file and Show in folder. Ctrl+Shift+T reopens a window closed while others stayed open. |
 | Restore after a crash | — | — | With `newtab` or `pages`, a launch after Lumen didn't quit normally (a `running` file left in the profile folder) offers to restore the tabs of the last run. |
 | Pages to open | `startupPages` | none | Up to 20 `http(s)` addresses, used with `pages`. |
 

@@ -7,3 +7,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 if (location.protocol === 'file:' && /\/renderer\/(error|cert-error|https-only|safe-browsing)\.html$/.test(location.pathname)) {
   contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} });
 }
+// The "This file was moved or deleted" page (the error page with kind=missingfile): Show in folder and Choose file. Main takes the
+// file from the page's own address, never from these calls.
+if (location.protocol === 'file:' && /\/renderer\/error\.html$/.test(location.pathname) && /[?&]kind=missingfile\b/.test(location.search)) {
+  contextBridge.exposeInMainWorld('lumenMissingFile', {
+    showInFolder: () => ipcRenderer.send('missingfile:folder'),
+    choose: () => ipcRenderer.send('missingfile:choose'),
+  });
+}
