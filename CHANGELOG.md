@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **No stray Regenerate and Retry buttons on a reply that is still thinking.** Opening a chat (or its full page) while its reply was still running left the "reply stopped" row of buttons on screen: two circular-arrow icons stacked next to the avatar, one over the "Thinking" line, and a second pair stayed behind once the reply finished. A running reply now has no such buttons, a finished one has exactly one Regenerate and one Retry, and the Retry-with-another-model button of an older reply no longer lingers when you ask again.
 - **The Spotify card's Library tab loads your library.** Opening the tab while Spotify was still starting (or after Lumen had put it to sleep) used to do nothing, and the card ended on "Nothing here yet"; it now says "Loading your library…" and shows your playlists as soon as Spotify is ready. If you have connected Spotify's Web API, the library (recent plays, Liked Songs, playlists, albums, artists) is read from it directly, and Lumen falls back to Spotify's own page only when that fails. The first rows show as soon as the playlists arrive and the rest fill in, each list is given a few seconds (never "Loading…" for ever), a rate limit says so, and a library that can't be read still ends in a clear message with **Try again**. Tested by clicking the Library tab on a real signed-in account, hidden.
 
 ## 0.5.27 (2026-10-12)
