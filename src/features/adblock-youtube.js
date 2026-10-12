@@ -9,7 +9,8 @@
 //    renderers in the feed, search, Shorts and watch page, and for the enforcement dialog;
 //  - a small script, run in the page at document start like the scriptlets, that acts only while an ad is
 //    actually playing (the player has `ad-showing`): it presses Skip, and otherwise mutes the ad and runs it to
-//    its end. It never touches the video while the player isn't showing an ad. It keeps nothing on window.
+//    its end. It never touches the video while the player isn't showing an ad, and never plays over a pause the
+//    user made. It keeps nothing on window.
 
 // Filter lines, merged into the engine with the sign-in exceptions (so they are tagged and rebuilt with them).
 const YOUTUBE_FILTERS = [
@@ -51,6 +52,27 @@ function youtubeFallback() {
     const CLOSE = '.ytp-ad-overlay-close-button';
     let held = null; // the video we muted and sped up for an ad, with what it had before
     let wallSeen = false;
+    // A pause the user made (a click, a key, a tap just before it) is theirs: nothing here plays over it. Only a pause
+    // that came with the enforcement dialog, with no input from the user, is undone. (Signed-in pages re-render the
+    // dialog, and resuming on every appearance played the video again each time the user paused: "pause does nothing".)
+    const USER_WINDOW = 1500;
+    let lastInput = -Infinity;
+    let lastPause = null; // { at, byUser }
+    const wallShown = () => Boolean(document.querySelector('ytd-enforcement-message-view-model'));
+    const noteInput = (e) => { if (e.isTrusted) lastInput = Date.now(); };
+    for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchstart']) document.addEventListener(type, noteInput, true);
+    const resumeIfForced = (video) => {
+      if (!video || !video.paused || video.ended) return;
+      if (!lastPause || lastPause.byUser || Date.now() - lastPause.at > 5000) return;
+      video.play().catch(() => {});
+    };
+    // (media events don't bubble, but a capturing listener on the document still hears them)
+    document.addEventListener('pause', (e) => {
+      const video = e.target;
+      if (!video || !video.classList || !video.classList.contains('html5-main-video')) return;
+      lastPause = { at: Date.now(), byUser: Date.now() - lastInput < USER_WINDOW };
+      if (!lastPause.byUser && wallShown()) resumeIfForced(video); // the dialog came first, then paused the video
+    }, true);
     const restore = () => {
       if (!held) return;
       try { held.video.playbackRate = held.rate; held.video.muted = held.muted; } catch { /* the video went away */ }
@@ -85,9 +107,11 @@ function youtubeFallback() {
         const wall = document.querySelector('ytd-enforcement-message-view-model');
         if (wall && !wallSeen) {
           wallSeen = true;
-          const video = document.querySelector('video.html5-main-video');
-          if (video && video.paused && !video.ended) video.play().catch(() => {});
+          resumeIfForced(document.querySelector('video.html5-main-video')); // only a pause the dialog made
           if (document.body) document.body.style.removeProperty('overflow');
+          // The hidden dialog can still hold the keyboard focus (k, space and the arrows then go nowhere): back to the player.
+          const dialog = wall.closest('tp-yt-paper-dialog');
+          if (dialog && dialog.contains(document.activeElement) && player && typeof player.focus === 'function') player.focus();
         } else if (!wall) wallSeen = false;
       } catch { /* the page is in the middle of changing */ }
     };
