@@ -2031,10 +2031,24 @@ explain describe list find give compare difference summarize summary write rewri
     return svg;
   }
 
+  // A chat opened with many diagrams does not draw them all at once: loading Mermaid and laying each one out held the page's one thread
+  // for a second or more while the chat was already there to read. A diagram is drawn when it comes near the view, and when the page is idle.
+  // (One already drawn this session comes straight back from the cache; with no IntersectionObserver it is drawn at once.)
+  const NEAR = '900px 0px';
+  function whenNear(box, source, run) {
+    if (typeof IntersectionObserver === 'undefined' || cache.has(`${isDark() ? 'd' : 'l'}|${source}`)) { run(); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1500 }); else setTimeout(run, 50);
+    }, { rootMargin: NEAR });
+    io.observe(box);
+  }
+
   function diagram(box, pre, source) {
     if (source.trim() === '' || source.length > MAX_SOURCE || box.dataset.diagram) return;
     box.dataset.diagram = 'pending';
-    draw(source).then((svg) => {
+    whenNear(box, source, () => draw(source).then((svg) => {
       if (!box.isConnected) return;
       const view = Object.assign(document.createElement('div'), { className: 'mermaid-view' });
       view.innerHTML = svg;
@@ -2048,7 +2062,7 @@ explain describe list find give compare difference summarize summary write rewri
         toggle.textContent = showing ? (window.t?.('chat.showDiagram') || 'Diagram') : (window.t?.('chat.showSource') || 'Source');
       });
       head?.insertBefore(toggle, head.querySelector('.code-copy'));
-    }).catch((e) => { box.dataset.diagram = 'failed'; }); // the code block stays as it is
+    }).catch((e) => { box.dataset.diagram = 'failed'; })); // the code block stays as it is
   }
 
   // ---------- wrap ----------
@@ -3339,7 +3353,9 @@ messages.addEventListener('scroll', () => {
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
 }, { passive: true });
+let restoring = false; // showHistory is adding a whole chat: one scroll at its end, not a layout per message (that was O(n^2) on a long chat)
 function scrollToBottom(force = false) {
+  if (restoring) return;
   if (force) stuck = true;
   if (stuck && (force || Date.now() - jumping >= 700)) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
@@ -5072,6 +5088,11 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
+  restoring = true;
+  try { renderHistory(items); } finally { restoring = false; }
+  scrollToBottom(); // (the "jump to latest" button follows where the view ended)
+}
+function renderHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
   const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
   const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs

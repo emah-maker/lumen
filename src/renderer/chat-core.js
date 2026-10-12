@@ -486,7 +486,9 @@ messages.addEventListener('scroll', () => {
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
 }, { passive: true });
+let restoring = false; // showHistory is adding a whole chat: one scroll at its end, not a layout per message (that was O(n^2) on a long chat)
 function scrollToBottom(force = false) {
+  if (restoring) return;
   if (force) stuck = true;
   if (stuck && (force || Date.now() - jumping >= 700)) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
@@ -2219,6 +2221,11 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items) {
+  restoring = true;
+  try { renderHistory(items); } finally { restoring = false; }
+  scrollToBottom(); // (the "jump to latest" button follows where the view ended)
+}
+function renderHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
   const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
   const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
