@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Zoom in on pictures in the chat.** Click any picture in a reply (one the image tool made, a picture from the web you chose to show, or one you sent) in the sidebar chat or the full-page chat, and it opens over the conversation, fit to the panel. Scroll or pinch to zoom toward the pointer, drag to move around, double-click to flip between fit and 100% (2x for a small picture), or use the +, − and 0 keys and the arrow keys. With several pictures in the chat, the arrows (or the Previous / Next buttons) step between them. The toolbar has Fit, 100%, Save, Copy image and Open in a tab; Esc, the backdrop or Close leaves and puts focus back on the picture. The viewer loads on the first click, so startup is no slower. Tested hidden in `test/chat-image-zoom.js`.
+
 - **The Spotify card's Library tab loads your library.** Opening the tab while Spotify was still starting (or after Lumen had put it to sleep) used to do nothing, and the card ended on "Nothing here yet"; it now says "Loading your library…" and shows your playlists as soon as Spotify is ready. If you have connected Spotify's Web API, the library (recent plays, Liked Songs, playlists, albums, artists) is read from it directly, and Lumen falls back to Spotify's own page only when that fails. The first rows show as soon as the playlists arrive and the rest fill in, each list is given a few seconds (never "Loading…" for ever), a rate limit says so, and a library that can't be read still ends in a clear message with **Try again**. Tested by clicking the Library tab on a real signed-in account, hidden.
 
 ## 0.5.27 (2026-10-12)

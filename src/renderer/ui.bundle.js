@@ -2150,8 +2150,53 @@ explain describe list find give compare difference summarize summary write rewri
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
   }
 
-  // ---- enlarge: a layer over the chat (the sidebar's or the page's own)
+  // ---- enlarge: the viewer (chat-image-viewer.js: zoom, pan, step through the chat's pictures, Save / Copy / Open in a tab).
+  // Its code and styles load on the first click, as the Meeting helper's do (meeting-loader.js); if they can't, the plain layer below opens.
+  let viewerLoading = null;
+  const loadViewer = () => {
+    if (window.chatImageViewer) return Promise.resolve();
+    return viewerLoading || (viewerLoading = new Promise((resolve, reject) => {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-image-viewer.css' });
+      document.head.appendChild(css);
+      const script = Object.assign(document.createElement('script'), { src: 'chat-image-viewer.js' });
+      script.onload = resolve;
+      script.onerror = () => { viewerLoading = null; script.remove(); css.remove(); reject(new Error('chat-image-viewer.js did not load')); };
+      document.body.appendChild(script);
+    }));
+  };
+  // Every picture in this conversation, in order: the AI's (and web pictures shown on request), Markdown data pictures, and ones the user sent.
+  const PICS = '.gen-img-open, img.md-img-ready, .msg-images img';
+  function galleryAround(opener, pic, url) {
+    const scope = (opener?.closest?.('.messages')) || document.querySelector('[data-chat-root] .messages') || document;
+    const items = [];
+    let index = -1;
+    for (const node of scope.querySelectorAll(PICS)) {
+      const im = node.tagName === 'IMG' ? node : node.querySelector('img');
+      const src = im?.currentSrc || im?.src || '';
+      if (!OK.test(src)) continue;
+      if (node === opener) index = items.length;
+      items.push({ url: src, alt: im.alt || '', id: node.closest('.gen-img')?.dataset.id || '' });
+    }
+    if (index < 0) { items.push({ url, alt: pic.alt || '', id: pic.id || '' }); index = items.length - 1; }
+    return { items, index };
+  }
   function enlarge(pic, url, opener) {
+    const { items, index } = galleryAround(opener, pic, url);
+    loadViewer().then(() => { if (!window.chatImageViewer.open({ items, index, opener })) enlargeBasic(pic, url, opener); }).catch(() => enlargeBasic(pic, url, opener));
+  }
+  // A picture the user sent: click (or Enter) to open it too.
+  function zoomable(img) {
+    if (!img || img.dataset.zoomable) return;
+    img.dataset.zoomable = '1';
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    img.title = tr('imgview.hint');
+    const open = () => enlarge({ id: '', alt: img.alt }, img.src, img);
+    img.addEventListener('click', open);
+    img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  }
+
+  function enlargeBasic(pic, url, opener) {
     const root = document.querySelector('[data-chat-root]') || document.body;
     const box = el('div', { className: 'gen-lightbox' });
     box.setAttribute('role', 'dialog');
@@ -2230,6 +2275,7 @@ explain describe list find give compare difference summarize summary write rewri
       img.src = url;
       const open = el('button', { type: 'button', className: 'gen-img-open' }, img);
       open.setAttribute('aria-label', `${tr('genimg.enlarge')}: ${pic.alt || tr('genimg.alt')}`);
+      open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
@@ -2269,16 +2315,11 @@ explain describe list find give compare difference summarize summary write rewri
     for (const img of root.querySelectorAll('img.md-img:not(.md-img-ready)')) {
       img.classList.add('md-img-ready');
       if (!OK.test(img.getAttribute('src') || '')) { img.replaceWith(document.createTextNode(img.alt || '')); continue; }
-      img.tabIndex = 0;
-      img.setAttribute('role', 'button');
-      const pic = { id: '', alt: img.alt };
-      const open = () => enlarge(pic, img.src, img);
-      img.addEventListener('click', open);
-      img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      zoomable(img);
     }
   }
 
-  window.genImages = { figure, decorate, load };
+  window.genImages = { figure, decorate, load, zoomable };
 })();
 ;
 // ---- chat-canvas.js
@@ -3985,6 +4026,7 @@ function startTurn(text, images, tabs = null) {
       const img = document.createElement('img');
       img.src = a.url;
       img.alt = t('chat.imageN', { n: i + 1 });
+      window.genImages?.zoomable(img);
       row.append(img);
     }
     bubble.append(row);
@@ -5077,7 +5119,7 @@ function showHistory(items) {
       if (images.length) {
         const row = document.createElement('div');
         row.className = 'msg-images';
-        images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) })));
+        images.forEach((src, i) => { const im = Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) }); window.genImages?.zoomable(im); row.append(im); });
         bubble.append(row);
       }
       const files = restoredFiles(item.files);
