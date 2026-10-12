@@ -8500,7 +8500,7 @@ ipcMain.on('agent:stop', (event, id) => {
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
-  else agent.stop();
+  else { agent.stop(); if (run?.messages) agent.stopFor(run.messages); } // [stop always works] the chat's own run, even when the agent's open conversation is another
 });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });

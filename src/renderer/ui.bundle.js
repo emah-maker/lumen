@@ -4264,6 +4264,7 @@ window.assistant.onEvent((event) => {
     case 'image': { // a picture the AI made (or a tool returned): main saved it; drawn here below what was said
       settleThinking();
       finishReply(turn.text, turn.textSource);
+      endStream(); // (its streaming dot goes: the text before a picture is whole)
       turn.text = null; // words after the picture start a new block under it
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
@@ -4277,6 +4278,7 @@ window.assistant.onEvent((event) => {
       if (!window.aiFiles || !event.file) break;
       settleThinking();
       finishReply(turn.text, turn.textSource);
+      endStream(); // (its streaming dot goes: the text before a file card is whole)
       turn.text = null;
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
@@ -4436,6 +4438,7 @@ function finishTurn(event, { early }) {
   labelReply(turn.text, event.model, event.auto || turn.auto, { at: Date.now(), versions: turn.versions });
   scrollToBottom(); // (the reply's copy button and label were added below its end)
   endStream();
+  for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
@@ -4444,10 +4447,50 @@ function finishTurn(event, { early }) {
     aiTabsRunId = event.runId;
     if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
   }
+  const stoppedByUser = Boolean(turn.stopRequested && !turn.interrupted);
   turn = null;
+  clearTimeout(stopTimer);
   setRunning(false);
-  setTimeout(sendQueued);
+  // After Stop the waiting messages are not sent on their own (the user just said stop): they come back to the box as a draft, to send or edit.
+  if (stoppedByUser) queuedToDraft(); else setTimeout(sendQueued);
 }
+
+// [stop always works] The Stop button, Esc and Stop in the toolbar all come here. Main aborts the run (agent.js stop: the engine, its tools and
+// its child processes); the reply's 'done' then ends the view. If nothing has ended it after STOP_WAIT_MS (the run was already gone in main, or its
+// 'done' was lost), main is asked what is true (reconcile) and, if the view still says "running", it is cleared here: the reply is marked stopped,
+// the dot and the working line go, the composer is free.
+const STOP_WAIT_MS = 2500;
+let stopTimer = null;
+function stopReply() {
+  window.assistant.stop();
+  if (!running) return;
+  if (turn) turn.stopRequested = true;
+  const mine = runId;
+  clearTimeout(stopTimer);
+  stopTimer = setTimeout(async () => {
+    if (!running || runId !== mine) return;
+    try { await reconcile(); } catch {}
+    if (!running || runId !== mine) return;
+    if (!turn) { setRunning(false); return; } // (a Stop with no reply on screen: only the state is stale)
+    turn.stopped = true;
+    if (!turn.failed) appendToTurn(Object.assign(document.createElement('div'), { className: 'notice stopped', textContent: t('chat.stopped') }));
+    finishTurn({ runId: mine }, { early: false });
+  }, STOP_WAIT_MS);
+}
+window.chatStopReply = stopReply;
+// The messages waiting for a reply that was stopped come back to the box (as clearChatView does for a chat that was left).
+function queuedToDraft() {
+  const mine = queued.filter((q) => !q.fresh && !forOtherChat(q.chatId));
+  for (const q of mine) { queued.splice(queued.indexOf(q), 1); q.notice.remove(); }
+  if (!mine.some((q) => q.text || q.images?.length)) return;
+  const texts = mine.map((q) => q.text).filter(Boolean);
+  if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
+  const images = mine.flatMap((q) => q.images || []);
+  if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
+  autosize();
+  updateSend();
+}
+
 
 // The 'done' of a run whose reply ended early (reply_complete): the model label, Undo and the opened-tabs row. A message sent
 // in between has its own turn on screen by now: the label still goes on the earlier reply, but its Undo / tabs row is left out
@@ -5288,7 +5331,7 @@ prompt.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape' && running && !prompt.value) {
     e.preventDefault();
     e.stopPropagation(); // (and doesn't also leave the full-page chat)
-    window.assistant.stop(); // Esc in an empty composer stops the reply
+    stopReply(); // Esc in an empty composer stops the reply
   } else if (e.key === 'ArrowUp' && !prompt.value && !running && !attachments.length && !pastes.length && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && messages.querySelector('.msg.user')) {
     e.preventDefault();
     editLast(); // Up in an empty composer edits the message you sent last (Claude.ai, ChatGPT)
@@ -5300,7 +5343,7 @@ $('composer').addEventListener('submit', async (e) => {
     // The Stop shown may be stale (the reply ended while this view was hidden and missed it): main's truth decides, and a
     // click on a stale Stop is a Send. A really running reply is stopped.
     const settled = await reconcile();
-    if (running) { if (settled) window.assistant.stop(); return; }
+    if (running) { if (settled) stopReply(); return; }
   }
   sendComposer();
 });
@@ -8848,7 +8891,7 @@ $('app-menu').onclick = () => {
     window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
   });
 }
-$('agent-stop').onclick = () => window.assistant.stop();
+$('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
 // from --omnibox-end-w. A fixed 62px only cleared two, and the URL ran under the rest.
