@@ -203,9 +203,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     if (!entry.renamed) entry.title = autoTitle(snapshot);
     // `updated` is the chat's last activity and the list's order. A save that changed nothing (leaving the chat, a research
-    // pin, a setting) leaves it alone; new messages, or a changed last message, move the chat to the top.
+    // pin, a setting) leaves it alone; new or changed messages move the chat to the top.
     const count = snapshot.messages.length;
-    const sig = `${count}:${JSON.stringify(snapshot.messages[count - 1].content).length}`;
+    let size = 0; // (the messages' content, not their wrappers: a chat that went through restore() and snapshot() again must match)
+    for (const m of snapshot.messages) size += JSON.stringify(m.content).length;
+    const sig = `${count}:${size}`;
     // (an entry saved before `sig` existed is compared by message count only)
     if (isNew || (entry.sig === undefined ? entry.msgs !== count : entry.sig !== sig)) entry.updated = now();
     entry.sig = sig;
