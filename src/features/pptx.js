@@ -68,9 +68,9 @@ function readCentralDirectory(buf) {
 
 // Reads parts by name (case-insensitive, as OOXML part names are). Every inflated byte counts against
 // one budget: past it the deck is refused, so a small file can't expand into gigabytes.
-function createZipReader(buf, { maxBytes = MAX_UNCOMPRESSED } = {}) {
+function createZipReader(buf, { maxBytes = MAX_UNCOMPRESSED, root = 'ppt/presentation.xml' } = {}) { // root: the part a file of the wanted kind has (docx-text.js: word/document.xml)
   const entries = readCentralDirectory(buf);
-  if (!entries.has('ppt/presentation.xml')) {
+  if (!entries.has(root)) {
     if (entries.has('encryptedpackage') || [...entries.keys()].some((k) => k.includes('encryptedpackage'))) throw new PptxError('This presentation is password-protected.');
     throw damaged();
   }
