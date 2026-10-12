@@ -33,9 +33,9 @@ class RepeatDetector {
     // Strongest tier: a note has not helped, so the loop ends the run with a final answer (see RunBudget).
     if ((!ok && (same >= 5 || failStreak >= 6)) || (ok && !BENIGN.has(name) && same >= 6)) this.stalled = true;
     const fix = 'Do something different: call read_page mode:"compact" for fresh refs, try click with the visible text, go straight to a URL with navigate, or use find. Reach for run_script only if no other tool can do it.';
-    if (!ok && same >= 3) return `REPEAT: this exact call has failed ${same} times in a row. Retrying it will not help. ${fix} If nothing works, stop and tell the user what is blocking you.`;
+    if (!ok && same >= 3) return `REPEAT: this exact call has failed ${same} times in a row. Retrying it will not help. ${fix} If nothing works, try a different tool or source; stop only for a sign-in, payment, CAPTCHA or choice only the user can make.`;
     if (!ok && same === 2) return `NOTE: this exact call just failed twice. Re-read the page before trying again; ids and the page may have changed.`;
-    if (!ok && failStreak >= 4) return `REPEAT: ${failStreak} tool calls in a row have failed. Stop varying the same approach. ${fix} If it is still failing, stop and tell the user.`;
+    if (!ok && failStreak >= 4) return `REPEAT: ${failStreak} tool calls in a row have failed. Stop varying the same approach. ${fix} If it is still failing, try a different tool or source; stop only for a sign-in, payment, CAPTCHA or choice only the user can make.`;
     if (ok && STATIC_READS.has(name) && same >= 3) return `NOTE: you have made this same ${name} call ${same} times with the same input and nothing has changed. Use what you already have, act on it, or try something different.`;
     if (ok && !BENIGN.has(name) && same >= 3) return `REPEAT: you have made this same call ${same} times with the same input. It is not making progress. ${fix} If the task is already done, stop and answer.`;
     return null;

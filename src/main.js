@@ -7113,6 +7113,10 @@ signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
 const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
 sharedFiles.register(ipcMain);
+// [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
+const gapLog = require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false });
+ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog.list(), report: gapLog.report() }));
+ipcMain.handle('settings:clear-ai-gaps', () => { gapLog.clear(); return { entries: [], report: '' }; });
 const tabAnywhere = (id) => {
   for (const rec of winRecs) {
     const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
@@ -7226,6 +7230,7 @@ const agent = new Agent({
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
+  recordGap: (info) => gapLog.record(info), // [no handoff]
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,

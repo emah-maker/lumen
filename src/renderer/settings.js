@@ -371,6 +371,7 @@ async function buildAi(card) {
     select('imageGen', tr('settings.ai.imageGen', 'Image generation'), tr('settings.ai.imageGenDesc', 'When you or the AI ask for a picture, Lumen sends the request to a provider you have already connected that makes pictures, even if the chat is on a model that can’t (Claude, Claude Code, Antigravity, Codex). Automatic tries the chat’s own provider first, then your other connected ones, and moves on if one is out of usage or down; a provider that refuses the picture on content grounds is not retried elsewhere. The picture says which provider made it. Your prompt goes to that provider, and it may count against its usage or your API key’s billing. Lumen never uses a provider you haven’t connected.'),
       ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].map((v) => [v, tr(`settings.ai.imageGen.${v}`, { auto: 'Automatic', off: 'Off', grokbuild: 'Grok Build only', xai: 'Grok (API) only', gemini: 'Gemini only', openai: 'OpenAI only', openrouter: 'OpenRouter only' }[v])])),
     toggle('autoModel', tr('settings.ai.autoModel', 'Pick the model for me when I choose an engine’s Default'), tr('settings.ai.autoModelDesc', 'On Claude Code, Codex, Grok Build and Antigravity, Default picks per message: quick chat and one-step browsing use the small model (Haiku, Luna, Flash-Lite), multi-step browsing, research and code the mid-size one (Sonnet, Sol, Flash), hard debugging and proofs the strongest (Opus, Astra, Pro). A model you pick is always used.')),
+    toggle('aiGapLog', tr('settings.ai.aiGapLog', 'Keep a list of what the AI couldn’t do'), tr('settings.ai.aiGapLogDesc', 'Notes, on this computer only, the times the AI still handed a task back to you after a second try: date, site, what was missing, the tool error. Never page content. See the list under Privacy below.')),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
   );
   // [bypass permissions] Ask / Auto-allow actions / Bypass permissions; a warning shows under the row while Bypass is on.
@@ -482,6 +483,24 @@ async function buildAi(card) {
   card.at('ai-privacy').append(stackRow('Files on this computer the AI can see', 'When you ask about a file in front of you ("what does this say?"), Lumen asks once; choosing Allow always for this file lists it here. Turn AI off for local files under Sites where AI is off to stop it for every file.', sharedList,
     h('div', { class: 'controls' }, clearShared)));
   renderShared();
+
+  // [no handoff] What the AI still couldn't do after its automatic second try: a private list on this computer (ai/capability-gaps.js).
+  const gapList = h('div', { class: 'list', id: 'ai-gaps' });
+  const gapClear = h('button', { id: 'ai-gaps-clear', text: 'Clear list', onclick: async () => renderGaps(await S.ai.clearAiGaps()) });
+  const gapCopy = h('button', { id: 'ai-gaps-copy', text: 'Copy to send to us' });
+  const renderGaps = async (data) => {
+    data ||= await S.ai.aiGaps();
+    const entries = data?.entries || [];
+    gapClear.hidden = gapCopy.hidden = !entries.length;
+    gapCopy.onclick = async () => { try { await navigator.clipboard.writeText(data.report || ''); gapCopy.textContent = 'Copied'; } catch { gapCopy.textContent = 'Copy failed'; } setTimeout(() => { gapCopy.textContent = 'Copy to send to us'; }, 1400); };
+    gapList.replaceChildren(...(entries.length ? entries.slice(0, 50).map((e) => h('div', { class: 'item', 'data-gap': e.date },
+      h('span', { class: 'grow', text: `${e.site || 'No site'}: ${e.missing}${e.tool ? ` (${e.tool}${e.error ? `: ${e.error}` : ''})` : ''}` }),
+      h('span', { class: 'note', text: e.date })))
+      : [h('span', { class: 'note', text: 'Nothing yet. When the AI still hands a task back to you after a second try, it is noted here.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Show what the AI couldn’t do', 'When the AI hands a task back to you even after Lumen asks it to try another way, Lumen notes the date, the site, what was missing and the tool error. No page content or personal data. It stays on this computer; copy it and send it to us if you like. Turn it off with the switch above.', gapList,
+    h('div', { class: 'controls' }, gapCopy, gapClear)));
+  renderGaps();
 
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
