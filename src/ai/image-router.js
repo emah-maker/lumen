@@ -107,7 +107,7 @@ async function route(deps) {
 // One short tool for every engine (the API tool list and Lumen's MCP tools): prompt budget test/acceptance/chat-prompt-budget.js.
 const TOOL = {
   name: 'generate_image',
-  description: 'Make or edit a picture, shown in the chat. For any image request, not HTML. svg: exact math, graphs, diagrams.',
+  description: 'Make/edit a picture shown in chat, not HTML. Image model sees only prompt: describe subject fully. svg: exact math/graphs.',
   input_schema: { type: 'object', properties: { prompt: { type: 'string' }, edit: { type: 'boolean' }, svg: { type: 'string' } }, required: ['prompt'] },
 };
 // Adds the tool to agent.js's TOOLS (before the derived lists are built), like snapshot.js's.
@@ -117,7 +117,7 @@ function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true 
 const toolResult = (r) => `Picture made with ${r.credit} and shown to the user in the chat. Do not repeat it or describe it at length.`;
 
 // Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first.
-const PICTURE_NOTE = 'The user wants a picture: "this/that/it" = your most recent reply unless they say otherwise (draw that, not an earlier part or the file). Read any file or page they mention, then call generate_image (it shows in the chat). Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: for a worked solution, call generate_image once for the picture and once with svg for the exact math, graphs and diagrams, and say so.';
+const PICTURE_NOTE = 'The user wants a picture: call generate_image (it shows in the chat) with a self-contained prompt written from what they mean in this conversation. Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: use the svg option for exact math, graphs and diagrams.';
 
 // An SVG (exact math, graphs, diagrams) drawn to a PNG buffer by rasterize(svg, w, h): no file, no tab. Scripts never run (an <img>).
 async function renderSvg(svg, { rasterize }) {

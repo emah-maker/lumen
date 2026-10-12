@@ -2241,7 +2241,7 @@ class Agent {
     messages.simpleTurn = !screenPlan.capture && isSimpleQuestion(userText, images.length + attachedFiles + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
     // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
-    if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit)) return;
+    if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit, { attachedFiles })) return;
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: the engine's run carries this message's task scope
@@ -3214,6 +3214,12 @@ ${prompt}` : prompt), historyImages: [] };
     });
   }
 
+  // Is a provider connected that generate_image could use right now (for this chat's model)? Nothing is called.
+  async imageProviderReady(current) {
+    const p = imageRouter.plan({ setting: this.imageSetting(), current, connected: await this.imageConnected(current), exclude: this.browser.autoExcluded?.() || [] });
+    return p.order.length > 0;
+  }
+
   // The newest picture of this chat, { buffer, mime }, for "edit the last one".
   lastGeneratedPicture(messages) {
     for (let i = (messages?.length || 0) - 1; i >= 0; i--) {
@@ -3409,12 +3415,19 @@ ${prompt}` : prompt), historyImages: [] };
   // A message that asks for a picture. When the chosen model's provider has an image API, it is called and the picture is
   // the reply (true). Otherwise the user is told this model can't make pictures: an explicit "/image …" is answered with
   // that alone (true); "draw a cat" goes on to the model as text (false) after one notice per chat and model.
-  async imageTurn(messages, userText, signal, emit) {
+  // The picture provider sees only the words it is sent, so a request goes straight to it only when there is nothing to resolve it
+  // against: the chat's first message, with nothing attached ("draw a cat"). Once the chat has any earlier turn, or the message
+  // carries a file, the model gets the whole conversation and writes the generate_image prompt itself ("this", "the second one",
+  // "the graph you described" are its to resolve, as for any assistant).
+  hasConversation(messages, { attachedFiles = 0 } = {}) {
+    if (attachedFiles > 0) return true;
+    return transcriptFor(messages).filter((it) => String(it.text || '').trim() || it.images?.length || it.files?.length).length > 1;
+  }
+  async imageTurn(messages, userText, signal, emit, { attachedFiles = 0 } = {}) {
     const asked = genImages.imageRequest(userText);
     if (!asked) return false;
-    // "show this" / "draw it" / no subject: the picture is of the latest reply, not of whatever the chat started with (gen-images.js imagePromptFrom).
-    const built = genImages.imagePromptFrom(asked.prompt, transcriptFor(messages));
-    const ask = { ...asked, prompt: built.prompt, shown: built.shown };
+    const ask = { ...asked, shown: asked.prompt };
+    const withConversation = this.hasConversation(messages, { attachedFiles });
     const picked = String(messages.settings.model);
     const viaEngine = /^(claudecode|grokbuild|antigravity|codex):/.test(picked);
     const { provider, model } = viaEngine ? { provider: null, model: picked } : providers.splitModel(picked);
@@ -3424,7 +3437,10 @@ ${prompt}` : prompt), historyImages: [] };
     // CLAUDE.md / rules) are theirs to use, so the message goes to it as any other. (runTask turned "/image …" into words.)
     // [image routing] A connected provider that makes pictures takes it (the chat's own first), whatever model the chat is on, Claude
     // Code with full access included: Lumen's tool is the clear choice, not an HTML / SVG file or the CLI's own skills.
-    if (this.imageSetting() !== 'off' && await this.routedImageTurn(messages, ask, picked, signal, emit)) return true;
+    if (this.imageSetting() !== 'off') {
+      if (withConversation) { if (await this.imageProviderReady(picked)) return false; } // the model writes the prompt and calls generate_image
+      else if (await this.routedImageTurn(messages, ask, picked, signal, emit)) return true;
+    }
     // Claude Code with full access and no provider connected: the message goes to it, and its generate_image call says why there is none.
     if (picked.startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) return false;
     // [full access] Grok Build with its own tools on has image_gen / image_edit: it makes the picture itself, and what it saves is
@@ -3443,6 +3459,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (messages.noImageNoted !== picked) { messages.noImageNoted = picked; emit({ type: 'notice', text }); }
       return false;
     }
+    if (withConversation) return false; // (never the bare words of a request that depends on the chat)
     const apiKey = this.getKey(provider);
     if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
     emit({ type: 'turn_start' });
