@@ -16,6 +16,10 @@ const { pathToFileURL } = require('url');
 
 const CHAT_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'chat-page.html')).href;
 const PRELOAD = path.join(__dirname, 'chat-preload.js');
+// A spare chat page (main.js makeSpareChat) is made in the background so a chat tab opens at once. The preload (chat-preload.js) holds
+// its calls back until main hands it to a tab; the one call it makes at once is the interface strings (SPARE_IPC).
+const SPARE_FLAG = '--lumen-spare-chat';
+const SPARE_IPC = new Set(['ui:strings']);
 
 // Local file URLs compare without case (Windows paths do) and ignore the query and hash.
 const bare = (url) => { try { const u = new URL(String(url)); u.search = ''; u.hash = ''; return u.protocol === 'file:' ? u.href.toLowerCase() : ''; } catch { return ''; } };
@@ -87,7 +91,7 @@ function createRunTracker() {
 }
 
 // deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId), goChat(tabId),
-//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab) }
+//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab), spareContents() }
 function create(deps) {
   const runs = createRunTracker();
   const drafts = new Map(); // chat tab id -> text carried from the new-tab page's box, handed to the page once (chatpage:state)
@@ -101,7 +105,9 @@ function create(deps) {
     return Boolean(wc) && event.senderFrame === wc.mainFrame && isChatUrl(event.senderFrame?.url)
       && everyChatTab().some((t) => t.view.webContents === wc);
   };
-  const allows = (event, channel) => CHAT_IPC.has(channel) && isChatSender(event);
+  // (the spare page, before a tab has taken it: the interface strings only)
+  const isSpareSender = (event) => { const wc = deps.spareContents?.(); return Boolean(wc) && event?.sender === wc && event.senderFrame === wc.mainFrame && isChatUrl(event.senderFrame?.url); };
+  const allows = (event, channel) => (CHAT_IPC.has(channel) && isChatSender(event)) || (SPARE_IPC.has(channel) && isSpareSender(event));
 
   // The sidebar plus every open chat page; nothing but the sender itself when there is no page, so
   // the sidebar behaves exactly as it always did until a page exists.
@@ -221,4 +227,4 @@ function create(deps) {
   return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, runFromPage, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
-module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };
+module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC, SPARE_FLAG, SPARE_IPC };

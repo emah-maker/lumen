@@ -618,7 +618,7 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
 [truncated: ${json.length} chars; use selector]` : json}
 </untrusted_page_content>`;
   }
-  if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
+  if (name === 'screenshot') return screenshot(agent, agent.screenshotWc ? agent.screenshotWc(input) : agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
     const inFrames = frames.available(wc);
