@@ -17,6 +17,7 @@ check('off, chat has messages: keep the chat as it was', plan({ setting: false, 
 check('off, chat empty: keep', plan({ setting: false, empty: true }) === 'keep');
 check('an intent (a chat to show, Ask AI, an approval, an agent event) always keeps the chat, setting on', plan({ setting: true, empty: false, intent: true }) === 'keep' && plan({ setting: true, empty: true, intent: true }) === 'keep');
 check('an intent keeps it with the setting off too', plan({ setting: false, intent: true }) === 'keep');
+check('busy (the chat of this tab is working, waits for an OK or finished unread): keep it, whatever the setting says and whether or not the chat looks empty', plan({ setting: true, empty: false, busy: true }) === 'keep' && plan({ setting: true, empty: true, busy: true }) === 'keep' && plan({ setting: false, busy: true }) === 'keep');
 check('no arguments: the setting counts as on (the default), the chat as not empty... unless told', plan() === 'new' && plan({ empty: true }) === 'reuse');
 
 // the setting
@@ -35,6 +36,8 @@ check('app.js: a new chat is only started when the sidebar is closed (opening), 
 check('app.js: a run waiting for an OK counts as an intent', /dataset\.attention === 'approval'/.test(app) && /approval-pending/.test(app));
 check('app.js: a notification, a chat to show and the "Ask AI" routes open the sidebar with showSidebar(true), never the toggle', /onOpenChat\?\.\(async[\s\S]*?showSidebar\(true\)/.test(app) && /needSidebar = \(\) => \{[^}]*showSidebar\(true\)/.test(app));
 check('tasks and research panels open the sidebar without a new chat', /showSidebarFor/.test(read('src/renderer/tasks.js')) && /showSidebarFor/.test(read('src/renderer/research.js')) && /window\.showSidebarFor = /.test(app));
+check('app.js: before a new chat is considered, main is asked which chat of this tab works / waits / is unread, and that chat is taken', app.indexOf('sidebarTarget') > 0 && app.indexOf('sidebarTarget') < app.indexOf('chatTakeView') && app.indexOf('chatTakeView') < app.indexOf('busy: Boolean(target)'));
+check('main.js answers chat:sidebar-target for the front tab of a window (its chat, or the run working in it), preload asks it', read('src/main.js').includes("ipcMain.handle('chat:sidebar-target'") && read('src/preload/preload.js').includes("ipcRenderer.invoke('chat:sidebar-target')"));
 check('index.src.html loads sidebar-open.js before app.js', (() => { const h = read('src/renderer/index.src.html'); return h.indexOf('sidebar-open.js') > 0 && h.indexOf('sidebar-open.js') < h.indexOf('src="app.js"'); })());
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
