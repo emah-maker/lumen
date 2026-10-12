@@ -603,4 +603,22 @@ ${text}
 </untrusted_page_content>`;
 }
 
-module.exports = { PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };
+// What the page looks like after a click, in a few words: its title and the focused element (a field, a button, or the editing surface of an
+// app such as Google Docs). A click_at result carries it, so the model need not take a screenshot to learn whether it landed.
+const glance = `(() => {
+  const name = (a, tag) => String(a.getAttribute('aria-label') || a.placeholder || a.name || a.title || (/^(button|a|summary)$/.test(tag) ? a.innerText : '') || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+  const a = document.activeElement;
+  let focus = '';
+  if (a && a !== document.body && a !== document.documentElement) {
+    const tag = a.tagName.toLowerCase();
+    if (tag === 'iframe' && /texteventtarget/i.test(a.className + ' ' + a.id)) focus = 'the page text input (typing and keys go to the document)';
+    else {
+      const role = a.getAttribute('role') || (tag === 'input' ? (a.type || 'text') + ' field' : tag === 'textarea' ? 'text area' : a.isContentEditable ? 'editable text' : tag);
+      const label = name(a, tag);
+      focus = label ? role + ' "' + label + '"' : role;
+    }
+  }
+  return { title: document.title, focus };
+})()`;
+
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };
