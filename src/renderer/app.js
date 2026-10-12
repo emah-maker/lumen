@@ -2616,6 +2616,9 @@ window.browser.onNewSidebarChat(async () => {
   const focusPrompt = () => $('prompt').focus({ preventScroll: true });
   focusPrompt();
   requestAnimationFrame(focusPrompt); // the new chat's reset can re-render the prompt area
+  // A sidebar that was just opened is still visibility:hidden for a frame or two after the class comes off, and focus() on a hidden
+  // element is ignored: keep trying until the prompt really has focus (the keyboard shortcut used to leave focus on the toggle button).
+  for (let i = 0; i < 30 && document.activeElement !== $('prompt'); i++) { await new Promise((r) => requestAnimationFrame(r)); focusPrompt(); }
 });
 
 // ---------- full-page chat ("Ask AI" from the homepage) ----------

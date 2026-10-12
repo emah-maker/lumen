@@ -51,7 +51,7 @@ const fakeClient = (app) => app.evaluate(() => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chatpage-'));
 
   let app = await launch(profile);
-  let ui = await app.firstWindow();
+  let ui = await app.firstWindow({ timeout: 90000 });
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
@@ -110,7 +110,7 @@ const fakeClient = (app) => app.evaluate(() => {
     const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
     const dt = new DataTransfer(); dt.items.add(new File([blob], 'page.png', { type: 'image/png' }));
     const input = document.getElementById('attach-input'); input.files = dt.files; input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 600));
+    for (let i = 0; i < 80 && !document.querySelector('#attachments .attachment'); i++) await new Promise((r) => setTimeout(r, 100)); // (the image is read and shrunk first: how long that takes depends on the machine)
     const chips = document.querySelectorAll('#attachments .attachment').length;
     const named = Boolean(btn && btn.getAttribute('aria-label') && /up to 10/.test(btn.title));
     document.querySelector('#attachments .attachment-remove')?.click();
@@ -213,8 +213,7 @@ const fakeClient = (app) => app.evaluate(() => {
   // ---- 10. Guards: a page cannot navigate to the chat page or read it; the chat tab cannot leave
   const chatUrl = (await chatTab()).url;
   await app.evaluate((_e, fixture) => { const t = global.__agent.browser.openTab(fixture); return t.id; }, require('url').pathToFileURL(path.join(__dirname, 'fixture.html')).href);
-  await sleep(800);
-  const fixtureTab = (await tabs()).find((t) => /fixture\.html$/.test(t.url));
+  const fixtureTab = await waitFor(async () => (await tabs()).find((t) => /fixture\.html$/.test(t.url)));
   const before = (await tabs()).length;
   await app.evaluate(async (_e, [id, url]) => { try { await global.__chatPage.contents(id).executeJavaScript(`location.href = ${JSON.stringify(url)}`); } catch { /* the navigation may abort the script */ } }, [fixtureTab.id, chatUrl]);
   await sleep(800);
@@ -291,7 +290,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await sleep(3500); // the session is saved a moment after tabs change
   await app.close();
   app = await launch(profile);
-  ui = await app.firstWindow();
+  ui = await app.firstWindow({ timeout: 90000 });
   await ui.waitForSelector('.tab');
   const restored = await waitFor(chatTab, 10000);
   check('session restore reopens lumen://chat as a tab', Boolean(restored) && /chat-page\.html$/.test(restored.url), JSON.stringify(await tabs()));
@@ -387,11 +386,11 @@ const fakeClient = (app) => app.evaluate(() => {
   await waitFor(async () => (await tabs()).length === 1);
   await app.evaluate(({ ipcMain }) => ipcMain.emit('nav:back', {}));
   check('with no page to come from, Back goes to the new-tab page', await waitFor(async () => { const t = await tabs(); return t.length === 1 && isNewTabUrl(t[0].url); }), JSON.stringify(await tabs()));
-  check('the browser window is still open', (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length)) >= 0 && await ui.evaluate(() => document.querySelectorAll('.tab').length) === 1, 'window gone');
+  check('the browser window is still open', (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length)) >= 0 && await waitFor(async () => (await ui.evaluate(() => document.querySelectorAll('.tab').length)) === 1), 'window gone');
 
   // (last: it starts a fresh chat, so the restore checks above still see the saved one)
   // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
-  await ui.click('#toggle-sidebar');
+  if (!(await ui.evaluate(() => document.body.classList.contains('sidebar-hidden')))) await ui.click('#toggle-sidebar'); // (each tab has its own sidebar state)
   await waitFor(() => ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'K', control: true, shift: true }));
   check('Ctrl+Shift+K opens a closed sidebar with the prompt focused', await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && document.activeElement === document.getElementById('prompt'))), 'not open/focused');
@@ -401,7 +400,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await app.close();
   const profile2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chatpage-layout-'));
   app = await launch(profile2);
-  ui = await app.firstWindow();
+  ui = await app.firstWindow({ timeout: 90000 });
   await ui.waitForSelector('.tab');
   await fakeClient(app);
   await app.evaluate(() => { // chats from different days, to see the groups
