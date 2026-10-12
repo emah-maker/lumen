@@ -5212,12 +5212,16 @@ async function reconcile() {
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
+  return takeView(view);
+}
+function takeView(view) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
   if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
+window.chatTakeView = takeView; // app.js: the sidebar opens on this tab's chat that is working / waiting / unread (assistant.sidebarTarget)
 
 // Links in replies open in a new tab.
 messages.addEventListener('click', (e) => {
@@ -6452,13 +6456,14 @@ function startChat() {
 // What the AI button (and Ctrl+J) does when it opens the sidebar (app.js): start a new chat, or leave the chat as it is.
 // A plain script in the UI; test/sidebar-open-units.js loads it with require().
 //   'keep'   leave the sidebar on the chat it shows (the setting is off, or the open request carries an intent: a chat to show,
-//            "Ask AI about this", a task or run that needs an OK, a notification, an agent event)
+//            "Ask AI about this", a task or run that needs an OK, a notification, an agent event; or `busy`: this tab's
+//            chat is working, waiting for an OK or finished unread, so it shows with its live state whatever the setting says)
 //   'reuse'  the setting is on but the open chat is already empty: use it (empty chats are not piled up)
 //   'new'    the setting is on and the open chat has messages: the sidebar opens on a fresh empty chat; the old one stays in
 //            History (a run still going in it keeps going)
 (function (root) {
-  function sidebarOpenPlan({ setting = true, empty = false, intent = false } = {}) {
-    if (intent || setting === false) return 'keep';
+  function sidebarOpenPlan({ setting = true, empty = false, intent = false, busy = false } = {}) {
+    if (intent || busy || setting === false) return 'keep';
     return empty ? 'reuse' : 'new';
   }
   const api = { sidebarOpenPlan };
@@ -9111,11 +9116,17 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
-function toggleSidebarByHand() {
+// [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
+// closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+async function toggleSidebarByHand() {
   const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
   if (opening) {
+    let target = null;
+    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
       setting: window.lumenSidebarNewChat !== false,
+      busy: Boolean(target),
       empty: !$('empty').hidden,
       intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
     });

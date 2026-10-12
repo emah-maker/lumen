@@ -227,6 +227,8 @@ Replace an input/textarea/contenteditable value, pick a <select> option by label
 
 Press a key or shortcut in the active tab, e.g. key "Enter", or key "a" with modifiers ["control"] to select all.
 
+Ctrl or Cmd with X, C, V, Z, Y or A (and Shift+Z, Shift+V) runs the browser's own cut, copy, paste, undo, redo or select-all on the focused element, so it works in editors such as Google Docs that ignore script-made paste. For an outside agent, cut and copy go to the agent's own clipboard and paste types that text in as plain text: your clipboard is never read or changed. In the sidebar the AI uses the real clipboard and your own is put back when the run ends. Shift+arrows, Home, End and Ctrl+Home/End select and move as usual.
+
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `key` | string | yes | One character, or Enter, Escape, Tab, Backspace, Delete, Arrow*, PageUp/Down, Home, End, Space. |
