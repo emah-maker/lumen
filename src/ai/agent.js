@@ -2,6 +2,7 @@ const { WebContentsView } = require('electron');
 let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only error handling and aborts need the SDK's classes
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
+const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides text from the editor's export
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
@@ -113,7 +114,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": [id] outline (start here); "outline": headings, links by region, next page; "full": raw text (elements:true lists; structured:true adds JSON-LD/meta); "site": Reddit/HN/YouTube/X/TikTok/GitHub feed view (default there). extract: tables|links|lists JSON.',
+    description: 'Read the active tab. mode "compact": [id] outline (start here); "outline": headings, links by region, next page; "full": raw text (elements:true lists; structured:true adds JSON-LD/meta); "site": Reddit/HN/YouTube/X/TikTok/GitHub feed view (default there). extract: tables|links|lists JSON. Google Docs/Sheets/Slides: full text.',
     input_schema: {
       type: 'object',
       properties: {
@@ -417,6 +418,7 @@ const TOOLS = [
       properties: {
         direction: { type: 'string', enum: ['up', 'down'] },
         screens: { type: 'number' },
+        page: { type: 'integer' },
       },
       required: ['direction'],
     },
@@ -4425,13 +4427,13 @@ ${rendered.text}
     const deck = kind === 'pptx';
     try {
       const texts = deck ? await slidesViewer.loadSlideTexts(url) : await pdfText.loadPdfPages(wc.session, url);
-      const out = pdfText.formatPages(texts, { pages: input.pages, query: input.query, noun: deck ? 'presentation' : 'PDF' });
+      const out = pdfText.formatPages(texts, { pages: pdfText.pagesArg(input), query: input.query, noun: deck ? 'presentation' : 'PDF' });
       const lo = out.pages[0];
       const hi = out.pages[out.pages.length - 1];
       const showing = input.query ? `searched for "${String(input.query).slice(0, 80)}"` : out.pages.length ? `showing pages ${lo === hi ? lo : `${lo}-${hi}`}` : 'no pages';
-      const more = out.next ? `Pages ${lo}-${out.next - 1} are included above. Call read_pdf again with pages:"${out.next}-" for the rest, or use query to find a page.` : 'That was the last requested page.';
-      const note = out.truncated ? `
-[Cut off at ${pdfText.MAX_CHARS} characters. ${more}]` : '';
+      const more = pdfText.continuation(out, { cut: out.truncated }).replace(/^Pages /, deck ? 'Slides ' : 'Pages ');
+      const note = more ? `
+[${more}]` : '';
       return `<untrusted_page_content>
 ${deck ? 'Presentation' : 'PDF'}: ${pdfText.pdfName(url)} (${out.numPages} ${deck ? 'slides, one page each' : 'pages'}; ${showing})
 
@@ -5159,7 +5161,8 @@ ${site.text}
         const elementOffset = Math.max(0, input.element_offset || 0);
         const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
         const list = input.elements === true || elementOffset > 0; // the element list only when asked for (compact outline and find give the ids)
-        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own, list }));
+        let page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own, list }));
+        if (officeDocs.exportTarget(page?.url, officeDocs.allowLocalHosts())) page = await officeDocs.overlayPage(page, textOffset, 12000, { run: (code) => runScript(wc, code, 15000), sessionFetch: (u) => wc.session.fetch(u, { credentials: 'include', signal: AbortSignal.timeout(15000) }) }).catch(() => page); // a Google Doc: its whole text, not the canvas's few words
         if (!own && !textOffset && !elementOffset) await this.readFrames(wc, page); // with the first page of a read
         const { text, ...rest } = page;
         const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}|${list}`, `${JSON.stringify(rest)}
@@ -5483,7 +5486,7 @@ ${same}
       case 'scroll': {
         const wc = this.requireTab();
         const screens = Math.min(Math.max(input.screens || 1, 0.25), 10);
-        const pdf = await pdfInput.scrollPdf(wc, { screens: input.direction === 'up' ? -screens : screens }); // the viewer's own scroll (null: not a PDF tab)
+        const pdf = await pdfInput.scrollPdf(wc, input.page > 0 ? { page: Math.floor(input.page) } : { screens: input.direction === 'up' ? -screens : screens }); // the viewer's own scroll (null: not a PDF tab)
         if (pdf) return JSON.stringify(pdf);
         const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens)); // (resolves once the scroll position is stable)
         return JSON.stringify(result);
