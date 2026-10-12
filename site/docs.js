@@ -14,6 +14,7 @@ const PAGES = {
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
+  'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
   'ai-document-tool': { title: 'The AI and Google Docs', file: 'docs/ai-document-tool.md' },

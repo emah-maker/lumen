@@ -252,6 +252,7 @@ const UI_ONLY_IPC = new Set([
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -2363,6 +2364,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
+    // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
+    // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
+    if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now() && handsOff.mayFocus(tab.rec)) ui()?.focus(); }); // see layout()
@@ -4460,6 +4464,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
+  else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
@@ -4523,6 +4528,12 @@ const activeTabIsChatPage = () => tabs.find((t) => t.id === activeId)?.managerPa
 function toggleChatPage() {
   if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
   else chatPageRt.open();
+}
+
+// Mod+Enter: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
+function toggleMeetingHelper() {
+  ui()?.focus();
+  ui()?.send('meeting:toggle');
 }
 
 function focusAddress() {
@@ -6985,7 +6996,7 @@ app.on('before-quit', () => {
   usage.flush();
   quitting = true;
 });
-const quitGuard = require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) });
+const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) })); // (loaded when quitting starts)
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
@@ -7574,6 +7585,31 @@ const skillsFeature = require('./features/skills').create({
 });
 skillsFeature.register();
 if (TEST) global.__skills = skillsFeature;
+
+// ---------- meeting helper (features/meeting.js): live prompting, agenda/resume, stealth, listener ----------
+const meetingHelper = lazy(() => require('./features/meeting').createMeetingHelper({
+  userDataDir: app.getPath('userData'),
+  getActiveTab: () => activeTab(),
+  readPageContext: async (tab) => {
+    try { return await agent.pageContextFor(tab, { fresh: true, screen: true }); } catch { return ''; }
+  },
+  complete: (args) => (TEST && global.__meetingComplete ? global.__meetingComplete(args) : completeSkillJson(args)),
+  getChatStore: () => chats(),
+  getWindow: () => win,
+  broadcast: (ch, p) => ui()?.send(ch, p),
+}));
+if (TEST) global.__meetingHelper = meetingHelper;
+
+ipcMain.handle('meeting:state', () => meetingHelper.getState());
+ipcMain.handle('meeting:context-get', () => meetingHelper.loadContext());
+ipcMain.handle('meeting:context-save', (_e, patch) => meetingHelper.saveContext(patch));
+ipcMain.handle('meeting:prompt', (_e, q, opts) => meetingHelper.prompt(q, opts));
+ipcMain.handle('meeting:live-start', () => meetingHelper.setLive(true));
+ipcMain.handle('meeting:live-stop', () => meetingHelper.setLive(false));
+ipcMain.handle('meeting:transcript-chunk', (_e, text, speaker) => meetingHelper.addTranscriptChunk(text, speaker));
+ipcMain.handle('meeting:stealth', (_e, on) => meetingHelper.setStealth(on));
+ipcMain.handle('meeting:summarize', (_e, text) => meetingHelper.summarize(text));
+ipcMain.handle('meeting:save-chat', (_e, payload) => meetingHelper.saveToChat(payload));
 
 // ---------- macros (features/macros-runtime.js): named step sequences; managed in Settings → Macros ----------
 // A run is the AI's own tools (click, type_text, navigate, wait_for, ...) driven from the saved steps. The user's runs (⋯ menu,

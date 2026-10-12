@@ -163,6 +163,10 @@
             <svg viewBox="0 0 16 16"><path d="M3.5 2.5h7a2 2 0 0 1 2 2v9h-7a2 2 0 0 1-2-2zM3.5 11.5a2 2 0 0 1 2-2h7M6 5.5h4"/></svg>
             <span class="menu-label" data-i18n="research.button">Research board</span><span class="task-badge research-badge" id="research-badge" aria-hidden="true" hidden></span>
           </button>
+            <button class="icon-btn menu-item labeled" role="menuitem" id="meeting-btn" type="button" title="Meeting helper (Mod+Enter)" aria-haspopup="dialog" aria-expanded="false" aria-controls="meeting-panel">
+            <svg viewBox="0 0 16 16"><path d="M8 2.5a2.5 2.5 0 0 0-2.5 2.5v3a2.5 2.5 0 0 0 5 0V5A2.5 2.5 0 0 0 8 2.5zM4.5 7.5v.5a3.5 3.5 0 0 0 7 0v-.5M8 11.5V14M6 14h4"/></svg>
+            <span class="menu-label" data-i18n="meeting.button">Meeting helper</span><span class="task-badge meeting-badge" id="meeting-badge" aria-hidden="true" hidden></span>
+          </button>
             <div class="menu-sep" role="separator"></div>
             <button class="icon-btn menu-item" role="menuitem" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
             <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
@@ -182,6 +186,7 @@
       <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" data-i18n-aria-label="sidebar.chats" hidden></div>
       <div id="task-panel" class="chat-list task-panel" role="dialog" aria-label="Background tasks" data-i18n-aria-label="tasks.title" hidden></div>
       <div id="research-panel" class="chat-list research-panel" role="dialog" aria-label="Research board" data-i18n-aria-label="research.title" hidden></div>
+      <div id="meeting-panel" class="chat-list meeting-panel" role="dialog" aria-label="Meeting helper" data-i18n-aria-label="meeting.title" hidden></div>
       <div id="task-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="tab-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
@@ -320,6 +325,7 @@
   <script src="chats.js"></script>
   <script src="tasks.js"></script>
   <script src="research.js"></script><!-- research board: sources, notes, pinned quotes, citations -->
+  <script src="meeting-loader.js"></script><!-- meeting helper: meeting.js and meeting.css load on first open -->
   <script src="extras.js"></script>
   <script src="chat-extras.js"></script>
   <script src="slash-match.js"></script>

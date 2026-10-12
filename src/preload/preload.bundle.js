@@ -623,6 +623,21 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
     onChanged: on('research:changed'),
   },
+  // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
+  meeting: {
+    getState: () => ipcRenderer.invoke('meeting:state'),
+    getContext: () => ipcRenderer.invoke('meeting:context-get'),
+    saveContext: (ctx) => ipcRenderer.invoke('meeting:context-save', ctx),
+    prompt: (text, opts) => ipcRenderer.invoke('meeting:prompt', text, opts),
+    startLive: () => ipcRenderer.invoke('meeting:live-start'),
+    stopLive: () => ipcRenderer.invoke('meeting:live-stop'),
+    sendTranscript: (text, speaker) => ipcRenderer.invoke('meeting:transcript-chunk', text, speaker),
+    setStealth: (on) => ipcRenderer.invoke('meeting:stealth', on),
+    summarize: (text) => ipcRenderer.invoke('meeting:summarize', text),
+    saveToChat: (payload) => ipcRenderer.invoke('meeting:save-chat', payload),
+    onToggle: on('meeting:toggle'),
+    onEvent: on('meeting:event'),
+  },
   // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
   sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
   setSidebarOpen: (tabId, open) => ipcRenderer.invoke('sidebar:set', tabId ?? null, Boolean(open)), // [sidebar per tab] the sidebar is open or closed on this tab
