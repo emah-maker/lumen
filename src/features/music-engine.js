@@ -23,6 +23,7 @@ const PLAYER_MISSING_MS = 25e3; // signed in but the player's controls never sho
 const SIGNIN_SIZE = { width: 560, height: 780 };
 const RESPOND_MS = 3500; // a button pressed and nothing changed this long after: the player did not respond
 const TRACKED = ['play', 'pause', 'next', 'previous', 'playItem']; // the commands whose effect can be told from the state
+const VERIFY_MS = 10e3; // a song asked to play whose track id is not the playing one after this long is asked once more
 const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
 const WARM_MS = 30 * 60e3; // the card's search is open (or its box was focused, or a search asked): the hidden page is not unloaded for being idle until this long after
 const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
@@ -208,6 +209,7 @@ function createMusicEngine(deps) {
       if (pending && pending.effect(m)) { const wasLate = pending.late; clearTimeout(pending.timer); pending = null; if (wasLate) changed(); }
       if (m.player === false && authState() === true) playerMissingSince ||= now(); else playerMissingSince = 0;
       if (m.item?.art && !arts.has(m.item.art)) fetchArt(m.item.art);
+      verifySong(m);
       if (m.auth && (!was || !was.auth)) { askLists(true); closeSignIn(); }
       if (m.signedOut === false && was && was.signedOut === true) { closeSignIn(); askLists(true); } // (the page itself shows the player instead of Log in: signed in again)
       if (!was) askLists(true);
@@ -238,7 +240,7 @@ function createMusicEngine(deps) {
         if (m.ok === false && results.partial === true && results.items.length) { searchCmd = null; changed(); return; } // (rows were already shown: a page that never stood still ends them, it does not take them away)
         results = { ...results, items: m.items, at: now(), pending: false, ok: m.ok, partial: m.partial === true, more: m.more === true, moreAt: m.more === true ? 0 : results.moreAt, why: m.ok ? '' : (m.why || 'page'), detail: m.ok ? '' : (m.detail || '') };
         if (m.ok === false || m.items.length) searchCmd = null;
-        // (the pictures are asked for by the card when the rows are on screen: loadThumbs)
+        fetchThumbs(m.items.slice(0, MAX_THUMBS), m.rid); // (the first rows' pictures at once, from the row data: the card's own ask, when rows scroll into view, covers the rest)
       } else {
         lists[m.kind] = { items: m.items, at: now(), signedOut: m.signedOut, ok: m.ok !== false, why: m.ok === false ? m.why || 'page' : '', detail: m.ok === false ? m.detail || '' : '' };
         if (m.kind === 'playlists') {
@@ -255,6 +257,7 @@ function createMusicEngine(deps) {
     const bytes = await deps.fetchBytes(url);
     if (!bytes || bytes.length > MAX_ART_BYTES) return '';
     const small = deps.resizeArt ? deps.resizeArt(bytes) : bytes;
+    if (!small && deps.decodeArt) return (await deps.decodeArt(bytes)) || ''; // (a format the resizer cannot read, WebP: a page decodes it)
     return (small && AMV.dataUrl(small)) || '';
   };
   function fetchArt(url) {
@@ -390,7 +393,19 @@ function createMusicEngine(deps) {
     return sendOrQueue({ cmd: action }, 'control');
   }
   function seek(sec) { touch(); return Boolean(caps.seek) && lastSource === 'engine' && sendOrQueue({ cmd: 'seek', sec }, 'control'); }
-  function playItem(kind, id) { touch(); lastSource = 'engine'; return sendOrQueue({ cmd: 'playItem', kind, id }, 'control'); }
+  // The song last asked to play ({ id, title, at, retried }), checked against the title the page reports (its now-playing bar has no track id: the title link is the album's).
+  let wantSong = null;
+  const sameTitle = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  function playItem(kind, id) { touch(); lastSource = 'engine'; const row = kind === 'song' ? results.items.find((i) => i.kind === 'song' && i.id === id) : null; wantSong = row && row.title ? { id, title: row.title, at: now(), retried: false } : null; return sendOrQueue({ cmd: 'playItem', kind, id }, 'control'); }
+  // The page says which song is playing: the one asked for ends the check; another one 10 s on is asked for once more.
+  function verifySong(m) {
+    if (!wantSong || !m.item || !m.item.title) return;
+    if (sameTitle(m.item.title, wantSong.title)) { wantSong = null; return; }
+    if (now() - wantSong.at < VERIFY_MS) return;
+    if (wantSong.retried) { wantSong = null; return; }
+    wantSong = { ...wantSong, retried: true, at: now() };
+    send({ cmd: 'playItem', kind: 'song', id: wantSong.id });
+  }
   const queueItem = (cmd, kind, id) => { touch(); return Boolean(caps[cmd]) && authState() !== false && send({ cmd, kind, id }); }; // (Spotify's queue is an account's)
   // The switches and the tabs (what the card's medium and large sizes add). An optimistic change first (the card moves at once; the page's own
   // state, which comes back within a second, has the last word). `arg`: like / shuffle: true | false | undefined (flip it); repeat: 'off' | 'all' | 'one'

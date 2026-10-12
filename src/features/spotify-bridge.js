@@ -617,17 +617,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   function playItem(kind, id) {
     var seg = KIND_PATH[kind];
     if (!seg || !ID.test(id)) return;
-    if (kind === 'song') {
-      var rows = songRows(q('main') || document);
-      for (var i = 0; i < rows.length; i++) {
-        var a = q('trackLink', rows[i]);
-        if (a && idOf(a.getAttribute('href'), '/track/') === id) {
-          var rb = q('rowPlay', rows[i]);
-          if (rb && !rb.disabled) { rb.click(); return; }
-          break; // (no play button in the row: the song's own page is opened below and its big Play button pressed)
-        }
-      }
-    }
+    // (a song is played from its own page, by its track id: a row's button on a results page was seen playing another song)
     var path = '/' + seg + '/' + id;
     var wasHere = onPath(path), before = pageKey(), seenKey = '', seenAt = 0;
     nav(path);
