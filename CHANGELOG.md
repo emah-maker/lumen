@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Files you had open come back when you reopen Lumen.** A PDF, a slide deck, a text file, an image or any page from your computer was dropped from the saved tabs, so closing the window (or quitting, or updating) and opening Lumen again left it out. They now return in the same place, in front if they were in front, pinned or in their group as before, and a PDF reopens on the page you were reading. If the file was moved or deleted meanwhile, its tab says "This file was moved or deleted" with Choose file and Show in folder, instead of a blank page.
+- **Ctrl+Shift+T brings back a window you closed.** Close one of several windows and press Ctrl+Shift+T (Cmd+Shift+T on a Mac): the window returns with all its tabs, files included, unless you closed a tab after it. Reopen Closed Tab also works for a file shown in the PDF or slide viewer now.
 - **A refreshed Grok or Codex sign-in is no longer lost when its file is busy.** On Windows, copying the newly refreshed sign-in back to your own file could be refused for a moment (another program had the file open) and was dropped, so a later run could start from the older token. Lumen now waits and retries.
 
 - **Spotify search results show their cover art, and a song you pick is the one that plays.** Spotify sends its pictures as WebP, which Lumen could not shrink, so the little covers beside search results never appeared; they are now converted and fetched for the first rows at once instead of waiting for you to scroll. A song is now always played from its own page, and if the player ends up on a different song Lumen asks once more.

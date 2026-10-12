@@ -52,7 +52,22 @@ container.addEventListener('wheel', (e) => {
 
 // ---- pages
 const pageBox = $('pageNumber');
-eventBus.on('pagechanging', ({ pageNumber }) => { pageBox.value = String(pageNumber); $('prev').disabled = pageNumber <= 1; $('next').disabled = pageNumber >= viewer.pagesCount; });
+// The address keeps the page being read (#page=N, replacing this entry: no history), which is what a saved session reopens the file at.
+let pageTimer = 0;
+function rememberPage(n) {
+  clearTimeout(pageTimer);
+  pageTimer = setTimeout(() => {
+    try {
+      const next = new URLSearchParams(fragment);
+      if (n > 1) next.set('page', String(n)); else next.delete('page');
+      const hash = next.toString().replace(/%2C/gi, ',');
+      const u = new URL(location.href);
+      u.searchParams.set('u', base + (hash ? '#' + hash : ''));
+      history.replaceState(null, '', u.href);
+    } catch {}
+  }, 400);
+}
+eventBus.on('pagechanging', ({ pageNumber }) => { rememberPage(pageNumber); pageBox.value = String(pageNumber); $('prev').disabled = pageNumber <= 1; $('next').disabled = pageNumber >= viewer.pagesCount; });
 $('prev').addEventListener('click', () => viewer.previousPage());
 $('next').addEventListener('click', () => viewer.nextPage());
 pageBox.addEventListener('change', () => {
