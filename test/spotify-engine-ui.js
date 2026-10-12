@@ -28,7 +28,7 @@ const world = { signedIn: false, playerBroken: false, hits: 0 };
 const page = () => `<!doctype html><meta charset="utf-8"><title>Stand-in Spotify</title><body style="margin:0;background:#121212;color:#fff;font:14px system-ui">
 <main id="main"><h1>Stand-in Spotify</h1><a href="https://accounts.spotify.com/">Log in here</a></main>
 ${world.framePort && !world.signedIn ? `<iframe id="challenge" src="https://127.0.0.1:${world.framePort}/frame" style="position:fixed;left:20px;top:200px;width:300px;height:150px;border:0"></iframe>` : ''}
-${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer><aside id="lib" aria-label="Your Library"></aside>` : ''}
+${world.signedIn && !world.playerBroken ? `<footer id="foot"></footer><nav id="lib" aria-label="Main"></nav>` : ''}
 <script>
 window.__log = ['width:' + innerWidth];
 window.__msgs = [];
@@ -67,28 +67,45 @@ function route() {
   if (p.indexOf('/search/') === 0) {
     const term = decodeURIComponent(p.slice(8));
     __log.push('route:' + p);
-    m.innerHTML = '<div data-testid="search-page"><div data-testid="tracklist-row"><a href="/track/AAAAAAAAAAAAAAAAAAAAA1">' + term + ' one</a><a href="/artist/BBBBBBBBBBBBBBBBBBBBB1">Taylor</a><div>3:30</div></div>'
-      + '<div data-testid="tracklist-row"><a href="/track/AAAAAAAAAAAAAAAAAAAAA2">' + term + ' two</a><a href="/artist/BBBBBBBBBBBBBBBBBBBBB1">Taylor</a><div>2:10</div></div>'
-      + '<a href="/album/CCCCCCCCCCCCCCCCCCCCC1">The Album</a><a href="/artist/BBBBBBBBBBBBBBBBBBBBB1">Taylor</a></div>';
+    // The results as the signed-in page lists them (2026-10-11): a grid of div[role=row] > div[data-encore-id=listRow], the entity's link in the title cell, the artists in the
+    // subtitle cell (no data-testid="tracklist-row" any more). The pictures and the rows' own Play buttons are left out: a press goes through the item's page.
+    const resultRow = (kind, id, title) => '<div role="row"><div data-encore-id="listRow" role="group"><div role="gridcell" data-testid="media"></div><div role="gridcell" data-testid="title"><a href="/' + kind + '/' + id + '" aria-label="' + title + '"><p data-encore-id="listRowTitle"><span>' + title + '</span></p></a></div><div role="gridcell" data-testid="subtitle"><p data-encore-id="listRowSubtitle"><span><a href="/artist/BBBBBBBBBBBBBBBBBBBBB1">Taylor</a></span></p></div></div></div>';
+    m.innerHTML = '<div data-testid="search-page"><div role="grid" aria-label="Search results">' + resultRow('track', 'AAAAAAAAAAAAAAAAAAAAA1', term + ' one') + resultRow('track', 'AAAAAAAAAAAAAAAAAAAAA2', term + ' two') + '</div><div role="grid">' + resultRow('album', 'CCCCCCCCCCCCCCCCCCCCC1', 'The Album') + resultRow('artist', 'BBBBBBBBBBBBBBBBBBBBB1', 'Taylor') + '</div></div>';
   } else if (/^\\/(track|album|playlist|artist)\\//.test(p)) {
     __log.push('route:' + p);
     m.innerHTML = '<div data-testid="action-bar-row"><button data-testid="play-button" aria-label="Play">Play</button></div>';
     m.querySelector('button').onclick = () => { __log.push('play:' + p); sp.title = 'Played ' + p.split('/')[2]; sp.artist = 'Result'; sp.artists = ['Result']; sp.playing = true; sp.pos = 0; mediaSession(); drawFoot(); };
   }
 }
-// The left library as the real page makes it hard (sp.lib): 'rows' (listrow ids, the second row's picture lazy, on Spotify's newer image host), 'collapsed' (only the
-// icon rail's Open button until pressed), 'empty' (the empty-library words), 'none' (the panel is not there at all: the page changed).
+// The left library as the real page makes it (seen signed in 2026-10-11): nav[aria-label="Main"] with a header (the heading button "Collapse Your Library", "Create", and
+// "Expand Your Library", which only WIDENS the list into cards), the scrolling viewport ([data-overlayscrollbars-viewport]) and the list in it,
+// div[role=grid][aria-label="Your Library"] > div[role=row] > div[data-encore-id=listRow] with the item's uri in the title's id. sp.lib: 'rows' (the second row's picture lazy, on
+// Spotify's newer image host), 'collapsed' (closed to the icon rail: only the header's "Open Your Library" until pressed), 'wide' (what "Expand Your Library" makes: ul[role=treegrid]
+// of cards, ids card-title-spotify:...), 'empty' (the empty-library words), 'none' (the panel is not there at all: the page changed). Pressing "Expand Your Library" is logged: the
+// engine must never do it.
 function drawLib() {
   const lib = document.getElementById('lib');
   if (!lib) return;
   if (sp.lib === 'none') { lib.remove(); return; }
-  const row = (kind, id, title, img) => '<div role="row"><div data-encore-id="listRow" role="group">' + img + '<p data-encore-id="listRowTitle" id="listrow-title-spotify:' + kind + ':' + id + '">' + title + '</p><p data-encore-id="listRowSubtitle" id="listrow-subtitle-spotify:' + kind + ':' + id + '">Playlist • Sam</p></div></div>';
-  if (sp.lib === 'rows') lib.innerHTML = '<div role="grid">' + row('playlist', 'LIBPLAYLIST00000000001', 'Road mix', '<img src="https://i.scdn.co/image/ab67706c0000da84libone">') + row('album', 'LIBALBUM0000000000000001', 'Quiet Hours', '<img src="" srcset="https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851libtwo 64w, https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02libtwo 300w">') + '</div>';
-  else if (sp.lib === 'collapsed') { lib.innerHTML = '<button aria-label="Open Your Library"></button>'; lib.querySelector('button').onclick = () => { __log.push('lib:open'); sp.lib = 'rows'; drawLib(); }; }
-  else if (sp.lib === 'empty') lib.innerHTML = '<h2>Create your first playlist</h2><p>It is easy, we will help you</p>';
+  const head = (...labels) => '<header><div>' + labels.map((l) => '<button aria-label="' + l + '"></button>').join('') + '</div></header>';
+  const row = (kind, id, title, img) => '<div role="row"><div data-encore-id="listRow" role="group">' + img + '<p data-encore-id="listRowTitle" id="listrow-title-spotify:' + kind + ':' + id + '">' + title + '</p><p data-encore-id="listRowSubtitle" id="listrow-subtitle-spotify:' + kind + ':' + id + '">Playlist \u2022 Sam</p></div></div>';
+  const card = (kind, id, title, img) => '<li role="row"><div role="gridcell"><div data-encore-id="card" role="group">' + img + '<a data-encore-id="cardTitle" id="card-title-spotify:' + kind + ':' + id + '" href="/' + kind + '/' + id + '"><span>' + title + '</span></a><p data-encore-id="cardSubtitle" id="card-subtitle-spotify:' + kind + ':' + id + '"><span>Playlist \u2022 Sam</span></p></div></div></li>';
+  const imgs = ['<img src="https://i.scdn.co/image/ab67706c0000da84libone">', '<img src="" srcset="https://image-cdn-ak.spotifycdn.com/image/ab67616d00004851libtwo 64w, https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02libtwo 300w">'];
+  const viewport = (inner) => '<div data-overlayscrollbars-viewport="scrollbarHidden overflowXHidden overflowYScroll">' + inner + '</div>';
+  const wire = (label, fn) => { const b = lib.querySelector('button[aria-label="' + label + '"]'); if (b) b.onclick = fn; };
+  if (sp.lib === 'rows') {
+    lib.innerHTML = head('Collapse Your Library', 'Create', 'Expand Your Library') + viewport('<div role="grid" aria-label="Your Library" aria-rowcount="76">' + row('playlist', 'LIBPLAYLIST00000000001', 'Road mix', imgs[0]) + row('album', 'LIBALBUM0000000000000001', 'Quiet Hours', imgs[1]) + '</div>');
+    wire('Expand Your Library', () => { __log.push('lib:expand'); sp.lib = 'wide'; drawLib(); });
+  } else if (sp.lib === 'wide') {
+    lib.innerHTML = head('Create', 'Minimize Your Library') + viewport('<ul role="treegrid" aria-label="Your Library" aria-rowcount="13">' + card('playlist', 'LIBPLAYLIST00000000001', 'Road mix', imgs[0]) + card('album', 'LIBALBUM0000000000000001', 'Quiet Hours', imgs[1]) + '</ul>');
+    wire('Minimize Your Library', () => { __log.push('lib:minimize'); sp.lib = 'rows'; drawLib(); });
+  } else if (sp.lib === 'collapsed') {
+    lib.innerHTML = head('Open Your Library', 'Create') + viewport('<div role="grid" aria-label="Your Library"></div>');
+    wire('Open Your Library', () => { __log.push('lib:open'); sp.lib = 'rows'; drawLib(); });
+  } else if (sp.lib === 'empty') lib.innerHTML = head('Collapse Your Library', 'Create', 'Expand Your Library') + viewport('<h2>Create your first playlist</h2><p>It is easy, we will help you</p><div role="grid" aria-label="Your Library"></div>');
   else lib.innerHTML = '';
 }
-sp.setLib = (m) => { sp.lib = m; if (m !== 'none' && !document.getElementById('lib')) { const a = document.createElement('aside'); a.id = 'lib'; a.setAttribute('aria-label', 'Your Library'); document.body.appendChild(a); } drawLib(); };
+sp.setLib = (m) => { sp.lib = m; if (m !== 'none' && !document.getElementById('lib')) { const a = document.createElement('nav'); a.id = 'lib'; a.setAttribute('aria-label', 'Main'); document.body.appendChild(a); } drawLib(); };
 sp.lib = 'rows';
 drawLib();
 window.addEventListener('popstate', route);
@@ -141,7 +158,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await reloadNewTab();
   check('spotify engine: with a card on the page the hidden page loads and the bridge says ready', await waitMain(() => global.__spotifyEngine.status().ready), JSON.stringify(await status()));
   check('spotify engine: the first load already sees the real window size (the own start-up code of the page gets 1280 wide, not 0)', (await engine('window.__log[0]')) === 'width:1280', String(await engine('window.__log[0]')));
-  check('spotify engine: the view is never shown for a status card', await app.evaluate(() => { const v = global.__spotifyWeb.view(); return Boolean(v) && !v.getVisible(); }), '');
+  check('spotify engine: the view is never shown for a status card (hidden, or parked far outside the window so the page keeps drawing frames)', await app.evaluate(() => { const v = global.__spotifyWeb.view(); return Boolean(v) && (!v.getVisible() || (() => { const b = v.getBounds(); return b.x + b.width <= 0 || b.y + b.height <= 0; })()); }), '');
 
   // ---- signed out ----
   check('spotify engine: signed out: the card offers Sign in and says nothing is wrong (no player controls on a signed-out page)', await waitFor(`Boolean(${card}.querySelector('.am-signin')) && /Sign in to Spotify/.test(${card}.querySelector('.am-signin').textContent)`) && (await status()).signedIn === false && !(await pageJs(`/changed its page/.test(${card}.textContent)`)), JSON.stringify(await status()));
@@ -197,7 +214,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   check('spotify engine sign-in: when the popup finishes it closes (the page closes it) and the sign-in window is still there', await waitMain(async ({ BrowserWindow }) => !BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes('/popup') && !w.isDestroyed())) && (await winInfo()).length === 1, JSON.stringify(await winInfo()));
   world.signedIn = true; // the user signs in on the page (the server's page now has the player); Spotify's cookie appears
   await app.evaluate(async ({ session }) => { await session.defaultSession.cookies.set({ url: 'https://open.spotify.com/', name: 'sp_dc', value: 'fixture', domain: '.spotify.com', secure: true }); });
-  check('spotify engine: when Spotify\'s sign-in cookie appears the window closes by itself and the page goes back, hidden', await waitMain(async ({ BrowserWindow }) => !BrowserWindow.getAllWindows().some((w) => /Sign in to Spotify/.test(w.getTitle()))) && await app.evaluate(() => !global.__spotifyWeb.view().getVisible()), JSON.stringify(await winInfo()));
+  check('spotify engine: when Spotify\'s sign-in cookie appears the window closes by itself and the page goes back, hidden', await waitMain(async ({ BrowserWindow }) => !BrowserWindow.getAllWindows().some((w) => /Sign in to Spotify/.test(w.getTitle()))) && await app.evaluate(() => { const v = global.__spotifyWeb.view(); return Boolean(v) && (!v.getVisible() || (() => { const b = v.getBounds(); return b.x + b.width <= 0 || b.y + b.height <= 0; })()); }), JSON.stringify(await winInfo()));
   check('spotify engine: signed in is known from the cookie (not from the page)', (await status()).signedIn === true, JSON.stringify(await status()));
 
   // ---- signed in, playing here ----
@@ -243,7 +260,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   await shot('spotify-engine-open-player.png');
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (/Spotify player/.test(w.getTitle())) w.close(); });
   await engine('window.__sp.ignore = false');
-  check('spotify engine: closing it puts the page back, hidden, at its hidden size again', await waitMain(() => !global.__spotifyWeb.view().getVisible()) && (await engine('innerWidth')) === 1280, String(await engine('innerWidth')));
+  check('spotify engine: closing it puts the page back, hidden, at its hidden size again', await waitMain(() => { const v = global.__spotifyWeb.view(); return Boolean(v) && (!v.getVisible() || (() => { const b = v.getBounds(); return b.x + b.width <= 0 || b.y + b.height <= 0; })()); }) && (await engine('innerWidth')) === 1280, String(await engine('innerWidth')));
   await app.evaluate(() => { global.__respondMs = 0; });
 
   // ---- playback on another device (Spotify Connect) ----
@@ -259,7 +276,7 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   // ---- search and play a result through the page's own router ----
   await pageJs(`${card}.querySelector('.am-searchbtn').click()`);
   await pageJs(`(() => { const i = ${card}.querySelector('.am-searchfield input'); i.value = 'shake'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  check('spotify engine: search goes to the page\'s own search route (no reload) and the results come back: songs with length, then the album and artist', await waitFor(`${card}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 4`, 80) && (await engine('__log')).includes('route:/search/shake'), await pageJs(`${card}.querySelector('.am-pop')?.textContent || ''`));
+  check('spotify engine: search goes to the page\'s own search route (no reload) and the results come back: the songs, then the album and artist', await waitFor(`${card}.querySelectorAll('.am-pop .am-opt:not(.am-opt-recent)').length === 4`, 80) && (await engine('__log')).includes('route:/search/shake'), await pageJs(`${card}.querySelector('.am-pop')?.textContent || ''`));
   const hits0 = world.hits;
   const groups = await pageJs(`[...${card}.querySelectorAll('.am-pop .am-heading')].map((h) => h.textContent)`);
   check('spotify engine: the results are grouped Songs, Albums, Artists, and Add to queue is there but Play next is not (Spotify has only the first)', JSON.stringify(groups) === '["Songs","Albums","Artists"]' && (await pageJs(`[...${card}.querySelectorAll('.am-pop .am-act')].every((a) => /^Add to queue/.test(a.getAttribute('aria-label'))) && ${card}.querySelectorAll('.am-pop .am-act').length > 0`)), JSON.stringify(groups));
@@ -273,6 +290,9 @@ setInterval(() => { if (sp.playing) { sp.pos = Math.min(sp.dur, sp.pos + 1); dra
   const askLib = async (mode, wait = 4000) => { await engine(`window.__sp.setLib(${JSON.stringify(mode)}); window.__log.length = 0`); await app.evaluate(() => { global.__spotifyEngine.refreshLists(); }); const end = Date.now() + wait; let s = await libNow(); while (Date.now() < end && s.pending) { await sleep(200); s = await libNow(); } return s; };
   let lib = await askLib('rows');
   check('spotify engine library: the left panel’s rows come back as the card’s library (a playlist and an album), not pending', lib.ok === true && lib.titles.join() === 'Road mix,Quiet Hours' && lib.pending === false, JSON.stringify(lib));
+  check('spotify engine library: the header\'s "Expand Your Library" (which only widens the list into cards) was not pressed', !(await engine('__log')).includes('lib:expand'), JSON.stringify(await engine('__log')));
+  lib = await askLib('wide');
+  check('spotify engine library: a list the page widened into cards is read through the card ids, not left as a failure', lib.ok === true && lib.titles.join() === 'Road mix,Quiet Hours', JSON.stringify(lib));
   lib = await askLib('collapsed');
   check('spotify engine library: a collapsed panel is opened by its own button, then its rows are read', lib.ok === true && lib.titles.join() === 'Road mix,Quiet Hours' && (await engine('__log')).includes('lib:open'), JSON.stringify([lib, await engine('__log')]));
   lib = await askLib('empty');

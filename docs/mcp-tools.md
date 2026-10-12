@@ -178,6 +178,10 @@ Wait until the active tab meets every condition given, up to a timeout. `url` is
 
 At least one of `text`, `url`, `gone`, `network_idle` is needed.
 
+### `verify_changes`
+
+What this run changed in the text fields and editors it typed in, deleted from or scripted, measured now against the start of the run: text size, images, tables, equations, list items and table rows, with what was added and removed. Edits Lumen could not measure (an editor drawn on a canvas, an embedded frame) are listed as such. Call it before saying content is unchanged or edited. It takes no parameters and only reads. See [The AI and your content](ai-content-guard.md), which also covers the card that asks before a typing, Delete or script step removes a lot of content.
+
 ### `get_console`
 
 The tab's console messages and uncaught errors, as one line each: `[err] 12:01:03 TypeError: x is undefined (app.js:120)`. Lumen starts keeping them (the newest 300) when an agent first works in a tab, so the first call shows only what happened since then; the result says when capture began. Page content, so it is wrapped like any other page read.
@@ -448,6 +452,19 @@ Search scholarly databases at once: OpenAlex, Crossref, Semantic Scholar, arXiv 
 | `doi` | string |  | The paper for `related`. |
 
 The sidebar chat also has `research_board` (not listed to MCP clients: it is the chat's own source list, saved with the chat): `add` (ids from `find_sources`, or `url` / `title` / `authors` / `year` / `venue` of a page it read; `url: "current"` captures the tab's own metadata), `quote` (pin an exact quote; it is checked against the page or PDF text the AI read in that chat and marked verified or not found, with the heading or page and a link to the passage), `star`, `remove` (never a source the user added), `list` and `cite` (`apa`, `mla`, `chicago`, `ieee`, `bibtex`, `ris`).
+
+### `document`
+
+Edit a Google Doc without retyping it (Docs draws on a canvas, so there is nothing to click). One `action`: `outline` (headings, counts; takes the snapshot), `select_section`, `move_section`, `replace`, `style`, `insert_markdown`, `verify`, `undo`, `read`. It cuts and pastes real ranges, uses Docs' own shortcuts and Find and replace, and compares the document's export with the snapshot after every edit. Selecting everything and typing, or removing more than a fifth of the text or any picture, table or equation, asks first. [docs/ai-document-tool.md](ai-document-tool.md).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | yes | `outline`, `select_section`, `move_section`, `replace`, `style`, `insert_markdown`, `verify`, `undo` or `read`. |
+| `heading` | string |  | A heading's text (a unique start is enough): the section to select or move, or the heading to restyle. |
+| `to` | string |  | `move_section` and `insert_markdown`: `before X` or `after X` (a heading), or `start` or `end` of the document. |
+| `find` | string |  | `replace`: the text to find; `text` is what replaces every match. |
+| `style` | string |  | `style`: `Normal` or `Heading 1` to `Heading 6`. |
+| `text` | string |  | `replace`: the replacement; `insert_markdown`: the Markdown. |
 
 ### `run_macro`
 

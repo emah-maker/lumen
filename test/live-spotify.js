@@ -44,7 +44,7 @@ const step = async (name, fn) => { try { const r = await fn(); report(name, r ==
 const hard = setTimeout(() => { console.error('FAIL  the live check ran longer than 10 minutes and was stopped'); process.exit(1); }, 10 * 60e3);
 
 (async () => {
-  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile };
+  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_WIDEVINE: '1' }; // (LUMEN_TEST_WIDEVINE: Playwright turns the component updater off, so Widevine would never register)
   if (SIGNIN) delete env.LUMEN_TEST_BACKGROUND; else env.LUMEN_TEST_BACKGROUND = '1'; // (only the sign-in run may show a window)
   const app = await electron.launch({ args: [path.join(__dirname, '..'), ...(SIGNIN ? [] : ['--mute-audio'])], env });
   const proc = app.process();
@@ -76,11 +76,18 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
   }
 
   // ---- hidden: every card action against the real account ----
-  await step('signed in (Spotify\'s own sign-in cookie is in this profile; if not, run the sign-in run first)', async () => { const s = await status(); return { ok: s.signedIn === true, detail: JSON.stringify(s) }; });
+  // The new-tab page with the card FIRST: the engine's hidden Spotify page is only made when a card asks for it (the status call does not wake it), and
+  // only a live page knows whether the account is signed in (the cookie hook runs when the view is made).
+  await app.evaluate(() => new Promise((res) => { const t = global.__agent.browser.openTab(); global.__wtab = t; t.webContents.once('did-finish-load', res); }));
+  await app.evaluate(() => { global.__spotifyEngine.read(); });
+  await step('signed in (Spotify\'s own sign-in cookie is in this profile; if not, run the sign-in run first)', async () => {
+    const end = Date.now() + 30000;
+    let s = await status();
+    while (Date.now() < end && s.signedIn === null) { await sleep(500); s = await status(); }
+    return { ok: s.signedIn === true, detail: JSON.stringify(s) };
+  });
   if (failures) { await app.close().catch(() => {}); clearTimeout(hard); process.exit(1); }
 
-  // the new-tab page with the card
-  await app.evaluate(() => new Promise((res) => { const t = global.__agent.browser.openTab(); global.__wtab = t; t.webContents.once('did-finish-load', res); }));
   const page = (code) => app.evaluate((_e, c) => global.__wtab.webContents.executeJavaScript(c), code);
   const waitFor = async (code, ms = 20000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await page(code).catch(() => false)) return true; await sleep(250); } return false; };
   const card = '(document.querySelector(".w-card.spotify") || document.createElement("i"))';
@@ -88,10 +95,15 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
   await step('the hidden Spotify player loads and its bridge finds the controls (engine ready)', async () => {
     const end = Date.now() + 45000;
     let s = await status();
-    while (Date.now() < end && !s.ready) { await sleep(500); s = await status(); }
+    while (Date.now() < end && !(s.ready && s.state === 'ready')) { await sleep(500); s = await status(); } // (the bridge can answer a moment before the page's load event)
     return { ok: s.ready === true && s.state === 'ready', detail: JSON.stringify(s) };
   });
-  await step('Widevine is available (protected audio can play)', async () => { const s = await status(); return { ok: s.drm === 'ok', detail: `drm ${s.drm}` }; });
+  await step('Widevine is available (protected audio can play)', async () => {
+    const end = Date.now() + 40000; // (asked on the page's load event, and again every 5 s while it is not there yet)
+    let s = await status();
+    while (Date.now() < end && s.drm !== 'ok') { await sleep(500); s = await status(); }
+    return { ok: s.drm === 'ok', detail: `drm ${s.drm}` };
+  });
 
   // search a common song through the card's own search box
   const TERM = 'Never Gonna Give You Up';
@@ -105,17 +117,25 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
     return { ok, detail: `${(await read()).searchWhy || 'no rows'}` };
   });
   await step('the results\' cover art loaded (a picture with naturalWidth > 0)', async () => {
-    const ok = await waitFor(`[...${card}.querySelectorAll('.am-pop img.am-thumb')].some((i) => i.naturalWidth > 0)`, 25000);
+    // (the card draws a row's picture lazily, which an off-screen window never triggers: loading is forced here, the picture itself is the card's own data: URL)
+    const drawn = `(() => { const l = [...${card}.querySelectorAll('.am-pop img.am-thumb')]; l.forEach((i) => { i.loading = 'eager'; }); return l.some((i) => i.naturalWidth > 0); })()`;
+    // (the card asks for the pictures of the rows it has on screen with an IntersectionObserver, which a page in an off-screen window may never tell: if none was asked
+    // for, the engine is asked for the first rows' pictures the way the card does, so the pictures from Spotify's page are still checked)
+    let ok = await waitFor(drawn, 20000);
+    if (!ok) { await app.evaluate(async () => { const d = await global.__spotifyEngine.read(); global.__spotifyEngine.loadThumbs(d.results.slice(0, 12).map((r) => r.id)); }); ok = await waitFor(drawn, 25000); }
     const counts = await page(`[${card}.querySelectorAll('.am-pop .am-opt').length, ${card}.querySelectorAll('.am-pop img.am-thumb').length]`);
-    return { ok, detail: `${counts[0]} rows, ${counts[1]} pictures drawn, none loaded` };
+    const d = await read();
+    return { ok, detail: `${counts[0]} rows, ${counts[1]} pictures drawn, none loaded; the engine has a picture for ${(d.results || []).filter((r) => r.thumb).length} of ${(d.results || []).length} results` };
   });
-  await step('play the first result: the card shows that song and Pause', async () => {
+  await step('play the first result: the page plays that song (its title, checked and asked once more by the engine if another), and the card shows it and Pause', async () => {
+    // The row the card shows is clicked; the engine plays the song from its own page by track id, then checks the title the player reports.
     await page(`${card}.querySelector('.am-pop .am-songs .am-opt').click()`);
     const want = firstTitle.toLowerCase().slice(0, 12);
-    const ok = await waitFor(`Boolean(${card}.querySelector('[aria-label="Pause"]')) && ${JSON.stringify(want)} !== '' && (${card}.querySelector('.sp-title')?.textContent || '').toLowerCase().includes(${JSON.stringify(want)})`, 30000);
+    const shown = `Boolean(${card}.querySelector('[aria-label="Pause"]')) && ${JSON.stringify(want)} !== '' && (${card}.querySelector('.sp-title')?.textContent || '').toLowerCase().includes(${JSON.stringify(want)})`;
+    const ok = await waitFor(shown, 40000);
     return { ok, detail: `wanted "${firstTitle}", the card shows "${await page(`${card}.querySelector('.sp-title')?.textContent || ''`)}"` };
   });
-  await step('the playing song\'s cover art loaded on the card', async () => ({ ok: await waitFor(`(() => { const i = ${card}.querySelector('.sp-art img'); return Boolean(i) && i.naturalWidth > 0; })()`, 15000), detail: 'no picture with naturalWidth > 0 in .sp-art' }));
+  await step('the playing song\'s cover art loaded on the card', async () => ({ ok: await waitFor(`(() => { const i = ${card}.querySelector('img.sp-art'); if (i) i.loading = 'eager'; return Boolean(i) && i.naturalWidth > 0; })()`, 15000), detail: 'no picture with naturalWidth > 0 in img.sp-art' }));
   await step('pause: the card shows Play', async () => {
     await page(`${card}.querySelector('[aria-label="Pause"]').click()`);
     return { ok: await waitFor(`Boolean(${card}.querySelector('[aria-label="Play"]'))`, 15000), detail: 'still shows Pause' };
@@ -154,6 +174,7 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
   await sleep(1500);
   await app.close().catch(() => {});
   clearTimeout(hard);
+  if (process.env.LUMEN_LIVE_VERBOSE === '1') console.log(mainLog.filter((l) => !/MaxListeners|trace-warnings/.test(l)).join('\n')); // (everything main printed, for a failure that the [spotify] lines above do not explain)
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

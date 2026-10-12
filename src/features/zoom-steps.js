@@ -21,4 +21,17 @@ function nextLevel(level, dir) {
   return stop === undefined ? here : levelOf(stop);
 }
 
-module.exports = { STOPS, nextLevel, levelOf, percentOf };
+// The zoom step a key press asks for: 0.5 in, -0.5 out, 0 reset, null when it is not a zoom key. The character wins
+// ("-" "=" "+" "0", numpad keys report them too); the physical key (code) covers layouts and modifiers that report
+// something else (Ctrl+Shift+= is "+", but a Ctrl-chorded numpad key or a non-Latin layout may not report any of them).
+const KEY_STEPS = { '=': 0.5, '+': 0.5, '-': -0.5, '_': -0.5, '0': 0 };
+const CODE_STEPS = { Equal: 0.5, NumpadAdd: 0.5, Minus: -0.5, NumpadSubtract: -0.5, Numpad0: 0 };
+function zoomKeyStep(input) {
+  const key = String(input && input.key || '');
+  if (Object.hasOwn(KEY_STEPS, key)) return KEY_STEPS[key];
+  const code = String(input && input.code || '');
+  if (Object.hasOwn(CODE_STEPS, code) && !/^[a-z0-9]$/i.test(key)) return CODE_STEPS[code];
+  return null;
+}
+
+module.exports = { STOPS, nextLevel, levelOf, percentOf, zoomKeyStep };

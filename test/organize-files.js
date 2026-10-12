@@ -80,8 +80,8 @@ function makePdf(text) {
   await app.evaluate(() => global.__aiSites.set('local files', false));
 
   await app.close();
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  // (Windows: the app's helper processes can hold the folders for a moment after close. A leftover is not a failure: _tmp-cleanup removes both at exit.)
+  for (const folder of [dir, profile]) { try { fs.rmSync(folder, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* removed at exit */ } }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -76,6 +76,7 @@ const organizeAi = require('./features/organize-ai'); // Organize with AI: local
 const fileTabs = require('./features/file-tabs'); // tabs that show a file (a PDF, a deck, a file from disk): what Organize and the strip's icons know of them
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
+const { zoomKeyStep } = zoomSteps;
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const { menuLabel } = require('./browser/menu-label'); // page titles and file names as menu labels (a literal & is written &&)
@@ -113,6 +114,7 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
 const slidesRt = slidesViewer.create();
+const sessionFiles = require('./features/session-files'); // file tabs in the saved session, and the "moved or deleted" page
 const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
 const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
 const pdfHandler = pdfViewer.createHandler({ netFetchFor: (ses) => (url, init) => ses.fetch(url, init) });
@@ -177,6 +179,11 @@ app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
 if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/tabui.js)
 
+// Playwright's electron.launch adds Chromium switches that turn the component updater off (--disable-component-update, --disable-background-networking), so
+// Widevine never installs or registers in a test run: a music site then reports "no protected audio". A live run that needs real playback (test/live-spotify.js)
+// asks for them back with LUMEN_TEST_WIDEVINE=1. Tests only; a normal launch never has those switches.
+if (TEST && process.env.LUMEN_TEST_WIDEVINE === '1') for (const sw of ['disable-component-update', 'disable-background-networking']) app.commandLine.removeSwitch(sw);
+
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
 
@@ -195,7 +202,10 @@ if (!TEST && (app.isPackaged || process.env.LUMEN_DEV_REAL_PROFILE === '1')) {
 }
 // (A test run, electron.exe from a checkout, takes an ID of its own: it must not share the installed Lumen's taskbar
 // group or the name Windows shows on its notifications.)
-if (process.platform === 'win32') app.setAppUserModelId(TEST ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
+// (The stock electron binary made to look packaged, test/hardening.js, is a test too: its own ID, and no relaunch, which
+// would start electron.exe on a temp entry script the test has already deleted: "Error launching app" on the user's screen.)
+if (app.isPackaged && !instance.isInstalledExe()) app.relaunch = () => {};
+if (process.platform === 'win32') app.setAppUserModelId(TEST || !instance.isInstalledExe() ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
 
 // (A test run's userData was set by the profile guard at the top: CLAUDE_BROWSER_PROFILE, else a temp folder, never the real profile.)
 
@@ -228,7 +238,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
@@ -2348,6 +2358,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   }
   wc.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); if (!(input.control || input.meta || input.alt)) userTookOver(tab); } // (a shortcut such as Ctrl+Tab, Ctrl+W or Ctrl+L is not typing in the page) // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
+    // The AI's own key (press_key) is for the page, never for the browser: Ctrl+F, Ctrl+H and Ctrl+Alt+1-6 are Google Docs' Find, Find and replace
+    // and heading styles, and here they would open Lumen's find bar, History, or switch to tab 3.
+    if (input.type === 'keyDown' && manners.isAgentInput(wc)) return;
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
@@ -2436,7 +2449,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   } else if (!loaded) { // an adopted page is already on its way to its address
     // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
     // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
-    const first = pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
+    const absent = sessionFiles.loadTarget(url, ERROR_URL, fs.existsSync); // a file that is not there (moved, deleted): the page that says so, not a blank viewer
+    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
     wc.loadURL(first).catch(() => {});
   }
   return wc;
@@ -3016,10 +3030,11 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
-  if (url && !isInternal(url) && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
-    closedTabs.push(url);
+  const reopenUrl = isInternal(url) ? sessionFiles.savedUrl(url) : url; // (a file in its viewer reopens from the file's own address)
+  if (reopenUrl && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
+    closedTabs.push(reopenUrl);
     closedInfo.push(closedTabsKept.snapshot({ pinned: tab.pinned, groupId: tab.groupId, index, history: tab.pendingCloseHistory ?? navSnapshot(tab) }));
-    tabTools.noteClosed(url, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
+    tabTools.noteClosed(reopenUrl, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
   }
   if (closedTabs.length > 50) { closedTabs.splice(0, closedTabs.length - 50); closedInfo.splice(0, closedInfo.length - 50); } // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
@@ -3643,7 +3658,12 @@ function closeTabs(keepId, list) {
   for (const t of list) requestCloseTab(t.id);
 }
 
+// Ctrl+Shift+T brings back whichever was closed last, a tab or a whole window (as Chrome does): a window closed while others stayed open,
+// with its tabs, their order, groups, pins and the file tabs among them. `after` is how many closed tabs there were when it closed.
+const closedWindows = [];
 function reopenLastClosed() {
+  const last = closedWindows[closedWindows.length - 1];
+  if (last && closedTabs.length <= last.after) { closedWindows.pop(); createWindow({ restore: last.entry }); return; }
   if (closedTabs.length) reopenClosedTab(closedTabs.pop(), closedInfo.pop());
 }
 
@@ -4450,9 +4470,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
   else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
   else if (mod && /^[1-9]$/.test(key)) { const shown = tabs.filter((x) => !aiTabHidden(x)); const t = key === '9' ? shown[shown.length - 1] : shown[Number(key) - 1]; if (t) switchTab(t.id); } // (Ctrl+N counts the tabs the strip shows)
-  else if (mod && (key === '=' || key === '+')) zoomBy(wc, 0.5);
-  else if (mod && key === '-') zoomBy(wc, -0.5);
-  else if (mod && key === '0') zoomBy(wc, 0);
+  else if (mod && zoomKeyStep(input) !== null) zoomBy(wc, zoomKeyStep(input)); // Ctrl + = - 0, the numpad's too (features/zoom-steps.js)
   else if (mod && input.shift && key === 'd') bookmarkAllTabs();
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
@@ -5306,8 +5324,11 @@ function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
-  const saved = tabs.filter((t) => !t.isolated && (isWebUrl(urlOf(t)) || chatPage.isChatUrl(urlOf(t)))); // web pages, and lumen://chat (not research tabs: they would come back in the user's session)
-  const urls = saved.map(urlOf);
+  // What a tab keeps in the session: web pages, lumen://chat, and the file a file tab shows (a PDF or deck in its viewer is saved as the file's own
+  // address: the viewer's moves with an update). Not research tabs: they would come back in the user's session.
+  const savedOf = (t) => { const u = urlOf(t); return isWebUrl(u) || chatPage.isChatUrl(u) ? u : sessionFiles.savedUrl(u); };
+  const saved = tabs.filter((t) => !t.isolated && savedOf(t));
+  const urls = saved.map(savedOf);
   const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
   return {
     urls,
@@ -6686,7 +6707,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   else if (agentOf) showBehind(w); // [agent window] on screen (so it paints) but never in front of what the user is doing
   if (agentOf) w.on('page-title-updated', (e) => e.preventDefault()); // (its title says whose window it is)
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
-  if (process.platform === 'win32' && app.isPackaged) {
+  if (process.platform === 'win32' && app.isPackaged && instance.isInstalledExe()) {
     // Set again once the UI has loaded: the taskbar can read the window's properties before the first
     // call lands (or after the shell recreates the button), and a repeat is harmless.
     const taskbarDetails = () => {
@@ -6733,7 +6754,15 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
-  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1 ? rec : null }); });
+  w.on('close', () => {
+    if (quitting) return;
+    const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
+    if (several && !rec.agent && !isSpare(rec) && !rec.mergedAway && !rec.pendingRestore) { // kept for Reopen Closed Window (Ctrl+Shift+T)
+      const entry = withWindow(rec, sessionEntry);
+      if (entry.urls.length) { closedWindows.push({ entry, rec, after: closedTabs.length }); if (closedWindows.length > 10) closedWindows.shift(); }
+    }
+    saveSession({ excluding: several ? rec : null });
+  });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
@@ -6742,6 +6771,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     freezeTimers.delete(rec);
     dropDeadWindowViews();
     winRecs.delete(rec);
+    const kept = closedWindows.find((c) => c.rec === rec);
+    if (kept) kept.after = closedTabs.length; // (its own tabs closing with it are not "closed after" it)
     if (rec === spareRec) spareRec = null;
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
@@ -7193,6 +7224,10 @@ signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
 const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
 sharedFiles.register(ipcMain);
+// [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
+const gapLog = require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false });
+ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog.list(), report: gapLog.report() }));
+ipcMain.handle('settings:clear-ai-gaps', () => { gapLog.clear(); return { entries: [], report: '' }; });
 const tabAnywhere = (id) => {
   for (const rec of winRecs) {
     const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
@@ -7306,6 +7341,7 @@ const agent = new Agent({
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
+  recordGap: (info) => gapLog.record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
@@ -7448,6 +7484,8 @@ if (TEST) {
     return items.map((i) => i.label);
   };
   global.__closedTabs = () => closedTabs.slice();
+  global.__closedWindows = () => closedWindows.length;
+  global.__reopenLastClosed = reopenLastClosed;
   // The tab strip's right-click menu (test/tabmenu.js): its items as { label, enabled }, and with
   // `label`, that item clicked.
   global.__tabMenu = (id, label) => {
@@ -7863,7 +7901,16 @@ if (TEST) global.__appleMusicEngine = appleMusicEngine;
 const spotifyEngine = require('./features/spotify-engine').createEngine({
   player: spotifyWeb,
   resizeArt,
-  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
+  // Spotify's picture host answers WebP whatever is asked for, which nativeImage cannot read: the engine's own page (a Chromium that can) draws it small and gives back a JPEG.
+  decodeArt: async (bytes) => {
+    const wc = spotifyWeb.webContents();
+    if (!wc || bytes.length > 400e3) return '';
+    try {
+      const out = await wc.executeJavaScript(`(async (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const bmp = await createImageBitmap(new Blob([u], { type: 'image/webp' })); const h = Math.min(120, bmp.height); const w = Math.max(1, Math.round(bmp.width * h / bmp.height)); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.8); })(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`);
+      return typeof out === 'string' && out.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(out) ? out : '';
+    } catch { return ''; }
+  },
+  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/jpeg, image/png;q=0.9' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (JPEG or PNG: Spotify's picture host otherwise sometimes answers WebP, which the picture resizer cannot read, so the picture was dropped; the engine only asks for https addresses on scdn.co)
   BrowserWindow: engineWindow,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
@@ -8091,6 +8138,24 @@ ipcMain.on('pages:strings', (event) => {
 });
 ipcMain.handle('settings:strings',() => ({ locale: i18n().locale, strings: i18n().strings }));
 if (TEST) global.__i18n = () => i18n(); // test/a11y.js
+// "This file was moved or deleted" (features/session-files.js): the page is a tab's own, and the file is the one its address names.
+const missingFileOf = (event) => (event.senderFrame === event.sender.mainFrame ? sessionFiles.missingTarget(event.senderFrame?.url, ERROR_URL) : '');
+ipcMain.on('missingfile:folder', (event) => {
+  const target = missingFileOf(event);
+  let dir = sessionFiles.localPath(target);
+  while (dir && !fs.existsSync(dir)) { const up = path.dirname(dir); if (up === dir) { dir = ''; break; } dir = up; } // the nearest folder that is still there
+  if (dir) shell.openPath(dir).catch?.(() => {});
+});
+ipcMain.on('missingfile:choose', async (event) => {
+  const target = missingFileOf(event);
+  const wc = event.sender;
+  if (!target || wc.isDestroyed()) return;
+  const owner = BrowserWindow.fromWebContents(wc) || win;
+  const wanted = sessionFiles.localPath(target);
+  const { canceled, filePaths } = await electronDialog.showOpenDialog(owner, { title: t('dialog.missingFile.choose'), defaultPath: path.dirname(wanted), properties: ['openFile'] });
+  if (canceled || !filePaths[0] || wc.isDestroyed()) return;
+  wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
+});
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
@@ -9003,6 +9068,8 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
+// [content guard] "Undo the AI's edits on this page": the editors and fields that run changed go back to how they started.
+ipcMain.handle('agent:undo-edits', (_e, runId) => agent.undoEdits(runId));
 // [annotate] "Show again" / "Clear" on a drawing step in the sidebar (ai/annotate.js).
 ipcMain.handle('agent:annotate', (_e, action) => (action === 'show' || action === 'clear' ? agent.annotateAgain(action) : false));
 // The PDF viewer's Print button (its page has no IPC but this one, from permissions-preload.js): the same preview as Ctrl+P.

@@ -102,12 +102,33 @@ module.exports = async function spotifyEngineUnits(check) {
   const res = await e.read();
   check('spotify engine: results (song, album, artist) with duration; the card is told', res.results.length === 3 && res.results[0].ms === 219000 && res.results[2].kind === 'artist' && res.query === 'shake it off' && res.searching === false && res.searchOk === true, JSON.stringify(res.results));
   await sleep(30);
-  check('spotify engine: no picture is fetched until the card asks for the rows on screen (lazy: the first rows show without waiting for pictures)', fetched.length === before && (await e.read()).results.every((r) => r.thumb === ''), String(fetched.length - before));
-  check('spotify engine: loadThumbs names rows by id; an id that is not in the results fetches nothing', e.loadThumbs(['nope']) === false && e.loadThumbs([]) === false && (await sleep(20), fetched.length === before), String(fetched.length - before));
+  // (the pictures of the first rows are fetched at once from the row data, not left to the card's IntersectionObserver, which never fires in a page that is not scrolled into view)
+  const eager = await e.read();
+  check('spotify engine: the first rows\' pictures are fetched at once from the rows\' own picture addresses (scdn.co only) and arrive as data: URLs; a row with no picture has none', fetched.length - before === 2 && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && eager.results[0].thumb.startsWith('data:image/') && eager.results[1].thumb.startsWith('data:image/') && eager.results[2].thumb === '', JSON.stringify(eager.results.map((r) => r.thumb.slice(0, 12))));
+  const afterEager = fetched.length;
+  check('spotify engine: loadThumbs names rows by id; an id that is not in the results fetches nothing', e.loadThumbs(['nope']) === false && e.loadThumbs([]) === false && (await sleep(20), fetched.length === afterEager), String(fetched.length - afterEager));
   check('spotify engine: loadThumbs for rows on screen', e.loadThumbs(['4uLU6hMCjMI75M1A2tKUQC', '2QJmrSgbdM35R67eoGQo4j', '06HL4z0CvFAxyc27GXpf02']) === true, '');
   await sleep(30);
   const withThumbs = await e.read();
-  check('spotify engine: small pictures for the rows asked for are fetched (scdn.co only) and then shown as data: URLs', fetched.length > before && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && withThumbs.results[0].thumb.startsWith('data:image/') && withThumbs.results[1].thumb.startsWith('data:image/') && withThumbs.results[2].thumb === '', JSON.stringify(withThumbs.results.map((r) => r.thumb.slice(0, 20))));
+  check('spotify engine: small pictures for the rows asked for are shown as data: URLs', fetched.length > before && fetched.slice(before).every((u) => /\.scdn\.co\//.test(u)) && withThumbs.results[0].thumb.startsWith('data:image/') && withThumbs.results[1].thumb.startsWith('data:image/') && withThumbs.results[2].thumb === '', JSON.stringify(withThumbs.results.map((r) => r.thumb.slice(0, 20))));
+  // playing a song: the page reports the track id it is on; a different one 10 s on is asked for once more (and only once)
+  const trk = (title) => JSON.stringify({ t: 'state', state: 2, pos: 3, dur: 200, device: '', player: true, item: { title, artist: 'A', album: 'B', art: ART, ms: 200000 } });
+  const plays = () => sent().filter((c) => c.cmd === 'playItem' && c.id === '4uLU6hMCjMI75M1A2tKUQC').length;
+  const p0 = plays();
+  e.playItem('song', '4uLU6hMCjMI75M1A2tKUQC');
+  e.onMessage(trk('Some Other Song'));
+  check('spotify engine: a song asked to play is not asked again while the page may still be starting it', plays() === p0 + 1, String(plays() - p0));
+  t += 11e3;
+  e.onMessage(trk('Some Other Song'));
+  check('spotify engine: a different song still playing 10 s on is asked for once more', plays() === p0 + 2, String(plays() - p0));
+  t += 11e3;
+  e.onMessage(trk('Some Other Song'));
+  check('spotify engine: …and only once (no loop)', plays() === p0 + 2, String(plays() - p0));
+  e.playItem('song', '4uLU6hMCjMI75M1A2tKUQC');
+  e.onMessage(trk('shake it off'));
+  t += 11e3;
+  e.onMessage(trk('Some Other Song'));
+  check('spotify engine: the song asked for playing (its title, any case) ends the check: nothing is asked again when the song later changes', plays() === p0 + 3, String(plays() - p0));
   e.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid, ok: false, items: [] }));
   check('spotify engine: a search the page could not answer is flagged (the card says Spotify may have changed)', (await e.read()).searchOk === false, '');
   // streaming: the first rows (partial) show at once; the whole list replaces them; a page that then never stands still does not take the rows away
@@ -211,6 +232,18 @@ module.exports = async function spotifyEngineUnits(check) {
     const warns = [];
     const realWarn = console.warn;
     console.warn = (...a) => { warns.push(a.join(' ')); };
+    // a picture in a format the resizer cannot read (Spotify's picture host answers WebP): the page's decoder gives back a small JPEG; one that cannot either has no picture
+    const WEBP = Buffer.from('RIFF\x10\x00\x00\x00WEBPVP8 abcd', 'latin1');
+    const decoded = [];
+    const plW = fakePlayer();
+    const eW = createEngine({ player: plW, now: () => t2, fetchBytes: async () => WEBP, resizeArt: () => null, decodeArt: async (b) => { decoded.push(b.length); return 'data:image/jpeg;base64,/9j/AAAA'; }, BrowserWindow: function BrowserWindow() { return fakeWin(); }, getParent: () => null, hasCard: () => true, onChange: () => {}, setInterval: () => ({ unref() {} }) });
+    await eW.read();
+    eW.onMessage('{"t":"ready"}');
+    eW.search('webp');
+    const ridW = plW.wc.sent.map((x) => x[1]).filter((c) => c.cmd === 'search').at(-1).rid;
+    eW.onMessage(JSON.stringify({ t: 'list', kind: 'search', rid: ridW, ok: true, items: [{ id: '4uLU6hMCjMI75M1A2tKUQC', kind: 'song', title: 'Webp Song', sub: 'A', ms: 1000, art: ART }] }));
+    await sleep(30);
+    check('spotify engine: a WebP search picture the resizer cannot read is decoded by the page and shown as a data: JPEG (the first rows\' pictures at once)', decoded.length === 1 && (await eW.read()).results[0].thumb === 'data:image/jpeg;base64,/9j/AAAA', JSON.stringify([decoded, (await eW.read()).results[0].thumb]));
     const e2 = createEngine({ player: pl, now: () => t2, fetchBytes: async () => PNG, resizeArt: (b) => b, BrowserWindow: function BrowserWindow() { return fakeWin(); }, getParent: () => null, hasCard: () => true, onChange: () => {}, setInterval: () => ({ unref() {} }) });
     const cmds = () => (pl.wc ? pl.wc.sent.map((s) => s[1]).filter((c) => c.cmd === 'list' && c.kind === 'playlists') : []);
     await e2.read();

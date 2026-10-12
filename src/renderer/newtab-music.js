@@ -907,7 +907,7 @@ function searchController(view, { id, o, act, ui, cap }) {
       b.setAttribute('aria-selected', 'false');
       b.setAttribute('aria-label', `Play ${text(item.title, 60)}${text(item.sub, 60) ? `, ${text(item.sub, 60)}` : ''}`);
       b.tabIndex = -1;
-      if (thumbOk(item.thumb)) { const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = item.thumb; b.append(img); } else { b.append(el('span', 'am-thumb none')); missing.push([row, item.id]); }
+      if (thumbOk(item.thumb)) { const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'eager'; img.decoding = 'async'; img.src = item.thumb; b.append(img); } else { b.append(el('span', 'am-thumb none')); missing.push([row, item.id]); }
       const t = el('span', 'am-opt-text');
       t.append(el('span', 'am-title', text(item.title, 120)));
       if (text(item.sub, 120)) t.append(el('span', 'am-sub', text(item.sub, 120)));
@@ -996,7 +996,7 @@ function searchController(view, { id, o, act, ui, cap }) {
       const b = byKey.get(`${item.kind}:${item.id}`);
       const slot = b && b.querySelector('.am-thumb.none');
       if (!slot) continue;
-      const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = item.thumb;
+      const img = document.createElement('img'); img.className = 'am-thumb'; img.alt = ''; img.loading = 'eager'; img.decoding = 'async'; img.src = item.thumb;
       slot.replaceWith(img);
     }
   }

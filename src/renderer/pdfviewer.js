@@ -40,7 +40,7 @@ eventBus.on('scalechanging', showScale);
 $('zoom').addEventListener('change', (e) => { if (e.target.value !== 'custom') viewer.currentScaleValue = e.target.value; });
 const zoomIn = () => viewer.increaseScale({ steps: 1 });
 const zoomOut = () => viewer.decreaseScale({ steps: 1 });
-const zoomReset = () => { viewer.currentScaleValue = '1'; };
+const zoomReset = () => { viewer.currentScaleValue = 'page-width'; }; // back to how the PDF opened
 $('zoomIn').addEventListener('click', zoomIn);
 $('zoomOut').addEventListener('click', zoomOut);
 // Ctrl+wheel (and a trackpad pinch, which arrives the same way) zooms the document, not the page around it.
@@ -52,7 +52,22 @@ container.addEventListener('wheel', (e) => {
 
 // ---- pages
 const pageBox = $('pageNumber');
-eventBus.on('pagechanging', ({ pageNumber }) => { pageBox.value = String(pageNumber); $('prev').disabled = pageNumber <= 1; $('next').disabled = pageNumber >= viewer.pagesCount; });
+// The address keeps the page being read (#page=N, replacing this entry: no history), which is what a saved session reopens the file at.
+let pageTimer = 0;
+function rememberPage(n) {
+  clearTimeout(pageTimer);
+  pageTimer = setTimeout(() => {
+    try {
+      const next = new URLSearchParams(fragment);
+      if (n > 1) next.set('page', String(n)); else next.delete('page');
+      const hash = next.toString().replace(/%2C/gi, ',');
+      const u = new URL(location.href);
+      u.searchParams.set('u', base + (hash ? '#' + hash : ''));
+      history.replaceState(null, '', u.href);
+    } catch {}
+  }, 400);
+}
+eventBus.on('pagechanging', ({ pageNumber }) => { rememberPage(pageNumber); pageBox.value = String(pageNumber); $('prev').disabled = pageNumber <= 1; $('next').disabled = pageNumber >= viewer.pagesCount; });
 $('prev').addEventListener('click', () => viewer.previousPage());
 $('next').addEventListener('click', () => viewer.nextPage());
 pageBox.addEventListener('change', () => {
@@ -88,7 +103,7 @@ eventBus.on('updatefindcontrolstate', ({ matchesCount, state }) => { showCount({
 // ---- keys the page itself doesn't scroll for
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); } else if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); } else if (mod && e.key === '-') { e.preventDefault(); zoomOut(); } else if (mod && e.key === '0') { e.preventDefault(); zoomReset(); } else if (e.key === 'Escape' && !findBar.hidden) closeFind();
+  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); } else if (mod && (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd')) { e.preventDefault(); zoomIn(); } else if (mod && (e.key === '-' || e.code === 'NumpadSubtract')) { e.preventDefault(); zoomOut(); } else if (mod && (e.key === '0' || e.code === 'Numpad0')) { e.preventDefault(); zoomReset(); } else if (e.key === 'Escape' && !findBar.hidden) closeFind();
   else if (!mod && !e.altKey && document.activeElement && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName) && ['Home', 'End', 'PageUp', 'PageDown', ' ', 'ArrowUp', 'ArrowDown'].includes(e.key)) container.focus({ preventScroll: true }); // keys go to the scroller
 });
 
