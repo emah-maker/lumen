@@ -22,6 +22,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - **The toolbar button no longer says "Set up AI" once an AI is connected.** With Auto picked (the default when you connect more than one AI), the button kept asking you to set up. It now says "Lumen".
 - **Deleting a saved login asks first.** In Settings, Delete on one saved password used to remove it at once with no way back; it now says "Delete? Click again", the same as Delete all. Clear list under Recent downloads asks the same way.
 - **A reopened chat still shows where you switched models.** The "Now using ..." line between messages used to vanish when you came back to the chat; it is drawn again before the first message the new model answered (not when Auto picked the model itself).
+- **A deleted Codex chat no longer leaves an empty folder behind.** When another Codex chat finished at the moment a chat was deleted, its sign-in copy-back could recreate the deleted chat's folder. Copy-backs now only write into folders that still exist.
 
 ## 0.5.25 (2026-10-11)
 
