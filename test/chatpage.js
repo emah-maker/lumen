@@ -492,8 +492,8 @@ const fakeClient = (app) => app.evaluate(() => {
   await app.evaluate(async () => { const wc = global.__chatPage.contents(global.__chatPage.tabs().find((x) => x.chat).id); await wc.debugger.sendCommand('Emulation.clearDeviceMetricsOverride'); });
   await app.close();
   server.close();
-  fs.rmSync(profile2, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  // (Windows: the app's helper processes can hold the folders for a moment after close. A leftover is not a failure: _tmp-cleanup removes both at exit.)
+  for (const folder of [profile2, profile]) { try { fs.rmSync(folder, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* removed at exit */ } }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
