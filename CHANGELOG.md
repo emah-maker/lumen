@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **The Spotify card's Library tab loads your library.** Opening the tab while Spotify was still starting (or after Lumen had put it to sleep) used to do nothing, and the card ended on "Nothing here yet"; it now says "Loading your library…" and shows your playlists as soon as Spotify is ready. If you have connected Spotify's Web API, the library (recent plays, Liked Songs, playlists, albums, artists) is read from it directly, and Lumen falls back to Spotify's own page only when that fails. A library that can't be read still ends in a clear message with **Try again**. Tested by clicking the Library tab on a real signed-in account, hidden.
+- **The Spotify card's Library tab loads your library.** Opening the tab while Spotify was still starting (or after Lumen had put it to sleep) used to do nothing, and the card ended on "Nothing here yet"; it now says "Loading your library…" and shows your playlists as soon as Spotify is ready. If you have connected Spotify's Web API, the library (recent plays, Liked Songs, playlists, albums, artists) is read from it directly, and Lumen falls back to Spotify's own page only when that fails. The first rows show as soon as the playlists arrive and the rest fill in, each list is given a few seconds (never "Loading…" for ever), a rate limit says so, and a library that can't be read still ends in a clear message with **Try again**. Tested by clicking the Library tab on a real signed-in account, hidden.
 
 ## 0.5.27 (2026-10-12)
 

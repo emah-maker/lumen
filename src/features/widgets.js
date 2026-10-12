@@ -632,7 +632,7 @@ const CONNECTORS = {
       }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage };
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
@@ -1296,11 +1296,11 @@ async function statusLibrary(c, x, cached, action) {
   if (!apiConnected(c, x)) return false;
   const ui = x.ui(c.id);
   const have = ui.library;
-  if (have && have.ok === true && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
-  const sctx = { ui, now: x.now, image: x.image };
+  if (have && SAC.directLibrary(ui) && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
+  const sctx = { ui, now: x.now, image: x.image, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
   await SAC.loadTab((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), 'library', sctx, cached).catch(() => {});
   const got = SAC.directLibrary(ui);
-  if (!got) { delete ui.library; return false; }
+  if (!got) return false;
   Object.assign(cached, got);
   return true;
 }
@@ -1708,6 +1708,8 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
+      pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
       ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
       rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)

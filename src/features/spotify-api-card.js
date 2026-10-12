@@ -18,6 +18,7 @@ const TAB_MAX_AGE_MS = 5000;
 const THUMBS = 6; // pictures fetched for a list (each distinct picture is a request, and all widgets share 40 a minute: a queue of one album is one)
 const NEEDS = { like: 'user-library-modify', library: 'playlist-read-private', recent: 'user-read-recently-played', liked: 'user-library-read', albums: 'user-library-read', following: 'user-follow-read' };
 const LIB_PAGES = 2; // pages of 50 read for a library list (the playlists, saved songs, saved albums, followed artists), following `next`
+const LIST_MS = 8000; // one library list (its pages together) is given this long; then it counts as failed and the others go on
 const LIB_CAP = { playlists: 100, liked: 50, albums: 50, artists: 50 }; // rows kept of each
 const MAX_SONGS = 30; // songs a search can grow to by "more songs" (three pages of 10)
 const LIST_MAX_AGE_MS = 2 * 60e3; // a playlist's songs are read again only when asked for after this (a tab opened again, "Try again")
@@ -136,26 +137,42 @@ async function loadTab(call, name, ctx, playback) {
     return;
   }
   if (name === 'library') {
-    const settle = (p) => p.catch((err) => ({ res: { ok: false, status: 0, body: '', error: err }, items: [], status: 0 })); // (a network error is one list failing, not the tab)
-    const [recent, playlists, liked, albums, artists] = await Promise.all([
-      settle(ask(call, ui, PLAYER.recent(), 'recent').then((res) => ({ res, items: res.ok ? bare(SV.normalizeRecent(res.body)).slice(0, 10) : [], status: res.ok ? 0 : res.status }))),
-      settle(paged(call, ui, PLAYER.playlists(), 'library', SV.normalizePlaylists, LIB_CAP.playlists)),
-      settle(paged(call, ui, PLAYER.liked(), 'liked', SV.normalizeLiked, LIB_CAP.liked)),
-      settle(paged(call, ui, PLAYER.albums(), 'albums', SV.normalizeAlbums, LIB_CAP.albums)),
-      settle(paged(call, ui, PLAYER.following(), 'following', SV.normalizeFollowing, LIB_CAP.artists)),
-    ]);
-    const all = { recent, playlists, liked, albums, following: artists };
-    const failed = Object.entries(all).filter(([, v]) => !v.res.ok);
-    // What failed and why goes to main's console (the card says only what the user can act on): a missing scope, or the status Spotify answered.
-    for (const [k, v] of failed) console.warn(`[spotify] library: ${k} answered ${v.res.status || 'no answer'}${SV.scopeError(v.res.status, v.res.body) ? ' (the account lacks a scope: sign in again)' : ''}${v.res.error ? ` (${String(v.res.error.message || v.res.error).slice(0, 120)})` : ''}`);
-    const ok = Object.values(all).some((v) => v.res.ok);
-    ui.library = {
-      at, ok,
-      why: ok ? '' : failed.every(([, v]) => SV.scopeError(v.res.status, v.res.body)) ? 'scope' : 'page', // (every list failed: for the scope the card offers Sign in again, else Try again)
-      liked: liked.items, recent: recent.items, playlists: playlists.items, albums: albums.items, artists: artists.items,
+    // The library is five lists asked at once (the lists are independent). The tab answers as soon as the FIRST list (the playlists) has, so the card has rows
+    // quickly; the others fill in as they arrive (ctx.onPart tells the card), each list is cut off after LIST_MS (a request that never answers is a failed list, not
+    // a tab that never ends), and the rows read stay. A newer read of the tab (Try again) replaces this one; what the older one finds after that is dropped.
+    const seq = (ui.libSeq = (ui.libSeq || 0) + 1);
+    const lib = { at, ok: false, why: '', pending: true, liked: [], recent: [], playlists: [], albums: [], artists: [], results: {} };
+    ui.library = lib;
+    const capMs = ctx.listMs || LIST_MS;
+    const timed = (p) => Promise.race([p, new Promise((r) => { const t = setTimeout(() => r({ res: { ok: false, status: 0, body: '', error: Object.assign(new Error('no answer'), { why: 'timeout' }) }, items: [], status: 0 }), capMs); t.unref?.(); })]);
+    const settle = (p) => timed(p.catch((err) => ({ res: { ok: false, status: 0, body: '', error: err }, items: [], status: 0 })));
+    const note = (key, field, got) => {
+      if (ui.libSeq !== seq) return;
+      lib.results[key] = got.res;
+      if (got.res.ok) { lib[field] = got.items; lib.ok = true; }
+      ctx.onPart?.();
     };
-    for (const p of ui.library.playlists) remember(ui, 'playlist', p.id, p.title);
-    for (const p of ui.library.albums) remember(ui, 'album', p.id, p.title);
+    const tasks = [
+      ['recent', 'recent', settle(ask(call, ui, PLAYER.recent(), 'recent').then((res) => ({ res, items: res.ok ? bare(SV.normalizeRecent(res.body)).slice(0, 10) : [], status: res.ok ? 0 : res.status })))],
+      ['playlists', 'playlists', settle(paged(call, ui, PLAYER.playlists(), 'library', SV.normalizePlaylists, LIB_CAP.playlists))],
+      ['liked', 'liked', settle(paged(call, ui, PLAYER.liked(), 'liked', SV.normalizeLiked, LIB_CAP.liked))],
+      ['albums', 'albums', settle(paged(call, ui, PLAYER.albums(), 'albums', SV.normalizeAlbums, LIB_CAP.albums))],
+      ['following', 'artists', settle(paged(call, ui, PLAYER.following(), 'following', SV.normalizeFollowing, LIB_CAP.artists))],
+    ].map(([key, field, p]) => p.then((got) => { note(key, field, got); return got; }));
+    const done = Promise.all(tasks).then(() => {
+      if (ui.libSeq !== seq) return;
+      const failed = Object.entries(lib.results).filter(([, r]) => !r.ok);
+      // What failed and why goes to main's console (the card says only what the user can act on): a missing scope, a rate limit, or the status Spotify answered.
+      for (const [k, r] of failed) console.warn(`[spotify] library: ${k} answered ${r.status || 'no answer'}${SV.scopeError(r.status, r.body) ? ' (the account lacks a scope: sign in again)' : ''}${r.error ? ` (${String(r.error.message || r.error).slice(0, 120)})` : ''}`);
+      lib.pending = false;
+      lib.why = lib.ok ? '' : failed.every(([, r]) => SV.scopeError(r.status, r.body)) ? 'scope' : failed.some(([, r]) => r.status === 429 || r.error?.waitMs) ? 'rate' : failed.some(([, r]) => r.error?.why === 'timeout') ? 'timeout' : 'page'; // (every list failed: for the scope the card offers Sign in again, else Try again)
+      for (const p of lib.playlists) remember(ui, 'playlist', p.id, p.title);
+      for (const p of lib.albums) remember(ui, 'album', p.id, p.title);
+      ctx.onPart?.();
+    });
+    lib.done = done;
+    await tasks[1]; // (the first list: the tab answers now)
+    if (ctx.waitAll) await done;
     return;
   }
   if (name === 'devices') {
@@ -355,7 +372,6 @@ async function extras(call, ctx, playback) {
   const here = playback.context ? listKey(playback.context.kind, playback.context.id) : '';
   const lists = {};
   for (const [k, l] of Object.entries(ui.lists || {})) lists[k] = { ...l, current: k === here ? currentIndex(l.items, song) : -1 };
-  const lib = ui.library;
   const dev = ui.devices;
   return {
     liked,
@@ -367,13 +383,7 @@ async function extras(call, ctx, playback) {
     queue: { items: q.items || [], pending: false, ok: q.ok !== false, why: q.ok === false ? q.why || 'page' : '', title: '', current: -1, signedOut: false },
     tracks,
     lists,
-    recent: lib ? lib.recent : [],
-    likedSongs: lib ? lib.liked || [] : [],
-    playlists: lib ? lib.playlists : [],
-    albums: lib ? lib.albums || [] : [],
-    artists: lib ? lib.artists || [] : [],
-    libraryOk: !lib || lib.ok !== false,
-    libraryWhy: lib && lib.ok === false ? lib.why || 'page' : '',
+    ...(libraryFields(ui) || { recent: [], likedSongs: [], playlists: [], albums: [], artists: [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: false }),
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
     results: ui.search ? searchRows(ui.search.items) : [],
@@ -388,11 +398,17 @@ async function extras(call, ctx, playback) {
   };
 }
 
-// The library the Web API read, for the engine's card when the account is connected (the page's own library list is the fallback): null until a read answered.
+// The library fields of the card from what the Web API has read so far (rows come in list by list; libraryPending until the last has answered).
+function libraryFields(ui) {
+  const lib = ui && ui.library;
+  if (!lib) return null;
+  const rows = lib.recent.length + lib.liked.length + lib.playlists.length + lib.albums.length + lib.artists.length;
+  return { recent: lib.recent, likedSongs: lib.liked, playlists: lib.playlists, albums: lib.albums, artists: lib.artists, libraryOk: lib.ok || lib.pending === true, libraryWhy: lib.ok || lib.pending ? '' : lib.why || 'page', libraryPending: lib.pending === true, libraryEmpty: lib.ok && !lib.pending && rows === 0 };
+}
+// The library the Web API read, for the engine's card when the account is connected (the page's own library list is the fallback): null until a list answered.
 function directLibrary(ui) {
   const lib = ui && ui.library;
-  if (!lib || lib.ok !== true) return null;
-  return { recent: lib.recent, likedSongs: lib.liked || [], playlists: lib.playlists, albums: lib.albums || [], artists: lib.artists || [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: !(lib.recent.length || lib.liked.length || lib.playlists.length || lib.albums.length || lib.artists.length) };
+  return lib && lib.results && lib.results.playlists && lib.results.playlists.ok ? libraryFields(ui) : null; // (the playlists answered: the page's own list is then not needed)
 }
 
-module.exports = { directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+module.exports = { libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
