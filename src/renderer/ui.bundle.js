@@ -2164,8 +2164,53 @@ explain describe list find give compare difference summarize summary write rewri
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
   }
 
-  // ---- enlarge: a layer over the chat (the sidebar's or the page's own)
+  // ---- enlarge: the viewer (chat-image-viewer.js: zoom, pan, step through the chat's pictures, Save / Copy / Open in a tab).
+  // Its code and styles load on the first click, as the Meeting helper's do (meeting-loader.js); if they can't, the plain layer below opens.
+  let viewerLoading = null;
+  const loadViewer = () => {
+    if (window.chatImageViewer) return Promise.resolve();
+    return viewerLoading || (viewerLoading = new Promise((resolve, reject) => {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-image-viewer.css' });
+      document.head.appendChild(css);
+      const script = Object.assign(document.createElement('script'), { src: 'chat-image-viewer.js' });
+      script.onload = resolve;
+      script.onerror = () => { viewerLoading = null; script.remove(); css.remove(); reject(new Error('chat-image-viewer.js did not load')); };
+      document.body.appendChild(script);
+    }));
+  };
+  // Every picture in this conversation, in order: the AI's (and web pictures shown on request), Markdown data pictures, and ones the user sent.
+  const PICS = '.gen-img-open, img.md-img-ready, .msg-images img';
+  function galleryAround(opener, pic, url) {
+    const scope = (opener?.closest?.('.messages')) || document.querySelector('[data-chat-root] .messages') || document;
+    const items = [];
+    let index = -1;
+    for (const node of scope.querySelectorAll(PICS)) {
+      const im = node.tagName === 'IMG' ? node : node.querySelector('img');
+      const src = im?.currentSrc || im?.src || '';
+      if (!OK.test(src)) continue;
+      if (node === opener) index = items.length;
+      items.push({ url: src, alt: im.alt || '', id: node.closest('.gen-img')?.dataset.id || '' });
+    }
+    if (index < 0) { items.push({ url, alt: pic.alt || '', id: pic.id || '' }); index = items.length - 1; }
+    return { items, index };
+  }
   function enlarge(pic, url, opener) {
+    const { items, index } = galleryAround(opener, pic, url);
+    loadViewer().then(() => { if (!window.chatImageViewer.open({ items, index, opener })) enlargeBasic(pic, url, opener); }).catch(() => enlargeBasic(pic, url, opener));
+  }
+  // A picture the user sent: click (or Enter) to open it too.
+  function zoomable(img) {
+    if (!img || img.dataset.zoomable) return;
+    img.dataset.zoomable = '1';
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    img.title = tr('imgview.hint');
+    const open = () => enlarge({ id: '', alt: img.alt }, img.src, img);
+    img.addEventListener('click', open);
+    img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  }
+
+  function enlargeBasic(pic, url, opener) {
     const root = document.querySelector('[data-chat-root]') || document.body;
     const box = el('div', { className: 'gen-lightbox' });
     box.setAttribute('role', 'dialog');
@@ -2244,6 +2289,7 @@ explain describe list find give compare difference summarize summary write rewri
       img.src = url;
       const open = el('button', { type: 'button', className: 'gen-img-open' }, img);
       open.setAttribute('aria-label', `${tr('genimg.enlarge')}: ${pic.alt || tr('genimg.alt')}`);
+      open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
@@ -2283,16 +2329,11 @@ explain describe list find give compare difference summarize summary write rewri
     for (const img of root.querySelectorAll('img.md-img:not(.md-img-ready)')) {
       img.classList.add('md-img-ready');
       if (!OK.test(img.getAttribute('src') || '')) { img.replaceWith(document.createTextNode(img.alt || '')); continue; }
-      img.tabIndex = 0;
-      img.setAttribute('role', 'button');
-      const pic = { id: '', alt: img.alt };
-      const open = () => enlarge(pic, img.src, img);
-      img.addEventListener('click', open);
-      img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      zoomable(img);
     }
   }
 
-  window.genImages = { figure, decorate, load };
+  window.genImages = { figure, decorate, load, zoomable };
 })();
 ;
 // ---- chat-canvas.js
@@ -4001,6 +4042,7 @@ function startTurn(text, images, tabs = null) {
       const img = document.createElement('img');
       img.src = a.url;
       img.alt = t('chat.imageN', { n: i + 1 });
+      window.genImages?.zoomable(img);
       row.append(img);
     }
     bubble.append(row);
@@ -5147,7 +5189,7 @@ function renderHistory(items) {
       if (images.length) {
         const row = document.createElement('div');
         row.className = 'msg-images';
-        images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) })));
+        images.forEach((src, i) => { const im = Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) }); window.genImages?.zoomable(im); row.append(im); });
         bubble.append(row);
       }
       const files = restoredFiles(item.files);
@@ -6124,6 +6166,45 @@ function startChat() {
       }
       if (months) { out.pop(); out.push(...monthly.values()); }
       return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
+    },
+    // A list that follows the chats' last activity live (a chat in use moves to the top). `host` holds the list (it may be rebuilt on every
+    // draw); `redraw` draws it again. The row under the pointer or the keyboard stays where it is: while the pointer is moving over the
+    // list, or focus is inside it, rows keep the order they were drawn in (new rows go on top) and the true order is drawn when the
+    // pointer rests, leaves or focus moves out. Rows that moved slide to their place (a short FLIP; none with reduced motion).
+    //   const live = tools.liveOrder(host, redraw);  chats = live.order(chats);  const play = live.flip();  ...redraw the DOM...;  play();
+    liveOrder(host, redraw) {
+      let ids = [], lastMove = 0, timer = null;
+      const HOLD_MS = 1200;
+      const held = () => host.contains(document.activeElement) && document.activeElement !== host || (host.matches(':hover') && Date.now() - lastMove < HOLD_MS);
+      const release = () => { clearTimeout(timer); timer = null; if (!held()) redraw(); else if (host.matches(':hover') && !host.contains(document.activeElement)) timer = setTimeout(release, HOLD_MS - (Date.now() - lastMove) + 30); };
+      host.addEventListener('pointermove', () => { lastMove = Date.now(); clearTimeout(timer); timer = setTimeout(release, HOLD_MS + 30); });
+      host.addEventListener('pointerleave', () => { lastMove = 0; clearTimeout(timer); timer = setTimeout(release, 0); });
+      host.addEventListener('focusout', (e) => { if (!host.contains(e.relatedTarget)) { clearTimeout(timer); timer = setTimeout(release, 0); } });
+      const rows = () => [...host.querySelectorAll('.chat-item[data-id]')];
+      return {
+        held,
+        order(chats) {
+          if (held() && ids.length) {
+            const at = new Map(ids.map((id, i) => [id, i]));
+            chats = [...chats].sort((a, b) => (at.has(a.id) ? at.get(a.id) : -1) - (at.has(b.id) ? at.get(b.id) : -1));
+          }
+          ids = chats.map((c) => c.id);
+          return chats;
+        },
+        flip() {
+          const before = new Map(rows().map((r) => [r.dataset.id, r.getBoundingClientRect().top]));
+          return () => {
+            if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !before.size) return;
+            for (const r of rows()) {
+              const was = before.get(r.dataset.id);
+              if (was === undefined || !r.animate) continue;
+              const dy = was - r.getBoundingClientRect().top;
+              if (Math.abs(dy) < 2) continue;
+              r.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+            }
+          };
+        },
+      };
     },
     // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
     // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
@@ -9706,11 +9787,14 @@ $('agent-stop')?.addEventListener('click', () => {
   let searchBox = null;
   let redraw = () => {};
   const search = tools.searcher(api, () => redraw());
+  const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats } = await api.list();
+    const { current, chats: fresh } = await api.list();
+    const chats = live.order(fresh);
+    const play = live.flip();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
     const title = Object.assign(document.createElement('h2'), { textContent: window.chatTr('chats.title', 'Chats') });
@@ -9739,6 +9823,7 @@ $('agent-stop')?.addEventListener('click', () => {
     redraw = drawList;
     drawList();
     panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];

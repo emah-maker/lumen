@@ -1044,6 +1044,12 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .gen-img { position: relative; margin: 0; max-width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .gen-img-open { display: block; max-width: 100%; padding: 0; border: none; border-radius: 12px; overflow: hidden; background: var(--field); cursor: zoom-in; box-shadow: 0 0 0 1px var(--hairline); }
 .gen-img-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gen-img-open { position: relative; }
+.gen-img-open[data-hint]::after { content: attr(data-hint); position: absolute; right: 8px; bottom: 8px; padding: 3px 9px; border-radius: 10px; background: rgb(20 20 22 / 0.78); color: #fff; font-size: 11.5px; line-height: 1.3; opacity: 0; pointer-events: none; transition: opacity var(--t-fast, 120ms) ease-out; }
+.gen-img-open[data-hint]:hover::after, .gen-img-open[data-hint]:focus-visible::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .gen-img-open[data-hint]::after { transition: none; } }
+.msg-images img[data-zoomable] { cursor: zoom-in; }
+.msg-images img[data-zoomable]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gen-img-open img { display: block; max-width: 100%; max-height: min(420px, 60vh); width: auto; height: auto; margin: 0 auto; object-fit: contain; }
 .gen-img-wait { display: grid; place-items: center; min-height: 120px; padding: 16px; border-radius: 12px; background: var(--field); color: var(--muted); font-size: 12px; box-shadow: 0 0 0 1px var(--hairline); animation: gen-img-pulse 1.6s ease-in-out infinite; }
 @keyframes gen-img-pulse { 50% { opacity: 0.6; } }
