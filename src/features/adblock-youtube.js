@@ -63,7 +63,9 @@ function youtubeFallback() {
     for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchstart']) document.addEventListener(type, noteInput, true);
     const resumeIfForced = (video) => {
       if (!video || !video.paused || video.ended) return;
-      if (!lastPause || lastPause.byUser || Date.now() - lastPause.at > 5000) return;
+      if (Date.now() - lastInput < USER_WINDOW) return; // the user just clicked or pressed a key: theirs
+      // (a video already paused before this script saw a pause, with no input from the user, is YouTube's doing)
+      if (lastPause && (lastPause.byUser || Date.now() - lastPause.at > 5000)) return;
       video.play().catch(() => {});
     };
     // (media events don't bubble, but a capturing listener on the document still hears them)
