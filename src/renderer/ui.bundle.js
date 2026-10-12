@@ -2904,12 +2904,15 @@ async function refreshSetup() {
   optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
   // Antigravity (Google's CLI, which replaces Gemini CLI): always offered in the sidebar; not found, it leads to Settings, where the install command is.
   const agy = s.antigravity || {};
-  optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
+  optional('setup-antigravity').hidden = !window.assistant.useAntigravity || !agy.installed; // (not installed: the note below says how, like Codex and Grok Build)
   optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
   // Codex (OpenAI's CLI): offered once it is found on this computer; the click turns it on in the sidebar.
   const cx = s.codex || {};
   optional('setup-codex').hidden = !cx.installed || !window.assistant.useCodex;
   optional('setup-codex-detail').textContent = cx.signedIn === false ? t('setup.codex.signedOut') : t('setup.codex.detail');
+  // Nothing found on this computer: the options that need no install lead (styles.css .setup.cold); a note says how to bring a coding agent.
+  $('setup').classList.toggle('cold', !s.claudeCode && !grok.installed && !agy.installed && !cx.installed);
+  optional('setup-more').hidden = Boolean(grok.installed && agy.installed && cx.installed);
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -3033,6 +3036,7 @@ optional('setup-codex').onclick = async () => {
   if (await window.assistant.setModel('codex:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity'); // (Settings > AI > Agents: where each one's install command and Download are)
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -3068,6 +3072,12 @@ const ASSISTANTS = {
   AI: {
     name: 'AI',
     setup: true, // the toolbar button reads "Set up AI" (app.js identity) until a model is connected
+    tint: 'var(--accent)',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
+  },
+  // Auto across providers is connected but nobody's name: the same neutral mark, and no "Set up AI".
+  Auto: {
+    name: 'Lumen',
     tint: 'var(--accent)',
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M6.8 2.2l1.2 3.6 3.6 1.2-3.6 1.2-1.2 3.6-1.2-3.6L2 7l3.6-1.2z"/><path d="M12.5 10.2v4.2M10.4 12.3h4.2"/></svg>',
   },
@@ -3122,7 +3132,7 @@ function setAssistantIdentity(group) {
   chatHost.identity?.(who, first); // the sidebar's toolbar button follows the model's company (app.js)
   const empty = document.querySelector('#empty .empty-title');
   // "Ask anything, or give <name> a task": the connected assistant's name; with Auto (or nothing known) it is Lumen, not "AI" or one provider.
-  const emptyName = who === ASSISTANTS.AI ? 'Lumen' : who.name;
+  const emptyName = who === ASSISTANTS.AI || who === ASSISTANTS.Auto ? 'Lumen' : who.name;
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
   if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
@@ -3180,7 +3190,7 @@ async function loadModels() {
     modelPicker.button.dataset.temporary = '1';
   } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : current.auto ? t('composer.askAuto') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
-  setAssistantIdentity(current?.auto && !current.autoScope ? '' : current?.group); // Auto across providers is nobody's name: the neutral mark, not the provider it last used
+  setAssistantIdentity(current?.auto && !current.autoScope ? 'Auto' : current?.group); // Auto across providers is nobody's name: the neutral mark (not "Set up AI": something is connected), not the provider it last used
 }
 window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
@@ -3223,7 +3233,7 @@ $('model').addEventListener('change', async (e) => {
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
   prompt.placeholder = select.selectedOptions[0].dataset.auto ? t('composer.askAuto') : t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
-  setAssistantIdentity(group);
+  setAssistantIdentity(select.selectedOptions[0].dataset.auto && !group ? 'Auto' : group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
@@ -4497,15 +4507,33 @@ function labelReply(bubble, modelId, auto = null, extra = {}) {
   if (modelId && !bubble.querySelector('.reply-model')) addModelLabel(bubble, modelId, auto);
   window.chatActions?.replyMeta(bubble, extra);
 }
-function addModelLabel(bubble, modelId, auto) {
+// A model's name as the picker shows it; null until the picker has it (the list loads a moment after the page).
+function modelName(modelId) {
   const option = [...$('model').options].find((o) => o.value === modelId);
+  if (!option) return null;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
-  const group = modelGroups.get(modelId) ?? option?.parentElement?.label;
+  const group = modelGroups.get(modelId) ?? option.parentElement?.label;
   // Local engines (Claude Code, Grok Build) already name themselves.
-  const name = !option ? modelId
-    : group === 'Claude' ? `Claude ${option.textContent}`
+  return group === 'Claude' ? `Claude ${option.textContent}`
     : !group || /^Your .* account$/.test(group) ? option.textContent
     : `${group} · ${option.textContent}`;
+}
+// A reopened chat shows where you switched models, as the live chat did ("Now using X"): before the message whose reply came from a
+// different model than the reply before it. Replies Auto chose (the model can differ without you switching) never count.
+function markModelSwitches(entries) {
+  let prev = null;
+  for (const { bubble, item } of entries) {
+    if (item.auto || !item.model) { prev = null; continue; }
+    const name = prev && prev !== item.model ? modelName(item.model) : null;
+    prev = item.model;
+    if (!name) continue;
+    let ask = bubble.previousElementSibling;
+    while (ask && !ask.matches('.msg.user')) ask = ask.previousElementSibling;
+    if (ask) ask.before(Object.assign(document.createElement('div'), { className: 'notice model-switch restored', textContent: t('models.switched', { name }) }));
+  }
+}
+function addModelLabel(bubble, modelId, auto) {
+  const name = modelName(modelId) ?? modelId;
   // [auto model] A reply Auto chose the model for says so ("Auto · Claude Haiku 5.5"), and why in its tooltip.
   const span = Object.assign(document.createElement('span'), { className: 'reply-model', textContent: auto ? t('models.auto.reply', { name }) : name });
   if (auto?.reason) { span.title = auto.reason; span.dataset.auto = '1'; }
@@ -5107,6 +5135,7 @@ function showHistory(items) {
   }
   // Under each reply and message: model, time, thumbs, versions (chat-actions.js).
   for (const { bubble, item } of replyEntries) labelReply(bubble, item.model, item.auto, { at: item.at, feedback: item.feedback });
+  markModelSwitches(replyEntries);
   for (const { bubble, item } of userEntries) {
     let versions = item.versions && item.versions.n > 1 ? item.versions : null;
     if (versions && versions.same !== false) { // asked again (Regenerate): the switch goes on its reply
@@ -5148,12 +5177,16 @@ async function reconcile() {
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
+  return takeView(view);
+}
+function takeView(view) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
   if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
 }
+window.chatTakeView = takeView; // app.js: the sidebar opens on this tab's chat that is working / waiting / unread (assistant.sidebarTarget)
 
 // Links in replies open in a new tab.
 messages.addEventListener('click', (e) => {
@@ -6388,13 +6421,14 @@ function startChat() {
 // What the AI button (and Ctrl+J) does when it opens the sidebar (app.js): start a new chat, or leave the chat as it is.
 // A plain script in the UI; test/sidebar-open-units.js loads it with require().
 //   'keep'   leave the sidebar on the chat it shows (the setting is off, or the open request carries an intent: a chat to show,
-//            "Ask AI about this", a task or run that needs an OK, a notification, an agent event)
+//            "Ask AI about this", a task or run that needs an OK, a notification, an agent event; or `busy`: this tab's
+//            chat is working, waiting for an OK or finished unread, so it shows with its live state whatever the setting says)
 //   'reuse'  the setting is on but the open chat is already empty: use it (empty chats are not piled up)
 //   'new'    the setting is on and the open chat has messages: the sidebar opens on a fresh empty chat; the old one stays in
 //            History (a run still going in it keeps going)
 (function (root) {
-  function sidebarOpenPlan({ setting = true, empty = false, intent = false } = {}) {
-    if (intent || setting === false) return 'keep';
+  function sidebarOpenPlan({ setting = true, empty = false, intent = false, busy = false } = {}) {
+    if (intent || busy || setting === false) return 'keep';
     return empty ? 'reuse' : 'new';
   }
   const api = { sidebarOpenPlan };
@@ -9047,11 +9081,17 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
-function toggleSidebarByHand() {
+// [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
+// closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+async function toggleSidebarByHand() {
   const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
   if (opening) {
+    let target = null;
+    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
       setting: window.lumenSidebarNewChat !== false,
+      busy: Boolean(target),
       empty: !$('empty').hidden,
       intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
     });

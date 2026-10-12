@@ -14,6 +14,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
 (async () => {
   let failures = 0;
+  const skip10 = (why) => console.log(`SKIP  reopened chat model divider  (${why})`);
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chatf2-'));
   const app = await electron.launch({
@@ -209,6 +210,27 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   check('and as a PDF', pdf?.head === '%PDF-' && pdf.size > 1000, JSON.stringify(pdf));
   await inPage("navigator.clipboard.writeText = async (t) => { window.__copied = t; }; document.getElementById('cp-more').click(); document.getElementById('cp-copy-md').click()");
   check('the menu\'s Copy chat as Markdown puts it on the clipboard', await waitFor(async () => /zyzzyva/.test((await inPage('window.__copied')) || '')), await inPage('window.__copied'));
+
+  // ---- 10. a reopened chat still shows where the model was switched
+  await inPage("document.getElementById('new-chat').click()");
+  await waitFor(async () => (await inPage("document.querySelectorAll('.msg').length")) === 0);
+  const pick = (n) => inPage(`(() => { const s = document.getElementById('model'); const o = [...s.options].filter((x) => x.value && !x.dataset.auto && !x.value.endsWith(':__more'))[${n}]; if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
+  const modelA = await pick(0);
+  const modelB = await pick(1);
+  if (modelA && modelB) {
+    await pick(0);
+    await send('Switch test one');
+    await pick(1);
+    await send('Switch test two');
+    await inPage("document.getElementById('new-chat').click()");
+    await waitFor(async () => (await inPage("document.querySelectorAll('.msg').length")) === 0);
+    await inPage(`(() => { const q = document.querySelector('.chat-search'); q.value = 'Switch test'; q.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await waitFor(() => inPage("[...document.querySelectorAll('#cp-items .chat-item')].some((li) => /Switch test one/.test(li.textContent))"));
+    await inPage("[...document.querySelectorAll('#cp-items .chat-item')].find((li) => /Switch test one/.test(li.textContent)).querySelector('.chat-open').click()");
+    await waitFor(() => inPage("document.querySelectorAll('.msg.user').length === 2"));
+    const live = await inPage("document.querySelectorAll('.notice.model-switch.restored').length");
+    check('a reopened chat shows a divider where the model changed, before the message the new model answered', live === 1 && await inPage("document.querySelector('.notice.model-switch.restored').nextElementSibling?.matches('.msg.user') && /Switch test two/.test(document.querySelector('.notice.model-switch.restored').nextElementSibling.textContent)"), await inPage("JSON.stringify({ n: document.querySelectorAll('.msg').length, models: [...document.querySelectorAll('.reply-model')].map((x) => x.textContent), items: [...document.querySelectorAll('#cp-items .chat-item')].map((x) => x.textContent.slice(0, 30)), opts: [...document.getElementById('model').options].map((o) => o.value + (o.dataset.auto ? '*' : '')) })"));
+  } else skip10('needs two non-Auto models in the picker');
 
   // ---- screenshots, light and dark
   await shot('chat-light');

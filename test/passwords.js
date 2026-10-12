@@ -182,6 +182,10 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await app.evaluate(() => { global.__passwordsReauth = async () => true; });
   await sWc('[...document.querySelectorAll("#passwords-list button")].find((b) => b.textContent === "Show").click()');
   check('Show after re-authentication shows the password', await waitFor(async () => (await sWc('document.getElementById("passwords-list").textContent')).includes(SECRET)), '');
+  await sWc('document.querySelector("#passwords-list .item button.danger").click()');
+  await sleep(300);
+  check('Delete on one login asks "Click again" and keeps it after one click', (await sWc('document.querySelector("#passwords-list .item button.danger")?.textContent')) === 'Delete? Click again' && (await app.evaluate(() => global.__passwords.vault.count())) === 1, await sWc('document.querySelector("#passwords-list .item button.danger")?.textContent'));
+  check('...and its accessible name still says which login', /^Delete the login for /.test(await sWc('document.querySelector("#passwords-list .item button.danger")?.getAttribute("aria-label")')), '');
   const pageApi = await inTab(t3, 'typeof window.lumenSettings');
   check('web pages have no settings API', pageApi === 'undefined', pageApi);
 
