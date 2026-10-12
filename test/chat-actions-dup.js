@@ -49,7 +49,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const state = () => inPage(`(() => {
     const q = (s) => document.querySelectorAll('#messages ' + s).length;
     const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; };
-    const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+    const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b - 3 && b.t < a.b; // (3px: the buttons' box reaches into the bubble's padding, never onto the text)
     const actions = [...document.querySelectorAll('#messages .reply-regen, #messages .reply-retry, #messages .reply-copy')];
     const others = [...document.querySelectorAll('#messages .thinking, #messages .working, #messages .step, #messages .msg.user, #messages .msg.assistant p')];
     const overlaps = [];
@@ -82,6 +82,12 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await shot('2-done');
   check('(b) once it finishes there is exactly one Regenerate and one Retry', s.regen === 1 && s.retry === 1 && s.only === 0, JSON.stringify(s));
   check('(d) the actions are clear of the text, the thinking row and each other', s.overlaps.length === 0, JSON.stringify(s.overlaps));
+  const row = await inPage(`(() => {
+    const r = (sel) => { const e = document.querySelector('#messages ' + sel); const b = e.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), top: Math.round(b.top), right: Math.round(b.right) }; };
+    const retry = document.querySelector('#messages .reply-retry');
+    return { copy: r('.reply-copy'), regen: r('.reply-regen'), retry: r('.reply-retry'), label: retry.getAttribute('aria-label'), icon: retry.innerHTML === document.querySelector('#messages .reply-regen').innerHTML };
+  })()`);
+  check('(e) Retry sits in the row with Regenerate and Copy (Copy, Regenerate, Retry from the right), same size, its own icon and tooltip', row.copy.w === row.retry.w && row.regen.w === row.retry.w && row.copy.h === row.retry.h && row.regen.h === row.retry.h && row.regen.top === row.retry.top && row.copy.top === row.retry.top && row.retry.right < row.regen.right && row.regen.right < row.copy.right && !row.icon && /another model/i.test(row.label), JSON.stringify(row));
 
   // ---- a handoff retry: main drops the first text and says "Trying another way...", then the second pass answers
   await app.evaluate(() => { global.__fake.gate = new Promise((r) => { global.__fake.release = r; }); });
