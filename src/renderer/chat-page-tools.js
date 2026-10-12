@@ -158,7 +158,7 @@
     const b = el('button', { type: 'button', className: 'reply-retry', title: label });
     b.setAttribute('aria-label', label);
     b.setAttribute('aria-haspopup', 'menu');
-    b.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/><path d="M6.2 8.2 8 6.4l1.8 1.8"/></svg>';
+    b.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h10.5"/><path d="M10.5 2.5 13 5l-2.5 2.5"/><path d="M13.5 11H3"/><path d="M5.5 8.5 3 11l2.5 2.5"/></svg>';
     b.onclick = () => openRetryMenu(b);
     return b;
   }
