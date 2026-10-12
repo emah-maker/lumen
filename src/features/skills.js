@@ -250,7 +250,7 @@ function expand(skill, ctx = {}) {
   if (typed && !referenced.has('input')) body += `\n\nFurther instructions from the user: ${defang(typed)}`;
   if (skill.inputRequired && !typed) need('input', false);
   if (skill.mode === 'no-tools') body += '\n\n(Answer from the text above. Do not use browser tools or search.)';
-  else if (skill.mode === 'agent') body += '\n\n(You may use your browser tools, and the web search tool if you have it, when the task needs them.)';
+  else if (skill.mode === 'agent') body += '\n\n(You may use your browser tools, and the web search tool if you have it, when the task needs them. Finish it yourself and do not hand steps back to me.)';
 
   const text = `<skill_request name="${attr(skill.name)}" title="${attr(skill.title)}" input="${attr(typed.slice(0, 300))}">\n${body}\n</skill_request>`;
   return { ok: missing.length === 0, prompt: body, text, missing, tainted: used.size > 0 };
