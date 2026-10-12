@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The full-page chat no longer sends screenshots on its own.** In the lumen://chat page a message used to carry a picture of whichever tab you had looked at last (the camera button, or words like "what is this?"), and the AI could take screenshots by reflex. Now nothing is attached unless you paste or drag a picture yourself, the camera button is gone from that page, and the chat tab itself is never captured. The AI can still look at a tab if you ask for it by name ("screenshot my GitHub tab"); the side panel beside a web page works as before.
+
 - **The Spotify card's Library tab loads your library.** Opening the tab while Spotify was still starting (or after Lumen had put it to sleep) used to do nothing, and the card ended on "Nothing here yet"; it now says "Loading your library…" and shows your playlists as soon as Spotify is ready. If you have connected Spotify's Web API, the library (recent plays, Liked Songs, playlists, albums, artists) is read from it directly, and Lumen falls back to Spotify's own page only when that fails. The first rows show as soon as the playlists arrive and the rest fill in, each list is given a few seconds (never "Loading…" for ever), a rate limit says so, and a library that can't be read still ends in a clear message with **Try again**. Tested by clicking the Library tab on a real signed-in account, hidden.
 
 ## 0.5.27 (2026-10-12)
