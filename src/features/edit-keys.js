@@ -49,4 +49,20 @@ async function restoreClipboard(cb, snap) {
   } catch { /* the user's clipboard stays as the AI left it */ }
 }
 
-module.exports = { editCommand, touchesClipboard, snapshotClipboard, restoreClipboard };
+// A hash of everything on the clipboard (every type of every item), to tell whether it is still what the AI last left there.
+// Resolves null when it cannot be read.
+async function fingerprintClipboard(cb) {
+  try {
+    const hash = require('crypto').createHash('sha1');
+    for (const item of (await cb.read()) || []) {
+      for (const type of [...(item.types || [])].sort()) {
+        hash.update(type + ':');
+        const part = await item.getType(type);
+        hash.update(part && typeof part.arrayBuffer === 'function' ? Buffer.from(await part.arrayBuffer()) : JSON.stringify(part) || '');
+      }
+    }
+    return hash.digest('hex');
+  } catch { return null; }
+}
+
+module.exports = { fingerprintClipboard, editCommand, touchesClipboard, snapshotClipboard, restoreClipboard };

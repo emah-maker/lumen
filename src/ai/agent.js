@@ -5582,10 +5582,16 @@ ${same}
     if (clipboardUse && own) return this.privateEdit(wc, command, label, own, system);
     if (clipboardUse && scope && !scope.clipRestore) {
       const snap = await editKeys.snapshotClipboard(system);
-      scope.clipRestore = () => editKeys.restoreClipboard(system, snap);
+      // Only while the clipboard is still what the AI last left on it: if the user copied something since, theirs stays.
+      scope.clipRestore = async () => { if (snap && scope.clipLast && (await editKeys.fingerprintClipboard(system)) === scope.clipLast) await editKeys.restoreClipboard(system, snap); };
     }
     wc[command]();
     await sleep(120); // the renderer runs the command after this call returns
+    if (clipboardUse && scope?.clipRestore) { // note what the AI left there, once a cut or copy has settled
+      let last = await editKeys.fingerprintClipboard(system);
+      for (let i = 0; i < 5; i++) { await sleep(60); const now = await editKeys.fingerprintClipboard(system); if (now === last) break; last = now; }
+      scope.clipLast = last;
+    }
     await settleAfterAction(wc);
     return `Pressed ${label} (${command}).`;
   }

@@ -171,6 +171,19 @@ gamma</div>
   check('the page saw no cut or paste from the refused calls', ev2 && ev2.cut === 0 && ev2.paste === 0, JSON.stringify(ev2));
   check('the clipboard is still the user\'s after the refusals', (await sys.get()).text === 'USER TEXT');
 
+  // The user copies something while the AI is working: the end-of-run restore leaves it alone.
+  await sys.set({ text: 'USER TEXT' });
+  await app.evaluate(async ({ clipboard }) => {
+    const signal = new AbortController().signal;
+    const m = []; m.settings = { model: 'claude-opus-5' };
+    await global.__agent.inTask(global.__windows.list()[0].activeId, signal, async () => {
+      await global.__agent.execute('press_key', { key: 'a', modifiers: ['control'] });
+      await global.__agent.execute('press_key', { key: 'c', modifiers: ['control'] });
+      await clipboard.writeText('COPIED MID-RUN');
+    }, m);
+  });
+  check('something the user copies during a run is not overwritten when the run ends', (await sys.get()).text === 'COPIED MID-RUN', JSON.stringify(await sys.get()));
+
   // An explicit clipboard write by the AI (the user asked for text on their clipboard) is kept.
   const wrote = await steps([['clipboard', { action: 'write', text: 'FOR THE USER' }], key('a', ['control'])]);
   check('the clipboard tool\'s write is not rolled back at the end of the run', (await sys.get()).text === 'FOR THE USER', JSON.stringify(wrote));

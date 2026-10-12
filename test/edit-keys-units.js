@@ -55,7 +55,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
   // ---- the tool layer
   const state = { calls: [], sys: makeClip({ 'text/plain': 'user copied this', 'text/html': '<i>user</i>' }), off: false, hands: false, ai: false, editorText: '', selection: 'picked text', frame: false };
   const wc = {
-    id: 50, isDestroyed: () => false, getTitle: () => 't', getURL: () => 'https://docs.test/d',
+    id: 50, isLoading: () => false, executeJavaScriptInIsolatedWorld: async () => undefined, executeJavaScript: async () => undefined, isDestroyed: () => false, getTitle: () => 't', getURL: () => 'https://docs.test/d',
     cut: () => { state.calls.push('cut'); if (state.selection) state.sys.writeText(state.selection); },
     copy: () => { state.calls.push('copy'); if (state.selection) state.sys.writeText(state.selection); },
     paste: () => { state.calls.push('paste'); state.editorText += state.sys.parts['text/plain'] || ''; },
@@ -101,6 +101,18 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
   const chat = []; chat.settings = {};
   await agent.inTask(5, signal, async () => { await agent.execute('press_key', { key: 'x', modifiers: ['control'] }); throw new Error('boom'); }, chat, null, { chatId: 'a1b2c3d4e5f60718', hosts: new Set(['docs.test']) }).catch(() => {});
   check('a run that throws still gets the user\'s clipboard back', txt() === 'user copied this', txt());
+  // something the user copies mid-run is theirs: the end-of-run restore leaves it alone
+  await state.sys.writeText('user copied this');
+  const midRun = []; midRun.settings = {};
+  await agent.inTask(5, signal, async () => {
+    await agent.execute('press_key', { key: 'x', modifiers: ['control'] });
+    await state.sys.writeText('copied by the user during the run');
+  }, midRun, null, { chatId: 'a1b2c3d4e5f60718', hosts: new Set(['docs.test']) });
+  check('a clipboard the user changed mid-run is not overwritten by the restore', txt() === 'copied by the user during the run', txt());
+  await state.sys.writeText('user copied this');
+  await sidebar([key('x', ['control'])]);
+  check('...while an untouched one (still what the AI left) is restored', txt() === 'user copied this', txt());
+
   // the user's request to put text on their clipboard stays
   await sidebar([['clipboard', { action: 'write', text: 'FOR THE USER' }], key('c', ['control'])]);
   check('a clipboard write by the AI stays, even when the run also copied (what it copied is rolled back)', txt() === 'FOR THE USER', txt());
