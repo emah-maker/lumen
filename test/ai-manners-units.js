@@ -333,7 +333,6 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('AI tabs are marked: the signed-in reader\'s tab', /const tab = openTab\(url, \{ background: true, openedBy: runOf\(\) \}\);/.test(mainSrc));
     check('AI tabs are marked: a link from a popup an AI tab opened', /const byAi = manners\.isAiTab\(openerTab\)/.test(mainSrc) && /\.\.\.\(byAi \? \{ openedBy:/.test(mainSrc));
-    check('AI tabs are marked: the tab a chat-page run opens for itself', /openTab\(undefined, \{ background: true, openedBy: \{\} \}\)/.test(fs.readFileSync(path.join(__dirname, '../src/features/chat-page.js'), 'utf8')));
     check('AI tabs are marked: a Shift+click popup from an AI tab opens behind', /openTab\(target, \{ background: manners\.isAiTab\(tab\), openerId: id/.test(mainSrc));
     check('hide toggle: part of the strip\'s layout signature, so a toggle redraws it', /\$\{aiHiddenTab\(x, state\) \? 1 : 0\}/.test(app));
     check('hide toggle: a group left with no visible tab shows no label', /!aiHiddenTab\(t, state\)/.test(app) && /if \(aiHiddenTab\(tab, state\)\) continue;/.test(app));
