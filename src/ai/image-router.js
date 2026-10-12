@@ -107,8 +107,8 @@ async function route(deps) {
 // One short tool for every engine (the API tool list and Lumen's MCP tools): prompt budget test/acceptance/chat-prompt-budget.js.
 const TOOL = {
   name: 'generate_image',
-  description: 'Make or edit a picture; it shows in the chat.',
-  input_schema: { type: 'object', properties: { prompt: { type: 'string' }, edit: { type: 'boolean' } }, required: ['prompt'] },
+  description: 'Make or edit a picture, shown in the chat. For any image request, not HTML. svg: exact math, graphs, diagrams.',
+  input_schema: { type: 'object', properties: { prompt: { type: 'string' }, edit: { type: 'boolean' }, svg: { type: 'string' } }, required: ['prompt'] },
 };
 // Adds the tool to agent.js's TOOLS (before the derived lists are built), like snapshot.js's.
 function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true }); }
@@ -116,4 +116,28 @@ function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true 
 // What the model is told after a picture was made (the picture itself is shown in the chat, never sent back to it).
 const toolResult = (r) => `Picture made with ${r.credit} and shown to the user in the chat. Do not repeat it or describe it at length.`;
 
-module.exports = { LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };
+// Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first.
+const PICTURE_NOTE = 'The user wants a picture: read any file or page they mention, then call generate_image (it shows in the chat). Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: for a worked solution, call generate_image once for the picture and once with svg for the exact math, graphs and diagrams, and say so.';
+
+// An SVG (exact math, graphs, diagrams) drawn to a PNG buffer by rasterize(svg, w, h): no file, no tab. Scripts never run (an <img>).
+async function renderSvg(svg, { rasterize }) {
+  let src = String(svg || '').trim().replace(/^<\?xml[^>]*\?>\s*/i, '');
+  if (!/^<svg[\s>]/i.test(src)) throw new Error('svg must be one <svg> element.');
+  if (src.length > 300000) throw new Error('svg is too large (300 KB at most).');
+  let tag = /^<svg\b[^>]*>/i.exec(src)[0];
+  const view = /viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(tag);
+  const attr = (n) => Number.parseFloat((new RegExp(`\\s${n}\\s*=\\s*["']([\\d.]+)(?:px)?["']`, 'i').exec(tag) || [])[1]);
+  let w = attr('width') || (view ? Number(view[1]) : 1000);
+  let h = attr('height') || (view ? Number(view[2]) : 700);
+  if (!(w > 0) || !(h > 0)) { w = 1000; h = 700; }
+  const long = Math.max(w, h);
+  const k = long < 800 ? 800 / long : Math.min(1, 1600 / long); // 800 to 1600 px on the long side
+  w = Math.max(100, Math.round(w * k)); h = Math.max(100, Math.round(h * k));
+  tag = tag.replace(/\s(?:width|height)\s*=\s*["'][^"']*["']/gi, '').replace(/\sxmlns\s*=\s*["'][^"']*["']/i, '');
+  src = src.replace(/^<svg\b[^>]*>/i, tag.replace(/^<svg/i, `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"`));
+  const png = await rasterize(src, w, h);
+  if (!png?.length) throw new Error('The drawing came out empty.');
+  return Buffer.from(png);
+}
+
+module.exports = { PICTURE_NOTE, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };

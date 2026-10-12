@@ -187,7 +187,7 @@ const classify = (e) => fallback.classify(e);
   // ---- the tool, every engine
   {
     const tool = EXTERNAL_TOOLS.find((t) => t.name === 'generate_image');
-    check('generate_image is in the tool list every engine gets (API list and MCP), with a short description', tool && tool.description.length <= 60 && JSON.stringify(tool).length < 260 && J(tool.input_schema.required) === '["prompt"]', J(tool));
+    check('generate_image is in the tool list every engine gets (API list and MCP), with a short description', tool && tool.description.length <= 125 && JSON.stringify(tool).length < 340 && J(tool.input_schema.required) === '["prompt"]', J(tool));
     check('its input is validated like any tool\'s', !validateInput('generate_image', { prompt: 'a cat' }) && !validateInput('generate_image', { prompt: 'a cat', edit: true }) && Boolean(validateInput('generate_image', { prompt: 'a cat', edit: 'yes' })));
     let bad = null;
     try { bad = validateInput('generate_image', {}); } catch (e) { bad = e.message; }
