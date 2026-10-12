@@ -120,6 +120,10 @@ const stubProvider = (app) => app.evaluate(() => {
   check('setup: a web tab and a chat tab', Boolean(chat) && Boolean(web), JSON.stringify(await tabs()));
   check('idle: no "Working on" chip', await waitFor(async () => (await chipHidden()) === true), await chipText());
   check('idle: the web tab has no mark', (await mark(web)) === '', await mark(web));
+  await inPage("document.getElementById('new-chat').click()");
+  await sleep(500);
+  check('idle new chat: no "Working on" chip (hidden, no text), even with a web tab open behind it', (await chipHidden()) === true && (await chipText()) === '' && (await inPage("document.getElementById('cp-target').getBoundingClientRect().width")) === 0, `${await chipHidden()} / ${await chipText()}`);
+  check('idle new chat: it is a new chat (empty state) and the web tab has no mark', (await inPage("document.querySelectorAll('#messages .msg').length")) === 0 && (await mark(web)) === '', await mark(web));
 
   // ---- 0. The permission mode control: one click goes to the next mode (Ask > Auto > Bypass > Ask), in the header and the composer alike
   const mode = () => inPage(modeState);
