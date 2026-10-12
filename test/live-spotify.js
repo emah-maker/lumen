@@ -121,18 +121,18 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
     const drawn = `(() => { const l = [...${card}.querySelectorAll('.am-pop img.am-thumb')]; l.forEach((i) => { i.loading = 'eager'; }); return l.some((i) => i.naturalWidth > 0); })()`;
     // (the card asks for the pictures of the rows it has on screen with an IntersectionObserver, which a page in an off-screen window may never tell: if none was asked
     // for, the engine is asked for the first rows' pictures the way the card does, so the pictures from Spotify's page are still checked)
-    let ok = await waitFor(drawn, 8000);
-    if (!ok) { await app.evaluate(async () => { const d = await global.__spotifyEngine.read(); global.__spotifyEngine.loadThumbs(d.results.slice(0, 12).map((r) => r.id)); }); ok = await waitFor(drawn, 17000); }
+    let ok = await waitFor(drawn, 20000);
+    if (!ok) { await app.evaluate(async () => { const d = await global.__spotifyEngine.read(); global.__spotifyEngine.loadThumbs(d.results.slice(0, 12).map((r) => r.id)); }); ok = await waitFor(drawn, 25000); }
     const counts = await page(`[${card}.querySelectorAll('.am-pop .am-opt').length, ${card}.querySelectorAll('.am-pop img.am-thumb').length]`);
     const d = await read();
     return { ok, detail: `${counts[0]} rows, ${counts[1]} pictures drawn, none loaded; the engine has a picture for ${(d.results || []).filter((r) => r.thumb).length} of ${(d.results || []).length} results` };
   });
-  await step('play the first result: the card shows that song and Pause', async () => {
+  await step('play the first result: the page plays that song (its title, checked and asked once more by the engine if another), and the card shows it and Pause', async () => {
+    // The row the card shows is clicked; the engine plays the song from its own page by track id, then checks the title the player reports.
     await page(`${card}.querySelector('.am-pop .am-songs .am-opt').click()`);
     const want = firstTitle.toLowerCase().slice(0, 12);
     const shown = `Boolean(${card}.querySelector('[aria-label="Pause"]')) && ${JSON.stringify(want)} !== '' && (${card}.querySelector('.sp-title')?.textContent || '').toLowerCase().includes(${JSON.stringify(want)})`;
-    let ok = await waitFor(shown, 15000);
-    if (!ok) { await page(`${card}.querySelector('.am-pop .am-songs .am-opt')?.click()`); ok = await waitFor(shown, 20000); } // (once more: a press made while the results page was still settling)
+    const ok = await waitFor(shown, 40000);
     return { ok, detail: `wanted "${firstTitle}", the card shows "${await page(`${card}.querySelector('.sp-title')?.textContent || ''`)}"` };
   });
   await step('the playing song\'s cover art loaded on the card', async () => ({ ok: await waitFor(`(() => { const i = ${card}.querySelector('img.sp-art'); if (i) i.loading = 'eager'; return Boolean(i) && i.naturalWidth > 0; })()`, 15000), detail: 'no picture with naturalWidth > 0 in img.sp-art' }));
@@ -174,6 +174,7 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
   await sleep(1500);
   await app.close().catch(() => {});
   clearTimeout(hard);
+  if (process.env.LUMEN_LIVE_VERBOSE === '1') console.log(mainLog.filter((l) => !/MaxListeners|trace-warnings/.test(l)).join('\n')); // (everything main printed, for a failure that the [spotify] lines above do not explain)
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

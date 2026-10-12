@@ -7840,7 +7840,16 @@ if (TEST) global.__appleMusicEngine = appleMusicEngine;
 const spotifyEngine = require('./features/spotify-engine').createEngine({
   player: spotifyWeb,
   resizeArt,
-  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
+  // Spotify's picture host answers WebP whatever is asked for, which nativeImage cannot read: the engine's own page (a Chromium that can) draws it small and gives back a JPEG.
+  decodeArt: async (bytes) => {
+    const wc = spotifyWeb.webContents();
+    if (!wc || bytes.length > 400e3) return '';
+    try {
+      const out = await wc.executeJavaScript(`(async (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const bmp = await createImageBitmap(new Blob([u], { type: 'image/webp' })); const h = Math.min(120, bmp.height); const w = Math.max(1, Math.round(bmp.width * h / bmp.height)); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.8); })(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`);
+      return typeof out === 'string' && out.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(out) ? out : '';
+    } catch { return ''; }
+  },
+  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/jpeg, image/png;q=0.9' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (JPEG or PNG: Spotify's picture host otherwise sometimes answers WebP, which the picture resizer cannot read, so the picture was dropped; the engine only asks for https addresses on scdn.co)
   BrowserWindow: engineWindow,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
