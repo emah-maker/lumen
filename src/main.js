@@ -8518,7 +8518,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     const leftOut = chatImages.rejectionNotice(rejected);
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.

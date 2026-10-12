@@ -106,7 +106,7 @@ How to work:
 - Don't ask what you can decide: pick a sensible default and say so.
 - Finding sources is your job, not the user's: a table, a value to check, a book or course site they name (zyBooks, Canvas: list_tabs, read that tab). Web pages and PDF links: read_urls (read_pdf for an open PDF); never download and run local programs. If a source fails, try other results, sites or tabs; never ask the user to paste what you can read, and never answer from memory a value they asked to check without saying which sources failed.
 - Current page: use its attached text if enough, else read_page mode:"compact" or find.
-- "This", "here", "on screen" with no screenshot attached: call screenshot first; never ask the user to describe it.
+- "This", "here", "on screen" with no screenshot attached: screenshot first; never ask them to describe it.
 - Go direct: navigate to a URL you know or can build. Batch known steps, make independent calls together, and use observe, read or since_last rather than re-reading.
 - Google Docs: use the document tool (outline first); move text, never retype or select-all and replace.
 - Verify an action that matters. Don't repeat a failed step; change route after two failures.
@@ -133,8 +133,8 @@ const TOOLS = [
   },
   {
     name: 'screenshot',
-    description: 'Screenshot the active tab (visuals only).',
-    input_schema: { type: 'object', properties: {} },
+    description: 'Screenshot the active tab or tab_id.',
+    input_schema: { type: 'object', properties: { tab_id: { type: 'integer' } } },
   },
   {
     name: 'video_overview',
@@ -967,7 +967,12 @@ const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'g
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
-const TAB_NAMING_READS = new Set(['read_pdf', 'get_console', 'get_network', 'handle_dialog', 'video_overview', 'video_frames']); // tools that may name another tab (tab_id) as well as the task's
+// [full-page chat] lumen://chat: no picture of a tab goes with a message on its own, and the screenshot tool is for a tab the user names.
+const isChatPageUrl = (url) => /^lumen:\/\/chat(?:[/?#]|$)|\/renderer\/chat-page\.html(?:[?#]|$)/i.test(String(url || ''));
+const FULL_PAGE_NOTE = "This is the full-page chat: no screenshot is attached. Do not screenshot unless the user asks to see a specific tab; then call list_tabs and screenshot with that tab_id." + String.fromCharCode(10);
+const FULL_PAGE_SHOT_NEEDS_TAB = 'In the full-page chat a screenshot needs tab_id: only for a tab the user asked to see. Call list_tabs to find it, or use read_page.';
+const CHAT_PAGE_SHOT_REFUSED = "That is the chat page itself, which is never captured. Name the tab the user wants to see (tab_id).";
+const TAB_NAMING_READS = new Set(['read_pdf', 'get_console', 'get_network', 'handle_dialog', 'video_overview', 'video_frames', 'screenshot']); // tools that may name another tab (tab_id) as well as the task's
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', drag: 'dragged', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
 const pageReading = require('./page-reading'); // read_urls / read_page: health, structured data, markdown, outline
@@ -1929,7 +1934,7 @@ class Agent {
       });
       ended.catch(() => {});
       await Promise.race([
-        this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra) }),
+        this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra), fullPage: extra.fullPage === true }),
         ended,
       ]);
     } catch (err) {
@@ -2138,6 +2143,7 @@ class Agent {
     const tabOff = tab && this.browser.tabOff?.(tab.id); // [ai off-tab]
     const recentDownloads = aiDownloads.news(this.browser.downloadList?.(), messages); // [ai downloads] finished lately, told once
     const downloadsNote = recentDownloads.length ? `${recentDownloads.join('\n')}\n(list_files read:"<path>" reads one; never search the disk for it.)\n` : '';
+    const fullPage = extra.fullPage === true;
     // [image routing] A request for a picture that the model must read something for ("look at the pdf and generate an image"): told to
     // use generate_image, in the browser_state block (never shown in the chat). pictureAsk also keeps open_tab from previewing a file.
     const pictureAsk = !aiOff && this.imageSetting() !== 'off' ? genImages.pictureIntent(userText) : null;
@@ -2149,7 +2155,7 @@ class Agent {
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe tab shows a file on this computer. Its name, address and contents are not shared unless the user allows it (asking about "this" or "here" with the file open shows them a card).\n</browser_state>\n\n`
       : tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${this.shownUrl(tab.webContents.getURL())}\n${tabOff ? `${manners.OFF_TAB_NOTE} You can read this tab, but tools that click, type, navigate or run scripts are refused there.\n` : ''}</browser_state>\n\n`
-      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}</browser_state>`);
+      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}${fullPage ? FULL_PAGE_NOTE : ''}</browser_state>`);
     let state = stateOf();
     const filesNote = uploadFiles.filesNote(extra.files); // [uploads] files attached in the composer: their names and refs (never their bytes)
     const attachedFiles = filesNote ? extra.files.length : 0;
@@ -2372,6 +2378,7 @@ class Agent {
     try { return this.screenPlanUnsafe(tab, userText, extra, messages); } catch { return { capture: false, how: null, why: 'error', forced: false }; } // (a failure here must never stop the message)
   }
   screenPlanUnsafe(tab, userText, extra, messages) {
+    if (extra.fullPage === true) return { capture: false, how: null, why: 'full-page', forced: false }; // [full-page chat] never attaches a picture of a tab on its own: not of the chat page, not of the tab last looked at
     const wc = tab?.webContents;
     const url = (() => { try { return wc && !wc.isDestroyed?.() ? wc.getURL() : ''; } catch { return ''; } })();
     const recent = [];
@@ -5212,6 +5219,23 @@ ${out.text}${note}
     this.pinTab(tab.id);
   }
 
+  // [full-page chat] Is the run in the lumen://chat page (not the sidebar)? Set by main from where the message came from.
+  fullPageRun() { return taskScope.getStore()?.fullPage === true; }
+  // The tab the screenshot tool looks at: the one named by tab_id; with none, the task's tab. A full-page chat run never has a default
+  // (the user asks for a tab by name: list_tabs, then tab_id), and the chat page itself is never captured, however it is reached.
+  screenshotWc(input = {}) {
+    const named = input?.tab_id !== undefined && input?.tab_id !== null;
+    if (!named && this.fullPageRun()) throw new Error(FULL_PAGE_SHOT_NEEDS_TAB);
+    let wc;
+    if (named) {
+      const tab = this.browser.tabById?.(input.tab_id);
+      if (!tab) throw new Error(`No tab with id ${input.tab_id}. Call list_tabs.`);
+      wc = tab.webContents;
+    } else wc = this.requireTab();
+    if (isChatPageUrl(wc.getURL())) throw new Error(CHAT_PAGE_SHOT_REFUSED);
+    return wc;
+  }
+
   requireTab() {
     const tab = this.taskTab();
     if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
@@ -5657,7 +5681,7 @@ ${same}
         return scripts.formatFull(page, extras);
       }
       case 'screenshot': {
-        const wc = this.requireTab();
+        const wc = this.screenshotWc(input);
         let image = await captureTab(wc); // works on a tab behind another one too (features/tab-capture.js)
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
