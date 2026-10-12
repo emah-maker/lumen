@@ -4459,7 +4459,7 @@ function finishTurn(event, { early }) {
 // its child processes); the reply's 'done' then ends the view. If nothing has ended it after STOP_WAIT_MS (the run was already gone in main, or its
 // 'done' was lost), main is asked what is true (reconcile) and, if the view still says "running", it is cleared here: the reply is marked stopped,
 // the dot and the working line go, the composer is free.
-const STOP_WAIT_MS = 2500;
+const STOP_WAIT_MS = 2000;
 let stopTimer = null;
 function stopReply() {
   window.assistant.stop();
