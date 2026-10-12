@@ -21,6 +21,28 @@ function serial(key, fn) {
   return next;
 }
 
+// On Windows a rename over a file that something has open at that moment (the user's own Grok or Codex reading it, a virus scanner, a
+// file indexer) fails with EPERM/EBUSY/EACCES for a few milliseconds. The copy waits and tries again rather than losing the token's copy-back.
+const BUSY = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_TRIES = 8;
+const retryDelay = (i) => Math.min(25 * 2 ** i, 400);
+async function renameRetry(from, to) {
+  for (let i = 0; ; i++) {
+    try { return await fs.promises.rename(from, to); } catch (err) {
+      if (!BUSY.has(err?.code) || i >= RENAME_TRIES - 1) throw err;
+      await new Promise((r) => setTimeout(r, retryDelay(i)));
+    }
+  }
+}
+function renameRetrySync(from, to) {
+  for (let i = 0; ; i++) {
+    try { return fs.renameSync(from, to); } catch (err) {
+      if (!BUSY.has(err?.code) || i >= RENAME_TRIES - 1) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelay(i));
+    }
+  }
+}
+
 // Atomic copy (temp file + rename) that keeps the source's mtime, so "newest" stays comparable across copies.
 async function copyAtomic(from, to, srcStat, { mkdir = true } = {}) {
   if (mkdir) await fs.promises.mkdir(path.dirname(to), { recursive: true });
@@ -29,7 +51,7 @@ async function copyAtomic(from, to, srcStat, { mkdir = true } = {}) {
     await fs.promises.copyFile(from, tmp);
     await fs.promises.chmod(tmp, 0o600).catch(() => {});
     await fs.promises.utimes(tmp, srcStat.atime, srcStat.mtime);
-    await fs.promises.rename(tmp, to);
+    await renameRetry(tmp, to);
   } catch (err) {
     await fs.promises.rm(tmp, { force: true }).catch(() => {});
     throw err;
@@ -43,7 +65,7 @@ function copyAtomicSync(from, to, srcStat) {
     fs.copyFileSync(from, tmp);
     try { fs.chmodSync(tmp, 0o600); } catch { /* no modes here */ }
     fs.utimesSync(tmp, srcStat.atime, srcStat.mtime);
-    fs.renameSync(tmp, to);
+    renameRetrySync(tmp, to);
   } catch (err) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* gone */ }
     throw err;
@@ -91,4 +113,4 @@ const isTransient = (text) => TRANSIENT.test(String(text || ''));
 // authentication that network errors also contain) only when the text isn't a transient failure.
 const isSignedOutText = (text, strong, weak) => { const t = String(text || ''); return strong.test(t) || (weak.test(t) && !isTransient(t)); };
 
-module.exports = { isSignedOutText, copyIfNewer, copyAtomic, copyAtomicSync, syncNewest, serial, isTransient, ms };
+module.exports = { renameRetry, isSignedOutText, copyIfNewer, copyAtomic, copyAtomicSync, syncNewest, serial, isTransient, ms };

@@ -26,7 +26,7 @@ When you say no, the AI is told not to retry or work around it, and to edit in p
 
 ## Undo the AI's edits on this page
 
-Under a reply that edited a field or an editor, **Undo the AI's edits on this page** puts each of them back as it was at the start of the run. A plain field is restored from its saved copy. An editor goes back through its own undo, as many steps as it takes, checked against the saved copy; if that doesn't bring it back, the copy is put in. It says which pages it could and couldn't restore. A site that saves your work online (Google Docs, Notion) may already have saved the change: use its version history. Editors Lumen cannot read (Google Docs draws its pages on a canvas) are not measured at all, and the AI's `verify_changes` says so.
+Under a reply that edited a field or an editor, **Undo the AI's edits on this page** puts each of them back as it was at the start of the run. A plain field is restored from its saved copy. An editor goes back through its own undo, as many steps as it takes, checked against the saved copy; if that doesn't bring it back, the copy is put in. It says which pages it could and couldn't restore. A site that saves your work online (Google Docs, Notion) may already have saved the change: use its version history. Google Docs draws its pages on a canvas, so Lumen measures a Doc through its own export instead (text, pictures, tables, equations; [the AI and Google Docs](ai-document-tool.md)), and this button undoes with Docs' own undo.
 
 ## Truthful reports
 
