@@ -37,3 +37,19 @@ if (!crashed && host && /^https?:\/\//i.test(searchUrl)) {
   searchButton.hidden = false;
   searchButton.onclick = () => location.replace(searchUrl);
 }
+// kind=missingfile: a file tab from the last session whose file is no longer where it was (features/session-files.js).
+if (params.get('kind') === 'missingfile' && window.lumenMissingFile) {
+  let name = url;
+  try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || '') || url; } catch {}
+  document.title = window.t('errorPage.missingFile.title');
+  document.querySelector('h1').textContent = window.t('errorPage.missingFile.title');
+  document.getElementById('message').textContent = window.t('errorPage.missingFile.message', { name: '“' + name + '”' });
+  document.getElementById('hint').hidden = true;
+  document.getElementById('code').textContent = '';
+  retry.hidden = false;
+  retry.textContent = window.t('errorPage.missingFile.choose');
+  retry.onclick = () => window.lumenMissingFile.choose();
+  searchButton.hidden = false;
+  searchButton.textContent = window.t('errorPage.missingFile.showFolder');
+  searchButton.onclick = () => window.lumenMissingFile.showInFolder();
+}
