@@ -453,6 +453,19 @@ Search scholarly databases at once: OpenAlex, Crossref, Semantic Scholar, arXiv 
 
 The sidebar chat also has `research_board` (not listed to MCP clients: it is the chat's own source list, saved with the chat): `add` (ids from `find_sources`, or `url` / `title` / `authors` / `year` / `venue` of a page it read; `url: "current"` captures the tab's own metadata), `quote` (pin an exact quote; it is checked against the page or PDF text the AI read in that chat and marked verified or not found, with the heading or page and a link to the passage), `star`, `remove` (never a source the user added), `list` and `cite` (`apa`, `mla`, `chicago`, `ieee`, `bibtex`, `ris`).
 
+### `document`
+
+Edit a Google Doc without retyping it (Docs draws on a canvas, so there is nothing to click). One `action`: `outline` (headings, counts; takes the snapshot), `select_section`, `move_section`, `replace`, `style`, `insert_markdown`, `verify`, `undo`, `read`. It cuts and pastes real ranges, uses Docs' own shortcuts and Find and replace, and compares the document's export with the snapshot after every edit. Selecting everything and typing, or removing more than a fifth of the text or any picture, table or equation, asks first. [docs/ai-document-tool.md](ai-document-tool.md).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | yes | `outline`, `select_section`, `move_section`, `replace`, `style`, `insert_markdown`, `verify`, `undo` or `read`. |
+| `heading` | string |  | A heading's text (a unique start is enough): the section to select or move, or the heading to restyle. |
+| `to` | string |  | `move_section` and `insert_markdown`: `before X` or `after X` (a heading), or `start` or `end` of the document. |
+| `find` | string |  | `replace`: the text to find; `text` is what replaces every match. |
+| `style` | string |  | `style`: `Normal` or `Heading 1` to `Heading 6`. |
+| `text` | string |  | `replace`: the replacement; `insert_markdown`: the Markdown. |
+
 ### `run_macro`
 
 Run one of the user's saved macros (Settings → Macros: [docs/macros.md](macros.md)) by name. `list: true`, or no name, returns the names with their descriptions, the variables they ask for and any site they are limited to. The macro's steps run as the same tools listed here (`click`, `type_text`, `navigate`, `press_key`, `wait_for`, `scroll`, `switch_tab`, `open_tab`, `close_tab`), so every approval the AI's own steps need still applies: the first click or typing on a new site asks, and a step that clicks a submit, buy, send, post or delete control, or presses Enter to submit, asks again with a card naming the step. A macro that has an "Ask AI" step or uses `{{clipboard}}` is not run by an agent at all. Hands-off mode, a site where the user turned AI off and a tab kept off-limits refuse it like any acting tool. A failed step is an error naming the step and the reason.
