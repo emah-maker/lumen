@@ -46,7 +46,9 @@ function createGapLog({ dir, enabled = () => true }) {
   const write = (entries) => {
     try {
       fs.mkdirSync(path.dirname(file()), { recursive: true });
-      fs.writeFileSync(file(), entries.length ? `${entries.map((e) => JSON.stringify(e)).join('\n')}\n` : '');
+      const tmp = `${file()}.tmp`; // (temp file and rename: a quit in the middle leaves the old log whole)
+      fs.writeFileSync(tmp, entries.length ?`${entries.map((e) => JSON.stringify(e)).join('\n')}\n` : '');
+      fs.renameSync(tmp, file());
     } catch { /* a diagnostics file that can't be written is never a reason to fail a chat */ }
   };
   return {

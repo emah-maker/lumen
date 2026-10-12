@@ -250,13 +250,27 @@ function createUsage(deps) {
     }
   }
   let saveTimer = null;
+  let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
+  const payload = () => {
+    const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
+    records = records.filter((r) => r.at >= cutoff);
+    return { records, meter, grokLimit, agyLimit, rates, codex: codexSnap, budget, budgets, notified };
+  };
   function save() {
     clearTimeout(saveTimer);
+    const gen = ++saveGen;
     saveTimer = setTimeout(() => {
-      const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
-      records = records.filter((r) => r.at >= cutoff);
-      settingsFile.writeJsonAtomicAsync(file(), { records, meter, grokLimit, agyLimit, rates, codex: codexSnap, budget, budgets, notified }, undefined, 0).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
+      saveTimer = null;
+      settingsFile.writeJsonAtomicAsync(file(), payload(), () => gen === saveGen, 0).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
     }, 500);
+  }
+  // Quitting: a change from the last half second is written now, synchronously (temp file and rename).
+  function flush() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveGen++;
+    try { settingsFile.writeJsonAtomic(file(), payload(), 0); } catch (err) { console.error('[lumen] could not save usage.json:', err.message); }
   }
 
   // A new 5-hour reading; returns how many points it moved since the last one, when that one is
@@ -515,7 +529,7 @@ function createUsage(deps) {
   function shutdown() { if (planChild) killTree(planChild); planChild = null; }
   deps.app?.on?.('will-quit', shutdown);
 
-  return { load, record, summary, planUsage, glance, clear, setBudget, shutdown, budget: (engine = 'grokbuild') => (engine === 'grokbuild' ? budget : budgets[engine] || { ...DEFAULT_BUDGET }), meter: () => meter, rates: () => rates };
+  return { load, record, summary, planUsage, glance, clear, setBudget, shutdown, flush, budget: (engine = 'grokbuild') => (engine === 'grokbuild' ? budget : budgets[engine] || { ...DEFAULT_BUDGET }), meter: () => meter, rates: () => rates };
 }
 
 module.exports = { createUsage, codexSummary, parsePlan, fiveHourOf, barFor, otherClaudeActivity, normalizeBudget, periodStart, periodEnd, grokWindows, engineWindows, budgetStatus };

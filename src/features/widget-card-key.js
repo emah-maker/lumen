@@ -19,7 +19,7 @@
 'use strict';
 
 // What the page applies to a card as it is, without drawing it again (a new size, place, age, turn in a stack or edit-form value).
-const LIVE = ['span', 'height', 'layout', 'updated', 'warning', 'colors', 'setup', 'stack', 'sid', 'top', 'rotate', 'smart'];
+const LIVE = ['span', 'height', 'layout', 'updated', 'warning', 'colors', 'setup', 'stack', 'sid', 'top', 'rotate', 'smart', 'refreshing'];
 const PLAYHEAD = new Set(['spotify', 'applemusic']);
 const DRIFT_MS = 1500; // a playhead this close to where the card already shows it is the same
 

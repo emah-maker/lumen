@@ -606,7 +606,7 @@ function build(w, card, o) {
       p.endedKey = `${p.from}|${p.at}`;
       // The track is over: the service has moved on to the next one (or stopped). Without this the card sat at the end of the old song until its
       // next scheduled refresh. The later asks cover the service still answering with the old song.
-      for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh'); }, wait);
+      for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh', { arg: 'auto' }); }, wait);
     }
   }
   const clock = { poke() { if (view.prog?.playing) window.liveTick.add(root, progressTick); else window.liveTick.remove(root); }, stop() { window.liveTick.remove(root); } };
@@ -659,7 +659,7 @@ function build(w, card, o) {
     playBtn.setAttribute('aria-label', playLabel);
     playBtn.title = playLabel;
     clearTimeout(adTimer);
-    if (ad && state === 'playing') adTimer = setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh'); }, 16000); // an ad has no length: look again when it is likely over
+    if (ad && state === 'playing') adTimer = setTimeout(() => { if (root.isConnected) widgetAct(id, 'refresh', { arg: 'auto' }); }, 16000); // an ad has no length: look again when it is likely over
     // switches
     extra.hidden = isIdle;
     shuffle.hidden = !cap('shuffle');

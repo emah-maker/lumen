@@ -33,12 +33,23 @@ function createDownloads(deps) {
   const icons = new Map(); // path -> { image (nativeImage, for dragging), dataUrl (for the panel) }
   const listFile = () => path.join(deps.app.getPath('userData'), 'downloads.json');
   let saveTimer = null;
+  let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
+  const keptList = () => downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
   function save() {
     clearTimeout(saveTimer);
+    const gen = ++saveGen;
     saveTimer = setTimeout(() => {
-      const kept = downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
-      settingsFile.writeJsonAtomicAsync(listFile(), kept, undefined, 0).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
+      saveTimer = null;
+      settingsFile.writeJsonAtomicAsync(listFile(), keptList(), () => gen === saveGen, 0).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
     }, 500);
+  }
+  // Quitting: a change from the last half second is written now, synchronously (temp file and rename, so never half a file).
+  function flush() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveGen++;
+    try { settingsFile.writeJsonAtomic(listFile(), keptList(), 0); } catch (err) { console.error('[lumen] could not save the downloads list:', err.message); }
   }
   // Last session's list. A download that was still running when Lumen quit can only be retried.
   function load() {
@@ -314,7 +325,7 @@ function createDownloads(deps) {
     sender.startDrag({ file: d.path, icon });
   }
 
-  return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
+  return { list: downloads, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads, RISKY_TYPES };

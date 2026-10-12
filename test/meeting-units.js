@@ -189,6 +189,14 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-meeting-test-'));
     fs.rmSync(tmpDir, { recursive: true, force: true });
   } catch {}
 
+  // features/meeting.js loads on first use, so main.js names its IPC channels itself: the two lists must match.
+  {
+    const mainSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const missing = require('../src/features/meeting').CHANNELS.filter((c) => !mainSrc.includes(`'${c}'`));
+    if (missing.length) { failures++; console.log(`FAIL  main.js allows every meeting channel  -> missing ${missing.join(', ')}`); }
+    else console.log('PASS  main.js allows every meeting channel');
+  }
+
   console.log(`\nmeeting-units: ${failures ? `${failures} failed` : 'all passed'}`);
   process.exit(failures ? 1 : 0);
 })();

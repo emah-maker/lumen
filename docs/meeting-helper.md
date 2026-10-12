@@ -2,7 +2,7 @@
 
 A sidebar co-pilot that assists during and after web meetings (interviews, architecture discussions, and client calls) with real-time answers, saved agenda and resume context, stealth screen-share protection, and post-call summaries.
 
-Open it anytime with **Mod+Enter** (`Cmd+Enter` on macOS, `Ctrl+Enter` on Windows/Linux) or from the sidebar's ⋯ (More) menu under **Meeting helper**.
+Open it with **Mod+Enter** (`Cmd+Enter` on macOS, `Ctrl+Enter` on Windows/Linux) while Lumen's own sidebar or toolbar has focus, or anytime from the sidebar's ⋯ (More) menu under **Meeting helper**. Inside a web page, Ctrl/Cmd+Enter stays the page's own key (send in Gmail, Slack and chat sites, submit in forms).
 
 ## Live prompting
 

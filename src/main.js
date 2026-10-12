@@ -252,7 +252,7 @@ const UI_ONLY_IPC = new Set([
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
-  ...require('./features/meeting').CHANNELS, // meeting helper
+  'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -2364,6 +2364,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
+    // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
+    // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
+    if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now() && handsOff.mayFocus(tab.rec)) ui()?.focus(); }); // see layout()
@@ -6989,8 +6992,11 @@ app.on('before-quit', () => {
     historyGen++; // (an async write still queued or in flight now skips its rename)
     try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
+  downloads.flush(); // (the lists that save a moment after a change land now)
+  usage.flush();
   quitting = true;
 });
+const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) })); // (loaded when quitting starts)
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
@@ -7581,7 +7587,7 @@ skillsFeature.register();
 if (TEST) global.__skills = skillsFeature;
 
 // ---------- meeting helper (features/meeting.js): live prompting, agenda/resume, stealth, listener ----------
-const meetingHelper = require('./features/meeting').createMeetingHelper({
+const meetingHelper = lazy(() => require('./features/meeting').createMeetingHelper({
   userDataDir: app.getPath('userData'),
   getActiveTab: () => activeTab(),
   readPageContext: async (tab) => {
@@ -7591,7 +7597,7 @@ const meetingHelper = require('./features/meeting').createMeetingHelper({
   getChatStore: () => chats(),
   getWindow: () => win,
   broadcast: (ch, p) => ui()?.send(ch, p),
-});
+}));
 if (TEST) global.__meetingHelper = meetingHelper;
 
 ipcMain.handle('meeting:state', () => meetingHelper.getState());
@@ -9477,9 +9483,17 @@ const updates = require('./features/updates').createUpdates({
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
 
+// A second launch (or a link from another app) brings a window forward, whatever state the last one is in: minimized, hidden, or
+// closed (macOS keeps running with no window; an instance whose window is gone gets a new one rather than a silent no-op).
 const focusWindow = () => {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) {
+    const other = [...winRecs].find(rcAlive);
+    if (other) raiseWindow(other.win);
+    else if (app.isReady() && !quitting) { dropDeadWindowViews(); createWindow(); }
+    return;
+  }
   if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
   win.focus();
 };
 const singleInstance = process.argv.includes('--install-shortcuts') || instance.acquireInstanceLock(app);
@@ -9520,7 +9534,7 @@ app.whenReady().then(async () => {
   components?.whenReady()
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
-  instance.listenForSecondInstances(app, () => { if (!activateNotified()) focusWindow(); });
+  instance.listenForSecondInstances(app, () => { if (!activateNotified()) focusWindow(); }, { isQuitting: () => quitting });
   setupTaskbar();
   instance.ensureStartMenuShortcut(app, shell, APP_ID); // the shortcut a notification is named from (carries the app ID)
   setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
@@ -9569,6 +9583,9 @@ app.whenReady().then(async () => {
   firstTabLoaded.then(() => startup.release());
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
+// Registered after every other before-quit handler, so the deadline starts only once all of them have run: their writes are
+// synchronous (temp file and rename) and are never cut short by it.
+app.on('before-quit', () => quitGuard.arm());
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
 // ---- [mac reopen] Clicking the Dock icon after the window closed builds a new window: the old
 // tab and panel views were attached to the dead one, so drop them and restore the saved session.
