@@ -10,6 +10,13 @@ check('macOS: Cmd+P, Cmd+N, Cmd+T are shortcuts', ['p', 'n', 't'].every((k) => s
 check('macOS: Ctrl+Tab and Ctrl+Page Up/Down still switch tabs', ['Tab', 'PageUp', 'PageDown'].every((k) => shortcutMod(press(k, { control: true }), 'darwin')));
 check('Windows and Linux: Ctrl+P is a shortcut', shortcutMod(press('p', { control: true }), 'win32') && shortcutMod(press('p', { control: true }), 'linux'));
 check('no modifier: not a shortcut', !shortcutMod(press('p'), 'darwin') && !shortcutMod(press('p'), 'win32'));
+check('macOS: Ctrl+Shift+Tab and Ctrl+Shift+Page Up/Down are shortcuts too (shift does not change the key)', ['Tab', 'PageUp', 'PageDown'].every((k) => shortcutMod(press(k, { control: true, shift: true }), 'darwin')));
+check('Windows: Ctrl+Shift+Tab and Ctrl+Shift+T are shortcuts (the key reads Tab / T, lowercased for matching)', shortcutMod(press('Tab', { control: true, shift: true }), 'win32') && shortcutMod(press('T', { control: true, shift: true }), 'win32') && 'T'.toLowerCase() === 't');
+{
+  const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  check('Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+Shift+T are one handleShortcut line each, with Shift choosing the direction', main.includes("mod && key === 'tab') cycleTab(input.shift ? -1 : 1)") && main.includes("mod && input.shift && key === 't') reopenLastClosed()"));
+  check('every contents that can hold the keyboard (window UI, tabs, the Downloads panel) routes keys to handleShortcut', main.includes("downloadsView.webContents.on('before-input-event', (event, input) => handleShortcut(event, input))") && main.includes("w.webContents.on('before-input-event', (event, input) => handleShortcut(event, input))"));
+}
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log('all passed');

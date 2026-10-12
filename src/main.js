@@ -1652,6 +1652,7 @@ function createDownloadsView() {
   downloadsView.setVisible(false);
   win.contentView.addChildView(downloadsView);
   hardenOwnView(downloadsView.webContents, DOWNLOADS_PANEL_URL);
+  downloadsView.webContents.on('before-input-event', (event, input) => handleShortcut(event, input)); // the panel takes the keyboard when opened: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+T, Ctrl+W work from it too
   downloadsView.webContents.on('blur', () => setTimeout(() => { if (!downloadsView?.webContents.isFocused()) hideDownloadsPanel(); }, 0));
   downloadsView.webContents.loadFile(path.join(__dirname, 'renderer', 'downloads-panel.html'));
 }
