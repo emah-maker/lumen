@@ -375,6 +375,23 @@ window.addEventListener('hashchange', render);
   form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
   form.addEventListener('drop', (e) => refuseImages(e, e.dataTransfer?.files || []));
 
+  // Chat: this tab becomes the full-page chat (Ctrl/Cmd+click or middle-click: a new tab). What is typed in the box goes
+  // along as a draft in the chat's composer; it is not sent. The page asks by loading itself with ?chat=, as Ask AI does.
+  const chatBtn = document.getElementById('chat-btn');
+  if (chatBtn) {
+    const mac = /mac/i.test(navigator.platform || '');
+    const keys = mac ? 'Shift+Cmd+L' : 'Ctrl+Shift+L';
+    chatBtn.title = `Open full-page chat (${keys})`;
+    chatBtn.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+L' : 'Control+Shift+L');
+    const openChat = (inNewTab) => {
+      const draft = input.value.trim().slice(0, 20000);
+      location.href = `${location.pathname}?chat=${inNewTab ? 'tab' : '1'}${draft ? `&draft=${encodeURIComponent(draft)}` : ''}${location.hash}`;
+    };
+    chatBtn.addEventListener('click', (e) => openChat(e.ctrlKey || e.metaKey));
+    chatBtn.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // (no autoscroll on a middle-click)
+    chatBtn.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openChat(true); } });
+  }
+
   form.addEventListener('submit', (e) => {
     const q = input.value.trim();
     if (mode === 'ask') {

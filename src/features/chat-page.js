@@ -86,10 +86,11 @@ function createRunTracker() {
   };
 }
 
-// deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId),
+// deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId), goChat(tabId),
 //         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab) }
 function create(deps) {
   const runs = createRunTracker();
+  const drafts = new Map(); // chat tab id -> text carried from the new-tab page's box, handed to the page once (chatpage:state)
 
   const chatTabs = () => deps.tabs().filter((t) => t.managerPage === 'chat' && deps.alive(t) && !t.closing);
   // Chat pages in every window (deps.allTabs): a page in a window that is not the one in front is still a chat page,
@@ -188,17 +189,33 @@ function create(deps) {
     return true;
   }
 
+  // The new-tab page's Chat button (the way back from Home): this tab turns into the chat page, in place (inNewTab: a new tab
+  // instead). What was typed in the new-tab box waits in the page's composer as a draft; it is never sent.
+  function fromHome(tabId, { draft = '', inNewTab = false } = {}) {
+    const id = inNewTab ? deps.openTab(CHAT_URL, { managerPage: 'chat' }).id : deps.goChat(tabId);
+    const text = String(draft || '').slice(0, 20000);
+    if (id != null && text.trim()) drafts.set(id, text);
+    deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
+    return id;
+  }
+
   function register() {
     const { ipcMain } = deps;
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
     ipcMain.on('chat:open-page', (event) => { if (!deps.isPrivateSender(event)) open(); });
-    ipcMain.handle('chatpage:state', (event) => { deps.followPage?.(event); return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '' }; });
+    ipcMain.handle('chatpage:state', (event) => {
+      deps.followPage?.(event);
+      const tab = chatTabs().find((t) => t.view.webContents === event.sender);
+      const draft = tab ? drafts.get(tab.id) || '' : '';
+      if (tab) drafts.delete(tab.id);
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft };
+    });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 
-  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, home, pick, chatTabs, everyChatTab, surfaces, runs };
+  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
 module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC };

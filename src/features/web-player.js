@@ -12,7 +12,7 @@
 // A player is described by a spec: { url, hosts (a Set: the pages the view may show), cardClass (the card's
 // class on the page), signIn?: { cookie, domain (RegExp) } (the cookie the site keeps while someone is signed in; a
 // player that learns it another way leaves it out), preload?: the path of a preload script of ours for the view (the Apple
-// Music engine's bridge), hiddenViewport?: { width, height } (the size the page is laid out at while the view is not on screen: an
+// Music engine's bridge), parkRender?: true (a view with no card to show it on stays visible, parked outside the window, so the page keeps drawing frames), hiddenViewport?: { width, height } (the size the page is laid out at while the view is not on screen: an
 // unattached view is 0 by 0, and a music site's player lays itself out, or starts its player, for a window that has a size), popups?: true (sign-in pages on the allowed hosts open as windows of their own, so they can
 // answer the page that opened them) }.
 //
@@ -27,6 +27,7 @@ const RETRY_MS = 20e3; // a load that failed (offline, a site outage) is tried a
 const DRM_RETRY_MS = 5e3; // the Widevine component installs in the background on a first run: ask again until it is there
 const DRM_MAX_TRIES = 30;
 const PAINT_MS = 250; // a page that has just finished loading is shown this much later: its first frame is painted by then (never a white or black flash)
+const PARK_OFFSET = 20000; // px: how far outside the window a parked view (see park) is
 const MAX_RADIUS = 40; // px: the card's corner radius the page may ask the view to be rounded to
 // Chromium's net error numbers (net/base/net_error_list.h) for "the network isn't there": the card says to
 // check the connection. -3 (ABORTED) is only a navigation that was replaced, never a failure.
@@ -246,6 +247,7 @@ function createWebPlayer(deps, spec) {
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false, ...(spec.preload ? { preload: spec.preload } : {}) },
     });
     const wc = view.webContents;
+    pageStarted = false;
     // The page's own colour until it paints (never the white or black of an empty view), and no menu of the browser's own on a right click:
     // it is a card, not a page (the player's own menus are drawn by the page).
     try { if (typeof view.setBackgroundColor === 'function') view.setBackgroundColor(spec.background || '#121212'); } catch { /* an older shell */ }
@@ -298,7 +300,8 @@ function createWebPlayer(deps, spec) {
     });
     hookCookies(); // (a player kept hidden by an engine, with no card to place, still learns whether the user is signed in)
     // (not before the page exists: asking for the emulation of a view with no page yet takes the process down)
-    wc.on('did-start-navigation', () => { if (!host || !view || view.webContents !== wc) emulate(true); });
+    wc.on('did-start-navigation', () => { pageStarted = true; if (!host || parked || !view || view.webContents !== wc) emulate(true); });
+    if (spec.parkRender) hide(); // (a view made for an engine, with no card: it is drawn, out of sight, from the start)
     load();
     return view;
   }
@@ -308,6 +311,7 @@ function createWebPlayer(deps, spec) {
     view = null;
     generation++;
     emulating = false;
+    parked = false;
     clearTimeout(drmTimer);
     clearTimeout(retryTimer);
     clearTimeout(paintTimer);
@@ -323,8 +327,28 @@ function createWebPlayer(deps, spec) {
     try { if (!v.webContents.isDestroyed()) v.webContents.close(); } catch { /* already closing */ }
   }
 
+  // A view that is not on screen gets no frames: no requestAnimationFrame, and a page that draws a long list lazily (Spotify's Your Library) draws no rows, so
+  // the engine reads an empty library. For a spec with `parkRender`, a view that was never placed (the engine's hidden page) is kept visible instead, in the
+  // window but far outside its area, at the size of spec.hiddenViewport: it renders, and nobody sees or reaches it.
+  let parked = false;
+  let pageStarted = false; // the view's page has begun its first navigation (device emulation is only asked of a view with a page)
+  function park() {
+    const win = deps.getWindow();
+    if (!spec.parkRender || !spec.hiddenViewport || pinned || !alive() || !win || win.isDestroyed()) return false;
+    const v = view;
+    if (host && host !== win) { try { host.contentView.removeChildView(v); } catch { /* that window is gone */ } host = null; }
+    if (!host) { host = win; win.once('closed', () => { if (host === win) destroy(); }); }
+    if (pageStarted) emulate(true); // (the page's first script, run before the view's own size arrives, must already see a window: the navigation's handler asks when it starts)
+    const { width, height } = spec.hiddenViewport;
+    win.contentView.addChildView(v);
+    v.setBounds({ x: -PARK_OFFSET, y: -PARK_OFFSET, width, height });
+    v.setVisible(true);
+    parked = true;
+    return true;
+  }
   function hide() {
     if (!alive()) return;
+    if ((!host || parked) && park()) return;
     view.setVisible(false); // stays loaded and playing
     if (!host) emulate(true); // never placed (or released): it has no size of its own
   }
@@ -337,6 +361,7 @@ function createWebPlayer(deps, spec) {
     if (host && host !== win) { try { host.contentView.removeChildView(v); } catch { /* that window is gone */ } }
     host = win;
     pinned = true;
+    parked = false;
     emulate(false);
     try { if (v.webContents.getZoomFactor() !== 1) v.webContents.setZoomFactor(1); } catch { /* no page yet */ } // (a card's reduced zoom is not the sign-in page's)
     win.contentView.addChildView(v);
@@ -350,6 +375,7 @@ function createWebPlayer(deps, spec) {
     view.setVisible(false);
     try { host?.contentView.removeChildView(view); } catch { /* the window is gone */ }
     host = null;
+    if (park()) { setTimeout(() => { if (alive() && parked) { emulating = false; emulate(true); } }, 150).unref?.(); return; } // (the engine's hidden page: kept drawing, out of sight; the size asked again below, as for any hidden view)
     emulate(true);
     // (asked again once the removal has settled: the first ask, made as the view leaves the window, is not kept)
     setTimeout(() => { if (alive() && !host) { emulating = false; emulate(true); } }, 150).unref?.();
@@ -372,7 +398,8 @@ function createWebPlayer(deps, spec) {
     }
     emulate(false);
     if (moving) { v.setVisible(false); return; } // (the page is scrolling or resizing: shown again, in place, when it has settled)
-    if (moved || !v.getVisible()) win.contentView.addChildView(v); // (re-)adding puts it above the page
+    if (moved || parked || !v.getVisible()) win.contentView.addChildView(v); // (re-)adding puts it above the page
+    parked = false;
     v.setBounds(rect);
     try { if (typeof v.setBorderRadius === 'function') v.setBorderRadius(Math.round(radius)); } catch { /* an older shell: square corners */ } // (the card's corners, not the page's square ones)
     v.setVisible(painted());

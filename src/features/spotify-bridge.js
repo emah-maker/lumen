@@ -65,13 +65,18 @@ const SELECTORS = {
   searchInput: ['[data-testid="search-input"]', 'form[role="search"] input', 'input[type="search"]'],
   main: ['main'],
   trackList: ['[data-testid="track-list"]'],
+  // (seen signed in 2026-10-11: a search page lists songs, albums, artists, playlists as rows of grids: div[role=row] > div[data-encore-id=listRow] with the picture in
+  // [data-testid=media] (img[data-testid=entity-image]), the entity's link in [data-testid=title] (a[href=/track/<id>, /album/<id> ...]), the artists in [data-testid=subtitle], and
+  // a Play button in [data-testid=trailing]; the song rows have no data-testid="tracklist-row" there any more. The item pages' own track lists may still use tracklist-row.)
   trackRow: ['[data-testid="tracklist-row"]'],
+  resultRow: ['main [data-encore-id="listRow"]'],
+  rowEntityLink: ['[data-testid="title"] a[href]'],
   trackLink: ['a[href^="/track/"]'],
   artistHref: ['a[href^="/artist/"]'],
   albumHref: ['a[href^="/album/"]'],
   rowPlay: ['button[aria-label^="Play "]', 'button[data-testid="play-button"]', 'button[aria-label^="Play"]'],
   // Containers whose links are not search results: the song rows' own links, the playbar, the side and top bars.
-  chrome: ['[data-testid="tracklist-row"]', 'footer', '[data-testid="now-playing-bar"]', '[data-testid="now-playing-widget"]', 'nav', 'header', '[data-testid="topbar"]'],
+  chrome: ['[data-testid="tracklist-row"]', 'main [data-encore-id="listRow"]', 'footer', '[data-testid="now-playing-bar"]', '[data-testid="now-playing-widget"]', 'nav', 'header', '[data-testid="topbar"]'],
   // The big Play button of an item's own page (track, album, artist, playlist): its action bar first, then the sticky top bar's copy. Never
   // a bare play-button of the main area: that is a card of some other item.
   entityPlay: ['[data-testid="action-bar-row"] [data-testid="play-button"]', '[data-testid="topbar-content"] [data-testid="play-button"]', '[data-testid="action-bar-row"] button[aria-label^="Play"]', '[data-testid="topbar-content"] button[aria-label^="Play"]'],
@@ -86,17 +91,26 @@ const SELECTORS = {
   // (seen signed in 2026-10-08: data-testid="context-link" is gone; the widget's album link is there)
   contextLink: ['[data-testid="context-link"]', '[data-testid="now-playing-widget"] a[href^="/album/"]', '[data-testid="now-playing-widget"] a[href^="/playlist/"]'],
   menuItem: ['[role="menuitem"]', '[role="menu"] button', '[role="menu"] li'],
-  // The left library (seen signed in 2026-10-08): no links any more. A virtualised list of listRow groups whose title and subtitle <p> carry the
-  // item's uri in their ids: listrow-title-spotify:<kind>:<id> (kind playlist, album, artist; the first row is spotify:collection:tracks, Liked Songs).
-  libraryTitle: ['[aria-label="Your Library"] p[id^="listrow-title-spotify:"]'],
-  librarySubtitle: ['[aria-label="Your Library"] p[id^="listrow-subtitle-spotify:"]'],
+  // The left library (seen signed in 2026-10-08 and again 2026-10-11, on the hidden 1280x800 page): the panel is nav[aria-label="Main"]. Its header has the
+  // heading button "Collapse Your Library", "Create", and "Expand Your Library", which only WIDENS the panel into a card grid (it is not a closed state); under it
+  // the filter chips (role=listbox, aria-label "Filter options": Playlists, Artists, Albums) and the list: div[role=grid][aria-label="Your Library"] > div[role=row]
+  // > div[data-encore-id=listRow]. The list is virtualised (rows only while it is drawn) and scrolls inside [data-overlayscrollbars-viewport]. No links: the item's uri
+  // is in its title's id, listrow-title-spotify:<kind>:<id> (kind playlist, album, artist; the first row is spotify:collection:tracks, Liked Songs). Closed to
+  // the icon rail the same rows are there and the header button reads "Open Your Library"; widened ("Minimize Your Library") the list is
+  // ul[role=treegrid][aria-label="Your Library"] > li[role=row] > div[data-encore-id=card] with ids card-title-spotify:<kind>:<id> (an <a>) and card-subtitle-....
+  libraryGrid: ['[role="grid"][aria-label="Your Library"]', '[role="treegrid"][aria-label="Your Library"]'],
+  libraryTitle: ['[aria-label="Your Library"] [id^="listrow-title-spotify:"]', '[aria-label="Your Library"] [id^="card-title-spotify:"]'],
+  librarySubtitle: ['[aria-label="Your Library"] [id^="listrow-subtitle-spotify:"]', '[aria-label="Your Library"] [id^="card-subtitle-spotify:"]'],
   // When the panel's label changed (a translated page, a renamed panel): the same rows inside the page's left side (nav, the sidebar's test id).
-  libraryTitleAlt: ['nav p[id^="listrow-title-spotify:"]', '[data-testid="left-sidebar"] p[id^="listrow-title-spotify:"]', 'aside p[id^="listrow-title-spotify:"]'],
-  librarySubtitleAlt: ['nav p[id^="listrow-subtitle-spotify:"]', '[data-testid="left-sidebar"] p[id^="listrow-subtitle-spotify:"]', 'aside p[id^="listrow-subtitle-spotify:"]'],
-  // The panel itself, and the button that opens it when it is collapsed to its icon rail (assumed labels: "Open Your Library" / "Expand Your Library").
+  libraryTitleAlt: ['nav [id^="listrow-title-spotify:"]', 'nav [id^="card-title-spotify:"]', '[data-testid="left-sidebar"] [id^="listrow-title-spotify:"]', 'aside [id^="listrow-title-spotify:"]'],
+  librarySubtitleAlt: ['nav [id^="listrow-subtitle-spotify:"]', 'nav [id^="card-subtitle-spotify:"]', '[data-testid="left-sidebar"] [id^="listrow-subtitle-spotify:"]', 'aside [id^="listrow-subtitle-spotify:"]'],
+  // The panel itself, and the button that opens it when it is closed to its icon rail ("Open Your Library"). NOT "Expand Your Library": that button is there while the
+  // panel is open and pressing it widens the list into cards.
   libraryPanel: ['[aria-label="Your Library"]', '[data-testid="left-sidebar"]', 'nav[aria-label="Main"]'],
-  libraryExpand: ['button[aria-label="Open Your Library"]', 'button[aria-label="Expand Your Library"]', 'button[aria-label="Show Your Library"]', '[aria-label="Your Library"] button[aria-expanded="false"]'],
+  libraryExpand: ['button[aria-label="Open Your Library"]'],
+  libraryScroller: ['[data-overlayscrollbars-viewport]'],
   listRow: ['[data-encore-id="listRow"]'],
+  cardRow: ['[data-encore-id="card"]'],
   // The queue (seen signed in 2026-10-08): the /queue route is gone. A side panel, opened by the playbar's queue button (aria-pressed toggles), with
   // "Now playing" and "Next from: ..." / "Next in queue" headings and li[role="row"] rows (a hashed listrow id, no track id, a play-button each).
   queueButton: ['[data-testid="control-button-queue"]'],
@@ -472,7 +486,22 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     function add(it) { if (!it) return; var k = it.kind + ':' + it.id; if (!it.id || !it.title || seen[k]) return; seen[k] = true; items.push(it); }
     var root = q('main') || document;
     var chrome = (SEL.chrome || []).join(', ');
-    qa('trackRow', root).slice(0, 8).forEach(function (row) { add(rowItem(row)); });
+    var perKind = { song: 0, album: 0, artist: 0, playlist: 0 };
+    songRows(root).forEach(function (row) { var it = rowItem(row); if (!it || !it.id || perKind.song >= 8) return; var before = items.length; add(it); if (items.length > before) perKind.song++; });
+    // The rows of the newer layout: every kind is a row with its own picture and its entity link in the title cell, in the page's order.
+    qa('resultRow', root).forEach(function (row) {
+      var a = q('rowEntityLink', row), href = a ? String(a.getAttribute('href') || '') : '';
+      var kp = [['song', '/track/'], ['album', '/album/'], ['artist', '/artist/'], ['playlist', '/playlist/']].filter(function (k) { return href.indexOf(k[1]) === 0; })[0];
+      if (!kp || perKind[kp[0]] >= 8) return;
+      var id = idOf(href, kp[1]), title = text(a) || a.getAttribute('aria-label') || '';
+      if (!id || !title) return;
+      var artists = qa('artistHref', row).filter(function (x) { return x !== a; }).map(text).filter(Boolean).join(', ');
+      var dur = 0;
+      [].forEach.call(row.querySelectorAll('div, span'), function (d) { if (d.children.length === 0 && /^\d+:\d\d$/.test(text(d))) dur = secs(text(d)); });
+      var before = items.length;
+      add({ id: id, kind: kp[0], title: title, sub: kp[0] === 'artist' || kp[0] === 'playlist' ? '' : artists, album: '', ms: kp[0] === 'song' ? dur * 1000 : 0, art: imgSrc(q('rowImage', row) || row.querySelector('img')) });
+      if (items.length > before) perKind[kp[0]]++;
+    });
     [['album', '/album/'], ['artist', '/artist/'], ['playlist', '/playlist/']].forEach(function (kp) {
       var n = 0;
       [].forEach.call(root.querySelectorAll('a[href^="' + kp[1] + '"]'), function (a) {
@@ -492,7 +521,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     return TEXT.noResults.some(function (w) { return t.indexOf(w) >= 0; });
   }
   function diag() {
-    return ('path ' + location.pathname + ', ' + qa('trackRow').length + ' song rows, ' + (q('main') ? 'main' : 'no main') + ', ' + (q('playPause') ? 'player' : 'no player')).slice(0, 120);
+    return ('path ' + location.pathname + ', ' + songRows(document).length + ' song rows, ' + (q('main') ? 'main' : 'no main') + ', ' + (q('playPause') ? 'player' : 'no player')).slice(0, 120);
   }
   // Why a search found nothing: signed out, the player's controls missing (the page changed), or just too slow.
   function whyNot() {
@@ -573,7 +602,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       var list = q('trackList');
       var label = list ? String(list.getAttribute('aria-label') || '').toLowerCase() : '';
       if (label.indexOf(low) < 0) return null; // (the previous page's list, until this one's label shows)
-      var rows = qa('trackRow', list).slice(0, 8).map(rowItem).filter(function (r) { return r && r.id; });
+      var rows = songRows(list).slice(0, 8).map(rowItem).filter(function (r) { return r && r.id; });
       return rows.length > have ? rows : null;
     }, MORE_MS, function (rows) {
       if (seq !== searchSeq) return;
@@ -588,17 +617,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   function playItem(kind, id) {
     var seg = KIND_PATH[kind];
     if (!seg || !ID.test(id)) return;
-    if (kind === 'song') {
-      var rows = qa('trackRow', q('main') || document);
-      for (var i = 0; i < rows.length; i++) {
-        var a = q('trackLink', rows[i]);
-        if (a && idOf(a.getAttribute('href'), '/track/') === id) {
-          var rb = q('rowPlay', rows[i]);
-          if (rb && !rb.disabled) { rb.click(); return; }
-          break; // (no play button in the row: the song's own page is opened below and its big Play button pressed)
-        }
-      }
-    }
+    // (a song is played from its own page, by its track id: a row's button on a results page was seen playing another song)
     var path = '/' + seg + '/' + id;
     var wasHere = onPath(path), before = pageKey(), seenKey = '', seenAt = 0;
     nav(path);
@@ -665,7 +684,9 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     var a = q('title');
     return a ? idOf(a.getAttribute('href'), '/track/') : '';
   }
-  function rowsOf(root) { return qa('trackRow', root || q('main') || document).filter(function (r) { return Boolean(q('trackLink', r)); }); }
+  // Song rows: the item pages' tracklist rows, and the newer layout's listRow rows (search results) that have a track link.
+  function songRows(root) { var r = root || q('main') || document; return qa('trackRow', r).concat(qa('resultRow', r).filter(function (x) { return Boolean(q('trackLink', x)); })).filter(function (x, i, all) { return all.indexOf(x) === i; }); }
+  function rowsOf(root) { return songRows(root).filter(function (r) { return Boolean(q('trackLink', r)); }); }
   // A page about to be opened: what the page shows now, so that rows still on it (the router replaces the content a moment after the address
   // changes) are never taken for the new page's.
   function arriving(path) { return { sig: '', at: 0, before: pageKey(), here: onPath(path) }; }
@@ -862,8 +883,9 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
   }
   // Does the panel say there is nothing in it (a new account)? Words, not an element: Spotify's empty state has no test id.
   function libraryEmptyText() {
-    var p = q('libraryPanel');
-    var t = p ? text(p).toLowerCase() : '';
+    var p = q('libraryPanel'), g = q('libraryGrid'), v = g && g.closest ? g.closest(SEL.libraryScroller.join(', ')) : null; // (the words may sit beside the list, in its scrolling box)
+    var t = (p ? text(p) + ' ' : '') + (v && v !== p ? text(v) : '');
+    t = t.toLowerCase();
     return TEXT.emptyLibrary.some(function (w) { return t.indexOf(w) >= 0; });
   }
   function libraryWhy() {
@@ -873,19 +895,19 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
     return q('libraryExpand') ? 'collapsed' : 'timeout';
   }
   function libraryItems() {
-    var subs = {}, items = [], seen = {}, rowSel = (SEL.listRow || []).join(', ');
+    var subs = {}, items = [], seen = {}, rowSel = (SEL.listRow || []).concat(SEL.cardRow || []).join(', ');
     var titles = qa('libraryTitle'), subtitles = qa('librarySubtitle');
     if (!titles.length) { titles = qa('libraryTitleAlt'); subtitles = qa('librarySubtitleAlt'); }
-    subtitles.forEach(function (p) { subs[String(p.getAttribute('id') || '').replace(/^listrow-subtitle-/, '')] = text(p); });
+    subtitles.forEach(function (p) { subs[String(p.getAttribute('id') || '').replace(/^(listrow|card)-subtitle-/, '')] = text(p); });
     titles.forEach(function (p) {
-      var uri = String(p.getAttribute('id') || '').replace(/^listrow-title-/, '');
+      var uri = String(p.getAttribute('id') || '').replace(/^(listrow|card)-title-/, '');
       var m = /^spotify:(playlist|album|artist):([A-Za-z0-9._-]{1,64})$/.exec(uri);
       var title = text(p);
       if (!m || !title || seen[uri] || items.length >= 40) return;
       seen[uri] = true;
       var row = rowSel ? p.closest(rowSel) : null;
       var img = row ? row.querySelector('img') : null;
-      var sub = String(subs[uri] || '').replace(/^(playlist|album|artist|single|ep|compilation)\s*[•·]\s*/i, '').replace(/^(playlist|album|artist|single|ep|compilation)$/i, '');
+      var sub = String(subs[uri] || '').replace(/^pinned\s*/i, '').replace(/^(playlist|album|artist|single|ep|compilation)\s*[•·]\s*/i, '').replace(/^(playlist|album|artist|single|ep|compilation)$/i, '');
       items.push({ id: m[2], kind: m[1], title: title, sub: sub, album: '', ms: 0, art: imgSrc(img) });
     });
     return items;
@@ -914,7 +936,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       if (s !== sig) { sig = s; at = Date.now(); poke(320); return null; }
       if (Date.now() - at < 300) { poke(320 - (Date.now() - at)); return null; }
       if (all.length < 40 && scrolls < 5) { // more rows below: scroll the list by a page and look again
-        if (!scroller) { var t0 = qa('libraryTitle')[0] || qa('libraryTitleAlt')[0]; scroller = scrollerOf(t0); }
+        if (!scroller) { var t0 = qa('libraryTitle')[0] || qa('libraryTitleAlt')[0]; scroller = (t0 && t0.closest && t0.closest(SEL.libraryScroller.join(', '))) || scrollerOf(t0); }
         if (scroller && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 4) { scrolls++; scroller.scrollTop = scroller.scrollTop + Math.max(120, scroller.clientHeight * 0.9); at = Date.now(); poke(350); return null; }
       }
       return finish({ items: all, signedOut: false });
@@ -922,7 +944,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       cancelLibrary = null;
       if (scroller) { try { scroller.scrollTop = 0; } catch (e) { /* gone */ } }
       if (!found && all.length) found = { items: all, signedOut: false }; // (rows were read, the page was just slow to stand still: they are the answer)
-      if (!found) { failList('playlists', rid, libraryWhy(), 'no library rows (' + qa('listRow').length + ' list rows, ' + (q('libraryPanel') ? 'panel' : 'no panel') + (q('libraryExpand') ? ', collapsed' : '') + ')'); return; }
+      if (!found) { failList('playlists', rid, libraryWhy(), 'no library rows (' + qa('listRow').length + ' list rows, ' + (q('libraryGrid') ? 'grid' : 'no grid') + ', ' + (q('libraryPanel') ? 'panel' : 'no panel') + (q('libraryExpand') ? ', collapsed' : '') + ')'); return; }
       out({ t: 'list', kind: 'playlists', rid: rid, ok: true, signedOut: found.signedOut, items: found.items });
     });
   }

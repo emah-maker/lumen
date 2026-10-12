@@ -100,7 +100,7 @@ function checkFiles({ accept = '', multiple = false } = {}, files = []) {
   if (files.length > MAX_UPLOAD_FILES) return `At most ${MAX_UPLOAD_FILES} files can be uploaded at once.`;
   if (!multiple && files.length > 1) return `This field takes a single file, and ${files.length} were given. Upload one file per field.`;
   const bad = files.filter((f) => !acceptMatches(accept, f));
-  if (bad.length) return `${bad.map((f) => `"${f.name}"`).join(', ')} ${bad.length === 1 ? "isn't" : "aren't"} a type this field accepts (${describeAccept(accept) || accept}). Pick a matching file, or ask the user for one.`;
+  if (bad.length) return `${bad.map((f) => `"${f.name}"`).join(', ')} ${bad.length === 1 ? "isn't" : "aren't"} a type this field accepts (${describeAccept(accept) || accept}). Pick a matching file from those attached or named; if none fits, say so.`;
   return null;
 }
 

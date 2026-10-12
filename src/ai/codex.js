@@ -148,8 +148,9 @@ function authPeers({ userHome, home }) {
   return out;
 }
 // The sign-in goes in before a run and back after it, newest wins both ways and reaches every copy: contents never read.
-async function pullAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home })); }
-async function returnAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home })); }
+// (never creating a folder: a late copy-back from one chat must not bring back another chat's deleted home; a run makes its own home first)
+async function pullAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home }), { mkdir: false }); }
+async function returnAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home }), { mkdir: false }); }
 
 async function removeChatHome(userData, chatId) {
   const home = chatHomeFor(userData, chatId);

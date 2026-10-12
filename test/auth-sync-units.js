@@ -100,6 +100,11 @@ function makeServer(first = 'rt-0') {
     await Promise.all(homes.map((h) => cx.returnAuth({ userHome, home: h })));
     check('Codex: copy-backs finishing together keep the refreshed token everywhere', homes.every((h) => get(path.join(h, 'auth.json')) === server.valid) && get(path.join(userHome, 'auth.json')) === server.valid);
     check('Codex: no temp files are left in the chat homes', homes.every((h) => fs.readdirSync(h).every((f) => !/\.lumen-/.test(f))));
+    // a deleted chat's home stays deleted: another chat's copy-back (it looked at the folders just before) must not bring it back
+    await cx.removeChatHome(path.join(root, 'userData'), 'a');
+    await cx.copyIfNewer(path.join(homes[1], 'auth.json'), path.join(homes[0], 'auth.json'), { mkdir: false }); // (a copy-back that was already on its way)
+    await cx.returnAuth({ userHome, home: homes[1] });
+    check('Codex: a copy-back arriving after a chat was deleted does not bring its home back', !fs.existsSync(homes[0]));
   }
 
   // ---------- Grok: Lumen's GROK_HOME with the user's auth.json linked in ----------
