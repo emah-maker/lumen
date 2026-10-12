@@ -155,7 +155,7 @@ function create({ getSetting = () => 'lumen' } = {}) {
     // The address of a PDF: swapped before the PDF loads (Chromium's own viewer never starts).
     wc.on('did-start-navigation', (details) => {
       if (!details.isMainFrame || details.isSameDocument) return;
-      if (shouldRoute({ url: details.url, setting: getSetting() })) toViewer(details.url);
+      if (shouldRoute({ url: details.url, setting: getSetting() })) setImmediate(() => toViewer(details.url));
     });
     // A response that is a PDF without saying so in its address: the document type tells, once the page has committed.
     // The PDF's own entry is dropped from history, so Back doesn't land on it and go straight to the viewer again.

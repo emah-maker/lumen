@@ -56,7 +56,8 @@ function lumenScrollScript(move) {
     const c = document.getElementById('viewerContainer'), api = window.lumenPdf;
     if (!c || !api) return { error: 'viewer' };
     const start = c.scrollTop, max = Math.max(0, c.scrollHeight - c.clientHeight);
-    const target = move.to === 'top' ? 0 : move.to === 'bottom' ? max : start + (move.lines !== undefined ? move.lines : Math.round(c.clientHeight * 0.85 * move.screens));
+    const pageEl = move.page ? c.querySelector('.page[data-page-number="' + Number(move.page) + '"]') : null;
+    const target = pageEl ? Math.round(c.scrollTop + pageEl.getBoundingClientRect().top - c.getBoundingClientRect().top) : move.to === 'top' ? 0 : move.to === 'bottom' ? max : start + (move.lines !== undefined ? move.lines : Math.round(c.clientHeight * 0.85 * move.screens));
     c.scrollTo({ top: Math.min(Math.max(target, 0), max), behavior: 'instant' });
     return new Promise((resolve) => setTimeout(() => { const s = api.state(); resolve({ y: s.scrollTop, max, page: s.page, pages: s.pages, moved: s.scrollTop !== start }); }, 120));
   })()`;

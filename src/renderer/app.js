@@ -2509,11 +2509,17 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
-function toggleSidebarByHand() {
+// [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
+// closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+async function toggleSidebarByHand() {
   const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
   if (opening) {
+    let target = null;
+    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
       setting: window.lumenSidebarNewChat !== false,
+      busy: Boolean(target),
       empty: !$('empty').hidden,
       intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
     });

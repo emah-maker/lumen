@@ -97,6 +97,7 @@ const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const { createCoalescer } = require('./features/event-coalesce'); // streamed text sent in ~16 ms batches, not per token
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
+const notifyTarget = require('./features/notify-target'); // which tab a clicked chat notification opens, and keeping it alive until then
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
@@ -176,6 +177,11 @@ app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
 if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/tabui.js)
 
+// Playwright's electron.launch adds Chromium switches that turn the component updater off (--disable-component-update, --disable-background-networking), so
+// Widevine never installs or registers in a test run: a music site then reports "no protected audio". A live run that needs real playback (test/live-spotify.js)
+// asks for them back with LUMEN_TEST_WIDEVINE=1. Tests only; a normal launch never has those switches.
+if (TEST && process.env.LUMEN_TEST_WIDEVINE === '1') for (const sw of ['disable-component-update', 'disable-background-networking']) app.commandLine.removeSwitch(sw);
+
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
 
@@ -227,9 +233,9 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
-  'chat:sidebar-state', 'sidebar:set', 'chat:resync', // the sidebar asking which chat its window's front tab shows
+  'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
@@ -891,7 +897,14 @@ ipcMain.on('page-notification:click', (event) => {
     if (t) { showTab(rec, t.id); return; }
   }
 });
-if (TEST) global.__notifyClick = { open: (url) => openTab(url).id, switchTab: (id) => switchTab(id), activeId: () => activeId, contentsOf: (id) => tabs.find((t) => t.id === id)?.view?.webContents.id ?? null };
+if (TEST) global.__notifyClick = { // chat notifications: tell(spec, kind) makes one for a fake run (no OS toast), click(item) is its click, activate() an activation without a click
+  tell: (spec, kind) => { const messages = []; if (spec.aiNavTabId != null) messages.aiNavTabId = spec.aiNavTabId; const run = { chatId: spec.chatId, messages, runId: 0, rec: curRec, pending: new Map(), reply: '', error: null, tabId: spec.tabId ?? null, homeTab: spec.homeTab ?? null }; if (spec.bind != null) chatBind.bind(spec.bind, spec.chatId); const item = showNotification(run, kind); (global.__notifyClick.items ||= []).push(new WeakRef(item.n)); return global.__notifyClick.items.length - 1; },
+  click: (i) => global.__notifyClick.items[i].deref().emit('click'), // (a collected notification would be undefined here: that is what the keeper prevents)
+  activate: () => activateNotified(),
+  kept: () => notifyKeeper.size(), isKept: (i) => { const n = global.__notifyClick.items[i].deref(); return Boolean(n) && notifyKeeper.has(n); }, collect: () => { global.gc?.(); return typeof global.gc === 'function'; },
+  chatOf: (id) => chatBind.chatOf(id), openAi: (url) => openTab(url, { ai: true, show: false }).id, closeTab: (id) => closeTab(id),
+  pick: (spec, kind) => notifyTarget.pickTab({ kind, ...spec }, (id) => Boolean(tabAnywhere(id))),
+  open: (url) => openTab(url).id, switchTab: (id) => switchTab(id), activeId: () => activeId, contentsOf: (id) => tabs.find((t) => t.id === id)?.view?.webContents.id ?? null };
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
 app.whenReady().then(() => {
@@ -2169,6 +2182,7 @@ const stuckLoad = require('./features/stuck-load');
 function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
+  wc.setMaxListeners(40); // each feature that watches a tab adds its own did-navigate/did-start-navigation/destroyed listener (11+ today): Node's default of 10 printed a "possible memory leak" warning for every tab, though the count is fixed per tab
   wc.once('did-stop-loading', () => setTimeout(markFirstTabLoaded, 200));
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
@@ -2424,7 +2438,10 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       if (!now || now === 'about:blank') wc.loadURL(url).catch(() => {});
     }, 10e3).unref?.();
   } else if (!loaded) { // an adopted page is already on its way to its address
-    wc.loadURL(url).catch(() => {});
+    // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
+    // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
+    const first = pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
+    wc.loadURL(first).catch(() => {});
   }
   return wc;
 }
@@ -3998,6 +4015,7 @@ function askFromHome(event, url, tabId) {
   let text;
   let params;
   try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
+  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab' }); return true; } // the Chat button: the full-page chat, here or (Ctrl/middle-click) in a new tab
   if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
@@ -4213,6 +4231,7 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
 function tabFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    if (failedUrl.startsWith(ERROR_URL)) return; // the error page itself failed: an error page for it would fail the same way, over and over
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
     if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
     if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
@@ -4229,7 +4248,7 @@ function tabFailPage(wc) {
 // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
 function popupFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3) return;
+    if (!isMainFrame || code === -3 || failedUrl.startsWith(ERROR_URL)) return;
     const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
     wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
   });
@@ -4737,22 +4756,59 @@ function tellUser(run, kind) {
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
   if (!decided.os || TEST || !Notification.isSupported()) return;
+  showNotification(run, kind);
+}
+// Electron drops a Notification's click handler when the object is garbage collected, so the keeper holds each one until it is
+// clicked (or old). A toast clicked after it went to the Action Center arrives as an activation instead (activateNotified).
+const notifyKeeper = notifyTarget.createKeeper();
+function showNotification(run, kind) {
   const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
   const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
   try {
-    const n = new Notification({ title: text.title, body: text.body, silent: false });
-    n.on('click', () => {
-      // Back to the page the chat worked on (or was asked from), in whichever window holds it now; else the run's window.
-      const home = [run.tabId, run.homeTab, ...chatBind.tabsHomeFirst(run.chatId)].filter((id) => id != null).map(tabAnywhere).find(Boolean);
-      const rec = home?.rec || (run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec);
-      const w = rec === curRec ? win : rec?.win;
-      if (!w || w.isDestroyed()) return;
-      if (home) showTab(home.rec, home.t.id);
-      else { if (w.isMinimized()) w.restore(); w.focus(); }
-      w.webContents.send('agent:open-chat', { id: run.chatId });
-    });
+    const entry = { run, kind, approvalTab: kind === 'approval' ? run.tabId ?? null : null }; // (the tab an approval is about is the one the run was in when it asked)
+    const n = TEST ? new (require('events'))() : new Notification({ title: text.title, body: text.body, silent: false });
+    if (TEST) n.show = () => {};
+    const item = notifyKeeper.keep(n, entry);
+    n.on('click', () => { notifyKeeper.clicked(item); openNotified(entry); });
     n.show();
-  } catch {}
+    return item;
+  } catch { return null; }
+}
+// Brings the user to what a chat notification is about: that tab (in whichever window holds it now), the window raised, the sidebar on
+// the chat. The tab is where the AI last worked (its own tab when it navigated), see features/notify-target.js; if that tab is gone, the
+// tab the chat started in, else the run's window.
+function openNotified({ run, kind, approvalTab }) {
+  const found = notifyTarget.pickTab({ kind, approvalTab, runTab: run.tabId, aiNavTab: run.messages?.aiNavTabId, homeTab: run.homeTab, bound: chatBind.tabsHomeFirst(run.chatId) }, (id) => Boolean(tabAnywhere(id)));
+  const home = found != null ? tabAnywhere(found) : null;
+  const rec = home?.rec || (run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec);
+  const w = rec === curRec ? win : rec?.win;
+  if (!w || w.isDestroyed()) return false;
+  if (home) { showTab(home.rec, home.t.id); showChatInTab(home, run.chatId); }
+  else raiseWindow(w);
+  w.webContents.send('agent:open-chat', { id: run.chatId });
+  return true;
+}
+// A tab the AI worked in has no chat of its own (it carried the open one): it shows the chat the notification is about, opened.
+function showChatInTab({ rec, t: tab }, chatIdWanted) {
+  try {
+    if (chatBind.chatOf(tab.id) !== chatIdWanted) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatIdWanted, { share: true }); withWindow(rec, () => followTabChat(tab)); }
+    setTabSidebar(tab.id, true);
+  } catch { /* the sidebar's own open-chat still follows */ }
+}
+// An activation with no click of its own (the app was closed or its window minimised, the toast was in the Action Center): the newest
+// fresh notification is the one meant.
+function activateNotified() {
+  const entry = notifyKeeper.takeActivation();
+  return entry ? openNotified(entry) : false;
+}
+// The window to the front even when Windows will not give the foreground to a background app (focus() alone only flashes the taskbar).
+function raiseWindow(w) {
+  if (!w || w.isDestroyed()) return;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  if (TEST && process.env.LUMEN_TEST_BACKGROUND) return; // (a test run never takes the foreground)
+  if (process.platform === 'win32') { try { w.setAlwaysOnTop(true); w.focus(); w.setAlwaysOnTop(false); } catch { w.focus(); } try { app.focus({ steal: true }); } catch {} }
+  else { w.focus(); try { app.focus({ steal: true }); } catch {} }
 }
 // ---------- [chat per tab] a sidebar chat in each tab, working at the same time (features/tab-chats.js)
 // Each tab shows its own chat in the sidebar. Switching tabs switches the sidebar to that tab's chat at once, and a
@@ -4931,6 +4987,34 @@ ipcMain.handle('chat:resync', (event) => {
     if (runIsLive(run)) run.sender = wc;
     return { view: chatView() };
   });
+});
+// [sidebar keeps the run] The sidebar button is about to open the sidebar on the front tab: is a chat there working, waiting for an OK,
+// or finished unread while the sidebar was closed? Then that chat is the one to show, whatever "Sidebar button starts a new chat"
+// says. The chat is the tab's own, or the one whose run works in this tab (a tab the AI opened). Answers { id, reason, view } with the
+// chat taken as the open one, or null when nothing is there to keep.
+ipcMain.handle('chat:sidebar-target', (event) => {
+  const wc = event.sender;
+  if (!wc || wc.isDestroyed() || chatPageRt.isChatSender(event)) return null;
+  syncToSender(event);
+  const rec = recOfSender(wc) || curRec;
+  const front = rec ? activeIdOf(rec) : null;
+  if (front == null) return null;
+  const reasonOf = (id) => {
+    const run = chatRuns.get(id);
+    if (run && !run.deleted && run.pending.size) return 'approval';
+    if (chatBusy(id)) return 'running';
+    return unreadChats.has(id) ? 'unread' : null;
+  };
+  const ownsFront = [...chatRuns.values()].filter((r) => runIsLive(r) && !r.queued && agent.runTabIdFor(r.messages) === front).map((r) => r.chatId);
+  const hits = [chatBind.chatOf(front), ...ownsFront].filter(Boolean).map((id) => ({ id, reason: reasonOf(id) })).filter((h) => h.reason);
+  const hit = hits.find((h) => h.reason === 'approval') || hits.find((h) => h.reason === 'running') || hits[0];
+  if (!hit) return null;
+  if (hit.id !== chatId && !switchChat(hit.id, { ensure: true, quiet: true })) return null;
+  if (chatBind.chatOf(front) == null) chatBind.bind(front, hit.id);
+  shownChat.set(wc, chatId);
+  const run = chatRuns.get(chatId);
+  if (runIsLive(run)) run.sender = wc;
+  return { id: chatId, reason: hit.reason, view: chatView() };
 });
 // Every other window's sidebar follows its own tab again (a chat moved away from a tab it was showing in).
 function refreshSidebars() {
@@ -5475,9 +5559,7 @@ const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
 function showTab(rec, id) {
   const w = rec === curRec ? win : rec.win;
   if (!w || w.isDestroyed()) return false;
-  if (w.isMinimized()) w.restore();
-  w.show();
-  w.focus();
+  raiseWindow(w);
   withWindow(rec, () => switchTab(id));
   return true;
 }
@@ -7108,6 +7190,10 @@ signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
 const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
 sharedFiles.register(ipcMain);
+// [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
+const gapLog = require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false });
+ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog.list(), report: gapLog.report() }));
+ipcMain.handle('settings:clear-ai-gaps', () => { gapLog.clear(); return { entries: [], report: '' }; });
 const tabAnywhere = (id) => {
   for (const rec of winRecs) {
     const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
@@ -7221,6 +7307,8 @@ const agent = new Agent({
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
+  recordGap: (info) => gapLog.record(info), // [no handoff]
+  downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
@@ -7280,6 +7368,7 @@ chatPageRt = chatPage.create({
   switchTab: (id) => switchTab(id),
   requestCloseTab: (id) => requestCloseTab(id),
   goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
+  goChat: (id) => { const { id: page } = openTab(chatPage.CHAT_URL, { managerPage: 'chat' }); takePlace(page, id); return page; }, // and the way back: the new-tab page becomes the chat page
   managersOpen: () => managers.open('chat'),
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -7292,7 +7381,7 @@ chatPageRt = chatPage.create({
   },
 });
 chatPageRt.register();
-if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), fromHome: (id, o) => chatPageRt.fromHome(id, o), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
@@ -7751,7 +7840,16 @@ if (TEST) global.__appleMusicEngine = appleMusicEngine;
 const spotifyEngine = require('./features/spotify-engine').createEngine({
   player: spotifyWeb,
   resizeArt,
-  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on scdn.co)
+  // Spotify's picture host answers WebP whatever is asked for, which nativeImage cannot read: the engine's own page (a Chromium that can) draws it small and gives back a JPEG.
+  decodeArt: async (bytes) => {
+    const wc = spotifyWeb.webContents();
+    if (!wc || bytes.length > 400e3) return '';
+    try {
+      const out = await wc.executeJavaScript(`(async (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const bmp = await createImageBitmap(new Blob([u], { type: 'image/webp' })); const h = Math.min(120, bmp.height); const w = Math.max(1, Math.round(bmp.width * h / bmp.height)); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.8); })(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`);
+      return typeof out === 'string' && out.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(out) ? out : '';
+    } catch { return ''; }
+  },
+  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/jpeg, image/png;q=0.9' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (JPEG or PNG: Spotify's picture host otherwise sometimes answers WebP, which the picture resizer cannot read, so the picture was dropped; the engine only asks for https addresses on scdn.co)
   BrowserWindow: engineWindow,
   hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
   playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
@@ -8891,6 +8989,8 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
+// [content guard] "Undo the AI's edits on this page": the editors and fields that run changed go back to how they started.
+ipcMain.handle('agent:undo-edits', (_e, runId) => agent.undoEdits(runId));
 // [annotate] "Show again" / "Clear" on a drawing step in the sidebar (ai/annotate.js).
 ipcMain.handle('agent:annotate', (_e, action) => (action === 'show' || action === 'clear' ? agent.annotateAgain(action) : false));
 // The PDF viewer's Print button (its page has no IPC but this one, from permissions-preload.js): the same preview as Ctrl+P.
@@ -9313,7 +9413,7 @@ app.on('second-instance', (_e, argv) => {
   const closeAi = taskbarTasks.wantsCloseAiTabs(argv);
   if (closeAi) closeAiTabsEverywhere().catch(() => {});
   const links = linksIn(argv);
-  if (!closeAi || links.length) { focusWindow(); openLinksFromOtherApps(links); }
+  if (!closeAi || links.length) { if (links.length || !activateNotified()) focusWindow(); openLinksFromOtherApps(links); } // (a toast clicked from the Action Center arrives here with no link: it goes where the click would have)
 });
 // The taskbar entry: a Jump List task on Windows (an installed Lumen only: from source or in a test the program would be the
 // wrong one, and the Jump List belongs to the installed app's identity), the Dock menu on macOS.
@@ -9341,7 +9441,7 @@ app.whenReady().then(async () => {
   components?.whenReady()
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
-  instance.listenForSecondInstances(app, focusWindow);
+  instance.listenForSecondInstances(app, () => { if (!activateNotified()) focusWindow(); });
   setupTaskbar();
   instance.ensureStartMenuShortcut(app, shell, APP_ID); // the shortcut a notification is named from (carries the app ID)
   setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
