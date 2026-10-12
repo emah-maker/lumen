@@ -76,6 +76,7 @@ const organizeAi = require('./features/organize-ai'); // Organize with AI: local
 const fileTabs = require('./features/file-tabs'); // tabs that show a file (a PDF, a deck, a file from disk): what Organize and the strip's icons know of them
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const zoomSteps = require('./features/zoom-steps'); // Ctrl+Plus/Minus walk Chrome's zoom stops
+const { zoomKeyStep } = zoomSteps;
 const findSelection = require('./features/find-selection'); // Ctrl+F starts from the page's selection
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const { menuLabel } = require('./browser/menu-label'); // page titles and file names as menu labels (a literal & is written &&)
@@ -4467,9 +4468,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
   else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
   else if (mod && /^[1-9]$/.test(key)) { const shown = tabs.filter((x) => !aiTabHidden(x)); const t = key === '9' ? shown[shown.length - 1] : shown[Number(key) - 1]; if (t) switchTab(t.id); } // (Ctrl+N counts the tabs the strip shows)
-  else if (mod && (key === '=' || key === '+')) zoomBy(wc, 0.5);
-  else if (mod && key === '-') zoomBy(wc, -0.5);
-  else if (mod && key === '0') zoomBy(wc, 0);
+  else if (mod && zoomKeyStep(input) !== null) zoomBy(wc, zoomKeyStep(input)); // Ctrl + = - 0, the numpad's too (features/zoom-steps.js)
   else if (mod && input.shift && key === 'd') bookmarkAllTabs();
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y

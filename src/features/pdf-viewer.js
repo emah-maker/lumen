@@ -173,7 +173,7 @@ function create({ getSetting = () => 'lumen' } = {}) {
   }
   // The viewer's own commands, from main's keyboard handling (the page has no IPC): Ctrl+F opens its find bar.
   function command(wc, name) {
-    if (!wc || wc.isDestroyed() || !isViewerUrl(wc.getURL()) || !/^[a-z]+$/.test(name)) return false;
+    if (!wc || wc.isDestroyed() || !isViewerUrl(wc.getURL()) || !/^[a-zA-Z]+$/.test(name)) return false;
     wc.executeJavaScript(`window.lumenPdf && window.lumenPdf.${name} && window.lumenPdf.${name}()`, true).catch(() => {});
     return true;
   }
