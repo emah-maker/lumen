@@ -1,5 +1,5 @@
 // Page zoom walks Chrome's stops (features/zoom-steps.js), plain Node.
-const { STOPS, nextLevel, levelOf, percentOf } = require('../src/features/zoom-steps');
+const { STOPS, nextLevel, levelOf, percentOf, zoomKeyStep } = require('../src/features/zoom-steps');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
@@ -37,5 +37,12 @@ check('Ctrl+wheel (zoom-changed) goes through the same stops; pinch zoom (visual
   for (let i = 0; i < 8; i++) { level = nextLevel(level, 1); shown.push(Math.round(1.2 ** level * 100)); }
   check('the zoom pill shows exactly the stops', shown.join() === '110,125,150,175,200,250,300,400', shown.join());
 }
+
+// Which key presses are zoom keys (features/zoom-steps.js zoomKeyStep)
+check('zoom keys: = and + zoom in, - zooms out, 0 resets', zoomKeyStep({ key: '=' }) === 0.5 && zoomKeyStep({ key: '+' }) === 0.5 && zoomKeyStep({ key: '-' }) === -0.5 && zoomKeyStep({ key: '0' }) === 0);
+check('zoom keys: the numpad keys (key or code) work', zoomKeyStep({ key: '-', code: 'NumpadSubtract' }) === -0.5 && zoomKeyStep({ key: '+', code: 'NumpadAdd' }) === 0.5 && zoomKeyStep({ key: '', code: 'NumpadSubtract' }) === -0.5 && zoomKeyStep({ key: 'Subtract', code: 'NumpadSubtract' }) === -0.5 && zoomKeyStep({ key: '', code: 'Numpad0' }) === 0);
+check('zoom keys: the physical Minus / Equal key counts when the layout reports another symbol', zoomKeyStep({ key: '–', code: 'Minus' }) === -0.5 && zoomKeyStep({ key: 'é', code: 'Equal' }) === 0.5);
+check('zoom keys: letters and digits on those physical keys are not zoom keys', zoomKeyStep({ key: 'a', code: 'Minus' }) === null && zoomKeyStep({ key: '6', code: 'Equal' }) === null);
+check('zoom keys: other keys and bad input give null', zoomKeyStep({ key: 'a', code: 'KeyA' }) === null && zoomKeyStep({}) === null && zoomKeyStep(null) === null && zoomKeyStep({ key: '__proto__' }) === null);
 
 process.exit(failures ? 1 : 0);

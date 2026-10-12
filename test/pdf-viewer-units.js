@@ -103,6 +103,12 @@ const src = (...p) => fs.readFileSync(path.join(__dirname, '..', 'src', ...p), '
   check('AI scroll: on a viewer tab scrollPdf scrolls its scroller and answers like the Chrome viewer path', out.scrolled === 'pdf' && out.y === 300 && /page 2 of 5/.test(out.where) && /viewerContainer/.test(calls[0]), J(out));
   check('AI scroll: on an ordinary page scrollPdf leaves the scroll to the page tools (null)', (await pdfInput.scrollPdf({ getURL: () => 'https://a.test/', mainFrame: { framesInSubtree: [] } }, { screens: 1 })) === null);
   check('AI click: a viewer tab is an ordinary page (no PDF-only click path)', (await pdfInput.clickPdf({ getURL: () => view, mainFrame: { framesInSubtree: [] } }, 5, 5)) === null);
+  // The viewer's own commands from main (Ctrl+F, Ctrl+Plus/Minus/0): camelCase names such as zoomIn must get through (they were refused once).
+  const ran = [];
+  const cmdTab = { isDestroyed: () => false, getURL: () => view, executeJavaScript: () => { ran.push(1); return Promise.resolve(); } };
+  const rt = pv.create();
+  check('command: zoomIn / zoomOut / zoomReset / find reach the viewer', ['zoomIn', 'zoomOut', 'zoomReset', 'find'].every((n) => rt.command(cmdTab, n) === true) && ran.length === 4, String(ran.length));
+  check('command: not on another page, and never an expression', rt.command({ ...cmdTab, getURL: () => 'https://a.test/' }, 'zoomIn') === false && rt.command(cmdTab, 'x();y') === false && rt.command(cmdTab, '') === false);
   const agent = src('ai', 'agent.js');
   check('AI: read_pdf reads the PDF behind the viewer address, list_tabs and the approval card show its address, per-site AI off follows it', /pdfViewer\.pdfUrlOf\(wc\.getURL\(\)\)/.test(agent) && /taskTabUrl\(\) \{ try \{ const u = .*pdfViewer\.pdfUrlOf\(u\) \|\| u/.test(agent) && /const url = pdfViewer\.pdfUrlOf\(raw\) \|\| raw/.test(agent) && /aiOff: \(url\) => aiSites\.isOff\(pdfViewer\.pdfUrlOf\(url\) \|\| url\)/.test(main));
 

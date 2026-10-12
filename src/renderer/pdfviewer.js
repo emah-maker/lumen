@@ -40,7 +40,7 @@ eventBus.on('scalechanging', showScale);
 $('zoom').addEventListener('change', (e) => { if (e.target.value !== 'custom') viewer.currentScaleValue = e.target.value; });
 const zoomIn = () => viewer.increaseScale({ steps: 1 });
 const zoomOut = () => viewer.decreaseScale({ steps: 1 });
-const zoomReset = () => { viewer.currentScaleValue = '1'; };
+const zoomReset = () => { viewer.currentScaleValue = 'page-width'; }; // back to how the PDF opened
 $('zoomIn').addEventListener('click', zoomIn);
 $('zoomOut').addEventListener('click', zoomOut);
 // Ctrl+wheel (and a trackpad pinch, which arrives the same way) zooms the document, not the page around it.
@@ -103,7 +103,7 @@ eventBus.on('updatefindcontrolstate', ({ matchesCount, state }) => { showCount({
 // ---- keys the page itself doesn't scroll for
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); } else if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); } else if (mod && e.key === '-') { e.preventDefault(); zoomOut(); } else if (mod && e.key === '0') { e.preventDefault(); zoomReset(); } else if (e.key === 'Escape' && !findBar.hidden) closeFind();
+  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); } else if (mod && (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd')) { e.preventDefault(); zoomIn(); } else if (mod && (e.key === '-' || e.code === 'NumpadSubtract')) { e.preventDefault(); zoomOut(); } else if (mod && (e.key === '0' || e.code === 'Numpad0')) { e.preventDefault(); zoomReset(); } else if (e.key === 'Escape' && !findBar.hidden) closeFind();
   else if (!mod && !e.altKey && document.activeElement && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName) && ['Home', 'End', 'PageUp', 'PageDown', ' ', 'ArrowUp', 'ArrowDown'].includes(e.key)) container.focus({ preventScroll: true }); // keys go to the scroller
 });
 
