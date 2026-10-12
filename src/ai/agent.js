@@ -2216,9 +2216,16 @@ class Agent {
     let autoChecked = false;
     // [no handoff] What the first attempt's events say about how it ended (see handoffRetry). Claude Code's 'reply_complete' is
     // held back until it is known whether the reply is final: a retry's events would reach a screen that already ended the turn.
-    const watch = { held: null, limited: false };
+    // Only a reply that reads as a hand-back is held: any other is announced complete at once (reply-done-sooner), and is not retried.
+    const watch = { held: null, limited: false, text: '', sent: false };
     const watchEmit = (event) => {
-      if (event.type === 'reply_complete') { watch.held = event; return; }
+      if (event.type === 'text' && event.text) watch.text += event.text;
+      if (event.type === 'reply_complete') {
+        let verdict = null;
+        try { verdict = handoff.classify(watch.text, userText); } catch { /* unknown: hold it */ }
+        if (verdict && !verdict.handoff) { watch.sent = true; emit(event); return; }
+        watch.held = event; return;
+      }
       if (event.type === 'notice' && event.action === 'continue') watch.limited = true;
       emit(event);
     };
@@ -2270,7 +2277,7 @@ class Agent {
     // ---- [/claude code engine]
     const outcome = await dispatch(watchEmit);
     // [no handoff] A final reply that hands the work back gets one more turn (handoffRetry); every other end is as it was.
-    const again = outcome === 'ok' && !controller.signal.aborted ? this.handoffRetry(messages, userText, watch) : null;
+    const again = outcome === 'ok' && !controller.signal.aborted && !watch.sent ? this.handoffRetry(messages, userText, watch) : null;
     if (again) {
       emit({ type: 'retry' }); // the handoff text goes from the screen; it stays in the history, for the model
       emit({ type: 'tool', name: 'retry', label: 'Trying another way…' });
@@ -2278,7 +2285,7 @@ class Agent {
       messages.unanswered = [];
       messages.simpleTurn = null;
       fb.calls0 = callsNow();
-      watch.held = null;
+      watch.held = null; watch.text = '';
       const second = await dispatch(watchEmit, handoff.FOLLOWUP);
       if (second === 'ok' && !controller.signal.aborted) this.handoffGap(messages, userText, again);
     }
