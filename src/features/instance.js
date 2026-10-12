@@ -7,6 +7,10 @@ const path = require('path');
 // first: every build and every update ships it at the same place. The icon.ico that
 // scripts/install-windows.ps1 puts next to the exe is not in the release zip, so an update's swap
 // deleted it and left the shortcuts pointing at nothing (Windows then shows the exe's, Electron's).
+// The installed Lumen, not the stock electron binary with app.isPackaged made true (test/hardening.js does that to check a
+// packaged run ignores test switches): only the real exe may write the user's registry, shortcuts and taskbar entries.
+const isInstalledExe = () => !/^electron(\.exe)?$/i.test(path.basename(process.execPath));
+
 function appIcon() {
   const own = path.join(__dirname, '..', 'assets', 'icon.ico');
   const installed = path.join(path.dirname(process.execPath), 'icon.ico');
@@ -20,7 +24,7 @@ function appIcon() {
 // Notifications are named and drawn from the app ID's own registry entry (AppUserModelId\<id>: DisplayName, IconUri) when
 // there is one; without it Windows fell back to the exe's description, so a finished chat's notification said "Electron".
 function fixAppName(app, appId = 'com.lumen.browser') {
-  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return;
   const values = appNameValues(process.execPath, appId, appIcon());
   const { execFile } = require('child_process');
   for (const [key, name, data] of values) execFile('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', data, '/f'], { windowsHide: true, timeout: 8000 }, () => {});
@@ -87,7 +91,7 @@ function shortcutsIn(dir) {
 // no-op once they're right. A shortcut naming an .ico that no longer exists (an update removed it)
 // counts as wrong too.
 function fixShortcutIcons(app, shell, exists = fs.existsSync, appId = null) {
-  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return;
   const exe = path.resolve(process.execPath).toLowerCase();
   for (const dir of shortcutDirs(app)) {
     for (const file of shortcutsIn(dir)) {
@@ -110,7 +114,7 @@ function fixShortcutIcons(app, shell, exists = fs.existsSync, appId = null) {
 // install, an updated-in-place or unzipped copy, a shortcut remade by hand), so at startup the Start menu's own
 // Lumen.lnk is made, or given the ID if it is missing it. A shortcut to some other Lumen.exe is left alone.
 function ensureStartMenuShortcut(app, shell, appId) {
-  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return false;
   const exe = process.execPath;
   const file = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Lumen.lnk');
   const want = { target: exe, cwd: path.dirname(exe), icon: appIcon(), iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
@@ -186,4 +190,4 @@ function acquireInstanceLock(app) {
   return false;
 }
 
-module.exports = { appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances };
+module.exports = { isInstalledExe, appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances };
