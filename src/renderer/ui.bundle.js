@@ -4761,7 +4761,8 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone } = {}) {
+  if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
@@ -4828,6 +4829,40 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   approvals.set(approvalId, { card, host });
   // Never focused for the user: Enter on the card means Allow, and a card that grabbed focus while
   // someone was typing a follow-up turned their Enter into an approval. Keyboard users Tab to it.
+  scrollToBottom();
+}
+
+// [content guard] ai/content-guard.js: a change that would remove, or has removed, content the AI didn't write (text, images, tables).
+// phase 'before': about to happen (Go ahead / Don't do it). phase 'after': it happened and was put back for now when it could be
+// (Keep the change / Undo it); when it couldn't be put back the choice is only whether the run carries on. Escape is the safe answer
+// (don't / undo / stop); Enter on the card does nothing, so a key pressed for something else can't keep a loss.
+function showContentLossApproval(approvalId, host, { title: heading, detail: text, phase, undone }) {
+  const before = phase === 'before';
+  const card = document.createElement('div');
+  card.className = 'approval approval-content-loss';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  card.setAttribute('aria-label', heading || host);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || host });
+  const detail = Object.assign(document.createElement('p'), { className: 'approval-detail', textContent: text || '' });
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const no = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: before ? t('approval.content.dont') : undone ? t('approval.content.undo') : t('approval.content.stop') });
+  const yes = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: before ? t('approval.content.go') : undone ? t('approval.content.keep') : t('approval.content.continue') });
+  const answer = (ok) => {
+    if (card.classList.contains('answered')) return;
+    card.classList.add('answered');
+    no.disabled = true;
+    yes.disabled = true;
+    window.assistant.approve?.(approvalId, ok);
+  };
+  no.onclick = () => answer(false);
+  yes.onclick = () => answer(true);
+  card.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); answer(false); } });
+  actions.append(no, yes);
+  card.append(title, detail, actions);
+  append(card, { force: true }); // waiting for you: always in view
+  approvals.set(approvalId, { card, host });
   scrollToBottom();
 }
 
@@ -10933,13 +10968,29 @@ $('agent-stop')?.addEventListener('click', () => {
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {
-    if (!undo?.undoable) return;
+    if (!undo?.undoable && !undo?.edits) return;
     const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));
     const tr = (k, en, v) => { const s = window.t ? window.t(k, v) : k; return s && s !== k ? s : en.replace(/\{(\w+)\}/g, (_, x) => v?.[x] ?? ''); };
     const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.button', 'Undo tab changes') });
     const lasting = undo.lasting?.length ? tr('undo.lasting', 'Can’t be undone here: {what}.', { what: undo.lasting.join('; ') }) : '';
     button.title = `${tr('undo.title', 'Close the tabs this reply opened, reopen the ones it closed, and take its tabs back to where they were.')}${lasting ? `\n${lasting}` : ''}`;
-    box.append(button);
+    if (undo.undoable) box.append(button);
+    // [content guard] The editors and fields the run typed in, deleted from or scripted: back to how they started (ai/content-guard.js).
+    if (undo.edits) {
+      const edits = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.edits.button', 'Undo the AI’s edits on this page') });
+      edits.title = tr('undo.edits.title', 'Put the text fields and editors this reply changed back to how they were. A site that saves your work online keeps its own version history.');
+      box.append(edits);
+      edits.addEventListener('click', async () => {
+        edits.disabled = true;
+        let result;
+        try { result = await window.assistant.undoEdits(undo.id); } catch (err) { result = { ok: false, message: String(err?.message || err) }; }
+        edits.remove();
+        const lines = result?.ok ? [...result.done, ...result.skipped] : [result?.message || 'Nothing was undone.'];
+        const list = Object.assign(document.createElement('ul'), { className: 'run-undo-result' });
+        for (const line of lines.length ? lines : ['Nothing was left to undo.']) list.append(Object.assign(document.createElement('li'), { textContent: line }));
+        box.append(list);
+      });
+    }
     button.addEventListener('click', async () => {
       button.disabled = true;
       let result;

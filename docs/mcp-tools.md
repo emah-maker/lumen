@@ -175,6 +175,10 @@ Wait until the active tab meets every condition given, up to a timeout. `url` is
 
 At least one of `text`, `url`, `gone`, `network_idle` is needed.
 
+### `verify_changes`
+
+What this run changed in the text fields and editors it typed in, deleted from or scripted, measured now against the start of the run: text size, images, tables, equations, list items and table rows, with what was added and removed. Edits Lumen could not measure (an editor drawn on a canvas, an embedded frame) are listed as such. Call it before saying content is unchanged or edited. It takes no parameters and only reads. See [The AI and your content](ai-content-guard.md), which also covers the card that asks before a typing, Delete or script step removes a lot of content.
+
 ### `get_console`
 
 The tab's console messages and uncaught errors, as one line each: `[err] 12:01:03 TypeError: x is undefined (app.js:120)`. Lumen starts keeping them (the newest 300) when an agent first works in a tab, so the first call shows only what happened since then; the result says when capture began. Page content, so it is wrapped like any other page read.

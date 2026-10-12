@@ -44,6 +44,7 @@ const postAnalysis = require('./post-analysis'); // [research pack] analyze_post
 const macroPage = require('./macro-page'); // [macros] run_macro: a stored locator -> the element id click / type_text take
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
 const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
+const contentGuard = require('./content-guard'); // [content guard] what typing / Delete / scripts take out of an editor: card, undo, journal, verify_changes
 const { captureTab } = require('../features/tab-capture');
 const videoCapture = require('../features/video-capture'); // video_overview, video_frames
 const videoBudget = require('./video-budget');
@@ -99,6 +100,7 @@ How to work:
 - "This", "here", "on screen" with no screenshot attached: call screenshot first; never ask the user to describe it.
 - Go direct: navigate to a URL you know or can build. Batch known steps, make independent calls together, and use observe, read or since_last rather than re-reading.
 - Verify an action that matters. Don't repeat a failed step; after two failures change route or say what blocks you.
+- User's content: edit in place, move text rather than retype it, never select-all and replace unless asked, work on a copy when told. Claim it unchanged or edited only after verify_changes.
 - Lumen is the user's browser: show what you make (small diagrams inline, as an svg block), never tell them to open a file in a browser.
 - Stop once answered, with a short written answer citing the page or URL a fact came from.
 
@@ -246,6 +248,11 @@ const TOOLS = [
         seconds: { type: 'number' },
       },
     },
+  },
+  {
+    name: 'verify_changes',
+    description: 'What this run changed in the fields and editors it edited (text, images, tables, items), before and after.',
+    input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'get_console',
@@ -933,7 +940,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1212,6 +1219,7 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
   else if (action === 'file') what = `shared ${host}`;
   else if (action === 'signin') what = `using your signed-in ${host} account`;
   else if (action === 'script') what = `running a script on ${host}`;
+  else if (action === 'content-loss') what = clip(String(title || 'a change that removes content').replace(/^The AI is about to /, 'to '), 120);
   else if (action === 'terminal') what = `${wants(title) || 'run a terminal command'}${args ? `: ${clip(String(args).replace(/\s+/g, ' ').trim(), 80)}` : ''}`;
   else if (action === 'open' && String(host).startsWith('image prompt:')) what = 'sending a picture request to an image AI';
   else if (action === 'open' && query !== null && query !== undefined && !wants(title)) what = `sending “${clip(query, 60)}” to the web`;
@@ -3766,6 +3774,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
       if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
       if (name === 'run_script') return 'Running a script on the page';
+      if (name === 'verify_changes') return 'Checking what the edits changed';
       if (name === 'wait_for') return input.text ? `Waiting for ${quote(input.text)}` : input.network_idle === true && !input.url && !input.gone ? 'Waiting for the page to finish loading' : 'Waiting for the page';
       if (name === 'get_console') return 'Reading the page console';
       if (name === 'get_network') return "Reading the page's requests";
@@ -4071,10 +4080,11 @@ ${prompt}` : prompt), historyImages: [] };
 
   // For the 'done' event: what Undo would do, or null when the run changed nothing.
   undoSummary(log) {
-    if (!log?.actions.length) return null;
+    const edits = log?.content ? contentGuard.changedRegions(log.content).length : 0; // [content guard] editors and fields the run changed
+    if (!log?.actions.length && !edits) return null;
     const undoable = log.actions.filter((a) => a.kind !== 'lasting').length;
     const lasting = [...new Set(log.actions.filter((a) => a.kind === 'lasting').map((a) => `${a.what} on ${a.site}`))];
-    return { id: log.id, undoable, lasting };
+    return { id: log.id, undoable, lasting, ...(edits ? { edits } : {}) };
   }
 
   // Takes back a run's changes, newest first. Each step that can't be done anymore (its tab was
@@ -4127,6 +4137,83 @@ ${prompt}` : prompt), historyImages: [] };
     const { lasting } = this.undoSummary(log) || { lasting: [] };
     return { ok: true, done: [...new Set(done)], skipped, lasting };
   }
+
+  // ---- [content guard] ai/content-guard.js; docs/ai-content-guard.md
+  // The run's journal of edited editors and fields: a sidebar run keeps it on its action log (Undo), an outside agent on one the app
+  // keeps for it (reset after a quiet quarter hour).
+  contentJournal() {
+    const log = taskScope.getStore()?.log;
+    if (log) return (log.content ||= contentGuard.createJournal(log.id));
+    if (!this.externalJournal || Date.now() - this.externalJournalAt > 15 * 60 * 1000) this.externalJournal = contentGuard.createJournal('ext');
+    this.externalJournalAt = Date.now();
+    return this.externalJournal;
+  }
+
+  // What guard.snap / restore / undo / redo do on one tab.
+  guardTools(wc, journal) {
+    const run = (code) => runScript(wc, code, 8000);
+    return {
+      snap: (opts) => run(contentGuard.snapshotScript({ ...opts, run: journal.id })),
+      restore: (opts) => run(contentGuard.restoreScript(opts)),
+      undo: async () => { wc.undo(); },
+      redo: async () => { wc.redo(); },
+    };
+  }
+
+  // Around an acting tool that could take the user's content out of an editor (execute calls this for every call).
+  async withContentGuard(name, input, run) {
+    const scope = taskScope.getStore();
+    const gate = scope?.gate;
+    if (!gate || this.userRun() || !(contentGuard.classify(name, input, input?.text) || name === 'click')) return run();
+    let wc = null;
+    try { wc = this.taskTab()?.webContents; } catch {}
+    if (!wc || wc.isDestroyed() || frames.decodeId(input?.element_id)) return run(); // (an embedded frame is not measured)
+    const journal = this.contentJournal();
+    const tools = this.guardTools(wc, journal);
+    let label = '';
+    if (name === 'click' && input?.element_id !== undefined) { try { label = await this.elementRun(wc, input.element_id, contentGuard.controlNameScript, { timeoutMs: 1500 }) || ''; } catch {} }
+    if (!contentGuard.classify(name, input, label)) return run();
+    const url = wc.getURL();
+    const site = siteOf(url) || 'this page';
+    const ctx = {
+      journal, tabId: this.taskTab().id, site, id: input?.element_id ?? null, label, bypass: this.bypassOn(), ...tools,
+      ask: (card) => this.askApproval(site, gate.emit, gate.signal, { action: 'content-loss', who: gate.who, title: card.title, args: card.detail, upload: { phase: card.phase, undone: card.undone } }),
+    };
+    return contentGuard.guardTool(ctx, name, input, run);
+  }
+
+  // "Undo the AI's edits on this page": back to how each editor / field the run changed started (the button under the reply).
+  async undoEdits(id) {
+    const log = this.actionLogs.get(Number(id));
+    if (!log?.content || log.editsUndone) return { ok: false, done: [], skipped: [], message: 'There is nothing left to undo for that reply.' };
+    log.editsUndone = true;
+    const tabs = new Map();
+    for (const rec of log.content.regions.values()) {
+      const tab = this.browser.tabById?.(rec.tabId);
+      if (!tab || tab.webContents.isDestroyed() || this.browser.aiOff?.(tab.webContents.getURL())) continue;
+      tabs.set(rec.tabId, { ...this.guardTools(tab.webContents, log.content), site: siteOf(tab.webContents.getURL()) });
+    }
+    const { done, skipped } = await contentGuard.undoEdits(log.content, tabs);
+    return { ok: true, done, skipped };
+  }
+
+  // verify_changes: what this run did to the editors and fields it edited, measured now.
+  async verifyChanges() {
+    const journal = this.contentJournal();
+    const current = new Map();
+    const names = new Map();
+    for (const rec of journal.regions.values()) {
+      const tab = this.browser.tabById?.(rec.tabId);
+      if (!tab || tab.webContents.isDestroyed() || this.browser.aiOff?.(tab.webContents.getURL())) { current.set(rec.key, null); continue; }
+      names.set(rec.tabId, siteOf(tab.webContents.getURL()) || rec.site);
+      try {
+        const now = await this.guardTools(tab.webContents, journal).snap({ region: rec.region });
+        current.set(rec.key, now && !now.missing && !now.none ? now : null);
+      } catch { current.set(rec.key, null); }
+    }
+    return contentGuard.verifyReport(journal, current, names);
+  }
+  // ---- [/content guard]
   // ---- [/ai controls]
 
   // Approves without a card: the sidebar's AI with "Ask before acting" off, or an outside agent in its own Lumen window with
@@ -4470,6 +4557,8 @@ ${out.text}${note}
       ? { type: 'approval', approvalId, host, action, title, args, tainted }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
+      : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)
+      ? { type: 'approval', approvalId, host, action, title, args, phase: upload?.phase, undone: upload?.undone }
       : action === 'open'
       ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
       : action === 'pdf' // read_pdf: `host` is the file name
@@ -4910,6 +4999,10 @@ ${out.text}${note}
     this.aiOffCheck(name, input);
     this.offTabCheck(name, input); // [ai off-tab]
     this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
+    return this.withContentGuard(name, input, () => this.executeChecked(name, input)); // [content guard]
+  }
+
+  async executeChecked(name, input) {
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
       const result = await this.executeDebugged(name, input);
@@ -5346,6 +5439,7 @@ ${same}
         return `<untrusted_page_content>\n${clipped}\n</untrusted_page_content>`;
       }
       case 'wait_for': return this.waitFor(this.requireTab(), input);
+      case 'verify_changes': return this.verifyChanges(); // [content guard]
       case 'get_console': { const wc = this.debugTarget(input); return pageDebugShared.console(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
       case 'get_network': { const wc = this.debugTarget(input); return pageDebugShared.network(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
       case 'handle_dialog': { const wc = this.debugTarget(input); pageDebugShared.watch(wc); return pageDebugShared.handleDialog(wc, input); }
