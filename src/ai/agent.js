@@ -1917,7 +1917,8 @@ class Agent {
 
       // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
       // (a chat that waited for a free slot); otherwise in the front tab.
-      const tab = (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
+      // [working-on chip] A chat-page run (extra.fromPage) about something other than the page in front starts with no tab: its tools take one when they need it.
+      const tab = extra.fromPage === true && !this.aboutCurrentPage(userText, extra) ? null : (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill, aboutPage: this.aboutCurrentPage(userText, extra) });
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });

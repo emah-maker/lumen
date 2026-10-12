@@ -104,18 +104,23 @@ body.chat-page .sidebar-head .model-picker .picker-button { font-size: 14px; fon
 body.chat-page .sidebar-head .model-picker svg { right: 10px; }
 body.chat-page .sidebar-actions { gap: var(--cp-1); align-items: center; }
 body.chat-page .sidebar-head .icon-btn { width: 32px; height: 32px; border-radius: 8px; }
+/* [header controls] every control on the right is 32px tall and centred; the permission button grows by its name only */
+body.chat-page .sidebar-head .icon-btn.auto-allow { width: auto; min-width: 32px; padding: 0 10px 0 8px; font-size: 12px; font-weight: 600; line-height: 1; }
+body.chat-page .sidebar-actions { flex: none; align-self: center; }
+body.chat-page .sidebar-actions > *, body.chat-page .cp-more-wrap .icon-btn { align-self: center; }
 body.chat-page .sidebar-head .icon-btn svg { width: 16px; height: 16px; }
 body.chat-page #cp-more svg { fill: currentColor; stroke: none; }
 
 /* Which tab the AI is working in: the chat page is never that tab. */
 .cp-target {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 3px var(--cp-2); border-radius: 8px; font-size: 12px; color: var(--muted);
+  flex: 0 1 auto; min-width: 0; max-width: min(420px, 34%); box-sizing: border-box; height: 32px; margin: 0 auto 0 var(--cp-2); display: flex; align-items: center; gap: 6px; justify-content: flex-start; overflow: hidden;
+  padding: 0 var(--cp-2); border-radius: 14px; font-size: 12px; line-height: 1; color: var(--muted);
 }
 .cp-target[hidden] { display: none; }
 .cp-target-icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
-.cp-target-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cp-target-text { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 body.agent-active .cp-target { color: var(--accent); background: var(--accent-soft); }
+/* (under 900px the chip is not shown at all: see "a narrower window" below) */
 
 /* the ⋯ menu: Back to sidebar and AI settings, named */
 .cp-more-wrap { position: relative; }

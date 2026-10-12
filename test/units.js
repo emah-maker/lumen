@@ -1765,9 +1765,10 @@ async function chatPageRuns() {
   check('chat runtime: a frame that is not the chat page\'s top frame (a subframe, another URL) is not trusted', !rt.isChatSender({ sender: chatWc, senderFrame: { url: CHAT } }) && !rt.isChatSender({ sender: chatWc, senderFrame: { url: 'https://x.test/' } }), 'trusted');
   check('chat runtime: the allowlist applies only to the chat page', rt.allows(pageAsk, 'agent:ask') && !rt.allows(pageAsk, 'settings:set-provider-key') && !rt.allows(sidebarAsk, 'agent:ask'), 'allows');
   const fromChat = rt.beginRun(pageAsk, { text: 'go', runId: 3, images: [{ media_type: 'image/png', data: 'AAA' }] });
-  check('chat runtime: a run from the chat page works in the tab last looked at, never the chat tab', fromChat && rt.runTarget() === 2, String(rt.runTarget()));
+  check('chat runtime: a run from the chat page has no tab until a tool takes one (the one looked at last, never the chat tab)', fromChat && rt.runFromPage() && rt.runTarget() === null && rt.pick() === 2 && !chatWc.sent.some(([c, info]) => c === 'chat:target' && info), String(rt.runTarget()));
+  rt.retarget(2);
   check('chat runtime: the sidebar hears a page run start (with its images), the page does not echo it', uiWc.sent.some(([c, p]) => c === 'chat:run-start' && p.runId === 3 && p.text === 'go' && p.images[0].data === 'AAA') && !chatWc.sent.some(([c]) => c === 'chat:run-start'), JSON.stringify(uiWc.sent));
-  check('chat runtime: the page shows which tab it works in', chatWc.sent.some(([c, p]) => c === 'chat:target' && p.id === 2), JSON.stringify(chatWc.sent.map((s) => s[0])));
+  check('chat runtime: once a tool takes a tab, the page shows which tab it works in', chatWc.sent.some(([c, p]) => c === 'chat:target' && p && p.id === 2), JSON.stringify(chatWc.sent.map((s) => s[0])));
   rt.emit(chatWc, 'agent:event', { type: 'text', runId: 3 });
   check('chat runtime: a run\'s events reach both views', uiWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text') && chatWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text'), 'events');
   rt.retarget(1);
@@ -1776,7 +1777,7 @@ async function chatPageRuns() {
   check('chat runtime: after the run there is no pin', rt.runTarget() === null, String(rt.runTarget()));
   tabsList = tabsList.filter((t) => t.managerPage === 'chat');
   const alone = rt.beginRun(pageAsk, { text: 'again', runId: 4, images: [] });
-  check('chat runtime: with no ordinary tab a run from the page opens one, out of sight', alone && opened.length === 1 && opened[0].opts.background === true && rt.runTarget() === 50, JSON.stringify(opened));
+  check('chat runtime: with no ordinary tab a run from the page opens nothing by itself (its own open_tab does) and names no tab', alone && opened.length === 0 && rt.runTarget() === null && rt.pick() === null, JSON.stringify(opened));
   rt.endRun();
   rt.broadcast('chat:sync', { view: { items: [] } }, chatWc);
   check('chat runtime: a chat switch reaches the other view, not the one that made it', uiWc.sent.some(([c]) => c === 'chat:sync') && !chatWc.sent.some(([c]) => c === 'chat:sync'), 'sync');

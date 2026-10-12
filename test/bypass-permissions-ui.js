@@ -43,10 +43,11 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
         descs: [...menu.querySelectorAll('.perm-desc')].map((n) => n.textContent),
         note: document.getElementById('perm-note')?.textContent || '',
         badgeShown: Boolean(badge) && !badge.hidden && badge.getBoundingClientRect().width > 0, badgeText: badge?.textContent || '',
-        color: getComputedStyle(b).color, handsOffShown: !document.getElementById('hands-off').hidden,
+        color: getComputedStyle(b.querySelector('svg')).color, handsOffShown: !document.getElementById('hands-off').hidden,
       };
     });
-    const clickBolt = () => ui.evaluate(() => document.getElementById('auto-allow').click());
+    // [mode cycle] a plain click now switches to the next mode (test/working-on-chip.js); the menu is a right-click away
+    const clickBolt = () => ui.evaluate(() => document.getElementById('auto-allow').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
     const clickItem = (mode) => ui.evaluate((m) => document.getElementById(`perm-${m}`).click(), mode);
     const shot = async (name, selector) => { if (shots) await ui.screenshot({ path: path.join(shots, name), clip: selector ? await ui.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: Math.max(0, r.x - 12), y: Math.max(0, r.y - 12), width: r.width + 24, height: r.height + 24 }; }, selector) : undefined }); };
 
@@ -60,7 +61,7 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
     await clickBolt();
     await sleep(700);
     v = await view();
-    check('the bolt opens a menu with Ask, Auto-allow actions and Bypass permissions, Ask marked', v.menuOpen && v.expanded === 'true' && v.names.join('|') === 'Ask|Auto-allow actions|Bypass permissions' && v.checked.join() === 'ask', JSON.stringify(v));
+    check('the bolt opens a menu with Ask, Auto-allow actions and Bypass permissions, Ask marked', v.menuOpen && v.expanded === 'true' && v.names.slice(0, 3).join('|') === 'Ask|Auto-allow actions|Bypass permissions' && v.names[3] === 'Permission settings…' && v.checked.join() === 'ask', JSON.stringify(v));
     check('the Bypass line carries the one-line warning', /won’t ask before acting, reading PDFs, using your signed-in accounts, or sending what it read anywhere/.test(v.descs[2]), v.descs[2]);
     check('the menu says what still applies (AI-off sites, kept-off tabs, hands-off) and that choosing a file still needs the user', /Hands-off/.test(v.note) && /file for an upload still needs you/.test(v.note), v.note);
     check('the menu fits inside the window', v.menuBox && v.menuBox.right <= v.win && v.menuBox.left >= 0, JSON.stringify(v.menuBox));
@@ -147,7 +148,7 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
     check('an armed line expires after a few seconds', (await view()).armed.length === 0 && (await saved()).bypass === false);
     await clickBolt();
 
-    check('the menu is reachable by keyboard: items are real buttons in a menu with radio roles', await ui.evaluate(() => { const m = document.getElementById('perm-menu'); return m.getAttribute('role') === 'menu' && [...m.querySelectorAll('button')].every((b) => b.getAttribute('role') === 'menuitemradio') && document.getElementById('auto-allow').getAttribute('aria-haspopup') === 'menu'; }));
+    check('the menu is reachable by keyboard: items are real buttons in a menu with radio roles', await ui.evaluate(() => { const m = document.getElementById('perm-menu'); return m.getAttribute('role') === 'menu' && [...m.querySelectorAll('button:not(#perm-settings)')].every((b) => b.getAttribute('role') === 'menuitemradio') && document.getElementById('auto-allow').getAttribute('aria-haspopup') === 'menu'; }));
     check('the page has no script errors', errors.length === 0, errors.join(' | '));
   } finally {
     await app.close().catch(() => {});

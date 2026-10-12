@@ -4624,6 +4624,11 @@ function finishReply(bubble, source, { latest = false } = {}) {
 // a second click on the same line within 4 s, turning it down takes one. The composer shows a badge while Bypass is on.
 
 const PERM_MODES = ['ask', 'auto', 'bypass'];
+const PERM_ICONS = { // a shield (asks first), a bolt (acts on its own), a warning triangle (asks nothing)
+  ask: '<path d="M8 1.8 3 3.8v4c0 3 2.2 5 5 6.2 2.8-1.2 5-3.2 5-6.2v-4z"/>',
+  auto: '<path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/>',
+  bypass: '<path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/>',
+};
 let permMode = 'ask';
 let permArmed = null; // { mode, timer }: the level waiting for its confirming click
 const permMenu = Object.assign(document.createElement('div'), { className: 'perm-menu', id: 'perm-menu', hidden: true });
@@ -4639,6 +4644,12 @@ for (const mode of PERM_MODES) {
   permItems.set(mode, item);
   permMenu.append(item);
 }
+const permSettings = Object.assign(document.createElement('button'), { type: 'button', className: 'perm-item perm-settings', id: 'perm-settings' });
+permSettings.setAttribute('role', 'menuitem');
+permSettings.innerHTML = '<span class="perm-name"></span>';
+permSettings.firstChild.textContent = t('sidebar.perm.settings');
+permSettings.onclick = () => { closePermMenu(false); window.lumenPrefs?.openSettingsPage('ask-before-acting'); };
+permMenu.append(permSettings);
 permMenu.append(Object.assign(document.createElement('p'), { className: 'perm-note', id: 'perm-note', textContent: t('sidebar.perm.note') }));
 const permButton = $('auto-allow');
 (permButton.closest('.sidebar-head') || permButton.parentElement).append(permMenu);
@@ -4668,16 +4679,16 @@ if (helpersButton) {
   renderHelpers();
 }
 
-// The composer's persistent indicator: only while Bypass is on; it opens the setting.
+// The composer's persistent indicator: only while Bypass is on; it switches to the next mode, like the header's button.
 const permBadge = document.createElement('button');
 permBadge.type = 'button';
 permBadge.className = 'bypass-badge';
 permBadge.id = 'bypass-badge';
 permBadge.hidden = true;
 permBadge.title = t('composer.bypass.title');
-permBadge.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg><span></span>';
-permBadge.lastChild.textContent = t('composer.bypass');
-permBadge.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('ask-before-acting'));
+permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text"></span></span>';
+permBadge.querySelector('.bb-text').textContent = t('composer.bypass');
+permBadge.addEventListener('click', () => cycleMode()); // [mode cycle] the same click as the header's button (Settings: right-click the button, or the Settings row of its menu)
 $('hands-off')?.after(permBadge);
 
 function disarmPerm() {
@@ -4687,16 +4698,24 @@ function disarmPerm() {
 function renderPerm() {
   permButton.dataset.mode = permMode;
   permButton.setAttribute('aria-pressed', String(permMode !== 'ask'));
-  permButton.title = t(`sidebar.perm.btn.${permMode}`);
-  permButton.setAttribute('aria-label', t('sidebar.perm.label', { mode: t(`sidebar.perm.${permMode}`) })); // the name says the state, not only the feature
-  // Visible state: the bolt alone is easy to miss, so Auto and Bypass say their name beside it ("Ask" shows nothing).
+  // [mode cycle] One click goes to the next mode (Ask > Auto > Bypass > Ask); the tooltip names it. Going up asks for a second click first.
+  const next = nextMode();
+  const nextName = t(`sidebar.perm.${next}`);
+  let tip = permArmed ? t('sidebar.perm.cycle.confirm', { mode: nextName }) : t('sidebar.perm.cycle', { mode: nextName, now: t(`sidebar.perm.${permMode}`) });
+  if (permMode === 'bypass') tip += `
+${t('sidebar.perm.bypass.desc')}`; // what Bypass means, on hover
+  permButton.title = tip;
+  permButton.dataset.next = next;
+  permButton.classList.toggle('armed', Boolean(permArmed));
+  permButton.setAttribute('aria-label', `${t('sidebar.perm.label', { mode: t(`sidebar.perm.${permMode}`) })}. ${tip}`); // the name says the state, not only the feature
+  // Visible state: the icon of the mode and its name, always ("Ask", "Auto", "Bypass").
+  permButton.querySelector('svg').innerHTML = PERM_ICONS[permMode];
   let stateLabel = permButton.querySelector('.perm-state');
-  if (permMode === 'ask') stateLabel?.remove();
-  else {
-    if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
-    stateLabel.textContent = t(`sidebar.perm.short.${permMode}`);
-  }
+  if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
+  stateLabel.textContent = permArmed ? t('sidebar.perm.armed', { mode: t(`sidebar.perm.short.${next}`) }) : t(`sidebar.perm.short.${permMode}`);
   permBadge.hidden = permMode !== 'bypass';
+  permBadge.title = tip;
+  permBadge.dataset.mode = permMode;
   for (const [mode, item] of permItems) {
     const armed = permArmed?.mode === mode;
     item.setAttribute('aria-checked', String(mode === permMode));
@@ -4711,6 +4730,10 @@ async function setPermMode(mode) {
   permMode = PERM_MODES.includes(got) ? got : permMode;
   renderPerm();
 }
+const nextMode = () => PERM_MODES[(PERM_MODES.indexOf(permMode) + 1) % PERM_MODES.length];
+// [mode cycle] The header button and the composer's Bypass badge both come here. Going up keeps the confirming second click the
+// menu always had (a line that says so, 4 s); going down (Bypass > Ask) is one click.
+function cycleMode() { chooseMode(nextMode()); }
 function chooseMode(mode) {
   if (mode === permMode) { closePermMenu(); return; }
   const raising = PERM_MODES.indexOf(mode) > PERM_MODES.indexOf(permMode);
@@ -4738,13 +4761,15 @@ function closePermMenu(refocus = true) {
   renderPerm();
   if (refocus) permButton.focus();
 }
-permButton.onclick = () => (permMenu.hidden ? openPermMenu() : closePermMenu());
+permButton.onclick = () => cycleMode();
+permButton.addEventListener('contextmenu', (e) => { e.preventDefault(); if (permMenu.hidden) openPermMenu(); else closePermMenu(); }); // the full menu (and Settings) is a right-click away
+permButton.addEventListener('keydown', (e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && permMenu.hidden) { e.preventDefault(); openPermMenu(); } }); // ...or an arrow key
 document.addEventListener('mousedown', (e) => { if (!permMenu.hidden && !permMenu.contains(e.target) && !permButton.contains(e.target)) closePermMenu(false); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !permMenu.hidden) { e.preventDefault(); closePermMenu(); } });
 permMenu.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
   e.preventDefault();
-  const items = [...permItems.values()];
+  const items = [...permItems.values(), permSettings];
   const at = items.indexOf(document.activeElement);
   items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
 });

@@ -4893,9 +4893,14 @@ function tabChatMark(tabId) {
   const bound = chatBind.chatOf(tabId);
   const rank = { approval: 4, running: 3, waiting: 2, done: 1 };
   let best = null;
-  for (const id of new Set([bound, pinnedChat(tabId)].filter(Boolean))) {
+  const pinned = pinnedChat(tabId);
+  const chatPage = tabAnywhere(tabId)?.t.managerPage === 'chat';
+  for (const id of new Set([bound, pinned].filter(Boolean))) {
     const run = chatRuns.get(id);
-    const live = runIsLive(run) ? (run.queued ? 'queued' : 'running') : null;
+    // [working-on chip] A reply typed on the chat page has no home tab: a web tab that merely shows the same chat is not "running" for it
+    // (only the tab its tools work in, and the chat page itself, are). A reply started in a tab's own sidebar does mark that tab.
+    const elsewhere = run && !run.deleted && run.homeTab == null && id !== pinned && !chatPage;
+    const live = runIsLive(run) && !elsewhere ? (run.queued ? 'queued' : 'running') : null;
     const s = tabChatsLib.tabStatus({ run: live, approvals: run?.pending.size || 0, unread: id === bound && unreadChats.has(id) });
     if (s && (!best || rank[s] > rank[best])) best = s;
   }
@@ -7091,9 +7096,19 @@ const agentOffLimits = (t) => Boolean(t && (t.settings || (alive(t) && managerPa
 // [agent window] An outside agent's calls (agent.inTask meta `mcp`) run in that agent's own window (ai-agents.js mcpCallTool): a chat page's
 // run, the sidebar's chat and the user's tabs are none of their business.
 const mcpCall = () => Boolean(agent.currentScope()?.mcp);
+// [working-on chip] A chat-page run has no tab until its tools actually need one: then it takes the tab the user last looked at
+// (chatPageRt.pick) and keeps it for the rest of the reply. Asking for the active tab outside a task (the first look at the
+// request, the /btw card) names that tab without taking it, so nothing is marked "working on" or shows the AI's dot for it.
 const agentActiveTab = () => {
-  const pinned = mcpCall() ? null : chatPageRt?.runTarget();
+  const fromPage = !mcpCall() && Boolean(chatPageRt?.runFromPage());
+  const pinned = fromPage ? chatPageRt.runTarget() : null;
   if (pinned != null) return agentTabById(pinned);
+  if (fromPage) {
+    const cand = chatPageRt.pick();
+    const t = cand == null ? null : agentTabById(cand);
+    if (t && agent.currentScope()) { agent.pinTab(t.id); chatPageRt.retarget(t.id); refreshTabMarks(); }
+    return t;
+  }
   const t = activeTab();
   return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t;
 };
@@ -7402,6 +7417,7 @@ agentTargetHook = pushAgentTarget;
 chatPageRt = chatPage.create({
   ipcMain,
   tabs: () => tabs,
+  runLive: (runId) => [...chatRuns.values()].some((r) => r.runId === runId && !r.deleted), // [working-on chip] is that run still on the books (done, failed and cancelled ones leave chatRuns)
   allTabs: () => allTabsEverywhere(),
   alive,
   ui,
@@ -8462,7 +8478,11 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     const leftOut = chatImages.rejectionNotice(rejected);
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
+    const askExtra = { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: screenMode === 'on' || screenMode === 'off' ? screenMode : undefined, fromPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } };
+    // [working-on chip] A chat-page run takes a tab at once only when the request is about the page the user is looking at; any other
+    // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).
+    if (fromChatPage && agent.aboutCurrentPage(askText, askExtra)) { const cand = chatPageRt.pick(); if (cand != null) chatPageRt.retarget(cand); }
+    agent.run(askText, emit, valid, askExtra, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting (0 / "unlimited": no cap); the next waits its turn.
