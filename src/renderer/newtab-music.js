@@ -90,6 +90,7 @@ const LIBRARY_FAIL = (o, why) => (why === 'noPlayer' ? `${o.name}’s player con
   : why === 'noPanel' ? `${o.name} changed its page, so Lumen can’t find your library. Try again; if it stays, switch this card to Now playing.`
   : why === 'collapsed' ? 'Lumen couldn’t open your library panel. Try again.'
   : why === 'timeout' ? `${o.name} didn’t show your library in time. Try again.`
+  : why === 'rate' ? 'Spotify asked Lumen to slow down. Try again in a minute.'
   : why === 'scope' ? 'Sign in again to show your library.'
   : 'Couldn’t read your library.');
 const musicUi = new Map(); // widget id -> { tab, term, open, active, timer, asked: {tab: ms}, scroll: {tab: px} }: what the user did, kept for as long as the page lives

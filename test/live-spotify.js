@@ -162,6 +162,22 @@ const hard = setTimeout(() => { console.error('FAIL  the live check ran longer t
     const d = await settled((x) => x.libraryPending === true);
     return { ok: d.libraryOk === true && d.playlists.length > 0, detail: `ok ${d.libraryOk}, why "${d.libraryWhy}", empty ${d.libraryEmpty}, ${d.playlists.length} rows` };
   });
+  // The same thing the way the user does it: a big card on the new-tab page, the Library tab clicked, and the rows on the card (not the engine's data read directly).
+  await step('Library, in the card: clicking its Library tab shows the library rows (playlists), not a spinner, "Nothing here yet" or an error', async () => {
+    const was = await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1700, 1100); const l = global.__widgets.list().filter((x) => x.type === 'spotify'); global.__widgets.layout([{ id: l[0].id, x: l[0].x, y: l[0].y, w: 8, h: 7 }]); return { id: l[0].id, x: l[0].x, y: l[0].y, w: l[0].w, h: l[0].h }; }); // (a card is large enough for tabs at 8x7; its own size is put back after)
+    try {
+      await waitFor(`Boolean(${card}.querySelector('.mc-tab-library'))`, 20000);
+      await page(`${card}.querySelector('.mc-tab-queue')?.click()`);
+      const t0 = Date.now();
+      await page(`${card}.querySelector('.mc-tab-library').click()`);
+      const rows = `(() => { const p = [...${card}.querySelectorAll('[role=tabpanel]')].find((x) => !x.hidden); return p ? p.querySelectorAll('.mc-row').length : 0; })()`;
+      const ok = await waitFor(`${rows} > 0`, 30000);
+      const shown = await page(`(() => { const p = [...${card}.querySelectorAll('[role=tabpanel]')].find((x) => !x.hidden); return p ? p.textContent.slice(0, 80) : 'no panel'; })()`);
+      return { ok, detail: `after ${Date.now() - t0} ms the Library tab shows: ${shown}`, ms: Date.now() - t0 };
+    } finally {
+      await app.evaluate((_e, r) => { global.__widgets.layout([r]); }, was).catch(() => {});
+    }
+  });
   await step('Up next: the queue answers', async () => {
     await app.evaluate(() => { global.__spotifyEngine.command('tab', 'queue'); });
     const d = await settled((x) => x.queue.pending === true);

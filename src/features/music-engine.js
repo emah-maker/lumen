@@ -27,6 +27,7 @@ const VERIFY_MS = 10e3; // a song asked to play whose track id is not the playin
 const SEARCH_MS = 20e3; // a search with no answer this long after it was asked ends as "no answer" (the page's own wait is shorter; this is for a page that went away)
 const WARM_MS = 30 * 60e3; // the card's search is open (or its box was focused, or a search asked): the hidden page is not unloaded for being idle until this long after
 const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
+const LIBRARY_START_MS = 60e3; // the library asked of a page that is still starting (not ready): it is read the moment the page is ready, so it may wait this long for that
 const LIBRARY_MS = 14e3; // the library asked and not answered this long (the page's own wait is shorter): it ends as a failure, not "Loading…" for ever
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
@@ -136,6 +137,7 @@ function createMusicEngine(deps) {
     if (searchCmd.gen === readyGen) return; // (the document it was asked of is this one: it is on it)
     send(searchCmd.cmd);
   }
+  const libraryLimit = () => (ready ? LIBRARY_MS : LIBRARY_START_MS);
   function askLists(force = false) {
     if (!caps.lists || !ready || (!force && now() - listsAskedAt < LISTS_FRESH_MS)) return;
     listsAskedAt = now();
@@ -160,7 +162,7 @@ function createMusicEngine(deps) {
   // A search kept for a page that never became ready, or asked and never answered, says so (the card stops saying "Searching…"); a kept button just goes.
   function expireQueue() {
     if (results.pending && searchCmd && results.rid === searchCmd.cmd.rid && now() - searchCmd.at > SEARCH_MS) { results = { ...results, pending: false, ok: false, why: 'timeout', detail: 'no answer from the page' }; searchCmd = null; changed(); }
-    if (libraryAskedAt && now() - libraryAskedAt > LIBRARY_MS) { // (a page that never answered: the card says so, and offers Try again)
+    if (libraryAskedAt && now() - libraryAskedAt > libraryLimit()) { // (a page that never answered: the card says so, and offers Try again)
       libraryAskedAt = 0;
       lists.playlists = { items: [], at: now(), signedOut: false, ok: false, why: 'timeout', detail: 'no answer from the page' };
       console.warn(`${tag} library: the page never answered`);
@@ -196,6 +198,7 @@ function createMusicEngine(deps) {
     if (!m) return;
     if (m.t === 'ready') {
       ready = true; readyGen = player.generation ? player.generation() : 0; flushQueue(); resumeSearch();
+      if (libraryAskedAt && wantTab.name === 'library') askLists(true); // (the Library tab was opened while the page was still starting: it is read now, not at some later look)
       if (wantTab.name && ['queue', 'tracks', 'lyrics'].includes(wantTab.name) && now() - wantTab.at < 30 * 60e3) askPage(wantTab.name);
       changed();
       return;
@@ -338,7 +341,7 @@ function createMusicEngine(deps) {
       playlists: listCard(lists.playlists, 25),
       libraryOk: !(lists.playlists && lists.playlists.ok === false), // (false: the page's library could not be read; the card says so and offers Try again)
       libraryWhy: lists.playlists && lists.playlists.ok === false ? lists.playlists.why || 'page' : '',
-      libraryPending: libraryAskedAt > 0 && now() - libraryAskedAt <= LIBRARY_MS, // (asked, no answer yet: the card says "Loading…" where it has no rows to show)
+      libraryPending: libraryAskedAt > 0 && now() - libraryAskedAt <= libraryLimit(), // (asked, no answer yet: the card says "Loading…" where it has no rows to show)
       libraryEmpty: Boolean(lists.playlists) && lists.playlists.ok !== false && !lists.playlists.signedOut && !lists.playlists.items.length,
       queue: pageCard(pageLists.queue),
       tracks: pageCard(pageLists.tracks),
@@ -460,7 +463,12 @@ function createMusicEngine(deps) {
   function tab(name) {
     if (!['queue', 'library', 'tracks', 'lyrics', 'devices', 'search'].includes(name)) return false;
     wantTab = { name, at: now() };
-    if (name === 'library') { askLists(true); return true; }
+    if (name === 'library') {
+      wake(); // (an engine not started yet, or unloaded after an idle, starts now: the tab used to do nothing then, and the card went on to say "Nothing here yet")
+      if (!ready) { libraryAskedAt = now(); if (lists.playlists && lists.playlists.ok === false) lists.playlists = null; changed(); return true; } // (the page is still starting: "Loading…", and it is read the moment the page is ready)
+      askLists(true);
+      return true;
+    }
     if (name === 'search') { warm(); return true; }
     if (name === 'devices') return true;
     wake();

@@ -594,7 +594,8 @@ const CONNECTORS = {
         if (!x.spotifyEngine) return AMV.unavailable('unsupported', x.now());
         const d = await x.spotifyEngine.read();
         const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
-        const merged = shown ? { ...d, ...shown } : d;
+        const lib = SAC.directLibrary(x.ui(c.id)); // (the Web API's library, when the account is connected and it answered; else the page's own)
+        const merged = shown || lib ? { ...d, ...(lib || {}), ...(shown || {}) } : d;
         return c.art === false ? { ...merged, art: '' } : merged;
       }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
@@ -626,11 +627,12 @@ const CONNECTORS = {
         if (!x.spotifyEngine) return false;
         const direct = await statusSearch(c, action, x, cached); // (the Web API answers searches when the account is connected, whatever plays the music)
         if (direct) return direct;
+        if (action.do === 'etab' && action.arg === 'library' && await statusLibrary(c, x, cached, action)) return { local: true }; // (the library too; when it did not answer, the page's own list below)
         return engineAct(x.spotifyEngine, 'Spotify', action, x, cached);
       }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage };
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
@@ -1288,6 +1290,20 @@ async function completedToday(x) {
 // Spotify's card in "Play as Lumen" mode, when the account is also connected to the Web API (a token is kept and the Client ID is there): a search is ONE
 // request (GET /v1/search) instead of two page routes. -> an act() result when it handled the action, else falsy (the engine's page does it).
 const apiConnected = (c, x) => Boolean(x.secret() && SV.effectiveClientId(c.clientId));
+// The Library tab of the engine's card, read from the Web API when the account is connected (five plain requests; no page to scroll). True when it answered (the card
+// has the rows); false when not connected or the API failed (no scope, rate limit, offline): the engine reads the page's own library then.
+async function statusLibrary(c, x, cached, action) {
+  if (!apiConnected(c, x)) return false;
+  const ui = x.ui(c.id);
+  const have = ui.library;
+  if (have && SAC.directLibrary(ui) && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
+  const sctx = { ui, now: x.now, image: x.image, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
+  await SAC.loadTab((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), 'library', sctx, cached).catch(() => {});
+  const got = SAC.directLibrary(ui);
+  if (!got) return false;
+  Object.assign(cached, got);
+  return true;
+}
 async function statusSearch(c, action, x, cached) {
   if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
   if (!apiConnected(c, x)) { if (action.do === 'esearch') SAC.clearSearch(x.ui(c.id)); return false; } // (not connected: the page searches, and no older Web API rows are left over it)
@@ -1692,6 +1708,8 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
+      pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
       ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
       rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)
