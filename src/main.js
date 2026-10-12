@@ -6981,8 +6981,9 @@ app.on('before-quit', () => {
     historyGen++; // (an async write still queued or in flight now skips its rename)
     try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
+  downloads.flush(); // (the lists that save a moment after a change land now)
+  usage.flush();
   quitting = true;
-  quitGuard.arm(); // quitting has a deadline: leftovers are ended and the process exits, so opening Lumen again straight away is never blocked
 });
 const quitGuard = require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -9546,6 +9547,9 @@ app.whenReady().then(async () => {
   firstTabLoaded.then(() => startup.release());
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
+// Registered after every other before-quit handler, so the deadline starts only once all of them have run: their writes are
+// synchronous (temp file and rename) and are never cut short by it.
+app.on('before-quit', () => quitGuard.arm());
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
 // ---- [mac reopen] Clicking the Dock icon after the window closed builds a new window: the old
 // tab and panel views were attached to the dead one, so drop them and restore the saved session.

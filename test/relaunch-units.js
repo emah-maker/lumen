@@ -55,7 +55,7 @@ check('ping: the exit codes of the probe map to live / busy / quitting / none', 
   check('quit: arming starts a watchdog and one timer at the grace period', guard.arm() === true && timers.length === 1 && timers[0][1] === 4000 && JSON.stringify(calls) === '[["backstop",5500]]');
   check('quit: arming twice does nothing more', guard.arm() === false && timers.length === 1);
   timers[0][0]();
-  check('quit: at the deadline children are ended first, then the process exits', JSON.stringify(calls.slice(1)) === '[["kill"],["exit",0]]', JSON.stringify(calls));
+  check('quit: at the deadline the process exits, then (if it is still there) is ended', JSON.stringify(calls.slice(1)) === '[["exit",0],["kill"]]', JSON.stringify(calls));
   const broken = createQuitGuard({ exit: () => calls.push(['exit2']), kill: () => { throw new Error('taskkill missing'); }, backstop: () => {}, setTimer: (fn) => { fn(); return null; }, log: () => {} });
   broken.arm();
   check('quit: a failing kill still exits', calls.some((c) => c[0] === 'exit2'));
@@ -63,19 +63,47 @@ check('ping: the exit codes of the probe map to live / busy / quitting / none', 
 
 // ---- the watchdog process really ends a process that will not quit (a victim this test started), and leaves when it is gone
 const { startBackstop, backstopScript } = require('../src/features/quit-guard');
-check('watchdog: its script is valid JavaScript', (() => { try { new (require('vm').Script)(backstopScript({ pid: 1, ms: 1, platform: 'win32' })); return true; } catch { return false; } })());
+check('watchdog: its script is valid JavaScript', (() => { try { new (require('vm').Script)(backstopScript({ pid: 1, ms: 1 })); return true; } catch { return false; } })());
+
+// ---- the kill set: Lumen's own PID, never its children (the update installer started at will-quit is one)
+{
+  const { killSelf } = require('../src/features/quit-guard');
+  const killed = [];
+  const INSTALLER = 424242;
+  killSelf({ pid: 1111, kill: (pid, sig) => killed.push([pid, sig]) });
+  check('kill set: only Lumen\'s own PID is signalled, and the installer\'s never is', JSON.stringify(killed) === '[[1111,"SIGKILL"]]' && !killed.some(([pid]) => pid === INSTALLER));
+  const script = backstopScript({ pid: 1111, ms: 100 });
+  check('kill set: the watchdog has no tree kill (no taskkill, no /T) and signals one PID', !/taskkill|\/T|spawn/i.test(script) && (script.match(/process\.kill\(pid, "SIGKILL"\)/g) || []).length === 1);
+  check('kill set: the guard module has no tree kill either', !/taskkill/.test(read('src/features/quit-guard.js').replace(/^\/\/.*$/gm, '')));
+}
 
 // ---- wiring in main.js
 {
   const main = read('src/main.js');
   const inst = read('src/features/instance.js');
-  check('wiring: the first before-quit handler arms the quit deadline', /quitting = true;\n\s*quitGuard\.arm\(\);/.test(main) && /createQuitGuard\(\{ exit: \(code\) => app\.exit\(code\) \}\)/.test(main));
+  check('wiring: the deadline is armed by the last before-quit handler, after the ones that write', /createQuitGuard\(\{ exit: \(code\) => app\.exit\(code\) \}\)/.test(main) && main.lastIndexOf("app.on('before-quit'") === main.indexOf("app.on('before-quit', () => quitGuard.arm());") && main.indexOf("app.on('before-quit', () => quitGuard.arm());") > main.indexOf('usage.flush();'));
+  check('wiring: the lists that save a moment after a change (downloads, usage) are flushed at quit, before the deadline', /downloads\.flush\(\);[^\n]*\n\s*usage\.flush\(\);\n\s*quitting = true;/.test(main));
   check('wiring: the second-instance pipe answers "bye" while quitting', /listenForSecondInstances\(app, \(\) => \{[^\n]*\}, \{ isQuitting: \(\) => quitting \}\)/.test(main));
   check('wiring: focusWindow shows a hidden window and makes a new one when none is left', /const focusWindow = \(\) => \{[\s\S]{0,400}createWindow\(\)[\s\S]{0,300}isVisible\(\)\) win\.show\(\)/.test(main));
   check('wiring: the lock waits instead of leaving silently; a timeout is announced', /takeOverLock\(\{/.test(inst) && /outcome === 'timeout'\) tellStuck\(\)/.test(inst));
 }
 
 async function watchdog() {
+  // The installer (a child of Lumen) must survive the watchdog ending Lumen: a "Lumen" that has an "installer" child, both real processes here.
+  {
+    const { spawn } = require('child_process');
+    const lumen = spawn(process.execPath, ['-e', 'const c = require("child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", detached: true }); console.log(c.pid); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const installerPid = await new Promise((resolve) => { lumen.stdout.once('data', (d) => resolve(Number(String(d).trim()))); setTimeout(() => resolve(0), 8000); });
+    let lumenGone = false;
+    lumen.on('exit', () => { lumenGone = true; });
+    startBackstop(500, { pid: lumen.pid });
+    for (let i = 0; i < 80 && !lumenGone; i++) await sleep(100);
+    await sleep(500);
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    check('watchdog: ending Lumen leaves the installer process it started running', installerPid > 0 && lumenGone && alive(installerPid), `installer ${installerPid} lumenGone=${lumenGone}`);
+    if (installerPid > 0) { try { process.kill(installerPid); } catch { /* gone */ } }
+    if (!lumenGone) lumen.kill();
+  }
   const { spawn } = require('child_process');
   const victim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
   let victimGone = false;
