@@ -214,6 +214,8 @@ function netError(err) {
 }
 const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
 const FRESH_NET_MS = 5 * 60e3; // after the browser's session failed and a fresh one worked: the cards stay on the fresh one this long
+const FETCH_CAP_MS = 45e3; // a card's whole fetch (several requests) is given up on after this, so a press of Refresh always ends
+const NET_RESET_CAP_MS = 4e3; // ...and so does dropping dead connections before it
 const NET_RESET_MS = 5e3; // dead sockets and the DNS cache are dropped before a retry at most this often
 // One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
 // last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
@@ -785,6 +787,7 @@ const CONNECTORS = {
   // to Meta and use the key's credit, so nothing is asked until the card is added, the answer is kept
   // for hours, and a typed question is kept in memory only (never stored, no history).
   muse: {
+    costly: true, // every answer costs the person's credit: a press of Refresh keeps the minimum interval (and says so)
     label: 'Muse',
     ttl: 6 * 3600e3,
     secret: 'muse',
@@ -1843,24 +1846,47 @@ function createWidgets(deps) {
   function freshNetwork() {
     if (!deps.resetNetwork || now() - netResetAt < NET_RESET_MS) return Promise.resolve();
     netResetAt = now();
-    return Promise.resolve().then(() => deps.resetNetwork()).catch(() => {});
+    let t;
+    const cap = new Promise((r) => { t = setTimer(r, NET_RESET_CAP_MS); }); // a reset that never answers does not hold the refresh
+    return Promise.race([Promise.resolve().then(() => deps.resetNetwork()).catch(() => {}), cap]).then(() => clearTimer(t));
   }
-  function refresh(w, { force = false, retry = false } = {}) {
+  // user: a person pressed Refresh or Try again. That is always a real fetch: no minimum interval, no cached answer, no rate-limit
+  // pause that hides it (the failure is shown instead), and it joins a refresh already running (the button spins until it ends).
+  function refresh(w, { force = false, retry = false, user = false, after = false } = {}) {
+    if (user) force = true;
+    if (after) { // after a write (an added task): a run that began before the write has the old list, so wait for it and ask again
+      const run = cache.get(w.id)?.pending;
+      if (run) return run.then(() => refresh(w, { after: true, user }), () => refresh(w, { after: true, user }));
+      force = true;
+    }
     const c = connector(w);
     let entry = cache.get(w.id);
     if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, tries: 0, undo: entry?.undo }; cache.set(w.id, entry); }
-    if (entry.pending) return entry.pending;
-    if (entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
+    if (entry.pending) {
+      if (user && !entry.userAsked) { entry.userAsked = true; deps.onUpdate?.(); } // joined: the card now shows it spinning until this run ends
+      return entry.pending;
+    }
+    if (!user && entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = !retry && entry.at && age < (entry.error ? ERROR_TTL : ttl);
     // A card showing an error asks again on Try again (only a double click is held back): the usual 15 s floor kept a click
     // right after an automatic retry from doing anything.
     const floor = entry.error || entry.retrying ? ERROR_CLICK_MS : typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH);
-    if (fresh && (!force || age < floor)) return Promise.resolve(false);
+    // A card that costs money for each answer (Muse) keeps the minimum interval for a press too, but says so on the card.
+    if (user && c.costly && fresh && age < floor && entry.data) {
+      entry.notice = { text: 'Just updated. Press again in a few seconds.', until: now() + 8000 };
+      setTimer(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+      deps.onUpdate?.();
+      return Promise.resolve(false);
+    }
+    if (!user && !after && fresh && (!force || age < floor)) return Promise.resolve(false);
+    if (user) { entry.userAsked = true; entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } forget('projects:'); }
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
-    entry.pending = (entry.netFail ? freshNetwork() : Promise.resolve())
-      .then(() => c.fetch(w, helpers(c.secret)))
+    let capTimer;
+    const capped = (p) => Promise.race([p, new Promise((_, no) => { capTimer = setTimer(() => no(Object.assign(new Error('Couldn’t reach the service in time. Try again.'), { transient: true })), FETCH_CAP_MS); })]);
+    entry.pending = (entry.netFail || (user && entry.error) ? freshNetwork() : Promise.resolve())
+      .then(() => capped(Promise.resolve().then(() => c.fetch(w, helpers(c.secret)))))
       .then((data) => {
         entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
         entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
@@ -1872,7 +1898,8 @@ function createWidgets(deps) {
         entry.netFail = err?.transient === true; // a passing failure (no answer, a reset, a timeout, a busy server), not a refusal
         if (err?.transient === true && !entry.retryAt) scheduleRetry(w, entry);
       })
-      .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
+      .then(() => { clearTimer(capTimer); entry.at = now(); entry.pending = null; entry.userAsked = false; deps.onUpdate?.(); return true; });
+    if (user) deps.onUpdate?.(); // the card starts spinning now, not when the answer comes
     return entry.pending;
   }
   const connector = (w) => CONNECTORS[w.type];
@@ -1891,7 +1918,7 @@ function createWidgets(deps) {
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -2437,6 +2464,7 @@ function createWidgets(deps) {
       action.arg = params.get('arg');
       if (!['today', 'tomorrow', 'nextweek', 'none'].includes(action.arg)) return { invalid: true };
     }
+    if (action.do === 'refresh') action.arg = params.get('arg') === 'auto' ? 'auto' : null;
     if (action.do === 'tdsource') { // the card header's Today / Upcoming / Inbox switch
       action.arg = params.get('arg');
       if (!TV.VIEWS.includes(action.arg)) return { invalid: true };
@@ -2672,7 +2700,7 @@ function createWidgets(deps) {
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
-    if (action.do === 'refresh') return refresh(w, { force: true });
+    if (action.do === 'refresh') return refresh(w, { force: true, user: action.arg !== 'auto' }); // arg=auto: the page's own timer (a card that went stale, a timer that ended)
     if (action.do === 'tdsource') { // the Todoist card's Today / Upcoming / Inbox switch: the card keeps showing the old list until the new one arrives
       const todo = w.type === 'todoist' ? TV.applyView(w.todo, action.arg) : null;
       if (!todo || TV.viewOf(w.todo) === null) return false;
@@ -2725,7 +2753,7 @@ function createWidgets(deps) {
       if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
+      setTimeout(() => refresh(w, { after: true }).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);

@@ -151,7 +151,32 @@ function iconButton(svg, label, onclick) {
   b.addEventListener('click', onclick);
   return b;
 }
-const refreshButton = (w) => iconButton(ICON_REFRESH, `Refresh ${w.title}`, () => widgetAct(w.id, 'refresh'));
+// A press is a real refresh (main never holds it back) and shows at once that it is running: the arrows turn and the button is off until
+// main says the run ended (w.refreshing goes away, setRefreshing below); a page that never hears back lets go after 25 s.
+function pressRefresh(w, btn) {
+  if (btn.disabled) return;
+  btn.dataset.spinSince = String(Date.now());
+  setRefreshButton(btn, true);
+  setTimeout(() => { if (btn.isConnected && btn.disabled) setRefreshButton(btn, false); }, 25e3);
+  widgetAct(w.id, 'refresh');
+}
+function setRefreshButton(btn, on) {
+  btn.classList.toggle('spinning', on);
+  btn.disabled = on;
+  btn.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+function refreshButton(w) {
+  const b = iconButton(ICON_REFRESH, `Refresh ${w.title}`, () => pressRefresh(w, b));
+  b.classList.add('w-refresh');
+  if (w.refreshing) setRefreshButton(b, true);
+  return b;
+}
+// What main says about a card's run, applied without drawing the card again (renderWidgets): its Refresh and Try again stop or keep turning.
+function setRefreshing(cardEl, w) {
+  const on = Boolean(w.refreshing);
+  for (const b of cardEl.querySelectorAll('.w-refresh')) if (b.disabled !== on) setRefreshButton(b, on);
+  for (const b of cardEl.querySelectorAll('.w-retry')) { b.disabled = on; b.textContent = on ? 'Trying…' : 'Try again'; }
+}
 
 // "2:00 PM" or "14:00" from an hour (the widget's clock setting, else the system's).
 function clockText(hour, minute, d) {
@@ -1236,7 +1261,7 @@ const WIDGET_RENDERERS = {
       const left = d.state === 'running' ? Math.max(0, d.endsAt - now) : d.state === 'done' ? 0 : Number(d.left) || 0;
       clock.textContent = fmt(left);
       fill.style.width = `${Math.round((1 - left / total) * 100)}%`;
-      if (d.state === 'running' && left === 0 && !card.el.classList.contains('tm-ended')) { card.el.classList.add('tm-ended'); widgetAct(w.id, 'refresh'); }
+      if (d.state === 'running' && left === 0 && !card.el.classList.contains('tm-ended')) { card.el.classList.add('tm-ended'); widgetAct(w.id, 'refresh', { arg: 'auto' }); }
     };
     if (d.state === 'running') btns.append(btn('Pause', 'pause', true), btn('Reset', 'reset'));
     else if (d.state === 'paused') btns.append(btn('Resume', 'start', true), btn('Reset', 'reset'));
@@ -1563,7 +1588,8 @@ function buildCard(w) {
       const retry = el('button', 'w-btn', 'Try again');
       retry.type = 'button';
       retry.setAttribute('aria-label', `Try ${title} again`);
-      retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+      retry.classList.add('w-retry');
+      retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Trying…'; setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 25e3); widgetAct(w.id, 'refresh'); });
       wrap.append(retry);
       if (w.setup && window.widgetSetup?.can(w.type)) {
         const fix = el('button', 'w-btn', 'Edit settings');
@@ -1591,11 +1617,14 @@ function buildCard(w) {
       const retry = el('button', 'w-btn', 'Try again');
       retry.type = 'button';
       retry.setAttribute('aria-label', `Try ${title} again`);
+      retry.classList.add('w-retry');
+      if (w.refreshing) { retry.disabled = true; retry.textContent = 'Trying…'; }
       retry.addEventListener('click', () => {
         // Say something happened: the card keeps its error until the answer arrives (a failure again looks the same).
+        // Main says when the run ended (setRefreshing); a page that never hears back lets go after 25 s.
         retry.disabled = true;
         retry.textContent = 'Trying…';
-        setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 4000);
+        setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 25e3);
         widgetAct(w.id, 'refresh');
       });
       wrap.append(retry);
@@ -1664,6 +1693,7 @@ function renderWidgets(list) {
       shownWidgets.set(w.id, { key, el: card });
     }
     updateFoot(card, w);
+    setRefreshing(card, w);
     card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
     return card;
   });
@@ -1986,7 +2016,7 @@ function tick() {
   for (const w of lastList.current) {
     // Stocks and Crypto say how often they refresh (a closed market: hourly).
     const after = (w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type];
-    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh'); return; }
+    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh', { arg: 'auto' }); return; }
   }
   const box = document.getElementById('widgets');
   if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
