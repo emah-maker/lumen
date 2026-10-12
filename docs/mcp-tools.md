@@ -178,6 +178,10 @@ Wait until the active tab meets every condition given, up to a timeout. `url` is
 
 At least one of `text`, `url`, `gone`, `network_idle` is needed.
 
+### `verify_changes`
+
+What this run changed in the text fields and editors it typed in, deleted from or scripted, measured now against the start of the run: text size, images, tables, equations, list items and table rows, with what was added and removed. Edits Lumen could not measure (an editor drawn on a canvas, an embedded frame) are listed as such. Call it before saying content is unchanged or edited. It takes no parameters and only reads. See [The AI and your content](ai-content-guard.md), which also covers the card that asks before a typing, Delete or script step removes a lot of content.
+
 ### `get_console`
 
 The tab's console messages and uncaught errors, as one line each: `[err] 12:01:03 TypeError: x is undefined (app.js:120)`. Lumen starts keeping them (the newest 300) when an agent first works in a tab, so the first call shows only what happened since then; the result says when capture began. Page content, so it is wrapped like any other page read.
@@ -456,12 +460,11 @@ Edit a Google Doc without retyping it (Docs draws on a canvas, so there is nothi
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `action` | string | yes | `outline`, `select_section`, `move_section`, `replace`, `style`, `insert_markdown`, `verify`, `undo` or `read`. |
-| `heading` | string |  | A heading's text (a unique start is enough): the section to select or move, the heading to restyle, or the one to insert next to. |
-| `to` | string |  | `move_section`: the heading to move it before or after. |
-| `where` | string |  | `before` or `after` (a heading), or `start` or `end` of the document (`insert_markdown`). |
-| `find`, `replace`, `all` | string, string, boolean |  | `replace`: the text, its replacement, and whether to replace every match (else the first). |
+| `heading` | string |  | A heading's text (a unique start is enough): the section to select or move, or the heading to restyle. |
+| `to` | string |  | `move_section` and `insert_markdown`: `before X` or `after X` (a heading), or `start` or `end` of the document. |
+| `find` | string |  | `replace`: the text to find; `text` is what replaces every match. |
 | `style` | string |  | `style`: `Normal` or `Heading 1` to `Heading 6`. |
-| `text` | string |  | `insert_markdown`: the Markdown. |
+| `text` | string |  | `replace`: the replacement; `insert_markdown`: the Markdown. |
 
 ### `run_macro`
 

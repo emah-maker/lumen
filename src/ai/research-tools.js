@@ -12,7 +12,7 @@ const STYLE_ENUM = [...citations.STYLES, ...citations.EXPORTS];
 
 const FIND_SOURCES_TOOL = {
   name: 'find_sources',
-  description: 'Search scholarly databases (OpenAlex, Crossref, Semantic Scholar, arXiv, PubMed): DOI, open-access PDF, citations, retraction flag. related+doi: who cites a paper, or its references.',
+  description: 'Search scholarly databases (OpenAlex, Crossref, Semantic Scholar, arXiv, PubMed): DOI, open PDF, citations, retraction flag. related+doi: citers or references.',
   input_schema: {
     type: 'object',
     properties: {

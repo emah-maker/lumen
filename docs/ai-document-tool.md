@@ -8,10 +8,10 @@ Google Docs draws its pages on a canvas, so there is nothing for the AI to click
 
 - **outline**: the headings with their level, paragraph number and word count, plus the whole document's counts. It also takes the snapshot that everything else is checked against, before the first edit.
 - **select_section** (`heading`): selects a heading and everything under it, up to the next heading of the same or higher level. The selection is copied and compared with what the export says the section holds (its words, pictures and tables); if it is not exactly that, nothing is changed.
-- **move_section** (`heading`, `where` before or after, `to`): cuts that section and pastes it before or after another, as a real range, so pictures, tables, equations and fonts come with it.
+- **move_section** (`heading`, `to` as `before X` or `after X`): cuts that section and pastes it before or after another, as a real range, so pictures, tables, equations and fonts come with it.
 - **style** (`style`, optionally `heading`): Normal text or Heading 1 to 6, with Docs' own shortcut (Ctrl+Alt+0 to 6).
-- **replace** (`find`, `replace`, `all`): Docs' own Find and replace (Ctrl+H), so the formatting around the text stays.
-- **insert_markdown** (`text`, and `heading` with `where`, or `where` start or end): pastes the Markdown as formatted content (headings, lists, bold, links) at the cursor, a heading, or the start or end.
+- **replace** (`find`, `text`; every match): Docs' own Find and replace (Ctrl+H), so the formatting around the text stays.
+- **insert_markdown** (`text`, and `to` as `before X`, `after X`, `start` or `end`): pastes the Markdown as formatted content (headings, lists, bold, links) at the cursor, a heading, or the start or end.
 - **verify**: compares the document now with the snapshot from before the first edit.
 - **undo**: takes back the AI's edits in this run, step by step, until the document matches the snapshot.
 - **read**: the whole text (the same as `read_page` on a Doc).
@@ -26,7 +26,7 @@ Reformatting a document means moving and styling what is there. The AI is told n
 - Any key that would remove more than a fifth of the words, or a picture, table or equation, asks first, with what it would remove.
 - `insert_markdown` at the cursor with everything selected is refused.
 
-The cards ask even with **Auto-allow** on. With **Bypass permissions** on there is no card: Lumen shows a step saying what was allowed.
+These are the same cards as the general content check ([the AI and your content](ai-content-guard.md)), which measures a Google Doc through its export (it cannot read the canvas), so its "Undo the AI's edits on this page" and the AI's `verify_changes` cover Docs too. The cards ask even with **Auto-allow** on. With **Bypass permissions** on there is no card: Lumen shows a step saying what was allowed.
 
 ## It checks its own work
 

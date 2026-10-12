@@ -1,7 +1,8 @@
 // YouTube with the built-in ad blocker, in a real Lumen window (needs the network: skips cleanly, exit 0, when
 // YouTube can't be reached or answers with a consent page). A throwaway profile; no sign-in, no account actions.
 // A watch page must start playing with no ad overlay and no "ad blockers violate" dialog; the feed and search
-// pages must show no ad slots; the engine must carry the current YouTube rules.
+// pages must show no ad slots; the engine must carry the current YouTube rules; a pause the user makes holds even
+// when the enforcement dialog shows, while a pause the dialog makes is undone.
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 
@@ -70,6 +71,34 @@ const reachable = async () => {
   check('watch page: no "ad blockers violate" dialog', ok.length > 5 && !ok.some((s) => s.wall), 'dialog seen');
   const last = ok[ok.length - 1] || {};
   check('watch page: playback starts and advances', ok.some((s) => s.time > 3) && last.time > ok[0].time, JSON.stringify([ok[0], last]));
+
+  // Controls: a pause the user makes holds, even when YouTube shows (and re-renders) its enforcement dialog, which the
+  // ad fallback answers by resuming playback; a pause the dialog itself makes, with no input from the user, is undone.
+  {
+    const wc = (fn, arg) => app.evaluate((_e, [f, a]) => global.__agent.browser.activeTab().webContents[f](a), [fn, arg]);
+    const paused = () => js(`document.querySelector('video.html5-main-video')?.paused`);
+    await go('https://www.youtube.com/watch?v=jNQXAC9IVRw');
+    await ui.waitForTimeout(5000);
+    for (let i = 0; i < 6 && (await paused()) !== false; i++) { await js(`document.querySelector('video.html5-main-video')?.play().catch(() => {})`); await ui.waitForTimeout(1500); }
+    const [cx, cy] = await js(`(() => { const r = document.getElementById('movie_player').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
+    const click = async () => { await wc('sendInputEvent', { type: 'mouseMove', x: cx, y: cy }); await wc('sendInputEvent', { type: 'mouseDown', x: cx, y: cy, button: 'left', clickCount: 1 }); await wc('sendInputEvent', { type: 'mouseUp', x: cx, y: cy, button: 'left', clickCount: 1 }); };
+    const showWall = () => js(`(() => { const d = document.createElement('tp-yt-paper-dialog'); const w = document.createElement('ytd-enforcement-message-view-model'); w.textContent = 'Ad blockers violate the Terms of Service'; d.appendChild(w); document.querySelector('ytd-app').appendChild(d); window.__lumenWall = d; })()`);
+    const hideWall = () => js(`window.__lumenWall && window.__lumenWall.remove()`);
+    await click();
+    await ui.waitForTimeout(800);
+    const userPaused = await paused();
+    const held = [];
+    for (let i = 0; i < 3; i++) { await showWall(); await ui.waitForTimeout(1000); held.push(await paused()); await hideWall(); await ui.waitForTimeout(500); }
+    check('controls: a click on the video pauses it', userPaused === true, userPaused);
+    check('controls: the pause holds while the enforcement dialog appears and re-renders', held.every((p) => p === true), JSON.stringify(held));
+    await click(); // play again (the user's own click)
+    await ui.waitForTimeout(2500); // (out of the user-input window)
+    await showWall();
+    await js(`document.querySelector('video.html5-main-video').pause()`); // the dialog's own pause, no input from the user
+    await ui.waitForTimeout(1200);
+    check('controls: a pause the dialog makes on its own is undone', (await paused()) === false, await paused());
+    await hideWall();
+  }
 
   // The feed and search: no ad slots on screen.
   for (const [label, target] of [['home feed', 'https://www.youtube.com/'], ['search results', 'https://www.youtube.com/results?search_query=music']]) {

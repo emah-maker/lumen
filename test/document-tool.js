@@ -91,14 +91,14 @@ const fx = require('./fixtures/docs-like');
   let r = await step('document', { action: 'outline' });
   check('outline: headings with levels and the whole-document counts', /H1 Abstract/.test(r.out) && /H2 Setup/.test(r.out) && /3 images, 1 tables, 1 equations/.test(r.out), r.out);
 
-  r = await step('document', { action: 'move_section', heading: 'Results', where: 'before', to: 'Methods' });
+  r = await step('document', { action: 'move_section', heading: 'Results', to: 'before Methods' });
   let h = await heads();
   let c = await counts();
   check('move_section: the headings are in the new order', h.join('|') === 'H1:Abstract|H1:Results|H1:Methods|H2:Setup|H1:Discussion', `${h.join('|')} / ${r.out}`);
   check('move_section: every picture, equation and table came with it, and no words were lost (cut and paste, no retyping)', c.img === 3 && c.eq === 1 && c.tbl === 1 && c.words === c0.words, JSON.stringify(c));
   check('move_section: the result says it was checked against the version before the edits', /same words, same pictures, tables and equations/.test(r.out), r.out);
 
-  r = await step('document', { action: 'move_section', heading: 'Abstract', where: 'after', to: 'Discussion' });
+  r = await step('document', { action: 'move_section', heading: 'Abstract', to: 'after Discussion' });
   h = await heads();
   c = await counts();
   check('move_section after the last section: it ends the document, the counts are the same', h[h.length - 1] === 'H1:Abstract' && h[0] === 'H1:Results' && c.img === 3 && c.eq === 1 && c.tbl === 1, `${h.join('|')} ${JSON.stringify(c)} / ${r.out}`);
@@ -107,16 +107,19 @@ const fx = require('./fixtures/docs-like');
   h = await heads();
   check('style: Setup becomes a Heading 3 (Ctrl+Alt+3)', h.includes('H3:Setup') && !h.includes('H2:Setup'), `${h.join('|')} / ${r.out}`);
 
-  r = await step('document', { action: 'replace', find: 'constant', replace: 'stiffness', all: true });
+  r = await step('document', { action: 'replace', find: 'constant', text: 'stiffness' });
   const text = await doc("document.getElementById('doc').textContent");
   check('replace all: the editor\'s Find and replace changed every match, the pictures and table are untouched', !/constant/i.test(text) && /spring stiffness/.test(text) && /Replaced all/.test(r.out) && (await counts()).img === 3 && (await counts()).tbl === 1, r.out);
 
-  r = await step('document', { action: 'insert_markdown', text: '## Appendix\n\nExtra **notes** here.', where: 'end' });
+  r = await step('document', { action: 'insert_markdown', text: '## Appendix\n\nExtra **notes** here.', to: 'end' });
   h = await heads();
   check('insert_markdown: a real heading and bold, not literal # or **', h.includes('H2:Appendix') && (await doc("document.querySelectorAll('#doc b,#doc strong').length")) >= 1 && !/##|\*\*/.test(await doc("document.getElementById('doc').textContent")), `${h.join('|')} / ${r.out}`);
 
   r = await step('document', { action: 'verify' });
   check('verify: after the edits it checks out against the snapshot from before the first one', /same words/.test(r.out) && /my edits so far/.test(r.out), r.out);
+
+  r = await step('verify_changes', {});
+  check('verify_changes: the content check measures the Doc through its export (not "could not be measured"), with the run\'s edits', /editor/.test(r.out) && !/could not be measured/.test(r.out) && /images 3 → 3/.test(r.out) && /tables 1 → 1/.test(r.out), r.out);
 
   r = await step('document', { action: 'undo' });
   h = await heads();

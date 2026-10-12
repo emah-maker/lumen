@@ -17,6 +17,7 @@ const PAGES = {
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
   'ai-document-tool': { title: 'The AI and Google Docs', file: 'docs/ai-document-tool.md' },
+  'ai-content-guard': { title: 'The AI and your content', file: 'docs/ai-content-guard.md' },
   'mac-signing': { title: 'macOS signing', file: 'docs/mac-signing.md' },
   changelog: { title: 'Changelog', file: 'CHANGELOG.md' },
 };

@@ -120,7 +120,7 @@ function begin(host, doc) {
   const st = host.state;
   const id = host.docId();
   if (!st.doc || st.doc.id !== id) {
-    st.doc = { id, snap: d.takeSnapshot({ html: doc.html, text: doc.text, rev: new Date().toISOString(), at: Date.now() }), undoSteps: 0, expect: { removedWords: 0, addedWords: 0 }, edits: [] };
+    st.doc = { id, snap: d.takeSnapshot({ html: doc.html, text: doc.text, rev: new Date().toISOString(), at: Date.now() }), undoSteps: 0, expect: { removedWords: 0, addedWords: 0 }, edits: [], guardFirst: d.guardSnapshot({ text: doc.text, html: doc.html }) };
   }
   return st.doc;
 }
@@ -151,6 +151,11 @@ async function verifyNow(host, run, { expectOrder } = {}) {
   const { res } = check(host, run, doc);
   const orderOk = !expectOrder || doc.parsed.headings.map((h) => h.text).join('|') === expectOrder.join('|');
   return { doc, res, orderOk, text: d.verifyMessage(res, run.snap) };
+}
+
+// An edit joins the run's journal (the content guard's: "Undo the AI's edits on this page", verify_changes).
+function noteEdit(host, run, doc, steps) {
+  try { if (host.noteEdit) host.noteEdit(run.guardFirst, d.guardSnapshot({ text: doc.text, html: doc.html }), steps); } catch { /* the journal is a convenience */ }
 }
 
 // ---- actions ----
@@ -224,6 +229,7 @@ async function moveSection(host, input) {
   run.edits.push(`moved "${hs[f.index].text}"`);
   const names = plan.order.map((i) => hs[i].text);
   const v = await verifyNow(host, run, { expectOrder: names });
+  noteEdit(host, run, v.doc, 2 + tidied);
   if (!v.orderOk || !v.res.ok) {
     await host.undo(2 + tidied);
     run.undoSteps -= 2 + tidied;
@@ -257,6 +263,7 @@ async function styleAction(host, input) {
   run.expect.headings = input.heading ? doc.parsed.headings.map((h, i) => (i === styledIndex ? { level: st.level, text: h.text } : { level: h.level, text: h.text })).filter((h) => h.level > 0) : 'any';
   run.edits.push(`styled ${what}`);
   const v = await verifyNow(host, run);
+  noteEdit(host, run, v.doc, 1);
   return `Applied ${st.level ? `Heading ${st.level}` : 'Normal text'} to ${what}. ${v.text}`;
 }
 
@@ -279,6 +286,7 @@ async function replaceAction(host, input) {
   if (doc.parsed.headings.some((h) => h.text.toLowerCase().includes(input.find.toLowerCase()))) run.expect.headings = 'any';
   run.edits.push(`replaced "${input.find}"`);
   const v = await verifyNow(host, run);
+  noteEdit(host, run, v.doc, 1);
   return `Replaced ${input.all ? `all ${hits}` : 'the first'} match${input.all && hits !== 1 ? 'es' : ''} of "${input.find}" with the editor's own Find and replace (formatting around it untouched). ${v.text}`;
 }
 
@@ -315,6 +323,7 @@ async function insertMarkdown(host, input) {
   run.expect.headings = 'any';
   run.edits.push('inserted text');
   const v = await verifyNow(host, run);
+  noteEdit(host, run, v.doc, 1);
   return `Inserted the text as formatted content (headings, lists, bold and links become real formatting). ${v.text}`;
 }
 
@@ -341,6 +350,7 @@ async function undoAction(host) {
   while (!ok && pressed < n + 3) { await host.undo(1); pressed++; ok = await same(); }
   if (!ok && pressed > n) { await host.redo(pressed - n); pressed = n; }
   const v = await verifyNow(host, run);
+  if (v.res.ok && host.noteUndo) { try { host.noteUndo(run.guardFirst); } catch { /* journal only */ } }
   const steps = `${pressed} edit step${pressed === 1 ? '' : 's'}`;
   return `Undid my ${steps} (${done.join('; ')}). ${v.res.ok ? 'The document matches the version from before my edits.' : `${v.text} File > Version history > See version history can restore ${run.snap.rev}.`}`;
 }
@@ -350,7 +360,20 @@ const ACTIONS = {
   style: [styleAction, true], insert_markdown: [insertMarkdown, true], verify: [verifyAction, false], undo: [undoAction, true],
 };
 
-async function run(host, input) {
+// The tool's few parameters, spread out for the actions: to = "before X" / "after X" (a heading) or "start" / "end"; text = what replace
+// puts in, or the Markdown to insert; replace changes every match.
+function normalize(input) {
+  const out = { ...input };
+  const to = String(input.to || '').trim();
+  const m = /^(before|after)\s+(.+)$/i.exec(to);
+  if (m) { out.where = m[1].toLowerCase(); out.to = m[2].trim(); } else if (/^(start|end)$/i.test(to)) { out.where = to.toLowerCase(); out.to = undefined; }
+  if (out.action === 'insert_markdown' && out.to) out.heading = out.to;
+  if (out.action === 'replace') { out.replace = input.text; out.all = true; }
+  return out;
+}
+
+async function run(host, rawInput) {
+  const input = normalize(rawInput || {});
   const action = String(input?.action || '');
   if (action === 'read') return host.read();
   const entry = ACTIONS[action];

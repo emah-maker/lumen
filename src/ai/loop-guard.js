@@ -6,7 +6,7 @@
 // - cacheLastTool: puts the prompt-cache breakpoint on the last tool definition.
 
 // Repeating these is normal (paging, waiting, re-reading), so only failures count for them.
-const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover', 'get_console', 'get_network']);
+const BENIGN = new Set(['scroll', 'press_key', 'wait', 'wait_for', 'screenshot', 'read_page', 'find', 'list_tabs', 'hover', 'get_console', 'get_network', 'verify_changes']);
 
 // Reads whose identical repeat (same input, nothing done in between) can only return the same thing.
 const STATIC_READS = new Set(['find_sources', 'delegate', 'read_page', 'find', 'list_tabs', 'read_tabs', 'web_search', 'read_urls', 'read_pdf', 'analyze_posts', 'video_overview', 'video_frames']);
