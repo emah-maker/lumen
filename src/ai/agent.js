@@ -3,8 +3,9 @@ let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only 
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides text from the editor's export
-const docTool = require('./document-tool'); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
-const docEdit = require('./doc-edit');
+const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/perf-budget.js)
+const docTool = lazy(() => require('./document-tool')); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
+const docEdit = lazy(() => require('./doc-edit'));
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
@@ -30,7 +31,7 @@ const chatImages = require('../features/chat-images'); // images a message carri
 const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
-const handoff = require('./handoff'); // [no handoff] the give-up detector: a reply that hands the work back gets one more try
+const handoff = lazy(() => require('./handoff')); // [no handoff] the give-up detector: a reply that hands the work back gets one more try
 const pdfText = require('../features/pdf-text');
 const remotePdf = require('./remote-pdf'); // read_urls on a web PDF: its text, rows kept
 const aiFiles = require('../features/ai-files'); // [ai files] files the AI made, shown as cards in the reply
