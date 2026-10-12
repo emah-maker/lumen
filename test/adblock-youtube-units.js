@@ -77,7 +77,7 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
 
   // ---- The fallback script, run against a stand-in page
   function page({ adShowing, hasSkip = false, duration = 20, wall = false, muted = false, rate = 1 }) {
-    const log = { clicks: [], played: 0, timers: [], timeouts: [], observers: [], cleared: 0 };
+    const log = { clicks: [], played: 0, timers: [], timeouts: [], observers: [], cleared: 0, listeners: {} };
     const video = { duration, currentTime: 0, playbackRate: rate, muted, paused: wall, ended: false, play() { log.played++; this.paused = false; return Promise.resolve(); } };
     const skipButton = { click() { log.clicks.push('skip'); } };
     const classes = new Set(adShowing ? ['html5-video-player', 'ad-showing'] : ['html5-video-player']);
@@ -89,14 +89,15 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
     const document = {
       body: { style: { removeProperty() {} } },
       documentElement: {},
-      addEventListener() {},
+      addEventListener(type, fn) { (log.listeners[type] = log.listeners[type] || []).push(fn); },
       getElementById: (id) => (id === 'movie_player' ? player : null),
       querySelector: (sel) => (sel === 'ytd-enforcement-message-view-model' ? (state.wall ? {} : null) : sel === 'video.html5-main-video' ? video : player),
     };
     class FakeObserver { constructor(fn) { log.observers.push(fn); } observe() {} }
     const ctx = vm.createContext({ document, MutationObserver: FakeObserver, setInterval: (fn) => { log.timers.push(fn); return log.timers.length; }, clearInterval: (id) => { log.timers[id - 1] = null; log.cleared++; }, setTimeout: (fn) => { log.timeouts.push(fn); return log.timeouts.length; }, isFinite });
     vm.runInContext(Y.FALLBACK_SCRIPT, ctx);
-    return { log, video, classes, state, tick: () => { log.observers.forEach((f) => f()); log.timeouts.splice(0).forEach((f) => f()); log.timers.forEach((f) => f && f()); }, live: () => log.timers.filter(Boolean).length };
+    const fire = (type, e) => (log.listeners[type] || []).forEach((fn) => fn(e));
+    return { log, video, classes, state, fire, tick: () => { log.observers.forEach((f) => f()); log.timeouts.splice(0).forEach((f) => f()); log.timers.forEach((f) => f && f()); }, live: () => log.timers.filter(Boolean).length };
   }
   const idle = page({ adShowing: false });
   idle.tick(); idle.tick();
@@ -118,6 +119,13 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
   const walled = page({ adShowing: false, wall: true });
   walled.tick(); walled.tick();
   check('fallback script: behind the enforcement dialog the paused video is resumed, once', walled.log.played === 1, walled.log.played);
+  const mine = page({ adShowing: false });
+  mine.tick();
+  mine.fire('pointerdown', { isTrusted: true }); // the user clicks the video, it pauses
+  mine.video.paused = true; mine.video.classList = { contains: (c) => c === 'html5-main-video' };
+  mine.fire('pause', { target: mine.video });
+  mine.state.wall = true; mine.tick(); mine.state.wall = false; mine.tick(); mine.state.wall = true; mine.tick(); // the dialog re-renders
+  check('fallback script: a pause the user made holds while the enforcement dialog appears and re-renders', mine.log.played === 0 && mine.video.paused === true, mine.log.played);
 
   // ---- Scriptlets that patch JSON.stringify (YouTube has six edit-inbound-object ones), run one after another.
   // The text below has the shape of the list's scriptlet (names as minified there): its own safeSelf() snapshots
