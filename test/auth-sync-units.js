@@ -53,6 +53,22 @@ function makeServer(first = 'rt-0') {
     check('no temp files are left behind', fs.readdirSync(path.join(tmp, 'p')).every((f) => !/\.lumen-/.test(f)), fs.readdirSync(path.join(tmp, 'p')).join());
   }
 
+  // ---------- a copy-back that meets a file something has open (Windows: EPERM/EBUSY on the rename) ----------
+  {
+    const dir = path.join(tmp, 'busy'); const from = path.join(dir, 'own.json'); const to = path.join(dir, 'real.json');
+    put(from, 'v2'); put(to, 'v1'); fs.utimesSync(from, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+    const realRename = fs.promises.rename; const realRenameSync = fs.renameSync; let busy = 3; let busySync = 3;
+    fs.promises.rename = async (a, b) => { if (busy-- > 0) { const e = new Error('EPERM: operation not permitted, rename'); e.code = 'EPERM'; throw e; } return realRename(a, b); };
+    fs.renameSync = (a, b) => { if (busySync-- > 0) { const e = new Error('EBUSY: resource busy or locked, rename'); e.code = 'EBUSY'; throw e; } return realRenameSync(a, b); };
+    let copied = false; let copiedSync = false;
+    try {
+      copied = await authSync.copyIfNewer(from, to);
+      put(to, 'v1'); busySync = 3; authSync.copyAtomicSync(from, to, fs.statSync(from)); copiedSync = get(to) === 'v2';
+    } finally { fs.promises.rename = realRename; fs.renameSync = realRenameSync; }
+    check('a copy-back whose rename is refused for a moment (the file is open elsewhere) is retried and lands', copied && copiedSync, JSON.stringify({ copied, copiedSync }));
+    check('no temp file is left behind by the retried copy', fs.readdirSync(dir).every((n) => !/.lumen-/.test(n)), fs.readdirSync(dir).join());
+  }
+
   // ---------- Codex: parallel chats, each with its own CODEX_HOME ----------
   {
     const root = path.join(tmp, 'codex'); const userHome = path.join(root, 'user');
