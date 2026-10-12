@@ -41,8 +41,10 @@ check('export url', d.gdocsExportUrl('https://docs.google.com/document/d/abc-1_2
 const before = d.takeSnapshot({ html: HTML, rev: 'r7' });
 const movedHtml = HTML.replace(/<h1>Methods[\s\S]*?(?=<h1>Results)/, '').replace('</body>', '<h1>Methods</h1><p>A mass hung from a spring.</p><h2>Setup</h2><p>Clamp the stand.</p><img src="a.png"><table><tr><td>1</td></tr></table></body>');
 const afterMove = d.takeSnapshot({ html: movedHtml });
-const okMove = d.compareSnapshots(before, afterMove);
+const okMove = d.compareSnapshots(before, afterMove, { headings: afterMove.headings });
+const reordered = d.compareSnapshots(before, afterMove);
 check('verify: a section move keeps words and object counts', okMove.ok, JSON.stringify(okMove));
+check('verify: a changed heading order is reported unless it was planned', !reordered.ok && !reordered.headingsOk && /headings/.test(reordered.problems.join()), JSON.stringify(reordered));
 check('verify message says unchanged only when ok', /same words/.test(d.verifyMessage(okMove, before)));
 
 const droppedImg = d.takeSnapshot({ html: movedHtml.replace('<img src="g1.png">', '') });
@@ -53,7 +55,7 @@ check('verify message names the loss and offers restore', /images: 3 before, 2 n
 const retyped = d.takeSnapshot({ text: 'Abstract We measured the spring constant. Methods A mass hung from a spring.', html: '<h1>Abstract</h1><h1>Methods</h1>' });
 const lost = d.compareSnapshots(before, retyped);
 check('verify catches retyped, shortened text with lost tables and images', !lost.ok && lost.lostWords > 5 && lost.objects.tables && lost.objects.images && lost.objects.equations, JSON.stringify(lost));
-check('expected removals are allowed', d.compareSnapshots(before, d.takeSnapshot({ html: HTML.replace('Discussion', '') }), { removedWords: 1 }).ok);
+check('expected removals are allowed', d.compareSnapshots(before, d.takeSnapshot({ html: HTML.replace('Discussion', '') }), { removedWords: 1, headings: 'any' }).ok);
 check('reordered words alone are fine (it is a bag)', d.compareSnapshots(d.takeSnapshot({ text: 'a b c' }), d.takeSnapshot({ text: 'c a b' })).ok);
 
 // destructive check

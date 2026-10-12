@@ -3,6 +3,8 @@ let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only 
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides text from the editor's export
+const docTool = require('./document-tool'); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
+const docEdit = require('./doc-edit');
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
@@ -100,7 +102,7 @@ How to work:
 - Current page: use its attached text if enough, else read_page mode:"compact" or find.
 - "This", "here", "on screen" with no screenshot attached: call screenshot first; never ask the user to describe it.
 - Go direct: navigate to a URL you know or can build. Batch known steps, make independent calls together, and use observe, read or since_last rather than re-reading.
-- Moving text in an editor (Google Docs): select it (click, then Shift+click or Shift+arrows), press_key Ctrl+X, click the target, Ctrl+V. Not the app's Edit menu. Re-read the doc instead of repeated undo.
+- Google Docs: use the document tool (outline first); move text by cut and paste, never retype or select-all and replace. Say "unchanged" only after document verify.
 - Verify an action that matters. Don't repeat a failed step; after two failures change route or say what blocks you.
 - Lumen is the user's browser: show what you make (small diagrams inline, as an svg block), never tell them to open a file in a browser.
 - Stop once answered, with a short written answer citing the page or URL a fact came from.
@@ -461,6 +463,19 @@ const TOOLS = [
         metric: { type: 'string', enum: ['views', 'engagement', 'auto'] },
       },
       required: ['posts'],
+    },
+  },
+  {
+    name: 'document',
+    description: 'Google Docs without retyping: outline, select_section, move_section, replace, style, insert_markdown, verify, undo, read.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['outline', 'select_section', 'move_section', 'replace', 'style', 'insert_markdown', 'verify', 'undo', 'read'] },
+        heading: { type: 'string' }, to: { type: 'string' }, where: { type: 'string', enum: ['before', 'after', 'start', 'end'] },
+        find: { type: 'string' }, replace: { type: 'string' }, all: { type: 'boolean' }, style: { type: 'string' }, text: { type: 'string' },
+      },
+      required: ['action'],
     },
   },
   {
@@ -914,7 +929,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ONE_OF = { annotate: [['marks', 'clear']], click: [['element_id', 'text']], wait_for: [['text', 'url', 'gone', 'network_idle']], drag: [['from_id', 'from_x'], ['to_id', 'to_x']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
 // (handle_dialog: accepting a page's confirm is part of the interaction the user allowed on that site, so it asks like a click does.)
-const ACTING_TOOLS = new Set(['click', 'click_at', 'drag', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', ...snapshot.ACTING]);
+const ACTING_TOOLS = new Set(['click', 'click_at', 'drag', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', 'upload_file', 'handle_dialog', 'document', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
 // (delegate is not here: it marks the chat tainted itself once a helper has read a page, delegate(), so the helpers' own first reads are judged like the chat's)
@@ -1204,6 +1219,7 @@ function captchaNote(url) {
 const hostOf = (url) => {
   try { return new URL(normalizeUrl(url)).host; } catch { return url; }
 };
+const docEditorOf = (url) => (officeDocs.exportTarget(url, officeDocs.allowLocalHosts())?.kind === 'doc' ? 'gdocs' : docEdit.detectEditor(url));
 const quote = (s, max = 40) => `“${s.length > max ? `${s.slice(0, max - 1)}…` : s}”`;
 
 // [bypass permissions] The step shown for a card that was answered allow by itself: what the card asked, in a few words.
@@ -1401,7 +1417,7 @@ async function searchWebInView(query) {
 
 // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
 // Also used for chats in the history list and for exporting one (main.js).
-const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
+const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll', 'document']);
 // settings.compactedItems: turns an API chat's /compact replaced with a summary (features/chat-compact.js), still shown.
 // The extra fields of a transcript item (see transcriptFor).
 function itemExtras(chatMessages, m, mi) {
@@ -3788,6 +3804,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
       if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
+      if (name === 'document') return { outline: 'Reading the document outline', select_section: `Selecting the section ${quote(String(input.heading || ''), 40)}`, move_section: `Moving the section ${quote(String(input.heading || ''), 40)}`, replace: `Replacing ${quote(String(input.find || ''), 40)}`, style: 'Applying a style', insert_markdown: 'Inserting formatted text', verify: 'Checking the document against before my edits', undo: 'Undoing my edits to the document', read: 'Reading the document' }[input.action] || 'Working on the document';
       if (name === 'run_macro') return input.list === true || !input.name ? 'Listing your macros' : `Running your macro ${quote(String(input.name), 40)}`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
@@ -4132,6 +4149,126 @@ ${prompt}` : prompt), historyImages: [] };
     const { lasting } = this.undoSummary(log) || { lasting: [] };
     return { ok: true, done: [...new Set(done)], skipped, lasting };
   }
+  // ---- [document tool] ai/document-tool.js, ai/doc-edit.js (docs/ai-document-tool.md)
+  // (the editor a tab holds: 'gdocs' for a Google Doc, and for a fixture page under test)
+  // Where the run's document state lives (the snapshot taken before the first edit, the undo count): the run's scope, else the agent.
+  docStore() { return taskScope.getStore() || this; }
+
+  // The card for a change that would delete or replace a lot (or any picture, table, equation). Asks even with Auto-allow on; Bypass
+  // answers allow and shows a step (askApproval). No run to ask in (a direct call): no.
+  async docConfirm(wc, message) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate) return false;
+    const site = siteOf(wc.getURL()) || 'this page';
+    return Boolean(await this.askApproval(site, gate.emit, gate.signal, { action: 'tool', who: gate.who, title: `${gate.who} wants to change the document: ${message}`, args: message }));
+  }
+
+  // select-all, then type / paste / Delete in a Docs tab (the AI's own press_key and type_text): the whole text replaced.
+  async docRawGuard(name, input) {
+    if (name !== 'press_key' && name !== 'type_text' && name !== 'click' && name !== 'click_at') return;
+    let wc = null;
+    try { wc = this.taskTab()?.webContents; } catch {}
+    if (!wc || docEditorOf(wc.getURL()) !== 'gdocs') return;
+    const store = this.docStore();
+    if (store.docInternal) return; // the document tool's own keys
+    const message = await docTool.rawEditGuard(this.documentHost(wc), store.docRaw ||= {}, name, input || {});
+    if (message && !(await this.docConfirm(wc, message))) throw new Error('The user did not allow replacing the whole document. Do not retype it. Move sections with the document tool (move_section), restyle with style, and change wording with replace.');
+  }
+
+  // What document-tool.js drives: the tab's keys, clipboard, export and approval card.
+  documentHost(wc) {
+    const url = wc.getURL();
+    const store = this.docStore();
+    const system = () => this.browser.clipboard || require('electron').clipboard;
+    const target = officeDocs.exportTarget(url, officeDocs.allowLocalHosts());
+    const key = async (k, modifiers = []) => { await this.runTool('press_key', { key: k, modifiers }); };
+    // The clipboard is the user's: every read or write is bracketed by a snapshot and restore.
+    const withClipboard = async (fn) => {
+      const cb = system();
+      const snap = await editKeys.snapshotClipboard(cb);
+      try { return await fn(cb); } finally { await editKeys.restoreClipboard(cb, snap); }
+    };
+    const dlg = "const box=[...document.querySelectorAll('[role=dialog],.modal-dialog,.docs-findandreplacedialog')].find((b)=>b.getClientRects().length);";
+    const host = {
+      state: (store.docRun ||= {}),
+      editor: docEditorOf(url),
+      sleep,
+      docId: () => target?.id || url,
+      key,
+      insert: async (text) => { if (await this.focusInFrame(wc)) await frames.insertText(wc, text); else wc.insertText(text); },
+      read: () => this.runTool('read_page', {}),
+      confirm: (message) => this.docConfirm(wc, message),
+      undo: async (n) => { for (let i = 0; i < n; i++) { wc.undo(); await sleep(150); } },
+      redo: async (n) => { for (let i = 0; i < n; i++) { wc.redo(); await sleep(150); } },
+      fetchExport: async (format) => {
+        if (!target) return null;
+        const r = await runScript(wc, officeDocs.fetchScript(target.exportUrl.replace('format=txt', `format=${format}`)), 20000).catch(() => null);
+        return r && r.ok && typeof r.text === 'string' && r.text.trim() ? r.text : null;
+      },
+      // What is selected: its words and how many pictures, tables and equations, by copying it (the copy's html says).
+      selectionInfo: () => withClipboard(async (cb) => {
+        cb.clear();
+        wc.copy();
+        let text = '', html = '';
+        for (let i = 0; i < 20 && !text && !html; i++) {
+          await sleep(30);
+          for (const item of (await cb.read()) || []) {
+            if (item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+            if (item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+          }
+        }
+        const parsed = docEdit.parseDocHtml(html);
+        // A copied picture can put its alt text into the plain text: not the document's words.
+        let body = text || parsed.text;
+        for (const alt of html.matchAll(/<img\b[^>]*\balt="([^"]+)"/gi)) body = body.replace(alt[1], '');
+        return { text: body, words: docEdit.words(body).length, images: parsed.images, tables: parsed.tables, equations: parsed.equations };
+      }),
+      // The selected text, by copying it (and putting the user's clipboard back).
+      selectionText: () => withClipboard(async (cb) => {
+        cb.clear();
+        wc.copy();
+        let text = '';
+        for (let i = 0; i < 20 && !text; i++) { await sleep(30); text = await cb.readText(); }
+        return text;
+      }),
+      // Cut the selection, run nav (which moves the caret), paste it there: the real range, so pictures, tables and fonts come along.
+      cutPaste: (nav) => withClipboard(async (cb) => {
+        cb.clear();
+        wc.cut();
+        let text = '';
+        for (let i = 0; i < 20 && !text; i++) { await sleep(30); text = await cb.readText(); }
+        if (!text) throw new Error('Nothing was cut (no selection). Nothing was changed.');
+        try { await nav(); } catch (err) { wc.undo(); throw err; }
+        wc.paste();
+        await sleep(250);
+      }),
+      // Formatted text (html with a plain copy) pasted at the caret, as the browser's own paste.
+      pasteRich: (html, text) => withClipboard(async (cb) => {
+        const Item = cb.ClipboardItem || require('electron').ClipboardItem;
+        await cb.write([new Item({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]);
+        wc.paste();
+        await sleep(250);
+      }),
+      // The editor's own Find and replace (Ctrl+H): fill both fields, press Replace all (or Next, then Replace). false: no dialog.
+      replaceDialog: async (find, repl, all) => {
+        await key('h', ['control']);
+        await sleep(300);
+        const focus = (i) => runScript(wc, `(()=>{${dlg} const ins=box?[...box.querySelectorAll('input[type=text],input:not([type])')].filter((i)=>i.getClientRects().length):[]; const el=ins[${i}]; if(!el) return false; el.focus(); el.select(); return true;})()`, 3000);
+        const press = (name) => runScript(wc, `(()=>{${dlg} const b=box&&[...box.querySelectorAll('button,[role=button]')].find((b)=>new RegExp(${JSON.stringify('^' + name + '$')},'i').test(b.textContent.trim())); if(!b) return false; for (const t of ['mousedown','mouseup','click']) b.dispatchEvent(new MouseEvent(t,{bubbles:true})); return true;})()`, 3000);
+        if (!(await focus(0))) return false;
+        await host.insert(find);
+        if (!(await focus(1))) { await key('Escape'); return false; }
+        await host.insert(repl);
+        await sleep(150);
+        const ok = all ? await press('Replace all') : (await press('Next')) && (await press('Replace'));
+        await sleep(300);
+        await key('Escape');
+        return Boolean(ok);
+      },
+    };
+    return host;
+  }
+  // ---- [/document tool]
   // ---- [/ai controls]
 
   // Approves without a card: the sidebar's AI with "Ask before acting" off, or an outside agent in its own Lumen window with
@@ -5134,6 +5271,7 @@ ${out.text}${note}
   readDedupe() { return taskScope.getStore()?.gate?.external === false; }
 
   async runTool(name, input) {
+    await this.docRawGuard(name, input); // [document tool] select-all then typing in a Google Doc is the retype that loses pictures and tables
     // --- efficiency hook (snapshot.js) ---
     const efficient = await snapshot.execute(this, name, input, { runScript, scripts, dedupe: () => this.readDedupe() });
     if (efficient !== undefined) return efficient;
@@ -5534,6 +5672,11 @@ ${same}
       case 'analyze_posts': return postAnalysis.run(input);
       case 'find_sources': return this.findSources(input); // [research]
       case 'research_board': return this.researchBoardTool(input); // [research]
+      case 'document': { // [document tool]
+        const store = this.docStore();
+        store.docInternal = true;
+        try { return await docTool.run(this.documentHost(this.requireTab()), input); } finally { store.docInternal = false; }
+      }
       case 'run_macro': { // [macros]
         if (!this.browser.macros) throw new Error('Macros are not available here.');
         return this.browser.macros.runForAI(input, this);

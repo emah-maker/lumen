@@ -12,7 +12,7 @@ const stripTags = (s) => decode(String(s || '').replace(/<[^>]*>/g, ' '));
 // Fraction of the document one edit may remove before it needs the user's OK (guardrail: the ~20% rule).
 const DESTRUCTIVE_FRACTION = 0.2;
 
-// Docs / Word export html -> { headings: [{ level, text, offset }], images, tables, equations, text }. Regex based: the export is
+// Docs / Word export html -> { src (the html), headings: [{ level, text, offset }], images, tables, equations, text }. Regex based: the export is
 // machine generated, and this runs in main, where there is no DOM. Equations: math markup, or the images Docs renders them as.
 function parseDocHtml(html) {
   const src = String(html || '').replace(/<(script|style|head)\b[\s\S]*?<\/\1>/gi, ' ');
@@ -27,6 +27,7 @@ function parseDocHtml(html) {
   const isEq = (t) => /cht=tx|latex|equation|data-math|class="[^"]*\b(math|equation)\b/i.test(t);
   const equations = imgTags.filter(isEq).length + (src.match(/<math\b/gi) || []).length + (src.match(/<m:oMath\b/gi) || []).length;
   return {
+    src,
     headings,
     images: imgTags.length - imgTags.filter(isEq).length,
     tables: (src.match(/<table\b/gi) || []).length,
@@ -59,7 +60,7 @@ function takeSnapshot({ html, text, rev, at }) {
 }
 
 // before: a snapshot. after: another snapshot. Same words (reordering is fine: it is a bag), same object counts. `expect` lets a
-// caller allow what it meant to do ({ removedWords, addedWords, images: -1 ...}); anything beyond it is reported as lost/added.
+// caller allow what it meant to do ({ removedWords, addedWords, images: -1, headings: [{ level, text }] | 'any' ...}); anything beyond it is reported as lost/added.
 function compareSnapshots(before, after, expect = {}) {
   const b = new Map(Object.entries(before.words || {})), a = new Map(Object.entries(after.words || {}));
   let lost = 0, added = 0;
@@ -73,11 +74,15 @@ function compareSnapshots(before, after, expect = {}) {
     const diff = (after[k] || 0) - (before[k] || 0) - (expect[k] || 0);
     if (diff) objects[k] = { before: before[k] || 0, after: after[k] || 0, change: diff };
   }
+  // The headings (their order and levels): as they were, or as the edits planned ('any': an edit that makes new headings or renames them).
+  const want = expect.headings === 'any' ? null : (expect.headings || before.headings);
+  const headingsOk = !want || !after.headings || JSON.stringify(want.map((h) => [h.level, h.text])) === JSON.stringify(after.headings.map((h) => [h.level, h.text]));
   const problems = [];
+  if (!headingsOk) problems.push('the headings are not in the order or styles they should be');
   if (okLost) problems.push(`${okLost} word${okLost === 1 ? '' : 's'} missing (e.g. ${lostSample.join(', ')})`);
   if (okAdded) problems.push(`${okAdded} word${okAdded === 1 ? '' : 's'} added (e.g. ${addedSample.join(', ')})`);
   for (const [k, v] of Object.entries(objects)) problems.push(`${k}: ${v.before} before, ${v.after} now`);
-  return { ok: !problems.length, lostWords: okLost, addedWords: okAdded, objects, problems };
+  return { ok: !problems.length, headingsOk, lostWords: okLost, addedWords: okAdded, objects, problems };
 }
 
 // What the user hears after a run. Never "unchanged" unless the comparison said so.

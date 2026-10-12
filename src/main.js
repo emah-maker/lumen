@@ -2347,6 +2347,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   }
   wc.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); if (!(input.control || input.meta || input.alt)) userTookOver(tab); } // (a shortcut such as Ctrl+Tab, Ctrl+W or Ctrl+L is not typing in the page) // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
+    // The AI's own key (press_key) is for the page, never for the browser: Ctrl+F, Ctrl+H and Ctrl+Alt+1-6 are Google Docs' Find, Find and replace
+    // and heading styles, and here they would open Lumen's find bar, History, or switch to tab 3.
+    if (input.type === 'keyDown' && manners.isAgentInput(wc)) return;
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
