@@ -299,7 +299,7 @@
   chatHost.identity = () => {};
   applyRail();
   startChat();
-  window.assistant.state().then(({ view: now, target, name }) => {
+  window.assistant.state().then(({ view: now, target, name, draft }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
@@ -310,6 +310,13 @@
     // Opened mid-reply: the events that follow belong to it. `view.live` is the open chat's own run
     // (a chat left running elsewhere is not this one).
     resumeLive(now?.live);
+    // Text typed in the new-tab page's box before its Chat button: waits here as a draft, after any draft this chat already had (never sent).
+    if (typeof draft === 'string' && draft.trim()) setTimeout(() => { // (after the box has taken back the draft this chat had)
+      prompt.value = [prompt.value.trimEnd(), draft.trim()].filter(Boolean).join('\n');
+      prompt.dispatchEvent(new Event('input')); // chat-core's own handler: sizes the box and saves the draft
+      prompt.focus();
+      prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+    });
   }).catch(() => {}).finally(async () => {
     await renderList();
     void body.offsetWidth; // the first layout is final: from here on the composer's move down (the first message) is animated

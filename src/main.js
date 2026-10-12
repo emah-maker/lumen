@@ -228,7 +228,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
@@ -4010,6 +4010,7 @@ function askFromHome(event, url, tabId) {
   let text;
   let params;
   try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
+  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab' }); return true; } // the Chat button: the full-page chat, here or (Ctrl/middle-click) in a new tab
   if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
@@ -7302,6 +7303,7 @@ const agent = new Agent({
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog.record(info), // [no handoff]
+  downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
@@ -7361,6 +7363,7 @@ chatPageRt = chatPage.create({
   switchTab: (id) => switchTab(id),
   requestCloseTab: (id) => requestCloseTab(id),
   goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
+  goChat: (id) => { const { id: page } = openTab(chatPage.CHAT_URL, { managerPage: 'chat' }); takePlace(page, id); return page; }, // and the way back: the new-tab page becomes the chat page
   managersOpen: () => managers.open('chat'),
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -7373,7 +7376,7 @@ chatPageRt = chatPage.create({
   },
 });
 chatPageRt.register();
-if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), fromHome: (id, o) => chatPageRt.fromHome(id, o), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
@@ -8972,6 +8975,8 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
+// [content guard] "Undo the AI's edits on this page": the editors and fields that run changed go back to how they started.
+ipcMain.handle('agent:undo-edits', (_e, runId) => agent.undoEdits(runId));
 // [annotate] "Show again" / "Clear" on a drawing step in the sidebar (ai/annotate.js).
 ipcMain.handle('agent:annotate', (_e, action) => (action === 'show' || action === 'clear' ? agent.annotateAgain(action) : false));
 // The PDF viewer's Print button (its page has no IPC but this one, from permissions-preload.js): the same preview as Ctrl+P.

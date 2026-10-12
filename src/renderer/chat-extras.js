@@ -374,13 +374,29 @@
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {
-    if (!undo?.undoable) return;
+    if (!undo?.undoable && !undo?.edits) return;
     const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));
     const tr = (k, en, v) => { const s = window.t ? window.t(k, v) : k; return s && s !== k ? s : en.replace(/\{(\w+)\}/g, (_, x) => v?.[x] ?? ''); };
     const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.button', 'Undo tab changes') });
     const lasting = undo.lasting?.length ? tr('undo.lasting', 'Can’t be undone here: {what}.', { what: undo.lasting.join('; ') }) : '';
     button.title = `${tr('undo.title', 'Close the tabs this reply opened, reopen the ones it closed, and take its tabs back to where they were.')}${lasting ? `\n${lasting}` : ''}`;
-    box.append(button);
+    if (undo.undoable) box.append(button);
+    // [content guard] The editors and fields the run typed in, deleted from or scripted: back to how they started (ai/content-guard.js).
+    if (undo.edits) {
+      const edits = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.edits.button', 'Undo the AI’s edits on this page') });
+      edits.title = tr('undo.edits.title', 'Put the text fields and editors this reply changed back to how they were. A site that saves your work online keeps its own version history.');
+      box.append(edits);
+      edits.addEventListener('click', async () => {
+        edits.disabled = true;
+        let result;
+        try { result = await window.assistant.undoEdits(undo.id); } catch (err) { result = { ok: false, message: String(err?.message || err) }; }
+        edits.remove();
+        const lines = result?.ok ? [...result.done, ...result.skipped] : [result?.message || 'Nothing was undone.'];
+        const list = Object.assign(document.createElement('ul'), { className: 'run-undo-result' });
+        for (const line of lines.length ? lines : ['Nothing was left to undo.']) list.append(Object.assign(document.createElement('li'), { textContent: line }));
+        box.append(list);
+      });
+    }
     button.addEventListener('click', async () => {
       button.disabled = true;
       let result;
