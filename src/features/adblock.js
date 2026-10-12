@@ -28,6 +28,7 @@ if (electron.protocol?.registerSchemesAsPrivileged && !electron.app.isReady()) {
     { scheme: 'crx', privileges: { bypassCSP: true } },
     { scheme: STUB, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true } },
     { scheme: pdfViewer.SCHEME, privileges: pdfViewer.PRIVILEGES }, // Lumen's PDF viewer (features/pdf-viewer.js)
+    { scheme: 'lumen-asr', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }, // Meeting helper on-device ASR
   ]);
 }
 

@@ -69,6 +69,7 @@ const SECTIONS = [
       ['shortcuts.newChat', ['mod+shift+k']],
       ['shortcuts.chatPage', ['mod+shift+l']],
       ['shortcuts.askFromAddress', ['alt+enter']],
+      ['shortcuts.meetingHelper', ['mod+enter']],
     ],
   },
   {

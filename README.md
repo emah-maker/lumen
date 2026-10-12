@@ -319,6 +319,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
+- [Meeting helper](docs/meeting-helper.md): real-time answers with Mod+Enter, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next

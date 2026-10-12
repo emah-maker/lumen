@@ -242,6 +242,7 @@ const UI_ONLY_IPC = new Set([
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  ...require('./features/meeting').CHANNELS, // meeting helper
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -4440,6 +4441,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
+  else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
@@ -4505,6 +4507,12 @@ const activeTabIsChatPage = () => tabs.find((t) => t.id === activeId)?.managerPa
 function toggleChatPage() {
   if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
   else chatPageRt.open();
+}
+
+// Mod+Enter: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
+function toggleMeetingHelper() {
+  ui()?.focus();
+  ui()?.send('meeting:toggle');
 }
 
 function focusAddress() {
@@ -7533,6 +7541,31 @@ const skillsFeature = require('./features/skills').create({
 });
 skillsFeature.register();
 if (TEST) global.__skills = skillsFeature;
+
+// ---------- meeting helper (features/meeting.js): live prompting, agenda/resume, stealth, listener ----------
+const meetingHelper = require('./features/meeting').createMeetingHelper({
+  userDataDir: app.getPath('userData'),
+  getActiveTab: () => activeTab(),
+  readPageContext: async (tab) => {
+    try { return await agent.pageContextFor(tab, { fresh: true, screen: true }); } catch { return ''; }
+  },
+  complete: (args) => (TEST && global.__meetingComplete ? global.__meetingComplete(args) : completeSkillJson(args)),
+  getChatStore: () => chats(),
+  getWindow: () => win,
+  broadcast: (ch, p) => ui()?.send(ch, p),
+});
+if (TEST) global.__meetingHelper = meetingHelper;
+
+ipcMain.handle('meeting:state', () => meetingHelper.getState());
+ipcMain.handle('meeting:context-get', () => meetingHelper.loadContext());
+ipcMain.handle('meeting:context-save', (_e, patch) => meetingHelper.saveContext(patch));
+ipcMain.handle('meeting:prompt', (_e, q, opts) => meetingHelper.prompt(q, opts));
+ipcMain.handle('meeting:live-start', () => meetingHelper.setLive(true));
+ipcMain.handle('meeting:live-stop', () => meetingHelper.setLive(false));
+ipcMain.handle('meeting:transcript-chunk', (_e, text, speaker) => meetingHelper.addTranscriptChunk(text, speaker));
+ipcMain.handle('meeting:stealth', (_e, on) => meetingHelper.setStealth(on));
+ipcMain.handle('meeting:summarize', (_e, text) => meetingHelper.summarize(text));
+ipcMain.handle('meeting:save-chat', (_e, payload) => meetingHelper.saveToChat(payload));
 
 // ---------- macros (features/macros-runtime.js): named step sequences; managed in Settings → Macros ----------
 // A run is the AI's own tools (click, type_text, navigate, wait_for, ...) driven from the saved steps. The user's runs (⋯ menu,
