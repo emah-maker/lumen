@@ -22,6 +22,7 @@
 
 const { PAGE_TEXT } = require('./page-scripts');
 const frames = require('./frames');
+const officeDocs = require('./office-docs'); // a Google Doc / Sheet / Slides tab: the export's text (the page itself is a canvas)
 
 const TEXT_CHUNK = 12000; // as read_page's first chunk (page-scripts.js)
 const PARSE_WAIT_MS = 1500;
@@ -110,6 +111,11 @@ async function readPageText(wc, { chars = TEXT_CHUNK, timeoutMs = 4000, fallback
     if (wc.isDestroyed?.()) throw new Error('The tab was closed.');
     if (typeof fallback !== 'function') throw new Error('The page did not respond.');
     value = await fallback(script, Math.max(1, timeoutMs - (Date.now() - started)));
+  }
+  // A Google Doc, Sheet or Slides deck: the whole text from the editor's export (office-docs.js), in place of the canvas's few words.
+  if (value && typeof value === 'object' && typeof fallback === 'function' && officeDocs.exportTarget(wc.getURL?.(), officeDocs.allowLocalHosts())) {
+    const doc = await officeDocs.readExport(wc.getURL(), { run: (code) => fallback(code, 8000), sessionFetch: wc.session?.fetch ? (u) => wc.session.fetch(u, { credentials: 'include', signal: AbortSignal.timeout(8000) }) : undefined }).catch(() => null);
+    if (doc) { const full = officeDocs.header(doc) + doc.text; return { ...value, text: full.slice(0, chars), totalTextChars: full.length, source: `${doc.label} export` }; }
   }
   // Then the frames (their own sessions and worlds), in what is left of the time.
   const left = Math.min(2500, timeoutMs - (Date.now() - started));

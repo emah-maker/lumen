@@ -407,7 +407,7 @@ function clickProbeRead(done = false) {
   })()`;
 }
 
-// Scrolls the window, or the largest scrollable container if the window does not move. Resolves (a promise)
+// Scrolls the window, or else the largest scrollable container around the middle of the view (a web app: Google Docs). Resolves (a promise)
 // once the position has held still for two 50 ms samples (smooth scrolling, scroll-linked loading), at most ~400 ms.
 function scroll(pages) {
   return `(() => {
@@ -426,16 +426,23 @@ function scroll(pages) {
     const before = scrollY;
     window.scrollBy(0, dy);
     if (scrollY !== before) return settle(() => Math.round(scrollY), (y) => ({ scrolled: 'window', y }));
-    let best = null, bestArea = 0;
-    for (const el of document.querySelectorAll('*')) {
+    // The window cannot move (a web app: Google Docs draws inside .kix-appview-editor): the largest scrollable container around
+    // the middle of the view, else the largest one anywhere.
+    const scrollable = (el) => {
       const s = getComputedStyle(el);
-      if (!/(auto|scroll)/.test(s.overflowY) || el.scrollHeight <= el.clientHeight) continue;
-      const area = el.clientWidth * el.clientHeight;
-      if (area > bestArea) { best = el; bestArea = area; }
+      return /(auto|scroll|overlay)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    };
+    let best = null, bestArea = 0;
+    const consider = (el) => { const area = el.clientWidth * el.clientHeight; if (area > bestArea) { best = el; bestArea = area; } };
+    for (let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2); el; el = el.parentElement || (el.getRootNode() && el.getRootNode().host) || null) {
+      if (el !== document.documentElement && el !== document.body && scrollable(el)) consider(el);
     }
+    if (!best) for (const el of document.querySelectorAll('*')) if (scrollable(el)) consider(el);
     if (!best) return { scrolled: 'none' };
+    const room = best.scrollHeight - best.clientHeight;
     best.scrollBy(0, dy);
-    return settle(() => Math.round(best.scrollTop), (y) => ({ scrolled: 'container', y }));
+    const label = best.tagName.toLowerCase() + (best.className && typeof best.className === 'string' ? '.' + best.className.trim().split(/\\s+/)[0] : '');
+    return settle(() => Math.round(best.scrollTop), (y) => ({ scrolled: 'container', y, max: Math.round(room), in: label }));
   })()`;
 }
 
@@ -603,4 +610,22 @@ ${text}
 </untrusted_page_content>`;
 }
 
-module.exports = { PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };
+// What the page looks like after a click, in a few words: its title and the focused element (a field, a button, or the editing surface of an
+// app such as Google Docs). A click_at result carries it, so the model need not take a screenshot to learn whether it landed.
+const glance = `(() => {
+  const name = (a, tag) => String(a.getAttribute('aria-label') || a.placeholder || a.name || a.title || (/^(button|a|summary)$/.test(tag) ? a.innerText : '') || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+  const a = document.activeElement;
+  let focus = '';
+  if (a && a !== document.body && a !== document.documentElement) {
+    const tag = a.tagName.toLowerCase();
+    if (tag === 'iframe' && /texteventtarget/i.test(a.className + ' ' + a.id)) focus = 'the page text input (typing and keys go to the document)';
+    else {
+      const role = a.getAttribute('role') || (tag === 'input' ? (a.type || 'text') + ' field' : tag === 'textarea' ? 'text area' : a.isContentEditable ? 'editable text' : tag);
+      const label = name(a, tag);
+      focus = label ? role + ' "' + label + '"' : role;
+    }
+  }
+  return { title: document.title, focus };
+})()`;
+
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };

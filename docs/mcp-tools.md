@@ -17,6 +17,8 @@ The sidebar's Claude models use Anthropic's server-side web search instead of `w
 
 Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"outline": a cheap map with no refs: title, URL, page health, h1-h3 headings, structured-data summary, links grouped by landmark (main/article first, then nav/header/footer; up to 15 each, with counts), a repeated block ("main > ul.results: 20 items like ..."), and the next-page link. mode:"full": raw JSON elements and text (text_offset/element_offset to page; structured:true adds JSON-LD, meta tags and embedded data). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.
 
+On a Google Doc, Sheet or Slides deck (docs.google.com), a plain or `full` read returns the whole text from the editor's own export, fetched inside the tab with your signed-in access (the page itself is drawn on a canvas and has almost no text). It is labelled "(from Google Docs export)"; a Sheet gives the current sheet as CSV. `read_tabs` and the text sent with your message use it too. If you cannot open the document, the read fails as it would for you.
+
 A full read of a page that is not fine starts with one line, `Page: js_shell | wall | soft_404 | data_shell — ...` (what it is and what to try), and a page drawn by script (js_shell, data_shell) also shows its compact structured data.
 
 | Parameter | Type | Required | Description |
@@ -136,12 +138,13 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:tr
 
 ### `read_pdf`
 
-Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks you first, once per PDF per chat, even with Auto-allow on (Bypass permissions answers it for you, and a step says so); the card and the result show the file name, never its folder. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule. Each page comes under a `--- Page N of M ---` marker. Pass `query` to find which page mentions something: one call returns the matching page numbers with a short snippet each (case-insensitive). Returns up to 30,000 characters; when cut off, the result lists the pages included and the `pages` value to ask for next. The parsed text is cached per PDF, so repeat calls are cheap. Scanned or encrypted PDFs give no text. It reads a PowerPoint deck (.pptx) open in Lumen's slide viewer the same way: one page per slide, with the speaker notes after each slide's text.
+Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks you first, once per PDF per chat, even with Auto-allow on (Bypass permissions answers it for you, and a step says so); the card and the result show the file name, never its folder. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule. Each page comes under a `--- Page N of M ---` marker. Pass `query` to find which page mentions something: one call returns the matching page numbers with a short snippet each (case-insensitive). Returns up to 30,000 characters; when cut off, the result says which pages it showed ("Pages 1-4 of 6 shown") and the `from` value for the next call, so a long file is read in parts. The text comes from the file itself, not from what the viewer has drawn. The parsed text is cached per PDF, so repeat calls are cheap. Scanned or encrypted PDFs give no text. It reads a PowerPoint deck (.pptx) open in Lumen's slide viewer the same way: one page per slide, with the speaker notes after each slide's text.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `tab_id` | integer | no |
 | `pages` | string ("1-5", "3", "4-", "1-3,7") | no |
+| `from` | integer | no (first page to read, to the end; same as `pages` "N-") |
 | `query` | string | no |
 
 ### `read_tabs`
@@ -330,12 +333,13 @@ Take tabs out of their groups. Empty groups disappear.
 
 ### `scroll`
 
-Scroll the active tab up or down by a number of screens.
+Scroll the active tab up or down by a number of screens. When the window itself cannot scroll (Google Docs and other web apps scroll an inner panel), it moves the largest scrollable panel around the middle of the view and says which. In Lumen's PDF viewer, `page` jumps to that page.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `direction` | `up`, `down` | yes |  |
 | `screens` | number |  | Default 1. |
+| `page` | integer |  | PDF viewer only: go to this page. |
 
 ### `go_back`
 
