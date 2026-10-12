@@ -313,8 +313,7 @@
     // Text typed in the new-tab page's box before its Chat button: waits here as a draft, after any draft this chat already had (never sent).
     if (typeof draft === 'string' && draft.trim()) setTimeout(() => { // (after the box has taken back the draft this chat had)
       prompt.value = [prompt.value.trimEnd(), draft.trim()].filter(Boolean).join('\n');
-      autosize();
-      saveDraft();
+      prompt.dispatchEvent(new Event('input')); // chat-core's own handler: sizes the box and saves the draft
       prompt.focus();
       prompt.setSelectionRange(prompt.value.length, prompt.value.length);
     });
