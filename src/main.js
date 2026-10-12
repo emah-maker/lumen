@@ -177,6 +177,11 @@ app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
 if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/tabui.js)
 
+// Playwright's electron.launch adds Chromium switches that turn the component updater off (--disable-component-update, --disable-background-networking), so
+// Widevine never installs or registers in a test run: a music site then reports "no protected audio". A live run that needs real playback (test/live-spotify.js)
+// asks for them back with LUMEN_TEST_WIDEVINE=1. Tests only; a normal launch never has those switches.
+if (TEST && process.env.LUMEN_TEST_WIDEVINE === '1') for (const sw of ['disable-component-update', 'disable-background-networking']) app.commandLine.removeSwitch(sw);
+
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
 
