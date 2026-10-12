@@ -154,40 +154,91 @@ const pipePath = (app) => (process.platform === 'win32'
   ? `\\\\.\\pipe\\lumen-${require('crypto').createHash('sha1').update(app.getPath('userData')).digest('hex').slice(0, 12)}`
   : path.join(app.getPath('userData'), 'instance.sock'));
 
-// Is a live instance listening on this profile's pipe? (It focuses itself when we connect.)
+// Is a live instance listening on this profile's pipe? Asks it to focus itself and waits for its answer:
+// 'live' (it focused: nothing more to do), 'quitting' (it answered that it is shutting down: wait for it, then take over)
+// 'busy' (connected, no answer yet: a busy instance, one from before the answer existed, or one whose main thread is stuck
+// while it quits) or 'none' (nothing listens).
+const PING_EXIT = { 0: 'live', 2: 'quitting', 3: 'busy' };
+const pingResult = (code) => PING_EXIT[code] || 'none';
 function pingRunningInstance(app) {
-  if (process.platform !== 'win32') return false;
-  const { execFileSync } = require('child_process');
-  try {
-    // A tiny synchronous probe: exit 0 if the pipe accepts a connection within 250 ms.
-    execFileSync(process.execPath, ['-e', `const s=require('net').connect(${JSON.stringify(pipePath(app))});s.on('connect',()=>{s.end('focus');process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),250)`], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 2000, windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
+  if (process.platform !== 'win32') return 'none';
+  const { spawnSync } = require('child_process');
+  // A tiny synchronous probe. The timers are generous: under CPU load a live instance can take a second to answer, and a ping
+  // that gave up early used to read as "nobody there".
+  const probe = `const s=require('net').connect(${JSON.stringify(pipePath(app))});let t;
+s.on('connect',()=>{s.write('focus');t=setTimeout(()=>process.exit(3),1500)});
+s.on('data',(d)=>process.exit(/^bye/.test(String(d))?2:0));
+s.on('error',()=>process.exit(1));setTimeout(()=>{if(!t)process.exit(1)},1500)`;
+  const run = spawnSync(process.execPath, ['-e', probe], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 6000, windowsHide: true });
+  return run.error ? 'none' : pingResult(run.status);
 }
 
-// A second copy pings the pipe; `focus` brings this window forward.
-function listenForSecondInstances(app, focus) {
-  if (process.platform !== 'win32') return;
-  require('net').createServer((socket) => {
-    socket.on('data', focus);
+// A second copy pings the pipe; `focus` brings this window forward and the copy gets "ok". An instance that is quitting answers
+// "bye" instead, so the newcomer waits for it rather than leaving (isQuitting). The pipe of an instance that has just exited can
+// still be held for a moment while the next one starts: keep trying to listen on it for `retryMs`.
+function listenForSecondInstances(app, focus, { isQuitting = () => false, retryMs = 10000 } = {}) {
+  if (process.platform !== 'win32') return null;
+  const giveUp = Date.now() + retryMs;
+  const server = require('net').createServer((socket) => {
+    let answered = false;
+    socket.on('data', () => {
+      if (answered) return;
+      answered = true;
+      if (isQuitting()) { socket.end('bye'); return; }
+      try { focus(); } catch {}
+      socket.end('ok');
+    });
     socket.on('error', () => {});
-  }).on('error', () => {}).listen(pipePath(app));
+  });
+  const listen = () => server.listen(pipePath(app));
+  server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE' && Date.now() < giveUp) setTimeout(listen, 200).unref?.();
+  });
+  listen();
+  return server;
+}
+
+// What a second launch does while the profile's lock is taken. Pure (the callbacks do the work) so the tests can drive it:
+//   'acquired'   the lock is ours (the holder is gone or finished quitting): start up
+//   'handed-off' a live instance answered and brought its window forward (or took the ping and never answered): this one can leave
+//   'timeout'    nothing live answers and the lock is still held after budgetMs: the caller must say so, not vanish
+// A holder that is quitting, or that only its leftover child processes keep alive (reclaim stops those), is waited for.
+function takeOverLock({ tryLock, ping, reclaim, wait, now = Date.now, budgetMs = 15000, stepMs = 200, reclaimEveryMs = 2000 }) {
+  const deadline = now() + budgetMs;
+  let lastReclaim = -Infinity;
+  let lastAnswer = null;
+  for (;;) {
+    if (tryLock()) return 'acquired';
+    const answer = ping();
+    if (answer === 'live') return 'handed-off';
+    lastAnswer = answer;
+    if (answer === 'none' && now() - lastReclaim >= reclaimEveryMs) { lastReclaim = now(); reclaim(); } // (no instance answers: leftovers of a dead one may hold the lock)
+    if (tryLock()) return 'acquired';
+    if (now() >= deadline) return lastAnswer === 'busy' ? 'handed-off' : 'timeout'; // (a silent instance that holds on got our ping: it is running, just slow)
+    wait(stepMs);
+  }
 }
 
 function acquireInstanceLock(app) {
   if (app.requestSingleInstanceLock()) return true;
   if (require('../test-mode').isTest() && !process.env.CLAUDE_BROWSER_PROFILE) return false;
   if (require('./taskbar-tasks').wantsCloseAiTabs(process.argv)) return false; // the taskbar's command: the running instance got it through 'second-instance'; the ping below would bring its window forward
-  if (pingRunningInstance(app)) return false; // a live instance answered and brought itself forward
-  if (!reclaimProfileLock()) return false;
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    if (app.requestSingleInstanceLock()) return true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
-  }
-  return false;
+  const outcome = takeOverLock({
+    tryLock: () => app.requestSingleInstanceLock(),
+    ping: () => pingRunningInstance(app),
+    reclaim: reclaimProfileLock,
+    wait: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  });
+  if (outcome === 'timeout') tellStuck();
+  return outcome === 'acquired';
 }
 
-module.exports = { isInstalledExe, appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances };
+// Never leave without a word: the other Lumen did not answer and did not let go.
+function tellStuck() {
+  const message = 'Lumen is still closing from the last time you used it. Wait a few seconds and open it again; if this keeps happening, end Lumen in Task Manager.';
+  console.error('[lumen] ' + message);
+  if (require('../test-mode').isTest()) return;
+  try { require('electron').dialog.showErrorBox('Lumen did not start', message); } catch {}
+}
+
+module.exports = { isInstalledExe, appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };

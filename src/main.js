@@ -6982,7 +6982,9 @@ app.on('before-quit', () => {
     try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
   quitting = true;
+  quitGuard.arm(); // quitting has a deadline: leftovers are ended and the process exits, so opening Lumen again straight away is never blocked
 });
+const quitGuard = require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) });
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
@@ -9444,9 +9446,17 @@ const updates = require('./features/updates').createUpdates({
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
 
+// A second launch (or a link from another app) brings a window forward, whatever state the last one is in: minimized, hidden, or
+// closed (macOS keeps running with no window; an instance whose window is gone gets a new one rather than a silent no-op).
 const focusWindow = () => {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) {
+    const other = [...winRecs].find(rcAlive);
+    if (other) raiseWindow(other.win);
+    else if (app.isReady() && !quitting) { dropDeadWindowViews(); createWindow(); }
+    return;
+  }
   if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
   win.focus();
 };
 const singleInstance = process.argv.includes('--install-shortcuts') || instance.acquireInstanceLock(app);
@@ -9487,7 +9497,7 @@ app.whenReady().then(async () => {
   components?.whenReady()
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
-  instance.listenForSecondInstances(app, () => { if (!activateNotified()) focusWindow(); });
+  instance.listenForSecondInstances(app, () => { if (!activateNotified()) focusWindow(); }, { isQuitting: () => quitting });
   setupTaskbar();
   instance.ensureStartMenuShortcut(app, shell, APP_ID); // the shortcut a notification is named from (carries the app ID)
   setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
