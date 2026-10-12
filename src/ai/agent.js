@@ -53,6 +53,7 @@ const pdfInput = require('../features/pdf-input'); // scroll / click_at / press_
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
+const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
@@ -99,6 +100,7 @@ How to work:
 - Current page: use its attached text if enough, else read_page mode:"compact" or find.
 - "This", "here", "on screen" with no screenshot attached: call screenshot first; never ask the user to describe it.
 - Go direct: navigate to a URL you know or can build. Batch known steps, make independent calls together, and use observe, read or since_last rather than re-reading.
+- Moving text in an editor (Google Docs): select it (click, then Shift+click or Shift+arrows), press_key Ctrl+X, click the target, Ctrl+V. Not the app's Edit menu. Re-read the doc instead of repeated undo.
 - Verify an action that matters. Don't repeat a failed step; after two failures change route or say what blocks you.
 - Lumen is the user's browser: show what you make (small diagrams inline, as an svg block), never tell them to open a file in a browser.
 - Stop once answered, with a short written answer citing the page or URL a fact came from.
@@ -1530,6 +1532,7 @@ class Agent {
       if (this.runScope === scope) this.runScope = null;
       try { this.browser.research?.finish(scope); } catch {} // research tabs stay open; only the "reading" marker goes
       this.closeSignedInTabs(scope); // [signed-in sites]
+      return Promise.resolve(scope.clipRestore?.()).catch(() => {}); // [edit keys] the user's clipboard goes back as it was, before the run is over
     });
   }
 
@@ -4810,6 +4813,7 @@ ${out.text}${note}
     if (input.action === 'write') {
       const text = String(input.text ?? '');
       (own || clipboard).writeText(text);
+      if (!own) { const scope = taskScope.getStore(); if (scope) scope.clipRestore = null; } // [edit keys] the user asked for this text on their clipboard: it stays
       return `Copied ${text.length} character${text.length === 1 ? '' : 's'} to ${own ? "this agent's own clipboard (the user's clipboard is untouched; to put text in a page use type_text)" : 'the clipboard'}.`;
     }
     if (input.action !== 'read') throw new Error('action must be "read" or "write".');
@@ -5507,13 +5511,15 @@ ${same}
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
         await this.waitForUserTyping(wc); // [ai manners]
+        const command = editKeys.editCommand(input.key, modifiers);
+        if (command) return this.editShortcut(wc, command, [...modifiers, input.key].join('+'));
         const pdfMove = pdfInput.keyMove(input.key, modifiers); // paging keys on a PDF tab scroll the viewer (it takes keys only with the plugin focused)
         const pdfScroll = pdfMove && await pdfInput.scrollPdf(wc, pdfMove);
         if (pdfScroll) return `Pressed ${[...modifiers, input.key].join('+')}: ${JSON.stringify(pdfScroll)}`;
         // The focus is inside an embedded frame: the key goes there through the DevTools session (frames.js).
         // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
         const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
-        const inFrame = !macCommand && frames.available(wc) && await runScript(wc, frames.FOCUS_IN_FRAME, 1000).catch(() => false);
+        const inFrame = !macCommand && await this.focusInFrame(wc);
         if (inFrame) await manners.agentInputAsync(wc, () => frames.pressKey(wc, input.key, modifiers));
         else this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
@@ -5665,16 +5671,11 @@ ${same}
 
   pressKey(wc, key, modifiers = []) {
     const keyCode = KEY_CODES[key] || key;
-    // Models write Windows shortcuts (Ctrl+A, Ctrl+C...). On macOS those are Cmd+letter, and
-    // Chromium runs them from the app menu, not from synthetic key events, so a sent Cmd+A never
-    // selects anything. Run the edit command itself; send other Ctrl+letter keys as Cmd+letter.
+    // Models write Windows shortcuts (Ctrl+A...). On macOS those are Cmd+letter, and Chromium runs them from the app
+    // menu, not from synthetic key events: send other Ctrl+letter keys as Cmd+letter. (The edit shortcuts themselves
+    // never get here: press_key runs them as native commands, see editShortcut.)
     if (process.platform === 'darwin' && [...key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'))) {
-      const mods = modifiers.filter((m) => m !== 'control' && m !== 'meta');
-      const letter = key.toLowerCase();
-      const command = mods.length === 0 ? { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo' }[letter]
-        : mods.length === 1 && mods[0] === 'shift' ? { z: 'redo', v: 'pasteAndMatchStyle' }[letter] : null;
-      if (command) { wc[command](); return; }
-      modifiers = [...mods, 'meta'];
+      modifiers = [...modifiers.filter((m) => m !== 'control' && m !== 'meta'), 'meta'];
     }
     manners.agentInput(wc, () => { // [ai manners] these keys are the AI's, not the user typing
       wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
@@ -5685,6 +5686,58 @@ ${same}
       }
       wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
     });
+  }
+
+  // Is the keyboard focus inside an embedded frame (a Google Docs page keeps its caret in one)?
+  async focusInFrame(wc) {
+    return frames.available(wc) && await runScript(wc, frames.FOCUS_IN_FRAME, 1000).catch(() => false);
+  }
+
+  // [edit keys] Ctrl/Cmd + X C V Z Y A, as the browser's own editing command on the focused frame (trusted, needs no
+  // clipboard permission, works in editors like Google Docs that ignore script-made paste). The sidebar AI uses the system
+  // clipboard, and the user's own is put back when the run ends. An outside agent (MCP) keeps a private buffer: its copy is
+  // read out of the system clipboard at once and the user's put back, and its paste types the buffer in as text.
+  async editShortcut(wc, command, label) {
+    const scope = taskScope.getStore();
+    const own = scope?.clipboard || null;
+    const system = this.browser.clipboard || require('electron').clipboard;
+    const clipboardUse = editKeys.touchesClipboard(command);
+    if (clipboardUse && own) return this.privateEdit(wc, command, label, own, system);
+    if (clipboardUse && scope && !scope.clipRestore) {
+      const snap = await editKeys.snapshotClipboard(system);
+      // Only while the clipboard is still what the AI last left on it: if the user copied something since, theirs stays.
+      scope.clipRestore = async () => { if (snap && scope.clipLast && (await editKeys.fingerprintClipboard(system)) === scope.clipLast) await editKeys.restoreClipboard(system, snap); };
+    }
+    wc[command]();
+    await sleep(120); // the renderer runs the command after this call returns
+    if (clipboardUse && scope?.clipRestore) { // note what the AI left there, once a cut or copy has settled
+      let last = await editKeys.fingerprintClipboard(system);
+      for (let i = 0; i < 5; i++) { await sleep(60); const now = await editKeys.fingerprintClipboard(system); if (now === last) break; last = now; }
+      scope.clipLast = last;
+    }
+    await settleAfterAction(wc);
+    return `Pressed ${label} (${command}).`;
+  }
+
+  async privateEdit(wc, command, label, own, system) {
+    if (command === 'paste' || command === 'pasteAndMatchStyle') {
+      const text = own.readText();
+      if (!text) return `Pressed ${label}: this agent's own clipboard is empty (copy or cut first; the user's clipboard is not used).`;
+      if (await this.focusInFrame(wc)) await frames.insertText(wc, text); else wc.insertText(text);
+      await settleAfterAction(wc);
+      return `Pressed ${label}: pasted ${text.length} character${text.length === 1 ? '' : 's'} from this agent's own clipboard as plain text.`;
+    }
+    const snap = await editKeys.snapshotClipboard(system);
+    let text = '';
+    try {
+      system.clear();
+      wc[command]();
+      for (let i = 0; i < 30 && !text; i++) { await sleep(25); text = await system.readText(); }
+    } finally { await editKeys.restoreClipboard(system, snap); }
+    if (!text) return `Pressed ${label}: nothing was selected, so nothing was copied.`;
+    own.writeText(text);
+    await settleAfterAction(wc);
+    return `Pressed ${label}: ${text.length} character${text.length === 1 ? '' : 's'} went to this agent's own clipboard (the user's is untouched).`;
   }
 
   // [ai manners] A click in a tab that is not on screen, as the browser's own (trusted) input: Input.dispatchMouseEvent over the tab's
