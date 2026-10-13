@@ -31,7 +31,8 @@ contextBridge.exposeInMainWorld('browser', {
   // Dropped files: the page can't see paths, so they're resolved here (webUtils) and main.js opens them.
   openFiles: (files) => ipcRenderer.send('files:open', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   closeTab: (id) => ipcRenderer.send('tab:close', id),
-  switchTab: (id) => ipcRenderer.send('tab:switch', id),
+  switchTab: (id) => ipcRenderer.send('tab:switch', id, performance.timeOrigin + performance.now()), // (the click's own time: Settings > Advanced > Record tab-switch timings)
+  switchStripDrawn: (id, at) => ipcRenderer.send('tab:switch-strip', id, at), // the strip drew this tab active (only while recording)
   tabHover: (id, on) => ipcRenderer.send('tab:hover', id, on), // the pointer rests on / leaves a tab: main wakes a sleeping one ahead of the click
   tabDown: (id) => ipcRenderer.send('tab:down', id), // the button went down on a tab (the click follows)
   moveTab: (id, toIndex, done) => ipcRenderer.send('tab:move', id, toIndex, Boolean(done)), // done: the strip is waiting to show the tab in its slot

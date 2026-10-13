@@ -8339,7 +8339,12 @@ function clickTab(e, id) {
   });
   selectionAnchor = r.anchor;
   setSelection(r.selection);
-  if (r.activate != null) window.browser.switchTab(r.activate);
+  if (r.activate != null) { window.browser.switchTab(r.activate); showActiveNow(r.activate); }
+}
+// The strip answers the click at once; main's state, a moment later, confirms it (or puts the highlight back where the switch did not happen).
+function showActiveNow(id) {
+  for (const el of $('tabs').querySelectorAll('.tab:not(.tab-ghost)')) el.classList.toggle('active', Number(el.dataset.id) === id);
+  placeIndicator(!motionReduced());
 }
 
 // Escape ends the selection (when the strip, not a page, has the keyboard).
@@ -8765,6 +8770,7 @@ function finishTabsRender(state, before, container, switched) {
 
   // Scrolled into view when the active tab changes, not on every update: a page loading in the
   // active tab kept yanking the strip back while you scrolled it to reach another tab.
+  if (switched && window.lumenSwitchTiming) { const shownId = state.activeId; requestAnimationFrame(() => window.browser.switchStripDrawn?.(shownId, performance.timeOrigin + performance.now())); } // (Settings > Advanced > Record tab-switch timings)
   const activeEl = container.querySelector('.tab.active');
   if (activeEl && (switched || !before.has(activeId))) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: motionReduced() ? 'auto' : 'smooth' });
 
@@ -12541,6 +12547,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false })); // [subagents] the sidebar's Helpers button follows Settings → AI
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false; // [sidebar new chat] app.js: the AI button opens on a new chat
+    if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true; // [diagnostics] app.js reports when the strip drew a switch
     accent = p.accent || null;
     applyAccent();
   };

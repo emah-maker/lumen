@@ -56,7 +56,7 @@ const os = require('os');
     const byId = async (id) => (await state()).find((t) => t.id === id);
     check('(setup) tab 1 is unloaded', (await byId(t1)).sleeping === true);
     await clickTab(t1);
-    check('switching to it wakes it', (await byId(t1)).sleeping === false);
+    check('switching to it wakes it (a tab clicked right after another switch waits a moment to see whether the user stays)', await waitFor(async () => (await byId(t1)).sleeping === false, 2000));
     check('...with nothing laid over the page area', !(await ui.evaluate(() => Boolean(document.querySelector('.wake-cover, .page-snapshot')))), 'covered');
     check('...the real page loads', await waitFor(() => app.evaluate(({ webContents }) => webContents.getAllWebContents().some((w) => /\/1$/.test(w.getURL()) && !w.isLoading())), 8000), JSON.stringify(await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => [w.getURL(), w.isLoading()])), null, 0));
     check('no wake pictures are taken or kept', !fs.existsSync(path.join(profile, 'tab-snapshots')), 'folder is back');

@@ -119,7 +119,7 @@ async function launchRig({ tabs = 30, chats = 50, chatKb = 12, chatScale = 1, bi
     try { new PerformanceObserver((l) => { if (m.on) for (const e of l.getEntries()) m.long.push({ d: e.duration, t: performance.timeOrigin + e.startTime }); }).observe({ type: 'longtask', buffered: false }); } catch { /* no longtask */ }
     let prev = performance.now();
     (function raf() { const n = performance.now(); if (m.on) m.frames.push(n - prev); prev = n; requestAnimationFrame(raf); })();
-    const seen = () => { const a = document.querySelector('#tabs .tab.active'); const id = a?.dataset.id; if (id !== m.activeId) { m.activeId = id; if (m.on) { m.active = performance.timeOrigin + performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => { m.settled = performance.timeOrigin + performance.now(); })); } } };
+    const seen = () => { const a = document.querySelector('#tabs .tab.active'); const id = a?.dataset.id; if (id !== m.activeId) { m.activeId = id; if (m.on) { (m.hist ||= []).push({ id: Number(id), t: performance.timeOrigin + performance.now() }); m.active = performance.timeOrigin + performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => { m.settled = performance.timeOrigin + performance.now(); })); } } };
     new MutationObserver(seen).observe(document.querySelector('#tabs'), { attributes: true, subtree: true, childList: true, attributeFilter: ['class'] });
     document.addEventListener('input', (ev) => { if (m.on && ev.target.id === 'address') m.input.push(performance.timeOrigin + performance.now()); }, true);
   });
@@ -203,6 +203,64 @@ function summarize(rows) {
   return out;
 }
 
+// Puts some tabs to sleep (unloaded) and freezes others, as Settings > Tabs > Page unloading does after its timers, then returns what it did.
+async function sleepSome(rig, { sleep: nSleep = 12, freeze: nFreeze = 6, from = 5 } = {}) {
+  const { app, ids } = rig;
+  const pool = ids.slice(from);
+  const sleeping = pool.filter((_, i) => i % 2 === 0).slice(0, nSleep);
+  const frozen = pool.filter((_, i) => i % 2 === 1).slice(0, nFreeze);
+  await app.evaluate(async (_e, { sleeping: s, frozen: f }) => { for (const id of f) await global.__tabSleep.freeze(id); for (const id of s) global.__tabSleep.sleep(id); }, { sleeping, frozen });
+  return { sleeping, frozen };
+}
+
+// A burst: n switches `gap` ms apart by clicking the strip, over `targets` (default: the strip's tabs, scattered). Returns, per input, the time
+// until the strip showed that tab active, `finalMs` (from the LAST input until that tab was active with its view visible in main), how many
+// unloaded tabs were woken and frozen ones thawed, and the worst main event-loop stall. `viewGap`: strip active -> view visible in main (ms).
+async function burst(rig, { n = 20, gap = 100, targets = null, end = null } = {}) {
+  const { app, ui } = rig;
+  const strip = await ui.evaluate(() => [...document.querySelectorAll('#tabs .tab')].map((el) => Number(el.dataset.id)));
+  const pool = targets || strip.filter((id) => rig.ids.includes(id));
+  const from = await app.evaluate(() => global.__agent.browser.activeTab()?.id);
+  const order = [];
+  for (let i = 0; i < n; i++) { let to = pool[(i * 7 + 3) % pool.length]; if (to === (order[i - 1] ?? from)) to = pool[(i * 7 + 4) % pool.length]; order.push(to); }
+  if (end != null) order[n - 1] = end; // (the burst ends on this tab)
+  const before = await app.evaluate(() => global.__tabSleep.state());
+  await ui.evaluate(() => { const m = window.__tsu; m.hist = []; m.long = []; m.on = true; });
+  await app.evaluate(({ BrowserWindow }) => {
+    const p = global.__tsp; p.lag = []; p.samples = []; p.on = true;
+    const win = BrowserWindow.getAllWindows()[0];
+    let key = '';
+    clearInterval(p.sampler);
+    p.sampler = setInterval(() => {
+      const a = global.__agent.browser.activeTab();
+      const id = a?.id;
+      const cid = a?.webContents?.id;
+      const v = win.contentView.children.find((c) => c.webContents && c.webContents.id === cid);
+      const k = `${id}:${v ? v.getVisible() : 'noview'}`;
+      if (k !== key) { key = k; p.samples.push({ t: Date.now(), id, visible: Boolean(v && v.getVisible()) }); }
+    }, 4);
+  });
+  const clicks = await ui.evaluate(async ({ order: o, gap: g }) => {
+    const out = [];
+    for (const id of o) {
+      out.push({ id, t: performance.timeOrigin + performance.now() });
+      document.querySelector(`#tabs .tab[data-id="${id}"]`)?.click();
+      await new Promise((r) => setTimeout(r, g));
+    }
+    return out;
+  }, { order, gap });
+  await sleep(1500);
+  const main = await app.evaluate(() => { const p = global.__tsp; p.on = false; clearInterval(p.sampler); return { samples: p.samples, lag: p.lag.slice(), state: global.__tabSleep.state(), active: global.__agent.browser.activeTab()?.id }; });
+  const hist = await ui.evaluate(() => { window.__tsu.on = false; return window.__tsu.hist.slice(); });
+  const last = clicks[clicks.length - 1];
+  const shown = main.samples.find((s) => s.t >= last.t && s.id === last.id && s.visible);
+  const per = clicks.map((c) => { const h = hist.find((x) => x.id === c.id && x.t >= c.t); return h ? h.t - c.t : NaN; });
+  const viewGap = clicks.map((c) => { const h = hist.find((x) => x.id === c.id && x.t >= c.t); const v = h && main.samples.find((x) => x.id === c.id && x.visible && x.t >= c.t); return h && v ? v.t - h.t : NaN; });
+  const woke = before.filter((b) => !b.view && main.state.find((x) => x.id === b.id)?.view).length;
+  const thawed = before.filter((b) => b.frozen && !main.state.find((x) => x.id === b.id)?.frozen).length;
+  return { order, per: stats(per.filter(Number.isFinite)), viewGap: stats(viewGap.filter(Number.isFinite)), finalMs: shown ? shown.t - last.t : NaN, finalOk: main.active === last.id, woke, thawed, lagMax: Math.max(0, ...main.lag), perRaw: per };
+}
+
 // Typing in the address bar: n keys, each from the keyDown to the field's input event.
 async function measureTyping(rig, n = 30) {
   const { app, ui } = rig;
@@ -238,4 +296,4 @@ async function measureIdle(rig, ms = 8000) {
   });
 }
 
-module.exports = { launchRig, measureSwitches, measureTyping, measureIdle, summarize, stats, median, sleep, privateTemp, root };
+module.exports = { launchRig, sleepSome, burst, measureSwitches, measureTyping, measureIdle, summarize, stats, median, sleep, privateTemp, root };

@@ -2695,6 +2695,23 @@ function buildAccessibility(card) {
 }
 
 
+// Settings > Advanced > Diagnostics: a recorder for how long switching tabs takes on this computer (features/switch-timing.js). Off by default;
+// the export is a JSON file of numbers (no addresses, titles or sites) saved where the user picks.
+function buildSwitchTiming(slot) {
+  slot.append(toggle('recordSwitchTimings', tr('settings.switchTiming.label', 'Record tab-switch timings'), tr('settings.switchTiming.desc', 'Times each tab switch on this computer (the last 200), to find out why switching feels slow. It records numbers only: no addresses, titles or sites. Nothing is sent anywhere; Export saves a file you choose.')));
+  const note = h('span', { class: 'note', id: 'switch-timing-note', role: 'status', 'aria-live': 'polite' });
+  const count = async () => { const n = await S.switchTiming.count().catch(() => 0); note.textContent = n ? tr('settings.switchTiming.count', '{n} switches recorded.', { n }) : tr('settings.switchTiming.none', 'Nothing recorded yet.'); note.className = 'note'; };
+  const exportBtn = h('button', { type: 'button', id: 'switch-timing-export', text: tr('settings.switchTiming.export', 'Export timings…'), onclick: async () => {
+    const r = await S.switchTiming.export().catch(() => ({ ok: false, reason: 'failed' }));
+    if (r.ok) flash(note, tr('settings.switchTiming.saved', 'Saved {n} switches.', { n: r.count }), 'ok');
+    else if (r.reason === 'empty') flash(note, tr('settings.switchTiming.empty', 'Nothing to export yet: turn the recorder on and switch tabs first.'), 'warn');
+    else if (r.reason !== 'canceled') flash(note, tr('settings.switchTiming.failed', 'Couldn’t save the file.'), 'err');
+  } });
+  const clearBtn = h('button', { type: 'button', id: 'switch-timing-clear', text: tr('settings.switchTiming.clear', 'Clear'), onclick: async () => { await S.switchTiming.clear(); count(); } });
+  slot.append(row(tr('settings.switchTiming.exportLabel', 'Export tab-switch timings'), tr('settings.switchTiming.exportDesc', 'A JSON file with one entry per switch: the times between the click, the page showing and the strip updating, whether the tab was unloaded or frozen, and CPU use.'), exportBtn, clearBtn), row('', '', note));
+  count();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
+}
 function buildSystem(card) {
   card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
   const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
@@ -2710,6 +2727,7 @@ function buildSystem(card) {
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
   buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
+  buildSwitchTiming(card.at('advanced-more'));
   if (st.platform === 'darwin') {
     card.at('behavior').append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
   }
