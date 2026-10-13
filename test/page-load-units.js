@@ -29,6 +29,17 @@ function strip() {
   return out;
 }
 {
+  // A forced send of what the window already has: the hooks run (shouldSend says yes) but no message is needed (repeated); a reloaded page starts again.
+  const g = gates.tabsSendGate();
+  const key = {};
+  const state = { tabs: [{ id: 1, title: 'A' }], activeId: 1 };
+  check('the first forced send is not a repeat', g.shouldSend(key, state, true) && !g.repeated(key));
+  check('a forced send of the same state still runs the hooks but is a repeat (no IPC)', g.shouldSend(key, { ...state }, true) && g.repeated(key));
+  check('a changed state is not a repeat', g.shouldSend(key, { ...state, activeId: 2 }, true) && !g.repeated(key));
+  g.forget(key);
+  check('after the page reloads the same state goes out again', g.shouldSend(key, { ...state, activeId: 2 }, true) && !g.repeated(key));
+}
+{
   const s = strip();
   s.send();
   check('a forced send goes out and runs the hooks', s.sent === 1 && s.hooks === 1);
@@ -125,6 +136,7 @@ function fakeWc(url = 'https://example.fr/') {
   check('an in-page navigation re-probes with just the call', w3.calls.length === n + 1 && w3.calls[n].size < 200, JSON.stringify(w3.calls.slice(n)));
   void sends;
   const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  check('main.js skips the IPC for a repeat and forgets the baseline on a reload', main.includes('tabStripGate.repeated(') && main.includes('tabStripGate.forget(rec)'));
   check('main.js sends the strip through the gate, and bursts ask for the coalesced path', /tabStripGate\.shouldSend\(/.test(main) && /sendTabs\(true\)/.test(main));
 
   // ---- the ad blocker's per-page decisions are remembered ----

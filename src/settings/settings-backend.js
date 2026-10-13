@@ -346,14 +346,22 @@ function create(deps) {
     return ownSets.get(ses);
   };
 
+  // Every setting checked, as the app uses them. Callers are many and frequent (the tab strip's state asks for the default zoom on
+  // nearly every tab event; a tab's creation, a request's headers), and checking the home widgets alone re-lays-out the whole home
+  // grid, so the result is worked out once per settings object (main's cache is replaced on every write) and handed out as a copy of
+  // the top level; the values inside are shared, and read-only for every caller.
+  let prefsMemo = null; // { ref, value }
   function prefs() {
-    const s = readSettings();
+    const ref = deps.peekSettings?.();
+    if (ref && prefsMemo?.ref === ref) return { ...prefsMemo.value };
+    const s = ref ? { ...ref } : readSettings();
     const out = {};
     for (const [key, fallback] of Object.entries(DEFAULTS)) {
       const valid = s[key] === undefined ? null : validate(key, s[key]);
       out[key] = valid === null ? structuredClone(fallback) : valid;
     }
-    return out;
+    if (ref) prefsMemo = { ref, value: out };
+    return ref ? { ...out } : out;
   }
   const ses = () => session.defaultSession;
 

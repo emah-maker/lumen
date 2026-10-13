@@ -1850,7 +1850,7 @@ function sendTabs(coalesced = false) {
   keepPinnedFirst();
   const state = tabState();
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
-  ui()?.send('tabs', state);
+  if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose navigation keeps changing).
@@ -7160,6 +7160,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label });
+    tabStripGate.forget(rec); // (the fresh page has no strip: the next send goes out even if the state is what the old page had)
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     followFront({ push: false }); // [chat per tab] this window's tab's chat
     const items = agent.transcript();

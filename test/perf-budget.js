@@ -104,6 +104,24 @@ const CEILING = { requireMs: 1000, modules: 335, preloadKB: 40, uiKB: 1000, idle
     await ui.focus('#address'); await ui.keyboard.type('lumen browser', { delay: 15 }); await ui.keyboard.press('Escape');
     const worstTask = await ui.evaluate(() => Math.round(Math.max(0, ...window.__lt)));
     check(`worst UI long task while the sidebar opens, closes and the address bar is typed in <= ${CEILING.longTaskMs} ms (${worstTask} ms)`, worstTask <= CEILING.longTaskMs, worstTask);
+    // The settings the app reads on nearly every tab event (the strip's state asks for the default zoom) are checked once per settings write,
+    // not per call (checking the home widgets alone re-laid-out the whole grid: 212 us a call with 12 widgets, 5 us now), and a caller's change to
+    // what it gets back never reaches the next caller.
+    const pm = await app.evaluate(() => {
+      const b = global.__settings.backend;
+      b.prefs();
+      const t0 = process.hrtime.bigint();
+      for (let i = 0; i < 200; i++) b.prefs();
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      const first = b.prefs(); first.defaultZoom = 99;
+      const leaked = b.prefs().defaultZoom === 99;
+      b.set('defaultZoom', 1.25);
+      const after = b.prefs().defaultZoom;
+      b.set('defaultZoom', 1);
+      return { ms, leaked, after, back: b.prefs().defaultZoom };
+    });
+    check(`200 reads of the checked settings take <= ${CEILING.prefsMs} ms (${pm.ms.toFixed(1)} ms)`, pm.ms <= CEILING.prefsMs, pm.ms);
+    check('the checked settings follow a write, and a caller changing its copy does not change the next', !pm.leaked && pm.after === 1.25 && pm.back === 1, JSON.stringify(pm));
 
     // Performance mode reaches the page: the class that removes blur and motion.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('prefs:ui', { lite: true }));
