@@ -263,7 +263,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -5196,7 +5196,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
 // approval card it waits on.
 function chatView() {
   const run = chatRuns.get(chatId);
-  const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
+  const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
   return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
 }
@@ -5376,7 +5376,7 @@ function openForApproval(tab) {
 ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = () => t('agent.waiting'); // (only the "Chats working at once" cap makes a chat wait)
+const waitingText = () => t('agent.waiting', { n: runSlots.size() }); // (only the "Chats working at once" cap makes a chat wait)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -9022,7 +9022,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
-    chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runId });
+    chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runNow: true, runId });
     pushAttention(); // the tab and the chat list show it waiting
   }
 });
@@ -9042,6 +9042,8 @@ function stopChat(id) {
   else agent.stopFor(run.messages);
   return true;
 }
+// "Run now" on a chat that waits for a slot (the cap on chats working at once): it starts beside the others. The sender's open chat.
+ipcMain.handle('chats:run-now', (event) => { syncToSender(event); const run = chatRuns.get(chatId); return Boolean(run?.queued && runSlots.runNow(chatId)); });
 // The chat list's "Stop waiting": answers whether a run was there to stop (the list shows a failure when not).
 ipcMain.handle('chats:stop', (_e, id) => (typeof id === 'string' && id ? stopChat(id) : false));
 ipcMain.on('agent:stop', (event, id) => {
