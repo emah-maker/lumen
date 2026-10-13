@@ -442,10 +442,17 @@ const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
 // What is typed (and the long pasted blocks waiting as chips) is saved per chat on every change (renderer/chat-drafts.js, localStorage), put
 // away when another chat opens and back when this one does, also after a restart. 'draftHold' keeps the box from saving while it is empty
 // between two chats (or before startChat).
-const drafts = (() => { try { return window.chatDrafts.create(window.localStorage); } catch { return null; } })();
+// The sidebar and the full-page chat are one origin's localStorage: each has its own entry, or one saving its (older, or empty) composer on a sync
+// overwrote what the other had typed for the same chat, and the next sync put that back in the box.
+const drafts = (() => { try { return window.chatDrafts.create(window.localStorage, Date.now, document.body.classList.contains('chat-page') ? `${window.chatDrafts.KEY}.page` : window.chatDrafts.KEY); } catch { return null; } })();
 let pastes = []; // long pasted blocks shown as chips and sent with the message (strings)
 let draftHold = true;
+let emptyOwner; // the id (null: not named yet) of the last empty chat whose box held text when it was left; undefined: none (see applySync)
 const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+// Saved on every change (updateSend), and again when the box loses focus or the page goes away.
+prompt.addEventListener('blur', () => saveDraft());
+window.addEventListener('pagehide', () => saveDraft());
+window.addEventListener('beforeunload', () => saveDraft());
 function restoreDraft() {
   draftHold = false;
   const d = drafts?.get(shownChatId);
@@ -2529,8 +2536,18 @@ function flushLazyHistory() {
 }
 function applySync(view) {
   runStateSeq++;
-  clearChatView();
+  // The chat this view already shows (or the one not started yet, which main has given an id): the box, its attachments and its pasted blocks are
+  // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
+  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
+  const unnamed = sameChat && !shownChatId;
+  clearChatView({ keepBox: sameChat });
+  if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  if (sameChat) saveDraft();
+  // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
+  // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
+  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) drafts?.rename(emptyOwner, view.id);
+  if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined; // (taken, or the box already has its own)
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
     // Kept for now: drawn after the next paint when the view is on screen (the tab strip and the page area come first), or when it is shown.
     lazyItems = view.items;
@@ -2711,14 +2728,18 @@ document.querySelectorAll('.chip').forEach((chip) => {
 });
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
-function clearChatView() {
-  saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
-  draftHold = true;
-  prompt.value = '';
-  pastes = [];
-  autosize();
-  renderAttachments();
-  queueMicrotask(restoreDraft);
+// `keepBox`: the same chat is drawn again (applySync): its box is not touched at all.
+function clearChatView({ keepBox = false } = {}) {
+  if (!keepBox) {
+    if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId; // (kept while other chats are shown in between)
+    saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+    draftHold = true;
+    prompt.value = '';
+    pastes = [];
+    autosize();
+    renderAttachments();
+    queueMicrotask(restoreDraft);
+  }
   runId++;
   shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
   lastAsk = null; // another chat: its last message isn't known here

@@ -121,10 +121,12 @@ function create(deps) {
   // sidebar or another tab, never replaces what it shows. The sidebar and a page with no chat of its own take everything.
   const chatOfPage = (wc) => { const t = everyChatTab().find((x) => x.view.webContents === wc); return t && deps.chatOf ? deps.chatOf(t.id) : null; };
   const pageWants = (wc, payload) => { const about = payload?.view?.id ?? payload?.chatId; const own = about ? chatOfPage(wc) : null; return !own || own === about; };
+  // `except`: a webContents, or a list of them, that are not sent to.
   function broadcast(channel, payload, except = null) {
     const pages = new Set(everyChatTab().map((t) => t.view.webContents));
     const scoped = channel === 'chat:sync' || channel === 'chat:run-start';
-    for (const wc of surfaces()) if (wc !== except && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
+    const skip = new Set(Array.isArray(except) ? except : [except]);
+    for (const wc of surfaces()) if (!skip.has(wc) && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
   }
   // A run's event to whoever asked, and to the other views when a page is open.
   function emit(sender, channel, payload) {
