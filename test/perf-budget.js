@@ -24,7 +24,7 @@ const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modul
 // drafts, the chat library's undo/pin/archive/search) measured 903 KB. Mermaid (3.5 MB) is not in it: it loads on the first diagram.
 // uiKB 950 -> 1000 (chat UI polish): main measured about 941 KB (LF) and 956 KB with Windows CRLF line endings, so the 950 ceiling already failed on a CRLF checkout; the polish adds roughly 3 KB of CSS and a label observer, and nothing is loaded eagerly that was not before.
 // Idle ceilings (2026-10, fresh profile, one tab): measured ~3 pages, 5 processes, ~2% CPU, ~650-1300 MB (it swings by a quarter with what Windows counts as shared); the ceilings are about twice that, so a new always-on page, a poller or a spare process shows.
-const CEILING = { requireMs: 1000, modules: 335, preloadKB: 40, uiKB: 1000, idleIntervals: 6, idleContents: 6, idleProcesses: 9, idleCpuPct: 15, idleMemMB: 2000, longTaskMs: 150 };
+const CEILING = { requireMs: 1000, modules: 335, preloadKB: 40, uiKB: 1000, idleIntervals: 6, idleContents: 6, idleProcesses: 9, idleCpuPct: 15, idleMemMB: 2000, longTaskMs: 150, prefsMs: 40 };
 
 (async () => {
   let failures = 0;
