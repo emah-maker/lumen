@@ -4088,6 +4088,16 @@ function dropReplyActions() {
   for (const b of messages.querySelectorAll('.reply-regen, .reply-retry, .reply-actions-only')) b.remove();
 }
 
+// The working line's passing status. `runNow`: the chat waits for a free slot (the cap on chats working at once), and a button starts it now.
+function setStatus(working, text, runNow = false) {
+  if (text) working.dataset.status = text; else delete working.dataset.status;
+  working.querySelector('.run-now')?.remove();
+  if (!text || !runNow || !window.assistant?.chats?.runNow) return;
+  const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'run-now', textContent: t('chat.runNow'), title: t('chat.runNow.title') });
+  btn.onclick = () => { btn.disabled = true; window.assistant.chats.runNow().catch(() => {}).finally(() => { btn.disabled = false; }); };
+  working.append(btn);
+}
+
 // The working line and turn state of a reply that is now running (its user bubble already shown).
 function beginTurn() {
   dropReplyActions(); // (also a chat opened mid-run: its history ended on your message, so it showed the actions-only row)
@@ -4107,7 +4117,7 @@ function resumeLive(live) {
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
   // Waiting for a free slot (features/tab-chats.js): its message is not in the saved chat yet, so it is shown here.
   if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
-  if (live.queued?.status && turn.working) turn.working.dataset.status = live.queued.status;
+  if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, upload: a.upload });
@@ -4321,8 +4331,8 @@ window.assistant.onEvent((event) => {
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
-  if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
-  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
+  if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
+  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
   switch (event.type) {
     case 'turn_start':
     case 'text_block':

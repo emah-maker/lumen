@@ -174,7 +174,6 @@
       onAdd: () => editProject(null),
       onEdit: (p) => editProject(p),
       onNewChat: async (p) => {
-        if (running) return;
         const next = await api.newInProject(p.id).catch(() => null);
         if (!next) return;
         clearChatView();
