@@ -897,8 +897,11 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
    blur behind the composer resample each frame; the glass is a flat veil for those few hundred milliseconds. */
 body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
-.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; max-height: 240px; overflow-y: auto; scrollbar-width: thin; padding: 4px 0; }
-.composer textarea::placeholder { color: var(--muted); }
+.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; overflow-y: auto; scrollbar-width: thin; padding: 4px 0;
+  /* The browser sizes the box to its text, at any width, hidden or shown, with no script to measure it: one line when empty (the
+     placeholder stays on one line too), growing to 40% of the window, then scrolling. */
+  field-sizing: content; min-height: calc(1lh + 8px); max-height: min(240px, 40vh); }
+.composer textarea::placeholder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .send {

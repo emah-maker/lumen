@@ -184,7 +184,7 @@ body.chat-page .composer {
 /* focus: a thin accent edge and a soft halo, not the sidebar's heavy ring */
 body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--border)), 0 0 0 3px var(--accent-soft), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); }
 /* the message box on the first line; attach (+) and the tools on the line under it, Send/Stop at the right */
-body.chat-page .composer textarea { order: 1; flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 0 var(--cp-1); max-height: 320px; }
+body.chat-page .composer textarea { order: 1; flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 0 var(--cp-1); min-height: 1lh; max-height: min(320px, 40vh); }
 body.chat-page .composer .attach-btn { order: 2; }
 body.chat-page .composer .screen-btn { order: 3; }
 body.chat-page .composer .meter-strip { order: 4; flex: 1 1 0; min-width: 0; margin: 0; padding: 0; }

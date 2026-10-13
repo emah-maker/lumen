@@ -2466,9 +2466,11 @@ new ResizeObserver(() => {
   if ($('composer').offsetHeight && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
 
+// The box sizes itself (CSS field-sizing: content, with a one-line minimum and a cap of 40% of the window), so nothing is measured
+// here: no scrollHeight read while the box is hidden or narrow, nothing to recompute on a resize, a draft restore, a zoom or a font
+// load. Callers keep calling this; it only drops a fixed height that an older version of the box may have left behind.
 function autosize() {
-  prompt.style.height = 'auto';
-  prompt.style.height = `${Math.min(prompt.scrollHeight, 240)}px`;
+  if (prompt.style.height) prompt.style.height = '';
 }
 // Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
 let prewarmAt = 0;
