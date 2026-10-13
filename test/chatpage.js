@@ -405,8 +405,10 @@ const fakeClient = (app) => app.evaluate(() => {
   await fakeClient(app);
   await app.evaluate(() => { // chats from different days, to see the groups
     const store = global.__chats.store(); const real = Date.now; const day = 864e5;
-    for (const [title, d] of [['Plan a trip to Lisbon', 45], ['Compare mortgage rates', 20], ['Fix flaky CI test', 3], ['Summarize the Rust notes', 1.2], ['Draft email to landlord', 0.1]]) {
-      Date.now = () => real() - d * day;
+    // (Measured from this morning's midnight, not from now: 3 hours ago is still yesterday between midnight and 3 am, and the groups are calendar days.)
+    const now = real(); const midnight = new Date(now).setHours(0, 0, 0, 0);
+    for (const [title, at] of [['Plan a trip to Lisbon', midnight - 44.5 * day], ['Compare mortgage rates', midnight - 19.5 * day], ['Fix flaky CI test', midnight - 2.5 * day], ['Summarize the Rust notes', midnight - 0.5 * day], ['Draft email to landlord', midnight + (now - midnight) / 2]]) {
+      Date.now = () => at;
       store.save(store.newId(), { messages: [{ role: 'user', content: title }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }], settings: {} });
     }
     Date.now = real;
