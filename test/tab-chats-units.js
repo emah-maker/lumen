@@ -322,7 +322,7 @@ const J = (v) => JSON.stringify(v);
     check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
     const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
     check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
-    check('queue: a waiting chat waits only for room (no "Antigravity works on one chat at a time" line)', /const waitingText = \(\) => t\('agent\.waiting'\)/.test(mainSrc) && !/agent\.waitingCli/.test(mainSrc));
+    check('queue: a waiting chat waits only for room (no "Antigravity works on one chat at a time" line)', /const waitingText = \(\) => t\('agent\.waiting', \{ n: runSlots\.size\(\) \}\)/.test(mainSrc) && !/agent\.waitingCli/.test(mainSrc));
     check('delete: a deleted chat\'s Antigravity home goes with it', /removeChatHome\(app\.getPath\('userData'\), id\)/.test(del));
   }
   check('marks: the tab mark and the list badge are the same size (12px)', /\.tab-chat-mark \{[^}]*width: 12px; height: 12px/.test(css) && /\.chat-badge \{[^}]*width: 12px; height: 12px/.test(css));
