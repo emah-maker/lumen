@@ -4088,6 +4088,16 @@ function dropReplyActions() {
   for (const b of messages.querySelectorAll('.reply-regen, .reply-retry, .reply-actions-only')) b.remove();
 }
 
+// The working line's passing status. `runNow`: the chat waits for a free slot (the cap on chats working at once), and a button starts it now.
+function setStatus(working, text, runNow = false) {
+  if (text) working.dataset.status = text; else delete working.dataset.status;
+  working.querySelector('.run-now')?.remove();
+  if (!text || !runNow || !window.assistant?.chats?.runNow) return;
+  const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'run-now', textContent: t('chat.runNow'), title: t('chat.runNow.title') });
+  btn.onclick = () => { btn.disabled = true; window.assistant.chats.runNow().catch(() => {}).finally(() => { btn.disabled = false; }); };
+  working.append(btn);
+}
+
 // The working line and turn state of a reply that is now running (its user bubble already shown).
 function beginTurn() {
   dropReplyActions(); // (also a chat opened mid-run: its history ended on your message, so it showed the actions-only row)
@@ -4107,7 +4117,7 @@ function resumeLive(live) {
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
   // Waiting for a free slot (features/tab-chats.js): its message is not in the saved chat yet, so it is shown here.
   if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
-  if (live.queued?.status && turn.working) turn.working.dataset.status = live.queued.status;
+  if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, upload: a.upload });
@@ -4321,8 +4331,8 @@ window.assistant.onEvent((event) => {
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
-  if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
-  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
+  if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
+  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
@@ -6668,12 +6678,13 @@ function startChat() {
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
-        const closeLabel = tr('chats.closeTabs', 'Close this chat’s tabs');
+        const closeLabel = tr('chats.closeTabs', 'Close tabs opened by this chat');
         const closeTabs = iconButton('closetabs', closeLabel);
         closeTabs.onclick = async () => {
           closeTabs.disabled = true;
           const out = await api.closeTabs(chat.id).catch(() => null);
-          say(out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : tr('chats.closeTabs.none', 'This chat has no tabs it opened'));
+          const busyNote = out?.busy > 0 ? tr(out.busy === 1 ? 'chat.aiTabs.busy.one' : 'chat.aiTabs.busy.other', out.busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.').replace('{count}', out.busy) : '';
+          say([out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : busyNote ? '' : tr('chats.closeTabs.none', 'This chat has no tabs it opened'), busyNote].filter(Boolean).join(' '));
           closeTabs.remove();
         };
         tabActions.push(closeTabs);
@@ -8084,7 +8095,7 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  // [ai manners] a tab the AI opened: a small sparkle after its title (updateTabEl; styles.css .tab-ai-mark)
+  // [ai manners] a tab the AI opened: a small sparkle on its favicon's corner (updateTabEl; styles.css .tab-ai-mark)
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
@@ -8092,7 +8103,7 @@ function createTabEl(id) {
   const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
   offMark.setAttribute('aria-hidden', 'true');
   offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 10 2.4v3c0 2.3-1.6 3.9-4 5-2.4-1.1-4-2.7-4-5v-3Z"/><path class="off-spark" d="M6 3.7l.5 1.4 1.4.5-1.4.5L6 7.5l-.5-1.4-1.4-.5 1.4-.5Z"/></svg>';
-  inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
+  inner.append(globeIcon(), aiMark, chatMark, title, offMark, close); // (aiMark sits right after the icon: it is drawn over the icon's corner)
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
@@ -11396,7 +11407,12 @@ $('agent-stop')?.addEventListener('click', () => {
     return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs', role: 'status' }));
   }
   const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
-  function undoRow(box, closed, token, kept = 0) {
+  // What a close left open: tabs that hold typed text or ask before closing, and tabs a chat is still working in.
+  const heldNote = (kept, busy) => [
+    kept > 0 ? plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '',
+    busy > 0 ? plural('chat.aiTabs.busy', busy, busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.') : '',
+  ].filter(Boolean).join(' ');
+  function undoRow(box, closed, token, kept = 0, busy = 0) {
     box.replaceChildren();
     box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
     const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
@@ -11406,7 +11422,7 @@ $('agent-stop')?.addEventListener('click', () => {
       box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: result?.reopened ? plural('chat.aiTabs.reopened', result.reopened, 'Reopened {count} tabs.') : (window.t?.('chat.aiTabs.nothingReopened') || 'Nothing to reopen.') })); // (a second Undo of the same close finds nothing)
     });
     box.append(undo);
-    if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
+    if (kept > 0 || busy > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: heldNote(kept, busy) }));
     box.setAttribute('role', 'status');
   }
   window.showAiTabs = function showAiTabs(append, info, runId) {
@@ -11415,16 +11431,16 @@ $('agent-stop')?.addEventListener('click', () => {
     const n = info.n;
     const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text' });
     if (info.mode === 'ask') text.textContent = plural('chat.aiTabs.ask', n, n === 1 ? 'The AI opened {count} tab. Close it?' : 'The AI opened {count} tabs. Close them?');
-    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab the AI opened' : 'Close {count} tabs the AI opened') });
+    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab this chat opened' : 'Close {count} tabs this chat opened') });
     close.addEventListener('click', async () => {
       close.disabled = true;
       const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
       if (!result?.closed) {
-        const keptText = result?.kept > 0 ? plural('chat.aiTabs.kept', result.kept, result.kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '';
+        const keptText = heldNote(result?.kept || 0, result?.busy || 0);
         box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: keptText || window.t?.('chat.aiTabs.none') || 'Nothing to close.' }));
         return;
       }
-      undoRow(box, result.closed, result.token, result.kept);
+      undoRow(box, result.closed, result.token, result.kept, result.busy);
     });
     box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
     if (info.mode === 'ask') {
@@ -11435,7 +11451,7 @@ $('agent-stop')?.addEventListener('click', () => {
   };
   window.showAiTabsClosed = function showAiTabsClosed(append, event) {
     if (!event?.n || !event.token) return;
-    undoRow(aiTabsRow(append), event.n, event.token, event.kept);
+    undoRow(aiTabsRow(append), event.n, event.token, event.kept, event.busy);
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {

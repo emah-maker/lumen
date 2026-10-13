@@ -331,7 +331,12 @@
     return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs', role: 'status' }));
   }
   const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
-  function undoRow(box, closed, token, kept = 0) {
+  // What a close left open: tabs that hold typed text or ask before closing, and tabs a chat is still working in.
+  const heldNote = (kept, busy) => [
+    kept > 0 ? plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '',
+    busy > 0 ? plural('chat.aiTabs.busy', busy, busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.') : '',
+  ].filter(Boolean).join(' ');
+  function undoRow(box, closed, token, kept = 0, busy = 0) {
     box.replaceChildren();
     box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
     const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
@@ -341,7 +346,7 @@
       box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: result?.reopened ? plural('chat.aiTabs.reopened', result.reopened, 'Reopened {count} tabs.') : (window.t?.('chat.aiTabs.nothingReopened') || 'Nothing to reopen.') })); // (a second Undo of the same close finds nothing)
     });
     box.append(undo);
-    if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
+    if (kept > 0 || busy > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: heldNote(kept, busy) }));
     box.setAttribute('role', 'status');
   }
   window.showAiTabs = function showAiTabs(append, info, runId) {
@@ -350,16 +355,16 @@
     const n = info.n;
     const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text' });
     if (info.mode === 'ask') text.textContent = plural('chat.aiTabs.ask', n, n === 1 ? 'The AI opened {count} tab. Close it?' : 'The AI opened {count} tabs. Close them?');
-    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab the AI opened' : 'Close {count} tabs the AI opened') });
+    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab this chat opened' : 'Close {count} tabs this chat opened') });
     close.addEventListener('click', async () => {
       close.disabled = true;
       const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
       if (!result?.closed) {
-        const keptText = result?.kept > 0 ? plural('chat.aiTabs.kept', result.kept, result.kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '';
+        const keptText = heldNote(result?.kept || 0, result?.busy || 0);
         box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: keptText || window.t?.('chat.aiTabs.none') || 'Nothing to close.' }));
         return;
       }
-      undoRow(box, result.closed, result.token, result.kept);
+      undoRow(box, result.closed, result.token, result.kept, result.busy);
     });
     box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
     if (info.mode === 'ask') {
@@ -370,7 +375,7 @@
   };
   window.showAiTabsClosed = function showAiTabsClosed(append, event) {
     if (!event?.n || !event.token) return;
-    undoRow(aiTabsRow(append), event.n, event.token, event.kept);
+    undoRow(aiTabsRow(append), event.n, event.token, event.kept, event.busy);
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {

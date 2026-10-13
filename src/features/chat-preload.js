@@ -71,6 +71,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
       moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),
+      runNow: () => ipcRenderer.invoke('chats:run-now'),
       newInProject: (projectId) => ipcRenderer.invoke('chats:new-in-project', projectId),
       closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners]
       onUsage: on('chats:usage'),

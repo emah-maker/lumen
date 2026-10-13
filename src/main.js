@@ -263,7 +263,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -5187,7 +5187,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
 // approval card it waits on.
 function chatView() {
   const run = chatRuns.get(chatId);
-  const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
+  const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
   return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
 }
@@ -5367,7 +5367,7 @@ function openForApproval(tab) {
 ipcMain.handle('sidebar:set', (_event, tabId, open) => setTabSidebar(tabId ?? activeId, Boolean(open))); // (no tab named: the one in front in the asking window)
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = () => t('agent.waiting'); // (only the "Chats working at once" cap makes a chat wait)
+const waitingText = () => t('agent.waiting', { n: runSlots.size() }); // (only the "Chats working at once" cap makes a chat wait)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -5646,8 +5646,9 @@ const aiCloseUndo = new Map(); // token -> [{ url, partition, rec }]: what a clo
 let aiCloseSeq = 0;
 const chatNotEmpty = (cid) => chatRuns.has(cid) || chats().list().some((c) => c.id === cid);
 // The tabs (of every window, or just `rec`'s) the AI opened that may be closed, as [{ rec, tab }]. `runId` / `chatId` narrow it
-// to that run's / chat's; neither: all of them.
-function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null } = {}) {
+// to that run's / chat's; neither: all of them. `busy: true` answers the other question: the ones a run is working in right now,
+// which a close keeps (and says so).
+function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null, busy: wantBusy = false } = {}) {
   const found = [];
   const own = new Set(chatId != null ? [chatId] : []);
   if (runId != null) for (const r of winRecs) for (const x of rcAlive(r) ? tabsOf(r) : []) if (x.openedBy?.runId === runId && x.openedBy.chatId != null) own.add(x.openedBy.chatId);
@@ -5656,7 +5657,8 @@ function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null } =
   const busy = agent.runTabIds();
   for (const r of rec ? [rec] : [...winRecs]) {
     if (!rcAlive(r)) continue;
-    for (const tab of manners.closeSelection(tabsOf(r), { runId, chatId, boundIds: [...bound], busyIds: busy, activeId: activeIdOf(r), auto })) found.push({ rec: r, tab });
+    const opts = { runId, chatId, boundIds: [...bound], busyIds: busy, activeId: activeIdOf(r), auto };
+    for (const tab of wantBusy ? manners.busyKept(tabsOf(r), opts) : manners.closeSelection(tabsOf(r), opts)) found.push({ rec: r, tab });
   }
   return found;
 }
@@ -5686,10 +5688,10 @@ function aiClosingNote(rec) {
   if (rcAlive(rec) && winRecs.has(rec)) withWindow(rec, () => ui()?.send('tabs:organize-note', { text: t('chat.aiTabs.closing'), undo: false, ttl: 6000 }));
 }
 // The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
-function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
+function aiCloseNote(rec, { closed = 0, kept = 0, busy = 0, token = 0 } = {}) {
   if (!rcAlive(rec) || !winRecs.has(rec)) rec = focusedRec(); // the window the tabs were in is gone: the toast (and its Undo) goes to the one the user is in
   const plural = (base, n) => t(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
-  const text = [closed ? plural('chat.aiTabs.closed', closed) : kept ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : ''].filter(Boolean).join(' ');
+  const text = [closed ? plural('chat.aiTabs.closed', closed) : kept || busy ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : '', busy ? plural('chat.aiTabs.busy', busy) : ''].filter(Boolean).join(' ');
   if (!rcAlive(rec) || !winRecs.has(rec)) return;
   withWindow(rec, () => ui()?.send('tabs:organize-note', { text, undo: Boolean(closed && token), ttl: 9000, aiUndo: closed ? token : 0, undoLabel: t('chat.aiTabs.undo'), undoTitle: t('chat.aiTabs.undo') }));
 }
@@ -5702,6 +5704,7 @@ function keepTab(rec, tab) {
 }
 async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
+  const busyBefore = aiTabSelect({ ...selector, auto, busy: true }).length; // [ai manners] tabs a run is still working in: kept, and the toast says "Kept 1 tab the AI is still using"
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
@@ -5715,7 +5718,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     aiCloseUndo.set(token, items);
     while (aiCloseUndo.size > 20) aiCloseUndo.delete(aiCloseUndo.keys().next().value);
   }
-  const result = { closed: items.length, kept: results.filter((r) => r.kept).length, token };
+  const result = { closed: items.length, kept: results.filter((r) => r.kept).length, busy: busyBefore, token };
   Object.defineProperty(result, 'rec', { value: items[0]?.rec || picked[0]?.rec || null }); // (not sent over IPC) the window holding the tabs: where a toast belongs
   return result;
 }
@@ -5832,6 +5835,7 @@ function sessionEntry() {
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
     aiKeepOff: saved.map((t) => manners.isKeptOff(t)), // [ai off-tab] stays with the tab across a restart
+    aiOpened: saved.map((t) => manners.savedMark(t)), // [ai manners] a tab the AI opened and the user has not taken over stays the AI's across a restart ({ chatId, at })
     chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart); a chat shown in several tabs is in each
     chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
     sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
@@ -5894,6 +5898,7 @@ function restoreTabsFrom(saved) {
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
     if (saved.aiKeepOff?.[i] === true) manners.keepOff(tab); // [ai off-tab]
+    if (saved.aiOpened?.[i]) manners.restoreMark(tab, saved.aiOpened[i]); // [ai manners] (after pinned: a pinned tab is the user's)
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
     sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
   });
@@ -6128,6 +6133,7 @@ function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false,
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab) return false;
   if (!withWindow(src, () => releaseTab(tab, { keepFlags }))) return false;
+  if (!keepFlags) manners.handOver(tab); // [ai manners] a tab the user moved to another window is theirs (merging all windows is no choice about this one tab, so a merge keeps the mark)
   withWindow(dst, () => adoptTab(tab, index, show));
   chatTabMoved(tabId, dst); // [chat per tab] its chat, and a task working in it, go along
   enterWindow(dst);
@@ -8970,7 +8976,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
-        aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
+        aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, busy: r.busy, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
       }
     } else if (msg.type === 'tool_done' && !run.deleted) (stampRun(run), isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
@@ -9004,7 +9010,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
-    chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runId });
+    chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runNow: true, runId });
     pushAttention(); // the tab and the chat list show it waiting
   }
 });
@@ -9024,6 +9030,8 @@ function stopChat(id) {
   else agent.stopFor(run.messages);
   return true;
 }
+// "Run now" on a chat that waits for a slot (the cap on chats working at once): it starts beside the others. The sender's open chat.
+ipcMain.handle('chats:run-now', (event) => { syncToSender(event); const run = chatRuns.get(chatId); return Boolean(run?.queued && runSlots.runNow(chatId)); });
 // The chat list's "Stop waiting": answers whether a run was there to stop (the list shows a failure when not).
 ipcMain.handle('chats:stop', (_e, id) => (typeof id === 'string' && id ? stopChat(id) : false));
 ipcMain.on('agent:stop', (event, id) => {
