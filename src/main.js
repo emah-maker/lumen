@@ -1992,7 +1992,7 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
-let spareForTest = false; // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it)
+let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure-app-perf.js)
 const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
 let spareForced = false; // tests: make one regardless of start-up state
 // One scheduler for the always-on housekeeping timers and one shared memory sample (features/scheduler.js). While every
@@ -2102,7 +2102,7 @@ if (TEST) global.__spareChat = { enable: (on = true) => { spareChatForTest = on;
 // with Performance mode switched on by hand.)
 let warmTab = null; // { view, prefs }
 const warmPending = new WeakSet(); // a tab's page that hasn't left the warm view's about:blank yet (no address, no history)
-let warmForTest = false;
+let warmForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // (same switch as the spare new-tab page)
 const warmTabsOn = () => (!TEST || warmForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
 function makeWarmTab() {
   if (warmTab || !app.isReady() || !warmTabsOn() || quitting) return;
