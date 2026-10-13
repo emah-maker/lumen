@@ -1891,6 +1891,16 @@ let viewFrozen = false;
 // UI catches up; navigating the tab anywhere ends it.
 let chatFullTab = null;
 
+// What a Lumen page (the new-tab page above all) is painted on before, and wherever, its renderer has not drawn: the page's own background in
+// the current theme, never the default black. Set on the tab views, the window and its content view (the UI's colour), kept up with the theme.
+const pageBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff');
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7');
+function paintBackgrounds(rec) {
+  try { rec.win.setBackgroundColor(windowBackground()); } catch { /* gone */ }
+  try { rec.win.contentView.setBackgroundColor(windowBackground()); } catch { /* an older shell */ }
+  for (const t of rec.tabs) { try { const u = t.view?.webContents.getURL(); if (t.view && (!u || isNewTab(u))) t.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
+  for (const s of [spareNewTab, spareChat]) { try { s?.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
+}
 function layout() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
@@ -2016,7 +2026,7 @@ function makeSpareNewTab() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
-  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} // (taken while still loading: the theme's color, not white)
+  try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   // A spare whose renderer died (out of memory, killed) is replaced shortly, not found dead at the next Ctrl+T.
@@ -2070,7 +2080,7 @@ function makeSpareChat() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs, preload: managers.preloadFor('chat'), additionalArguments: [chatPage.SPARE_FLAG] } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {}
-  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {}
+  try { view.setBackgroundColor(pageBackground()); } catch {}
   const s = { view, prefs: JSON.stringify(prefs), locale: i18n().locale, committed: false, at: Date.now() };
   view.webContents.once('dom-ready', () => { s.committed = true; }); // (its preload is in by then: it can be handed to a tab)
   view.webContents.once('render-process-gone', () => { if (spareChat === s) { closeSpareChat(); setTimeout(makeSpareChat, 2000).unref?.(); } });
@@ -2236,7 +2246,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
   if ((plainNewTab || settings || historyPage || managerPage) && !spare && !chatSpare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
-    try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
+    try { view.setBackgroundColor(pageBackground()); } catch {} }
+  if (plainNewTab) { try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ } } // (a spare or adopted one too: made before the theme may have changed)
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   if (openedBy && !curRec?.agent) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened (an agent's own window is not marked: nothing there is the user's, so nothing is hidden or closed for them)
@@ -2685,7 +2696,7 @@ function wakeTab(tab, { placeholder = false } = {}) {
   raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
-  if (!warm && !chatSpare) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
+  if (!warm && !chatSpare) { try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
   if (placeholder) tab.placeholder = { url: tab.sleepUrl, title: tab.sleepTitle || '', history }; // (the page and its history wait in the tab until Reload)
   wireView(tab, tab.sleepUrl || newTabUrl(), placeholder ? null : history, { loaded: Boolean(chatSpare) || placeholder });
   if (placeholder) view.webContents.loadURL(`${UNLOADED_URL}?${new URLSearchParams({ url: tab.sleepUrl, title: tab.sleepTitle || '', mb: String(tab.freedMb || 0) })}`).catch(() => {});
@@ -7048,6 +7059,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
   const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore), agent: agentOf ? { label: agentOf.label, used: false, madeAt: Date.now() } : null };
   winRecs.add(rec);
+  try { w.contentView.setBackgroundColor(windowBackground()); } catch { /* an older shell */ } // (what shows where no view has drawn yet: the UI's colour, not black)
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);
   bindContext(w.webContents, () => rec);
@@ -7348,6 +7360,7 @@ const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ 
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
+  for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, () => paintBackgrounds(rec)); // (the not-yet-painted area matches the page in the new theme)
   if (process.platform === 'darwin') return;
   for (const rec of winRecs) if (rcAlive(rec)) { try { rec.win.setTitleBarOverlay(titleBarOverlay()); } catch {} }
 });
