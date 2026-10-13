@@ -96,6 +96,8 @@ const launch = (profile) => electron.launch({
   check('after a restart the toggle is still on (and stays reachable with no AI tab, to turn it off)', t && t.hidden === false, JSON.stringify(t));
   await ui.click('#hide-ai-tabs');
   await waitFor(async () => (await toggle()).pressed === 'false');
+  await app.evaluate(() => global.__aiTabs.close({})); // (the AI's tabs are saved with the session and come back marked: close them to carry on with none)
+  await waitFor(() => app.evaluate(() => ![...global.__windows.list().flatMap((w) => w.tabs)].some((t) => global.__aiTabs.tab(t.id)?.openedBy)));
   check('...and turning it off with no AI tab open hides the button again', (await waitFor(async () => (await toggle()).hidden)) === true);
 
   // ---- 4. Close the tabs the AI opened (and what it never closes).
