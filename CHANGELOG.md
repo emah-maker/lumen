@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.31 (2026-10-13)
+
 - **The toolbar's pills no longer run over the address bar in a narrow window.** With the update pill and the "Lumen is using this tab" pill both showing (a failed update reads longest), a window around 1000 px wide pushed the second pill left over the end of the address field. The pills now make room in steps, as far as it takes and no further: the full words, then a dot and a short label ("Using tab", "Try again"), then icons only (Stop and the update button become 24 px icon buttons). The step is chosen from what actually fits, so any mix of pills, extension icons and window width stays clear of the address, inside the toolbar and inside the window, down to the minimum window width. The full words stay in each pill's tooltip and its accessible name. Tested hidden in `test/toolbar-layout.js` at 1400, 1200, 1000, 900, 800 and the minimum width, with no pill, either pill and both, in short and longest copy.
 
 ## 0.5.30 (2026-10-13)
