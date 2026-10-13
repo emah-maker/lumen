@@ -123,6 +123,27 @@ const CEILING = { requireMs: 1000, modules: 335, preloadKB: 40, uiKB: 1000, idle
     check(`200 reads of the checked settings take <= ${CEILING.prefsMs} ms (${pm.ms.toFixed(1)} ms)`, pm.ms <= CEILING.prefsMs, pm.ms);
     check('the checked settings follow a write, and a caller changing its copy does not change the next', !pm.leaked && pm.after === 1.25 && pm.back === 1, JSON.stringify(pm));
 
+    // The "Using: <page>" chip above the composer is redrawn only when what it shows changed: the same tab state arriving again (every title
+    // tick, loading flag and favicon of the tab in front sends one) writes nothing into the composer, whose height would otherwise move and
+    // restyle the whole chat.
+    {
+      const site = require('http').createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Chip page</title><body>chip</body>'); });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      try {
+        await ui.evaluate(() => { window.__lastTabs = null; window.browser.onTabs((s) => { window.__lastTabs = JSON.parse(JSON.stringify(s)); }); });
+        await app.evaluate((_e, url) => global.__agent.execute('navigate', { url }), `http://127.0.0.1:${site.address().port}/`);
+        await ui.waitForFunction(() => !document.getElementById('page-context').hidden && document.querySelector('.pc-title')?.textContent.includes('Chip page'), null, { timeout: 8000 });
+        await new Promise((r) => setTimeout(r, 600));
+        await ui.evaluate(() => { window.__chipMuts = 0; new MutationObserver((l) => { window.__chipMuts += l.length; }).observe(document.getElementById('composer'), { subtree: true, attributes: true, childList: true, characterData: true }); });
+        await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows().find((x) => /index.html/.test(x.webContents.getURL())); return w.webContents.executeJavaScript('window.__lastTabs').then((s) => { for (let i = 0; i < 5; i++) w.webContents.send('tabs', s); }); });
+        await new Promise((r) => setTimeout(r, 400));
+        const muts = await ui.evaluate(() => window.__chipMuts);
+        check('the same tab state arriving five times changes nothing in the composer', muts === 0, `${muts} DOM changes`);
+      } catch (err) {
+        check('the same tab state arriving five times changes nothing in the composer', false, err.message);
+      } finally { site.close(); }
+    }
+
     // Performance mode reaches the page: the class that removes blur and motion.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('prefs:ui', { lite: true }));
     await ui.waitForFunction(() => document.documentElement.classList.contains('pref-lite') && document.documentElement.classList.contains('pref-reduce-motion'), null, { timeout: 3000 })
