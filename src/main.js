@@ -3097,7 +3097,7 @@ function keepKeyboardFromBackgroundTab(tab) {
     const rec = tab.rec;
     if (!rec || !rec.win || rec.win.isDestroyed() || wc.isDestroyed()) return;
     if (tab.id === activeId) { rec.keyboardOwner = wc; return; }
-    if (tab.view.webContents !== wc) return; // (the view was swapped: leaveNewTabFor)
+    if (tab.view?.webContents !== wc) return; // (the view was swapped: leaveNewTabFor; or unloaded: no view)
     const ui = rec.win.webContents;
     const back = rec.keyboardOwner;
     // (the owner counts only while it is the UI or the tab in front: a tab left behind is not where the keyboard is)
