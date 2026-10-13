@@ -121,7 +121,7 @@
   };
   function stopSpeaking() {
     try { window.speechSynthesis.cancel(); } catch { /* none */ }
-    if (speaking) { speaking.innerHTML = SPEAK; speaking.classList.remove('on'); speaking.setAttribute('aria-pressed', 'false'); speaking.title = speaking.getAttribute('aria-label') || ''; }
+    if (speaking) { speaking.innerHTML = SPEAK; speaking.classList.remove('on'); speaking.setAttribute('aria-pressed', 'false'); speaking.setAttribute('aria-label', tr('chatpage.readAloud', 'Read aloud')); }
     speaking = null;
   }
   function speak(button, bubble) {
@@ -134,7 +134,7 @@
     button.innerHTML = STOP;
     button.classList.add('on');
     button.setAttribute('aria-pressed', 'true');
-    button.title = tr('chatpage.stopReading', 'Stop reading');
+    button.setAttribute('aria-label', tr('chatpage.stopReading', 'Stop reading')); // (the tooltip is drawn from the label, as on the other reply buttons)
     parts.forEach((part, i) => {
       const u = new SpeechSynthesisUtterance(part);
       u.lang = document.documentElement.lang || navigator.language || 'en-US';
@@ -144,7 +144,7 @@
   }
   function readAloudButton(bubble) {
     const label = tr('chatpage.readAloud', 'Read aloud');
-    const b = el('button', { type: 'button', className: 'reply-speak', title: label });
+    const b = el('button', { type: 'button', className: 'reply-speak' });
     b.setAttribute('aria-label', label);
     b.setAttribute('aria-pressed', 'false');
     b.innerHTML = SPEAK;
@@ -236,10 +236,11 @@
   // ---- what appears in the conversation: add the buttons to each reply and each Stop notice as they arrive
   function decorate(node) {
     if (node.nodeType !== 1) return;
+    // Read aloud joins Copy, Regenerate and Retry in the corner row under the reply (not the model label's row).
     for (const strip of node.matches?.('.reply-meta') ? [node] : node.querySelectorAll?.('.reply-meta') || []) {
       const bubble = strip.closest('.msg.assistant');
       if (!bubble || !bubble.querySelector('.reply-copy')) continue;
-      if ('speechSynthesis' in window && !strip.querySelector('.reply-speak')) strip.append(readAloudButton(bubble));
+      if ('speechSynthesis' in window && !bubble.querySelector(':scope > .reply-speak')) bubble.append(readAloudButton(bubble));
     }
     for (const regen of node.matches?.('.reply-regen') ? [node] : node.querySelectorAll?.('.reply-regen') || []) {
       if (!regen.parentElement.querySelector('.reply-retry')) regen.after(retryButton(regen.parentElement));

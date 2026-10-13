@@ -89,7 +89,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   check('Escape leaves the title as it was', (await chatList())[0].title === 'Fox facts' && (await inPage("document.getElementById('cp-title').textContent")) === 'Fox facts' && !(await inPage("Boolean(document.querySelector('.cp-title-input'))")), await inPage("document.getElementById('cp-title').textContent"));
 
   // ---- 2. read aloud
-  check('a finished reply has a Read aloud button', await inPage("Boolean(document.querySelector('.msg.assistant .reply-meta .reply-speak'))"), 'none');
+  check('a finished reply has a Read aloud button', await inPage("Boolean(document.querySelector('.msg.assistant > .reply-speak'))"), 'none');
   await inPage("window.__spoken = []; speechSynthesis.speak = (u) => { window.__spoken.push(u.text); }; speechSynthesis.cancel = () => {}; document.querySelector('.reply-speak').click()");
   const spoken = await inPage('window.__spoken');
   check('it reads the reply text, without the buttons around it', Array.isArray(spoken) && /quick brown fox/.test(spoken.join(' ')) && !/Read aloud|Copy/.test(spoken.join(' ')), JSON.stringify(spoken));

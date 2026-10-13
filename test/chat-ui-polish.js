@@ -18,6 +18,25 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 const CODE = `\`\`\`js\n${Array.from({ length: 70 }, (_, i) => `const line${i} = ${i}; // a long block of code`).join('\n')}\n\`\`\`\n`;
 const LONG = `## Answer\n\n${'A sentence that goes on for a good while so the paragraph is wide enough to wrap more than once on a roomy window. '.repeat(5)}\n\n${CODE}\n| A | B |\n|---|---|\n| 1 | 2 |\n\nThe end.\n`;
 
+// In-page contrast probe (text colour against the composited backgrounds behind it): WCAG ratio.
+const CONTRAST = `(() => {
+  const px = (c) => { const g = document.createElement('canvas').getContext('2d', { willReadFrequently: true }); g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (acc, c) => { const k = c[3] * (1 - acc[3]); return [acc[0] + c[0] * k, acc[1] + c[1] * k, acc[2] + c[2] * k, acc[3] + k]; };
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const field = () => { const p = document.createElement('div'); p.style.background = 'var(--field)'; document.body.append(p); const c = getComputedStyle(p).backgroundColor; p.remove(); return px(c); };
+  window.__contrast = (el, opts) => {
+    let acc = [0, 0, 0, 0];
+    if (opts && opts.fieldOver) acc = over(acc, field());
+    for (let n = el; n && acc[3] < 0.999; n = n.parentElement) acc = over(acc, px(getComputedStyle(n).backgroundColor));
+    if (acc[3] < 0.999) acc = over(acc, [255, 255, 255, 1]);
+    const t = px(getComputedStyle(el).color);
+    const mix = [t[0] * t[3] + acc[0] * (1 - t[3]), t[1] * t[3] + acc[1] * (1 - t[3]), t[2] * t[3] + acc[2] * (1 - t[3])];
+    const a = lum(mix) + 0.05; const b = lum(acc) + 0.05;
+    return Math.round((Math.max(a, b) / Math.min(a, b)) * 100) / 100;
+  };
+  return true;
+})()`;
+
 (async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-uipolish-'));
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-uipolish-tmp-'));
@@ -36,7 +55,7 @@ const LONG = `## Answer\n\n${'A sentence that goes on for a good while so the pa
       a.runTask = async (messages, _tab, text, _i, controller, emit) => {
         messages.push({ role: 'user', content: text });
         emit({ type: 'turn_start' });
-        if (/ERR/.test(text)) { emit({ type: 'error', text: 'The AI service did not answer. Try again in a minute.' }); return; }
+        if (/ERR/.test(text)) { emit({ type: 'error', text: 'The AI service did not answer. Try again in a minute.', details: '429 rate_limit_error' }); return; }
         let said = '';
         if (/STREAM/.test(text)) {
           emit({ type: 'text_block' });
@@ -90,6 +109,17 @@ const LONG = `## Answer\n\n${'A sentence that goes on for a good while so the pa
     const copied = await inPage(`(async () => { const b = [...document.querySelectorAll('.msg.assistant .code-head button')].find((x) => x.textContent.trim() === 'Copy'); b.click(); await new Promise((r) => setTimeout(r, 300)); return b.textContent.trim() + '|' + (b.getAttribute('aria-label') || ''); })()`);
     check('Copy answers with feedback', /Copied|✓|Copy/.test(copied), copied);
 
+    // ---- Read aloud sits in the corner row with Copy, Regenerate and Retry: same size, same row, fixed order, tooltip from its label
+    const row = await inPage(`(() => {
+      const m = [...document.querySelectorAll('#messages > .msg.assistant')].pop();
+      const r = (sel) => { const e = m.querySelector(':scope > ' + sel); if (!e) return null; const b = e.getBoundingClientRect(); return { right: Math.round(b.right), top: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
+      const s = m.querySelector(':scope > .reply-speak');
+      return { speak: r('.reply-speak'), copy: r('.reply-copy'), regen: r('.reply-regen'), retry: r('.reply-retry'), label: s && s.getAttribute('aria-label'), title: s && s.getAttribute('title'), inMeta: Boolean(m.querySelector('.reply-meta .reply-speak')) };
+    })()`);
+    const ok = row.speak && row.copy && row.regen && row.speak.w === row.regen.w && row.speak.h === row.regen.h && row.speak.top === row.regen.top && row.speak.top === row.copy.top && row.speak.right < row.regen.right && (!row.retry || row.speak.right < row.retry.right) && row.retry && row.retry.right < row.regen.right && row.copy.right > row.regen.right;
+    check('Read aloud is in the action group, the same size and row, after Copy, Regenerate and Retry', Boolean(ok) && !row.inMeta, JSON.stringify(row));
+    check('Read aloud is named "Read aloud" (its tooltip comes from the label, no second native one)', row.label === 'Read aloud' && row.title === null, JSON.stringify(row));
+
     // ---- edit-and-resend with Up
     await inPage(`document.getElementById('prompt').focus()`);
     await inPage(`document.getElementById('prompt').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))`);
@@ -113,7 +143,7 @@ const LONG = `## Answer\n\n${'A sentence that goes on for a good while so the pa
     const after = await inPage(`(() => { const m = document.getElementById('messages'); return { top: m.scrollTop, height: m.scrollHeight, more: window.__moreSeen = document.querySelectorAll('.msg.assistant.streaming p').length }; })()`);
     check('new text does not pull the view down while the reader is scrolled up', Math.abs(after.top - before.top) <= 2 && after.height > before.grew, JSON.stringify({ before, after }));
     // (a hidden window paints no frames, so a smooth scroll never moves: the button takes its reduced-motion path, a plain jump)
-    await inPage(`window.matchMedia = (q) => ({ matches: /reduced-motion/.test(q), media: q, addEventListener() {}, removeEventListener() {} }); document.querySelector('.jump-latest').click()`);
+    await inPage(`window.__mm = window.matchMedia; window.matchMedia = (q) => ({ matches: /reduced-motion/.test(q), media: q, addEventListener() {}, removeEventListener() {} }); document.querySelector('.jump-latest').click(); window.matchMedia = window.__mm; 0`);
     let jumped; await waitFor(async () => (jumped = await inPage(`(() => { const m = document.getElementById('messages'); const gap = m.scrollHeight - m.scrollTop - m.clientHeight; return gap < 60 && document.querySelector('.jump-latest').hidden ? 'yes' : 'gap ' + Math.round(gap) + ' hidden ' + document.querySelector('.jump-latest').hidden; })()`)) === 'yes', 6000);
     check('"Jump to latest" scrolls to the end and goes away', jumped === 'yes', jumped);
     const h0 = await inPage(`document.getElementById('messages').scrollHeight`);
@@ -146,6 +176,20 @@ const LONG = `## Answer\n\n${'A sentence that goes on for a good while so the pa
     await send('ERR please');
     const card = await waitFor(() => inPage(`(() => { const e = document.querySelector('#messages .error'); if (!e) return null; const b = getComputedStyle(e, '::before'); return { role: e.getAttribute('role'), icon: b.content, retry: [...e.querySelectorAll('button')].map((x) => x.textContent.trim()), radius: getComputedStyle(e).borderRadius, bar: getComputedStyle(e).boxShadow !== 'none' }; })()`));
     check('an error shows as a card: alert role, an icon, a bar and a Try again button', card && card.role === 'alert' && /!/.test(card.icon) && card.retry.includes('Try again') && card.bar, JSON.stringify(card));
+
+    // ---- dark mode (CDP emulation of prefers-color-scheme): the error card and the sticky code header read at WCAG AA (4.5:1)
+    const dark = await app.evaluate(async (_e, id) => { const wc = global.__chatPage.contents(id); try { if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }); return await wc.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches"); } catch (e) { return String(e); } }, tabId);
+    check('the page is in dark mode for the contrast checks', dark === true, dark);
+    await inPage(CONTRAST);
+    await sleep(300);
+    const errC = await inPage(`(() => { const e = document.querySelector('#messages .error'); const s = e.querySelector('summary'); const b = e.querySelector('button'); return { message: window.__contrast(e), details: window.__contrast(s), retry: window.__contrast(b), icon: window.__contrast(e, {}) }; })()`);
+    check('dark: the error message, Details and Try again are at least 4.5:1', errC.message >= 4.5 && errC.details >= 4.5 && errC.retry >= 4.5, JSON.stringify(errC));
+    await send('LONG dark please');
+    await waitFor(() => inPage(`document.querySelector('.msg.assistant .code-head')`));
+    await idle();
+    const codeC = await inPage(`(() => { const h = document.querySelector('.msg.assistant .code-head'); const label = h.firstElementChild; return { label: window.__contrast(label, { fieldOver: true }), copy: window.__contrast([...h.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Copy'), { fieldOver: true }) }; })()`);
+    check('dark: the sticky code header label and Copy are at least 4.5:1', codeC.label >= 4.5 && codeC.copy >= 4.5, JSON.stringify(codeC));
+    await app.evaluate(async (_e, id) => { try { await global.__chatPage.contents(id).debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] }); } catch { /* ignore */ } }, tabId);
 
     check('no UI errors', errors.length === 0, errors.join('; '));
   } finally {
