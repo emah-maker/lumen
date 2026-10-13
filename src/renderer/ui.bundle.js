@@ -8300,7 +8300,7 @@ function fillHoverCard(el) {
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
   if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
-  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover')].filter(Boolean).join(' · '); // asleep: the card says how to wake it
+  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
   hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
@@ -12439,6 +12439,7 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
+    root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
     if (badge) badge.hidden = !p.handsOff;

@@ -111,7 +111,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return rows.sort((a, b) => a.order - b.order).map((r) => r.label); })()`);
   const clearHist = await searchRows('clear history');
   check('search “clear history” finds Clear browsing data and not Widget cards', clearHist[0] === 'Clear browsing data' && !clearHist.includes('Widget cards'), JSON.stringify(clearHist));
-  for (const q of ['camera', 'microphone']) { const r = await searchRows(q); check(`search “${q}” lists the permission defaults before Put unused tabs to sleep`, r.indexOf('Default for new sites') === 0 && r.includes('Put unused tabs to sleep'), JSON.stringify(r)); }
+  for (const q of ['camera', 'microphone']) { const r = await searchRows(q); check(`search “${q}” lists the permission defaults before the page-unloading call exception`, r.indexOf('Default for new sites') === 0 && r.includes('Tabs in a call or sharing their screen'), JSON.stringify(r)); }
   check('search “incognito” finds the Private windows row', (await searchRows('incognito'))[0] === 'Private windows (incognito)');
   check('search “sync” says Lumen doesn’t sync', (await searchRows('sync'))[0] === 'Sync across devices' && /doesn’t sync/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
   check('search “print” finds Printing and Ctrl+P', (await searchRows('print'))[0] === 'Printing' && /ctrl\+p/i.test(await inTab(sid, "[...document.querySelectorAll('.row')].find((r) => r.querySelector('.label')?.textContent === 'Printing')?.dataset.search || ''")));

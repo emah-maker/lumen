@@ -118,6 +118,16 @@ const DEFAULTS = {
   tabSleepKeepRecent: 3, // [tabs] the most recently used background tabs stay awake whatever the idle timer says (0: none; features/tab-sleep.js)
   tabSleepNever: [], // [tabs] sites whose tabs never sleep
   tabSleepFreezeFirstMinutes: 10, // [tabs] an idle tab that would unload is frozen first for this many minutes (instant to wake); 0: unload at once
+  tabSleepPressure: 'medium', // [tabs] off | low | medium | aggressive: how soon unused tabs unload when memory is low (features/tab-sleep.js PRESSURE_LEVELS)
+  tabSleepKeepAudio: true, // [tabs] tabs playing sound or video never unload
+  tabSleepKeepForms: true, // [tabs] tabs with typed, unsent text (or a page that asks "Leave site?") never unload
+  tabSleepKeepTransfers: true, // [tabs] tabs with a download coming in (or a chosen upload) never unload
+  tabSleepKeepGroups: false, // [tabs] tabs in a tab group never unload
+  tabSleepSoon: [], // [tabs] sites whose tabs unload sooner (their own timer, tabSleepSoonMinutes); patterns, * allowed
+  tabSleepSoonMinutes: 5, // [tabs] ...after this many minutes unused
+  tabSleepDim: true, // [tabs] an unloaded tab shows a dimmed icon in the strip
+  tabSleepShowFreed: true, // [tabs] an unloaded tab's hover card says about how much memory it freed
+  tabSleepOnReturn: 'reload', // [tabs] reload | placeholder: switching to an unloaded tab loads it at once, or shows a page with a Reload button
   tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
@@ -241,10 +251,14 @@ function validate(key, value) {
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'tabSleepMode': return pick(value, TS.MODES, null);
     case 'tabSleepHow': return pick(value, TS.HOWS, null);
-    case 'tabSleepMinutes': return TS.cleanMinutes(value);
+    case 'tabSleepMinutes': return TS.cleanAfter(value); // 0: Never
+    case 'tabSleepPressure': return pick(value, TS.PRESSURES, null);
+    case 'tabSleepOnReturn': return pick(value, TS.ON_RETURN, null);
+    case 'tabSleepSoonMinutes': return pick(Number(value), TS.SOON_MINUTE_CHOICES, null);
+    case 'tabSleepSoon': return TS.cleanHosts(value);
     case 'tabSleepFreePercent': return pick(Number(value), TS.FREE_PERCENT_CHOICES, null);
     case 'tabSleepLumenGb': return pick(Number(value), TS.LUMEN_GB_CHOICES, null);
-    case 'tabSleepMaxAwake': return pick(Number(value), TS.MAX_AWAKE_CHOICES, null);
+    case 'tabSleepMaxAwake': return TS.cleanMaxAwake(value);
     case 'tabSleepKeepRecent': return pick(Number(value), TS.KEEP_RECENT_CHOICES, null);
     case 'tabSleepNever': return TS.cleanHosts(value);
     case 'tabSleepFreezeFirstMinutes': return pick(Number(value), require('../features/tab-wake').FREEZE_FIRST_CHOICES, null);
@@ -316,6 +330,7 @@ function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
   { const moved = migrateMaxChatRuns(readSettings()); if (moved) writeSettings(moved); }
+  { const moved = TS.migrate(readSettings()); if (moved) writeSettings({ ...readSettings(), ...moved }); } // [tabs] the old single sleep choice -> master switch, time and memory level
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
   const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
@@ -361,7 +376,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -712,13 +727,14 @@ function create(deps) {
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
-      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': deps.onTabSleepChange?.(key); break;
+      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
+      case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
       case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
       case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
@@ -755,7 +771,7 @@ function create(deps) {
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
-      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
       clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,
@@ -913,6 +929,14 @@ function create(deps) {
   }
 
   // ---- reset ----
+  // The page-unloading section's own "Reset to defaults": its settings only.
+  async function resetSleep() {
+    const s = readSettings();
+    for (const key of TS.KEYS) delete s[key];
+    writeSettings(s);
+    for (const key of TS.KEYS) await apply(key);
+    return state();
+  }
   async function reset() {
     const s = readSettings();
     for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen') delete s[key]; // not a preference: a reset doesn't bring back old release notes
@@ -941,6 +965,11 @@ function create(deps) {
       const d = deps.downloads.find((x) => x.id === id);
       if (d?.state === 'completed') shell.showItemInFolder(d.path);
     });
+    // [tabs] Settings > Tabs > Page unloading: the status panel, the "unload everything now" button, "Add current site", and its own reset
+    handle('prefs:sleep-status', () => deps.tabSleep?.status() ?? null);
+    handle('prefs:sleep-unload-all', () => deps.tabSleep?.unloadAll() ?? 0);
+    handle('prefs:sleep-site', () => deps.tabSleep?.currentSite() ?? '');
+    handle('prefs:sleep-reset', resetSleep);
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
     // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out

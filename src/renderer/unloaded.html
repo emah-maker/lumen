@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title data-i18n="unloaded.title">Tab unloaded</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    :root { --hover: rgba(0, 0, 0, 0.09); }
+    @media (prefers-color-scheme: dark) { :root { --hover: rgba(255, 255, 255, 0.12); } }
+    html, body { height: 100%; margin: 0; }
+    body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    main { width: min(512px, 88vw); margin: 0 auto; padding-top: 18vh; animation: rise 560ms cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @media (prefers-reduced-motion: reduce) { main { animation: none; } }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 10px; overflow-wrap: anywhere; }
+    p { margin: 0 0 6px; color: var(--muted); overflow-wrap: anywhere; }
+    button { margin-top: 20px; height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: background-color 150ms ease-out, transform 90ms ease-out; }
+    button:active { transform: scale(0.96); }
+    button:hover { background: var(--hover); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 id="heading" data-i18n="unloaded.title">Tab unloaded</h1>
+    <p id="lead"></p>
+    <p id="freed" hidden></p>
+    <button id="reload" type="button" data-i18n="unloaded.reload">Reload</button>
+  </main>
+  <script src="i18n.js"></script>
+  <script src="unloaded.js"></script>
+</body>
+</html>

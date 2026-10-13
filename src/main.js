@@ -157,6 +157,7 @@ const translate = require('./features/translate').createTranslate({
 });
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
+const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings > Tabs > Page unloading: When you return to one)
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
 const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL) || url.startsWith(SAFE_BROWSING_URL);
@@ -1702,7 +1703,7 @@ ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event
 function realUrl(wc) {
   if (warmPending.has(wc)) return ''; // (still on the warm view's about:blank: no address yet, as a fresh view has none)
   const url = wc.getURL();
-  if (isErrorPage(url) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
+  if (isErrorPage(url) || url.startsWith(settingsPage.HTTPS_ONLY_URL) || url.startsWith(UNLOADED_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
   return url;
 }
 
@@ -1734,6 +1735,7 @@ function tabState() {
           favicon: t.favicon || null,
           favicons: t.favicons || (t.favicon ? [t.favicon] : []),
           page: null,
+          freedMb: sleepShowFreed() ? t.freedMb || 0 : 0, // [tabs] the hover card's "about N MB freed"
           fileKind: fileTabs.iconKind(url), // the strip's icon for a file (a PDF, a deck ...) when the page has none
           error: false,
           zoom: 100,
@@ -1770,7 +1772,8 @@ function tabState() {
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
         pinned: Boolean(t.pinned),
-        sleeping: Boolean(t.frozen), // asleep in freeze mode: paused, still loaded (tabSleep)
+        sleeping: Boolean(t.frozen || t.placeholder), // asleep in freeze mode: paused, still loaded (tabSleep); or an unloaded tab showing its Reload page
+        freedMb: sleepShowFreed() && t.placeholder ? t.freedMb || 0 : 0,
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
@@ -2325,10 +2328,13 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
   wc.on('did-navigate', (_e, url) => {
+    if (url.startsWith(UNLOADED_URL)) return; // (the placeholder of an unloaded tab keeps the tab's icon)
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
   wc.on('will-navigate', (event, url) => {
+    // The placeholder's Reload button: the page asks for its own address, and the tab wakes the way a click on a sleeping tab does (history, scroll and form state come back).
+    if (tab.placeholder && event.isMainFrame !== false && tabSleep.sameAddress(event.url || url, tab.placeholder.url)) { event.preventDefault(); leavePlaceholder(tab); layout(); sendTabs(); return; }
     if (askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc)) return;
     // A tile or a search on the new-tab page: the page loads in the warm view (leaveNewTabFor), as a typed address does.
     if (event.isMainFrame !== false && alive(tab) && tab.view.webContents === wc && isNewTab(wc.getURL()) && isWebUrl(event.url || url)
@@ -2518,6 +2524,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
 // up through wireView(), the same path a freshly opened tab takes, reloading the same URL (restoring
 // scroll position isn't attempted). See canSleep() for every case this leaves alone.
 const tabSleep = require('./features/tab-sleep'); // the pure decisions: may it sleep, how it wakes
+const sleepShowFreed = () => readSettings().tabSleepShowFreed !== false; // [tabs] the hover card says about how much memory an unloaded tab freed
 const SLEEP_CHECK_MS = 30 * 1000;
 // Settings > Tabs > Memory (the sleep settings, with their defaults = what this always did): features/tab-sleep.js decides
 // which tabs sleep (decideSleep); this file reads the facts, runs the page's own busy check, and does the sleeping.
@@ -2545,15 +2552,27 @@ async function memoryPressure() { // (the test hook too) is memory low by the cu
   return tabSleep.memoryLow(tabSleep.normalize(readSettings()), await scheduler.memorySample({ ttlMs: 0 }));
 }
 
+// About how much memory a tab's page uses, in MB: its renderer process's working set (a process shared with another tab of the
+// same site counts in full for each, so this is an estimate, and the status panel says "about").
+function tabMemoryMb(wc, metrics) {
+  try {
+    const pid = wc.getOSProcessId();
+    const m = (metrics || app.getAppMetrics()).find((x) => x.pid === pid);
+    return m ? Math.round((m.memory?.workingSetSize || 0) / 1024) : 0;
+  } catch { return 0; }
+}
 function sleepTab(tab) {
   finishLeaving(tab); // (a page that just left the new-tab page: the new-tab page goes now)
   const wc = tab.view.webContents;
-  tab.sleepUrl = realUrl(wc) || wc.getURL();
-  tab.sleepTitle = wc.getTitle() || 'New Tab';
+  const placeholder = tab.placeholder; // an unloaded tab showing its Reload page goes back to sleep as the page it stands for
+  tab.placeholder = null;
+  tab.sleepUrl = placeholder ? placeholder.url : realUrl(wc) || wc.getURL();
+  tab.sleepTitle = placeholder ? placeholder.title : wc.getTitle() || 'New Tab';
+  tab.freedMb = placeholder ? tab.freedMb || 0 : tabMemoryMb(wc);
   // Back/forward (and each entry's saved scroll position and form fields) come back on wake.
   try {
     const nav = wc.navigationHistory;
-    tab.sleepHistory = { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
+    tab.sleepHistory = placeholder ? placeholder.history : { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
   } catch {
     tab.sleepHistory = null;
   }
@@ -2591,14 +2610,16 @@ function thawTab(tab, { quiet = false } = {}) {
   return wc.debugger.isAttached() ? wc.debugger.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}).then(() => { if (wasFrozen && !quiet) sendTabs(); }) : Promise.resolve();
 }
 
-function wakeTab(tab) {
+// `placeholder`: wake into the Reload page instead of the page itself (Settings > Tabs > Page unloading); the page loads when its button is pressed (leavePlaceholder).
+function wakeTab(tab, { placeholder = false } = {}) {
+  if (tab.placeholder) { leavePlaceholder(tab); return; }
   if (tab.frozen) { thawTab(tab); return; }
   if (!tab.sleeping) return;
   tab.lastActiveAt = Date.now(); // woken (even in the background): its idle clock starts again, so the next sweep doesn't put it straight back
   // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
-  const warm = !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
+  const warm = !placeholder && !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
   if (tab.managerPage === 'chat') noteChatPage();
-  const chatSpare = tab.managerPage === 'chat' && !tab.sleepHistory?.entries?.length && chatPage.isChatUrl(tab.sleepUrl || '') ? takeSpareChat() : null; // (a chat page that has already loaded)
+  const chatSpare = !placeholder && tab.managerPage === 'chat' && !tab.sleepHistory?.entries?.length && chatPage.isChatUrl(tab.sleepUrl || '') ? takeSpareChat() : null; // (a chat page that has already loaded)
   const view = warm || chatSpare || new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
@@ -2618,9 +2639,33 @@ function wakeTab(tab) {
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
   if (!warm && !chatSpare) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
-  wireView(tab, tab.sleepUrl || newTabUrl(), history, { loaded: Boolean(chatSpare) });
+  if (placeholder) tab.placeholder = { url: tab.sleepUrl, title: tab.sleepTitle || '', history }; // (the page and its history wait in the tab until Reload)
+  wireView(tab, tab.sleepUrl || newTabUrl(), placeholder ? null : history, { loaded: Boolean(chatSpare) || placeholder });
+  if (placeholder) view.webContents.loadURL(`${UNLOADED_URL}?${new URLSearchParams({ url: tab.sleepUrl, title: tab.sleepTitle || '', mb: String(tab.freedMb || 0) })}`).catch(() => {});
   if (chatSpare) adoptSpareChat(chatSpare);
 }
+// The placeholder's Reload (or any use of the tab: Reload, the AI): the placeholder view closes and the tab wakes as it always did.
+function leavePlaceholder(tab) {
+  const p = tab.placeholder;
+  if (!p) return;
+  tab.placeholder = null;
+  if (tab.view) {
+    const wc = tab.view.webContents;
+    wc.off('destroyed', tab.onViewDestroyed);
+    try { win.contentView.removeChildView(tab.view); } catch { /* already out */ }
+    try { wc.close(); } catch { /* gone */ }
+    tab.view = null;
+  }
+  tab.sleeping = true;
+  tab.sleepUrl = p.url;
+  tab.sleepTitle = p.title;
+  tab.sleepHistory = p.history;
+  wakeTab(tab);
+}
+// Switching to an unloaded tab shows the Reload page (not the site) when the setting asks for it and the tab is an ordinary web page.
+const placeholderMode = () => tabSleep.normalize(readSettings()).onReturn === 'placeholder';
+const placeholderWanted = (tab) => placeholderMode() && Boolean(tab.sleeping) && !tab.isolated && !tab.managerPage && isWebUrl(tab.sleepUrl || '');
+const isAsleep = (tab) => Boolean(tab && (tab.sleeping || tab.frozen || tab.placeholder));
 
 // A tab from the saved session that hasn't been opened yet: a sleeping tab (above) with no view,
 // which switchTab() wakes the first time it's shown. Starting Lumen loads only the active tab
@@ -2650,16 +2695,40 @@ function addRestoredTab(url, title, favicon = null) {
 const NO_ANSWER = Symbol('no answer');
 // 'yes' | 'no' | 'unknown': the page's own answer, or none (it hung, crashed or threw). Closing an AI tab tells these apart: a hung
 // page is not "holding text the user typed".
-async function unsavedInputState(wc) {
+// '' (nothing holds it), a reason from tabSleep.pageBusyScript ('input' | 'upload' | 'media' | 'streaming' | 'busy' | 'changing'), or 'unknown'
+async function pageHold(wc) {
   try {
     const answer = await Promise.race([
       wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSleep.pageBusyScript(1200) }]),
       new Promise((resolve) => setTimeout(() => resolve(NO_ANSWER), 5000)),
     ]);
     if (answer === NO_ANSWER) return 'unknown';
-    return tabSleep.pageBusy(answer) ? 'yes' : 'no';
+    return typeof answer === 'string' ? answer : 'busy';
   } catch {
     return 'unknown';
+  }
+}
+async function unsavedInputState(wc) {
+  const hold = await pageHold(wc);
+  return hold === 'unknown' ? 'unknown' : hold ? 'yes' : 'no';
+}
+// Does the page listen for "beforeunload" (it asks "Leave site?")? Read from the page's own event listeners over the debugger (the session
+// every tab already has; one is opened only when it is missing). Any failure answers false: the typed-input check above is the one that guards work.
+async function hasBeforeUnloadHandler(wc) {
+  const dbg = wc.debugger;
+  let own = false;
+  let objectId = null;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); own = true; }
+    const { result } = await dbg.sendCommand('Runtime.evaluate', { expression: 'window' });
+    objectId = result.objectId;
+    const { listeners } = await dbg.sendCommand('DOMDebugger.getEventListeners', { objectId });
+    return listeners.some((l) => l.type === 'beforeunload');
+  } catch {
+    return false;
+  } finally {
+    if (objectId) dbg.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {});
+    if (own) { try { dbg.detach(); } catch { /* gone */ } }
   }
 }
 async function hasUnsavedInput(wc) {
@@ -2671,11 +2740,12 @@ function sleepFacts(tab) {
   const wc = alive(tab) ? tab.view.webContents : null;
   const url = wc ? realUrl(wc) : tab.sleepUrl || '';
   return {
-    id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen), active: tab.id === activeId, settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
+    id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen || tab.placeholder), asleep: Boolean(tab.sleeping || tab.placeholder), frozen: Boolean(tab.frozen), active: tab.id === activeId, settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
     openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) || isNewTab(url) : false, newTab: wc ? isNewTab(url) : false, // (a new-tab page sleeps too, and soon: tab-sleep.js)
    
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
     capturing: wc ? (wc.isBeingCaptured() && !TEST) || mediaPages.has(wc) : false, // a camera, microphone or screen share (or the page being recorded). (Not in tests: the Playwright connection that drives them counts as a capturer on every page.)
+    downloading: wc ? downloads.list.some((d) => d.state === 'progressing' && d.contents === wc) : false, grouped: Boolean(tab.groupId),
     pinned: Boolean(tab.pinned), host: hostOf(url), lastActive: tab.lastActiveAt, viewedAt: tab.viewedAt || 0,
   };
 }
@@ -2685,9 +2755,13 @@ function sleepFacts(tab) {
 // exempt (pinned, a listed site), or with typed form input. On any doubt this returns false and the tab is left alone.
 // (An agent's own window keeps its tabs loaded: agentUsing covers them.)
 async function canSleep(tab, s = tabSleep.normalize(readSettings())) {
-  const facts = tab ? sleepFacts(tab) : null;
-  if (!facts || tabSleep.keepReason({ ...facts, keepPinned: s.keepPinned, neverSite: tabSleep.hostListed(facts.host, s.never) })) return false;
-  return !(await hasUnsavedInput(tab.view.webContents));
+  const facts = tab ? withWindow(tab.rec, () => sleepFacts(tab)) : null;
+  if (!facts || tabSleep.keepReason({ ...facts, keepPinned: s.keepPinned, neverSite: tabSleep.hostListed(facts.host, s.never), keepAudio: s.keepAudio, keepTransfers: s.keepTransfers, keepGroups: s.keepGroups })) return false;
+  const wc = tab.view.webContents;
+  const hold = await pageHold(wc);
+  // Each thing the page may be holding has its own switch (typed text, a chosen upload, playing media); a reply streaming in, a busy page or any doubt always keeps the tab.
+  if (hold === 'input' ? s.keepForms : hold === 'upload' ? s.keepTransfers : hold === 'media' ? s.keepAudio : hold !== '') return false;
+  return !(s.keepForms && (await hasBeforeUnloadHandler(wc)));
 }
 
 // Put a tab to sleep the chosen way: 'unload' closes the page (it reloads on return, keeping its place), 'freeze' pauses it in memory.
@@ -2705,11 +2779,11 @@ async function sweepSleep() {
   if (s.mode === 'off') return;
   sweeping = true;
   try {
-    const memory = s.mode === 'memory' || s.mode === 'both' ? await pressureCheck() : null;
-    const { sleep, capExcess, low } = tabSleep.decideSleep({ tabs: tabs.map(sleepFacts), settings, now: Date.now(), memory, limits: perfMode.limits() }); // Performance mode: sooner, and fewer kept
+    const memory = s.useMemory ? await pressureCheck() : null;
+    const { sleep, capExcess, low } = tabSleep.decideSleep({ tabs: tabs.map(sleepFacts), settings, now: Date.now(), memory, limits: perfMode.active() ? perfMode.limits() : {} }); // Performance mode: sooner, and fewer kept (its normal limits must not cap the user's own time at 20 minutes)
     let capLeft = capExcess;
     for (const { id, why } of sleep) {
-      if (why === 'cap' && capLeft <= 0) break;
+      if (why === 'cap' && capLeft <= 0) continue; // (the cap is reached: the rest of the list is for the other reasons)
       const tab = tabs.find((t) => t.id === id);
       if (!tab || !(await canSleep(tab, s))) continue;
       // The page check (inside canSleep) is an async round trip (over a second): re-check the fast,
@@ -2735,35 +2809,101 @@ async function sweepSleep() {
   }
 }
 
-// A tab's menu: "Put to sleep now" / "Wake", and "Never sleep this site". Sleeping now ignores the idle clock and the page's
-// own checks (you asked), but not what would lose work or break a task (the tab in front, an AI task, popups, a tab closing).
+// A tab's menu: "Unload tab" (or "Put tab to sleep" when tabs are frozen instead), "Unload other tabs", and "Never unload this site". Unloading now
+// ignores the idle clock and the page's own checks (you asked), but not what would lose work or break a task (the tab in front, an AI task, popups, a tab closing).
 const canSleepNow = (tab) => !tabSleep.keepReason({ ...sleepFacts(tab), loading: false, audible: false, fullscreen: false, devTools: false, capturing: false });
 function sleepMenuItems(tab) {
-  const asleep = Boolean(tab.sleeping || tab.frozen);
+  const asleep = isAsleep(tab);
+  const s = tabSleep.normalize(readSettings());
   const host = tabSleep.cleanHost(hostOf(tabUrl(tab)));
   const never = readSettings().tabSleepNever || [];
   const listed = Boolean(host) && never.includes(host);
+  const others = tabs.some((x) => x.id !== tab.id && x.id !== activeId && alive(x) && !x.settings && !x.sleeping && !x.frozen && !x.placeholder);
   return [
     asleep
       ? { label: t('menu.wakeTab'), click: () => { wakeTab(tab); layout(); sendTabs(); } }
-      : { label: t('menu.sleepTabNow'), enabled: canSleepNow(tab), click: () => { putToSleep(tab, tabSleep.normalize(readSettings()).how).then(() => sendTabs()).catch(() => {}); } },
+      : { label: t(s.how === 'freeze' ? 'menu.sleepTabNow' : 'menu.unloadTab'), enabled: canSleepNow(tab), click: () => { putToSleep(tab, s.how).then(() => sendTabs()).catch(() => {}); } },
+    { label: t('menu.unloadOtherTabs'), enabled: others, click: () => { unloadBackgroundTabs(tab.id).then(() => sendTabs()).catch(() => {}); } },
     ...(host && isWebUrl(tabUrl(tab)) ? [{
       label: t(listed ? 'menu.allowSiteSleep' : 'menu.neverSleepSite', { host }),
       click: () => { writeSettings({ ...readSettings(), tabSleepNever: listed ? never.filter((x) => x !== host) : [...never, host] }); try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ } },
     }] : []),
   ];
 }
-// A sleep setting changed (Settings > Tabs > Memory): applies at once. Turned off, frozen tabs wake; otherwise a sweep runs now.
+// "Unload all background tabs now" (Settings > Tabs > Page unloading) and "Unload other tabs" (a tab's menu): every background tab in every
+// window that the exceptions allow (the tab in front, audio, pinned, typed text, calls, the AI, downloads ... stay), put to sleep the chosen way at once.
+// Resolves to how many were unloaded.
+async function unloadBackgroundTabs(exceptId = null) {
+  const s = tabSleep.normalize(readSettings());
+  let n = 0;
+  for (const rec of [...winRecs]) {
+    if (!rcAlive(rec) || rec.agent) continue;
+    for (const tab of [...tabsOf(rec)]) {
+      if (tab.id === exceptId || !tab.view || tab.sleeping || tab.frozen || tab.placeholder) continue;
+      if (!(await canSleep(tab, s))) continue;
+      const stillBackground = withWindow(rec, () => tab.id !== activeId && alive(tab) && !tab.sleeping && !tab.view.webContents.isCurrentlyAudible());
+      if (!stillBackground) continue;
+      if (await withWindow(rec, () => putToSleep(tab, s.how))) { n++; withWindow(rec, () => sendTabs()); }
+    }
+  }
+  return n;
+}
+// The status panel (Settings > Tabs > Page unloading): what is loaded, unloaded and exempt, in every window, and about how much memory that is.
+// One getAppMetrics call; the page asks only while the section is on screen.
+function sleepStatus() {
+  const settings = readSettings();
+  const s = tabSleep.normalize(settings);
+  const facts = [];
+  let freedMb = 0;
+  for (const rec of [...winRecs]) {
+    if (!rcAlive(rec) || rec.agent) continue;
+    withWindow(rec, () => { for (const tab of tabsOf(rec)) { if (tab.closing) continue; facts.push(sleepFacts(tab)); if (tab.sleeping || tab.placeholder) freedMb += tab.freedMb || 0; } });
+  }
+  let usedMb = 0;
+  let totalMb = 0;
+  try {
+    for (const m of app.getAppMetrics()) { const mb = (m.memory?.workingSetSize || 0) / 1024; totalMb += mb; if (m.type === 'Tab') usedMb += mb; }
+  } catch { /* unknown */ }
+  let freePercent = null;
+  try { const m = process.getSystemMemoryInfo(); if (m.total > 0) freePercent = Math.round(m.free / m.total * 100); } catch { /* unknown */ }
+  const limit = perfMode.active() ? perfMode.limits().sleepAfterMs : Infinity;
+  return {
+    ...tabSleep.tally(facts, settings),
+    lists: { tabSleepNever: s.never, tabSleepSoon: s.soon }, // (the page follows a change made elsewhere, such as the tab menu's "Never unload this site")
+    usedMb: Math.round(usedMb), totalMb: Math.round(totalMb), freedMb: Math.round(freedMb), freePercent,
+    performance: perfMode.active() ? { afterMinutes: Number.isFinite(limit) ? Math.round(limit / 60e3) : null, cap: Number.isFinite(perfMode.limits().maxLiveBackgroundTabs) ? perfMode.limits().maxLiveBackgroundTabs : null } : null,
+    effectiveMinutes: s.minutes > 0 ? Math.min(s.minutes, Number.isFinite(limit) ? Math.round(limit / 60e3) : Infinity) : Number.isFinite(limit) && s.explicit ? Math.round(limit / 60e3) : 0,
+  };
+}
+// The host of the page the user was last on in a normal tab (Settings' "Add current site").
+function currentSleepSite() {
+  let best = null;
+  for (const rec of [...winRecs]) {
+    if (!rcAlive(rec)) continue;
+    for (const tab of tabsOf(rec)) {
+      const url = tab.sleeping ? tab.sleepUrl || '' : alive(tab) ? realUrl(tab.view.webContents) : '';
+      if (tab.settings || !isWebUrl(url)) continue;
+      const at = (tab.viewedAt || 0) || tab.lastActiveAt || 0;
+      if (!best || at > best.at) best = { at, url };
+    }
+  }
+  return best ? tabSleep.cleanHost(hostOf(best.url)) : '';
+}
+// A sleep setting changed (Settings > Tabs > Page unloading): applies at once. Switched off, frozen tabs wake; otherwise a sweep runs now
+// (and the strip and hover cards are sent again: the dimmed icon and the freed-memory line are settings too).
+let sleepSweepSoon = null;
 function tabSleepSettingChanged() {
+  sendTabs();
   if (tabSleep.normalize(readSettings()).mode === 'off') {
     for (const tab of tabs) if (tab.frozen) thawTab(tab).catch(() => {});
     return;
   }
-  setTimeout(() => { sweepSleep().catch(() => {}); }, 300).unref?.();
-}
-let pressureCheck = () => scheduler.memorySample(); // (one sample shared with the spare-tab policy)
+  clearTimeout(sleepSweepSoon); // (a reset changes a dozen settings in a row: one sweep)
+  sleepSweepSoon = setTimeout(() => { sweepSleep().catch(() => {}); }, 300);
+  sleepSweepSoon.unref?.();
+}let pressureCheck = () => scheduler.memorySample(); // (one sample shared with the spare-tab policy)
 scheduler.every('tab-sleep-sweep', SLEEP_CHECK_MS, () => sweepSleep().catch(() => {}), { whenHidden: 2 * 60 * 1000 }); // (still swept while minimised: that is when memory is wanted)
-if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve({ pressure: on }); }, frozen: (id) => Boolean(tabs.find((x) => x.id === id)?.frozen), freeze: (id) => freezeTab(tabs.find((x) => x.id === id)), thaw: (id) => thawTab(tabs.find((x) => x.id === id)), sleepNow: (id) => putToSleep(tabs.find((x) => x.id === id), tabSleep.normalize(readSettings()).how), menuItems: (id) => sleepMenuItems(tabs.find((x) => x.id === id)).map((i) => ({ label: i.label, enabled: i.enabled !== false })), changed: tabSleepSettingChanged, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
+if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), frozen: Boolean(t.frozen), view: Boolean(t.view), placeholder: Boolean(t.placeholder), freedMb: t.freedMb || 0 })), sweep: () => sweepSleep(), status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve({ pressure: on }); }, frozen: (id) => Boolean(tabs.find((x) => x.id === id)?.frozen), freeze: (id) => freezeTab(tabs.find((x) => x.id === id)), thaw: (id) => thawTab(tabs.find((x) => x.id === id)), sleepNow: (id) => putToSleep(tabs.find((x) => x.id === id), tabSleep.normalize(readSettings()).how), menuItems: (id) => sleepMenuItems(tabs.find((x) => x.id === id)).map((i) => ({ label: i.label, enabled: i.enabled !== false })), changed: tabSleepSettingChanged, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---------- waking tabs faster: wake ahead, background preload (features/tab-wake.js) ----------
 // A placeholder (restored, lazy) or unloaded tab has no page until it is woken. A tab is woken when the pointer rests on it
@@ -2792,7 +2932,7 @@ function awakeRoom() {
   return cap - tabs.filter((t) => alive(t) && !t.sleeping && !t.frozen && t.id !== activeId).length;
 }
 function wakeAhead(tab, why) {
-  if (!tab || !tab.sleeping || tab.frozen) return false;
+  if (!tab || !tab.sleeping || tab.frozen || placeholderMode()) return false; // (with the Reload page, nothing wakes an unloaded tab but the user's own click)
   wakeTab(tab);
   tab.wokeAhead = why;
   sendTabs();
@@ -2854,7 +2994,7 @@ async function preloadLoop(rec) {
   try {
     let busyTries = 0;
     while (rcAlive(rec) && !quitting) {
-      const cap = tabWake.cleanPreload(readSettings().tabPreload);
+      const cap = placeholderMode() ? 0 : tabWake.cleanPreload(readSettings().tabPreload);
       const front = withWindow(rec, () => { const t = tabs.find((x) => x.id === activeId); return alive(t) && !t.view.webContents.isLoading() && !rec.pendingRestore; });
       const waiting = withWindow(rec, () => tabs.filter((t) => t.preloaded && alive(t) && !t.sleeping && t.id !== activeId).length);
       const perf = perfMode.mode() === 'on' || perfMode.reasons().some((r) => r.key === 'memory');
@@ -3039,7 +3179,8 @@ function switchTab(id, { wake = true } = {}) {
     sendTabs();
     return true;
   }
-  if (tab.sleeping || tab.frozen) wakeTab(tab);
+  if (tab.sleeping && !tab.frozen && placeholderWanted(tab)) wakeTab(tab, { placeholder: true }); // [tabs] "When you return to an unloaded tab: Show a Reload button"
+  else if (tab.sleeping || tab.frozen) wakeTab(tab);
   activeId = id;
   adoptPreloaded(tab);
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
@@ -3794,7 +3935,7 @@ function duplicateTab(id) {
 // `always`: F5 / Ctrl+R and the tab menu reload even while the page is loading (the toolbar button is Stop then; reload-action.js).
 function reloadTab(tab, { ignoreCache = false, always = false } = {}) {
   if (!tab) return;
-  if (tab.sleeping || tab.frozen) { wakeTab(tab); layout(); sendTabs(); return; }
+  if (isAsleep(tab)) { wakeTab(tab); layout(); sendTabs(); return; }
   if (!alive(tab)) return;
   const wc = tab.view.webContents;
   const action = reloadAction({ loading: wc.isLoading(), ignoreCache, errorPage: isErrorPage(wc.getURL()), always });
@@ -7208,7 +7349,7 @@ const agentSwitchTab = (id, opts = {}) => {
   }
   const t = tabs.find((x) => x.id === id);
   if (!t || agentOffLimits(t)) return false;
-  if (t.sleeping || t.frozen) wakeTab(t); // (the run is about to use it)
+  if (isAsleep(t)) wakeTab(t); // (the run is about to use it)
   if (fromPage) chatPageRt.retarget(id);
   return true;
 };
@@ -7242,7 +7383,7 @@ const agentTabById = (id) => {
       if (t) { owner = rec; break; }
     }
   }
-  if (t?.sleeping || t?.frozen) withWindow(owner, () => wakeTab(t));
+  if (isAsleep(t)) withWindow(owner, () => wakeTab(t));
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
 // [ask across tabs] This window's tabs as read_tabs and the "@" picker see them (features/tabs-ask.js
@@ -8089,6 +8230,7 @@ const settingsBackend = settingsPage.create({
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   onTabSleepChange: () => tabSleepSettingChanged(),
+  tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
   onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,

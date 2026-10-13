@@ -252,6 +252,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab.sleeping:not(.active) .tab-favicon { opacity: 0.5; filter: grayscale(1); transition: opacity var(--t-fast) ease-out, filter var(--t-fast) ease-out; }
 .tab.sleeping:not(.active) .tab-title { opacity: 0.72; transition: opacity var(--t-fast) ease-out; }
 .tab.sleeping:not(.active):hover .tab-favicon, .tab.sleeping:not(.active):hover .tab-title { opacity: 1; filter: none; }
+html.pref-no-sleep-dim .tab.sleeping:not(.active) .tab-favicon, html.pref-no-sleep-dim .tab.sleeping:not(.active) .tab-title { opacity: 1; filter: none; }
 .tab.alert:not(.active)::before { content: ''; pointer-events: none; z-index: 1; position: absolute; top: 5px; left: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg, transparent); } /* a dialog is waiting for this tab */
 /* Pinned: icon only, fixed width, at the left of the strip (main.js keeps them first). */
 .tab.pinned, .tab.pinned.active { width: 40px; min-width: 40px; flex: none; }

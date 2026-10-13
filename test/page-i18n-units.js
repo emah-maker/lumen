@@ -21,6 +21,7 @@ const PAGES = {
   'cert-error': { html: 'cert-error.html', js: 'cert-error.js', preload: 'src/preload/error-preload.js' },
   'https-only': { html: 'https-only.html', js: 'https-only.js', preload: 'src/preload/error-preload.js' },
   'safe-browsing': { html: 'safe-browsing.html', js: 'safe-browsing.js', preload: 'src/preload/error-preload.js' },
+  unloaded: { html: 'unloaded.html', js: 'unloaded.js', preload: 'src/preload/error-preload.js' },
 };
 
 // ---- keys
@@ -81,7 +82,7 @@ for (const [name, p] of Object.entries(PAGES)) {
 const main = read('src/main.js');
 check('main answers pages:strings, only to Lumen\'s own renderer pages', /ipcMain\.on\('pages:strings'[\s\S]{0,200}startsWith\(RENDERER_PAGES\)/.test(main));
 check('the error page preload is registered for tab sessions (normal, private, research)', (main.match(/lumen-error-page/g) || []).length === 3);
-check('the error page preload does nothing on other pages (only the error and the three warning pages)', /location\.protocol === 'file:' && \/\\\/renderer\\\/\(error\|cert-error\|https-only\|safe-browsing\)\\\.html\$\//.test(read('src/preload/error-preload.js')));
+check('the error page preload does nothing on other pages (only the error, the three warning pages and the unloaded-tab page)', /location\.protocol === 'file:' && \/\\\/renderer\\\/\(error\|cert-error\|https-only\|safe-browsing\|unloaded\)\\\.html\$\//.test(read('src/preload/error-preload.js')));
 check('the warning pages load interstitial.js (window.fill) after i18n.js', ['cert-error', 'https-only', 'safe-browsing'].every((n) => { const h = read(`src/renderer/${n}.html`); return h.indexOf('i18n.js') < h.indexOf('interstitial.js') && h.indexOf('interstitial.js') < h.indexOf(`${n}.js"`); }));
 check('the Bookmarks and Downloads pages load the Undo note', ['bookmarks', 'downloads'].every((n) => read(`src/renderer/${n}.html`).includes('managers-toast.js')));
 
