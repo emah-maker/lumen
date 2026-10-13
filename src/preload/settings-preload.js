@@ -14,6 +14,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     pickDownloadDir: call('prefs:pick-download-dir'),
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
+    tabSleep: { status: call('prefs:sleep-status'), unloadAll: call('prefs:sleep-unload-all'), currentSite: call('prefs:sleep-site'), reset: call('prefs:sleep-reset') }, // [tabs] Settings > Tabs > Page unloading
     // [widgets] Appearance → Widgets
     widgets: {
       state: call('prefs:widgets'),

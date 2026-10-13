@@ -203,7 +203,7 @@ const CATEGORIES = [
   { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
-  { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
+  { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
   { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Add-ons']] },
   { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
@@ -2694,99 +2694,6 @@ function buildAccessibility(card) {
   );
 }
 
-// Settings > Tabs > Memory: when and how unused tabs sleep (features/tab-sleep.js decides; main.js sweepSleep acts, at once on a change).
-function sleepMinutesText(n) {
-  if (n >= 60 && n % 60 === 0) return n === 60 ? tr('settings.sleep.hour', '1 hour') : tr('settings.sleep.hours', '{n} hours', { n: n / 60 });
-  return tr('settings.sleep.minutes', '{n} minutes', { n });
-}
-function tabSleepRows() {
-  const C = st.tabSleepChoices;
-  const modeOf = () => (st.prefs.tabSleep === false ? 'off' : st.prefs.tabSleepMode);
-  const applicable = []; // [row, (mode) => shown]
-  const refresh = () => { const m = modeOf(); for (const [el, f] of applicable) el.hidden = !f(m); };
-  window.addEventListener('lumen-pref', refresh);
-
-  const mode = select('tabSleepMode', tr('settings.sleep.mode', 'Put unused tabs to sleep'), tr('settings.sleep.modeDesc', 'Sleeping tabs free memory. The tab you are on, tabs playing sound, sharing the camera, microphone or screen, and tabs with unsent typing never sleep.'),
-    [['off', tr('settings.sleep.mode.off', 'Off')], ['idle', tr('settings.sleep.mode.idle', 'After a time unused')], ['memory', tr('settings.sleep.mode.memory', 'Only when memory is low')], ['both', tr('settings.sleep.mode.both', 'After a time unused, and when memory is low')]],
-    { after: (v) => save('tabSleep', v !== 'off') });
-  mode.querySelector('select').value = modeOf();
-  mode.querySelector('select').addEventListener('change', refresh);
-
-  // After how long: the usual choices, or any number of minutes.
-  const sel = h('select', { id: 'pref-tabSleepMinutes', 'aria-label': tr('settings.sleep.after', 'Put tabs to sleep after') },
-    C.minutes.map((n) => h('option', { value: String(n), text: sleepMinutesText(n) })), h('option', { value: 'custom', text: tr('settings.sleep.custom', 'Custom…') }));
-  const num = h('input', { type: 'number', id: 'pref-tabSleepMinutesCustom', min: 1, max: C.maxMinutes, step: 1, 'aria-label': tr('settings.sleep.customMinutes', 'Minutes') });
-  const unit = h('span', { class: 'note', text: tr('settings.sleep.unitMinutes', 'minutes') });
-  let customOpen = false;
-  const syncMinutes = () => {
-    const m = st.prefs.tabSleepMinutes;
-    const preset = C.minutes.includes(m);
-    sel.value = preset && !customOpen ? String(m) : 'custom';
-    num.hidden = unit.hidden = sel.value !== 'custom';
-    if (!num.hidden && document.activeElement !== num) num.value = String(m);
-  };
-  sel.addEventListener('change', async () => {
-    customOpen = sel.value === 'custom';
-    if (!customOpen) await save('tabSleepMinutes', Number(sel.value));
-    syncMinutes();
-    if (customOpen) num.focus();
-  });
-  num.addEventListener('change', async () => {
-    const n = Math.round(Number(num.value));
-    if (Number.isFinite(n) && n >= 1 && n <= C.maxMinutes) await save('tabSleepMinutes', n);
-    customOpen = false;
-    syncMinutes();
-  });
-  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'tabSleepMinutes') syncMinutes(); });
-  const after = row(tr('settings.sleep.after', 'Put tabs to sleep after'), tr('settings.sleep.afterDesc', 'How long a background tab can go unused. Performance mode may make this shorter.'), sel, num, unit);
-  after.dataset.keywords = 'minutes hours custom';
-  syncMinutes();
-  applicable.push([after, (m) => m === 'idle' || m === 'both']);
-
-  const how = select('tabSleepHow', tr('settings.sleep.how', 'How tabs sleep'), tr('settings.sleep.howDesc', 'Sleep keeps the page in memory, paused, and wakes at once. Unload closes the page to free all its memory; it reloads when you return, keeping its place.'),
-    [['unload', tr('settings.sleep.how.unload', 'Unload (frees the most memory)')], ['freeze', tr('settings.sleep.how.freeze', 'Sleep (keeps the page as it was)')]]);
-  applicable.push([how, (m) => m !== 'off']);
-
-  const pct = select('tabSleepFreePercent', tr('settings.sleep.freePercent', 'Memory is low when free memory is under'), tr('settings.sleep.freePercentDesc', 'Checked every 30 seconds. Then tabs unused for 2 minutes sleep, least recently used first. On a Mac Lumen follows the system’s own memory pressure instead.'),
-    C.freePercent.map((n) => [n, `${n}%`]), { number: true });
-  const gb = select('tabSleepLumenGb', tr('settings.sleep.lumenGb', 'Or when Lumen uses more than'), tr('settings.sleep.lumenGbDesc', 'Counts all of Lumen’s tabs and processes.'),
-    C.lumenGb.map((n) => [n, n ? tr('settings.sleep.gb', '{n} GB', { n }) : tr('settings.sleep.gb.off', 'No limit')]), { number: true });
-  applicable.push([pct, (m) => m === 'memory' || m === 'both'], [gb, (m) => m === 'memory' || m === 'both']);
-
-  const cap = select('tabSleepMaxAwake', tr('settings.sleep.maxAwake', 'Most background tabs kept awake'), tr('settings.sleep.maxAwakeDesc', 'Beyond this, the tabs unused longest sleep (never one used in the last minute).'),
-    C.maxAwake.map((n) => [n, n ? String(n) : tr('settings.sleep.noLimit', 'No limit')]), { number: true });
-  applicable.push([cap, (m) => m !== 'off']);
-
-  const recent = select('tabSleepKeepRecent', tr('settings.sleep.keepRecent', 'Always keep the most recent tabs awake'), tr('settings.sleep.keepRecentDesc', 'The tabs you used last are the ones you go back to, so the idle timer leaves them alone (low memory and the cap above can still put them to sleep).'),
-    C.keepRecent.map((n) => [n, n ? String(n) : tr('settings.sleep.keepRecent.off', 'None')]), { number: true });
-  applicable.push([recent, (m) => m !== 'off']);
-
-  const pinned = toggle('tabSleepKeepPinned', tr('settings.sleep.keepPinned', 'Keep pinned tabs awake'), '');
-  applicable.push([pinned, (m) => m !== 'off']);
-
-  const list = h('div', { class: 'list', id: 'sleep-never' });
-  const input = h('input', { type: 'text', class: 'grow', id: 'sleep-never-add', placeholder: 'example.com', 'aria-label': tr('settings.sleep.neverAdd', 'Site that never sleeps') });
-  const renderList = () => list.replaceChildren(...((st.prefs.tabSleepNever || []).length ? st.prefs.tabSleepNever.map((host) => h('div', { class: 'item' },
-    h('span', { class: 'grow', text: host }),
-    h('button', { text: tr('settings.remove', 'Remove'), onclick: async () => { await save('tabSleepNever', st.prefs.tabSleepNever.filter((x) => x !== host)); renderList(); } })))
-    : [h('span', { class: 'note', text: tr('settings.sleep.neverNone', 'No sites. Right-click a tab and choose “Never sleep this site” to add one.') })]));
-  renderList();
-  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'tabSleepNever') renderList(); });
-  const add = async () => { const host = input.value.trim(); if (!host) return; await save('tabSleepNever', [...(st.prefs.tabSleepNever || []), host]); input.value = ''; renderList(); };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
-  const never = stackRow(tr('settings.sleep.never', 'Never sleep these sites'), tr('settings.sleep.neverDesc', 'Tabs on these sites (and their subdomains) stay awake.'), list,
-    h('div', { class: 'controls' }, input, h('button', { text: tr('settings.sleep.neverAddButton', 'Add site'), onclick: add })));
-  applicable.push([never, (m) => m !== 'off']);
-
-  const freezeFirst = select('tabSleepFreezeFirstMinutes', tr('settings.sleep.freezeFirst', 'Keep recently idle tabs frozen first'), tr('settings.sleep.freezeFirstDesc', 'An idle tab that would unload is first frozen in memory for this long, so coming back to it is instant; then it unloads. Costs memory meanwhile.'),
-    C.freezeFirst.map((n) => [n, n ? tr('settings.sleep.minutesN', '{n} minutes', { n }) : tr('settings.sleep.freezeFirst.off', 'Off (unload at once)')]), { number: true });
-  applicable.push([freezeFirst, (m) => m !== 'off']);
-  const preload = select('tabPreload', tr('settings.sleep.preload', 'Preload tabs after startup'), tr('settings.sleep.preloadDesc', 'Once the first page has loaded and the computer is idle, Lumen loads the tabs next to it, one at a time, so they are ready when you click. Stops when memory is low.'),
-    C.preload.map((n) => [n, n ? String(n) : tr('settings.sleep.preload.off', 'Off')]), { number: true });
-
-  refresh();
-  return [mode, after, how, pct, gb, cap, recent, freezeFirst, pinned, never, preload];
-}
 
 function buildSystem(card) {
   card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
@@ -2802,7 +2709,7 @@ function buildSystem(card) {
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
-  card.at('tabs-sleep').append(...tabSleepRows());
+  buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
   if (st.platform === 'darwin') {
     card.at('behavior').append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
   }

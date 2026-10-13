@@ -224,11 +224,36 @@ Programs and scripts are held until you agree to keep them, whatever these setti
 | Setting | Key | Default | What it does |
 |---|---|---|---|
 | Use graphics acceleration when available | `hardwareAcceleration` | on | Turn off if pages flicker. Takes effect after a relaunch. |
-| Put unused tabs to sleep | `tabSleep` | on | Frees memory from background tabs left alone for a while; switching back reloads them. |
+| Unload inactive tabs | `tabSleep` | on | Master switch of Settings > Tabs > Page unloading (below). Frees memory from background tabs left alone for a while; switching back reloads them. |
 | Keep Lumen running when its window is closed | `keepRunningInBackground` | on | macOS only. |
 | Proxy | `proxy` | `system` | `mode` is `system`, `direct`, `fixed_servers` (with `rules` and `bypass`), `pac_script` (with `pacUrl`) or `auto_detect`. Applies straight away. |
 | Download updates automatically | `autoDownloadUpdates` | on | New versions download in the background and "Restart to update" appears when one is ready. Off: Lumen asks before downloading. Copies that can't replace themselves (portable exe, per-machine install, unwritable Mac app) say when a version is out and download it when you ask. |
 | Show what’s new after updates | `showWhatsNew` | on | The first time Lumen starts on a newer version, the release notes for every version since the one you last ran come up once (from `CHANGELOG.md`, which ships inside Lumen, so no network is needed). A first run ever shows nothing. The same switch is on the card itself; **Show what’s new** here, or **What’s New in Lumen…** in the ⋯ menu (More Tools) and the Mac Help menu, opens the notes any time. The last version you ran is kept as `lastSeenVersion` (internal; Lumen records it, Reset settings keeps it). |
+
+## Page unloading
+
+Settings > Tabs > Page unloading. Every change applies at once; "Reset to defaults" at the bottom of the section restores all of them (and clears the site lists).
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Unload after | `tabSleepMinutes` | 20 | Minutes a background tab can go unused (1 to 10080); 0 is Never (memory pressure, the cap and the site list still apply). Performance mode can shorten it. |
+| How tabs unload | `tabSleepHow` | `unload` | `unload` closes the page; `freeze` keeps it paused in memory. |
+| Freeze first, then unload | `tabSleepFreezeFirstMinutes` | 10 | An idle tab is frozen this many minutes before it unloads; 0 unloads at once. |
+| Most background tabs kept loaded | `tabSleepMaxAwake` | 0 | 0 is Unlimited; otherwise 1 to 500. The tabs unused longest unload first. Performance mode's own cap also applies; the lower wins. |
+| Always keep the latest tabs loaded | `tabSleepKeepRecent` | 3 | The most recently used background tabs the idle timer leaves alone (0 to 8). |
+| Unload sooner when memory is low | `tabSleepPressure` | `medium` | `off`, `low` (under 5% free, tabs idle 5 minutes), `medium` (10%, 2 minutes) or `aggressive` (20%, 1 minute). Least recently used first. |
+| Also when Lumen uses more than | `tabSleepLumenGb` | 0 | GB of memory Lumen itself may use before tabs unload; 0 is no limit. |
+| Tabs playing audio or video | `tabSleepKeepAudio` | on | Such a tab stays loaded. |
+| Pinned tabs | `tabSleepKeepPinned` | on | Pinned tabs stay loaded. |
+| Tabs with unsaved input or a "Leave site?" prompt | `tabSleepKeepForms` | on | Typed, unsent text or a `beforeunload` handler keeps the tab loaded. |
+| Tabs with a download or upload | `tabSleepKeepTransfers` | on | A download coming in or a chosen upload keeps the tab loaded. |
+| Tabs in a tab group | `tabSleepKeepGroups` | off | Grouped tabs stay loaded. |
+| Always keep these sites loaded | `tabSleepNever` | none | Hosts (subdomains included) or patterns with `*`, such as `*.example.com`. Tabs in a call, sharing the camera, microphone or screen, or used by the AI or a background task always stay loaded; there is no switch for those. |
+| Unload these sites sooner | `tabSleepSoon` | none | Hosts or patterns whose tabs unload after `tabSleepSoonMinutes` instead. The always-keep list wins. |
+| Unload those sites after | `tabSleepSoonMinutes` | 5 | 1, 2, 5, 10, 15 or 30 minutes; never longer than the usual time. |
+| Dim unloaded tabs in the tab strip | `tabSleepDim` | on | An unloaded tab shows a dimmed icon and title. |
+| Show the memory freed when you hover an unloaded tab | `tabSleepShowFreed` | on | The hover card adds "about N MB freed" (an estimate). |
+| When you switch to an unloaded tab | `tabSleepOnReturn` | `reload` | `reload` loads it at once; `placeholder` shows a page with a Reload button and loads nothing until pressed (hovering a tab no longer wakes it, and startup preloading is off). |
 
 ## Background tasks
 

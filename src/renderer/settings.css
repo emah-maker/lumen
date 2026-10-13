@@ -167,6 +167,10 @@ input[type="checkbox"]:not(.switch), input[type="radio"] { accent-color: var(--a
 label.check { display: flex; align-items: center; padding: 3px 0; }
 
 .list { display: flex; flex-direction: column; }
+.unload-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.unload-stats .stat { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--field); }
+.unload-stats .stat-value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.unload-stats .stat-label { font-size: 12px; color: var(--muted); }
 .item { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
 .item + .item { border-top: 1px solid var(--hairline); }
 .item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -14,9 +14,9 @@ const KNOWN_UNDOCUMENTED = new Set([
   'accentColor', 'newTabBackground', 'newTabEffect', 'newTabEffectColor', 'newTabEffectAmount', 'newTabEffectSpeed', 'newTabEffectSize', 'newTabEffectInteract',
   'newTabImage', 'newTabClock', 'newTabClockSize', 'newTabClockStyle', 'newTabClockHours', 'newTabClockSeconds', 'newTabClockDate', 'newTabClockCard',
   'newTabClockShadow', 'newTabGreetingFont', 'newTabSearchWidth', 'newTabName', 'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy',
-  'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation', 'homeWidgets', 'pdfViewer', 'tabSleepMode', 'tabSleepMinutes',
-  'tabSleepHow', 'tabSleepFreePercent', 'tabSleepLumenGb', 'tabSleepMaxAwake', 'tabSleepKeepPinned', 'tabSleepKeepRecent', 'tabSleepNever',
-  'tabSleepFreezeFirstMinutes', 'tabPreload', 'performanceMode', 'organizeOnlyMixed', 'organizeDelaySeconds', 'maxSteps', 'aiSubagents', 'aiSubagentModel',
+  'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation', 'homeWidgets', 'pdfViewer', 'tabSleepMode', 
+  'tabSleepFreePercent', 
+  'tabPreload', 'performanceMode', 'organizeOnlyMixed', 'organizeDelaySeconds', 'maxSteps', 'aiSubagents', 'aiSubagentModel',
   'maxChatRuns', 'autoModel', 'usageBars', 'aiSignedInSites', 'pinchZoom', 'featureOffersSeen', 'aiDeviceAccess', 'grokTerminal', 'grokKeepConnected',
   'codexKeepConnected', 'grokKeepIdleMinutes', 'researchTabs', 'sidebarNewChat',
 ]);

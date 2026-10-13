@@ -4,7 +4,7 @@
 // main answers only that page too (pages:strings).
 const { contextBridge, ipcRenderer } = require('electron');
 
-if (location.protocol === 'file:' && /\/renderer\/(error|cert-error|https-only|safe-browsing)\.html$/.test(location.pathname)) {
+if (location.protocol === 'file:' && /\/renderer\/(error|cert-error|https-only|safe-browsing|unloaded)\.html$/.test(location.pathname)) {
   contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} });
 }
 // The "This file was moved or deleted" page (the error page with kind=missingfile): Show in folder and Choose file. Main takes the
