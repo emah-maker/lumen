@@ -6882,17 +6882,35 @@ let lastBounds = '';
 // While the sidebar springs, the page view holds its final size: resizing a native page every
 // frame makes the site reflow its whole layout each frame, which is what made pages stutter.
 let heldRect = null;
-function reportBounds() {
+// A sidebar that opens or closes without a slide (the new-tab page, reduced motion) tells main its new page size in a set order, so the
+// native page view and the sidebar are never both missing from, or both drawn over, the same strip: see applyStill(). Until then the
+// size is not reported.
+let boundsHeld = false;
+function currentBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
   const inset = document.body.classList.contains('agent-active') ? 2 : 0;
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
   // The page area's width with the sidebar closed: the new-tab page keeps laying itself out at this
   // width while the sidebar covers its right side (main.js layout(), features/sidebar-overlay.js).
   bounds.fullWidth = Math.max(bounds.width, Math.round(document.querySelector('.body').getBoundingClientRect().right - r.left - inset * 2));
+  return bounds;
+}
+function sendBounds(bounds) {
   const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)},${Math.round(bounds.fullWidth)}`;
   if (key === lastBounds) return; // called every frame during animations; only send changes
   lastBounds = key;
   window.browser.setContentBounds(bounds);
+}
+function reportBounds() {
+  if (!boundsHeld) sendBounds(currentBounds());
+}
+// sendBounds, resolved once main has resized the page view (never rejects; resolves at once when the size is the one main has).
+function sendBoundsAck(bounds) {
+  const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)},${Math.round(bounds.fullWidth)}`;
+  if (key === lastBounds) return Promise.resolve();
+  lastBounds = key;
+  if (!window.browser.setContentBoundsAck) { window.browser.setContentBounds(bounds); return Promise.resolve(); } // (an older main)
+  return Promise.resolve(window.browser.setContentBoundsAck(bounds)).catch(() => {});
 }
 new ResizeObserver(reportBounds).observe(viewport);
 window.addEventListener('resize', reportBounds);
@@ -9276,7 +9294,7 @@ function edgeColor(img) {
 // The last page edge colour seen: a resize drag shows it in the area the page hasn't caught up with yet,
 // before its own snapshot (50-200 ms) is ready.
 let lastSnapshotEdge = '';
-async function freezePage({ fade = false } = {}) {
+async function freezePage() {
   const token = ++freezeToken;
   // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
   const r = heldRect || viewport.getBoundingClientRect();
@@ -9299,10 +9317,21 @@ async function freezePage({ fade = false } = {}) {
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  if (fade) img.classList.add('fade-in');
   lastSnapshotEdge = edgeColor(img);
   viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
   viewport.append(img);
+  // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
+  // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
+  await new Promise((done) => afterPaint(done));
+  if (token !== freezeToken) return; // thawed meanwhile
+  window.browser.freezeShown?.();
+}
+// Runs fn once the UI has painted what it just changed: two frames, or a short timer where no frames are drawn (a minimized window).
+function afterPaint(fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; clearTimeout(timer); fn(); };
+  const timer = setTimeout(run, 80);
+  requestAnimationFrame(() => requestAnimationFrame(run));
 }
 
 const SNAPSHOT_REMOVE_DELAY_MS = 80; // the live page is back a moment before the still image leaves, so no blank frame shows
@@ -9331,38 +9360,64 @@ function reportTabSidebar(open, tabId = null) { // (no tab named: main's front t
 
 // visible: the wish. fromTab: following the tab in front (no report to main, the prompt keeps the focus it has).
 // instant: no spring (the first state of a window, a full-page chat docking back to a closed tab).
-async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
+// newTab: the tab in front is the new-tab page (default: look). It never slides: see the rule below.
+//
+// How the sidebar moves (one source of truth: the page view's bounds are only ever sent from here, in this order):
+//   - Web pages: the page becomes a snapshot first (freezePage; main hides the live view only once the snapshot is painted), the
+//     sidebar springs over it, then the live view comes back at its final size (one reflow, none per frame). If the snapshot
+//     isn't there within STILL_FREEZE_WAIT_MS, the change is made without a slide.
+//   - The new-tab page, reduced motion, and anything above that failed: no slide, no snapshot, one instant resize like Chrome's side
+//     panel (applyStill). The new-tab page doesn't reflow when its view narrows (main.js layout(): it keeps its full-width layout),
+//     so it has nothing to protect with a snapshot, and its cards and widgets are never hidden and brought back.
+let showSeq = 0; // each call is numbered: a call that is overtaken while it waits gives way to the newer one
+let sidebarWanted = !document.body.classList.contains('sidebar-hidden'); // what was last asked for, set the moment it is asked
+const STILL_FREEZE_WAIT_MS = 180; // a snapshot later than this isn't worth waiting for (a heavy page's capture): the change is made at once instead
+const activeOnNewTab = () => { const t = lastTabState?.tabs.find((x) => x.id === lastTabState.activeId); return Boolean(t) && !t.url && !t.page && !t.error; };
+let settleStill = null; // a no-slide change whose last step waits for the UI's paint; called early when another change arrives first
+async function showSidebar(visible, { fromTab = false, instant = false, newTab = activeOnNewTab() } = {}) {
   const body = document.body;
-  const still = instant || motionReduced(); // (no motion: the single reportBounds() in finish() sends the final size)
+  const seq = ++showSeq;
+  sidebarWanted = visible;
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
   window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
   if (!fromTab) reportTabSidebar(visible);
-  const wasEarly = Boolean(earlyFreeze);
-  if (earlyFreeze) {
-    const pending = earlyFreeze;
-    earlyFreeze = null;
-    await pending;
+  settleStill?.(); // (an earlier no-slide change is finished first, so this one starts from a settled layout)
+  const early = earlyFreeze; // a snapshot started on pointerdown
+  earlyFreeze = null;
+  const still = instant || newTab || motionReduced();
+  let frozen = false;
+  if (!still) {
+    const pending = early || (snapshot ? null : freezePage());
+    if (pending) await Promise.race([pending, new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
+    if (seq !== showSeq) return; // toggled again while waiting: that call carries on
+    frozen = Boolean(snapshot);
+  } else if (early) { // (pressed on a page that no longer slides: drop the snapshot it started)
+    await early;
+    if (seq !== showSeq) return;
   }
-  // No head start (a keyboard shortcut): the spring doesn't wait for the capture. The page area stays its
-  // background colour or the live page until the snapshot lands, and swaps in then (at the end of this function).
-  const lateFreeze = !wasEarly && !revealAnim && !still && !snapshot;
   const velocity = revealAnim?.velocity || 0;
   const interrupted = Boolean(revealAnim);
   revealAnim?.stop();
   revealAnim = null;
+  if (!frozen) { // no slide
+    applyStill(visible, { fade: !instant && !fromTab && !motionReduced() });
+    if (visible && !fromTab) focusPrompt(seq);
+    return;
+  }
   const wasHidden = body.classList.contains('sidebar-hidden');
   if (visible && wasHidden) body.classList.remove('sidebar-hidden');
   const target = visible ? 1 : 0;
   // Opening: the page takes its narrower size now and the sidebar slides over the space.
   // Closing: the page keeps its size until the sidebar has gone, then widens once.
   // (Interrupted mid-spring, the page area is already floating at full size: keep the size held.)
+  // The live view is hidden behind the snapshot by now, so resizing it here shows nothing.
   if (!(interrupted && heldRect)) {
     body.classList.remove('sidebar-moving'); // measure the settled layout
     heldRect = viewport.getBoundingClientRect();
   }
   if (visible && wasHidden) setReveal(0);
-  if (!still) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
+  body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
   reportBounds();
   const finish = () => {
     revealAnim = null;
@@ -9374,16 +9429,56 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
     reveal = target;
     reportBounds();
   };
-  // Reduced motion: no spring, so heldRect is set above only to be cleared by finish() in the same tick;
-  // the single reportBounds() inside finish() then sends the final size and nothing animates.
-  if (still) finish();
-  else {
-    // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
-    // motion begins, so any slow frame is a still frame, not a jump.
-    revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
+  revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
+  if (visible && !fromTab) focusPrompt(seq);
+}
+// The message box takes the keyboard when the sidebar opens. A sidebar that was just opened is still visibility:hidden for a frame or two
+// after its class comes off (with Reduce motion or Performance mode on, a 10 microsecond transition holds it), and focus() on a hidden
+// element is ignored: asked again every 16 ms until it has it (not for long, and not once the sidebar was toggled again).
+function focusPrompt(seq) {
+  const box = $('prompt');
+  box.focus({ preventScroll: true });
+  let tries = 0;
+  const again = () => {
+    if (document.activeElement === box || seq !== showSeq || ++tries > 25 || document.body.classList.contains('sidebar-hidden')) return;
+    box.focus({ preventScroll: true });
+    setTimeout(again, 16);
+  };
+  if (document.activeElement !== box) setTimeout(again, 16);
+}
+// The no-slide change. Opening: the sidebar takes its column in the UI at once and the page view stays full-size for the two frames the
+// UI needs to paint it (the sidebar is under the view for that moment, unseen), then the view narrows. Closing is the other way round: the
+// view widens first, over the sidebar, and the sidebar leaves the UI two frames later. Either way no frame shows a gap (nothing drawn
+// in the strip) or the view over a sidebar that should be showing.
+function applyStill(visible, { fade = false } = {}) {
+  const body = document.body;
+  heldRect = null;
+  body.classList.remove('sidebar-moving');
+  clearReveal();
+  reveal = visible ? 1 : 0;
+  if (snapshot) thawPage();
+  const hidden = body.classList.contains('sidebar-hidden');
+  if (visible === !hidden) { boundsHeld = false; reportBounds(); return; } // (already so)
+  const settle = () => {
+    if (settleStill !== settle) return;
+    settleStill = null;
+    boundsHeld = false;
+    if (!visible) body.classList.add('sidebar-hidden');
+    reportBounds();
+    // A short fade, on the sidebar alone (no layout, no page involved): it arrives rather than popping in.
+    if (visible && fade) $('sidebar').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: 'ease-out' });
+  };
+  boundsHeld = false;
+  let widened = Promise.resolve();
+  if (visible) {
+    body.classList.remove('sidebar-hidden');
+  } else {
+    const b = currentBounds();
+    widened = sendBoundsAck({ ...b, width: b.fullWidth }); // the page view's size with the sidebar gone, now
   }
-  if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
-  if (visible && !fromTab) $('prompt').focus({ preventScroll: true });
+  boundsHeld = true;
+  settleStill = settle;
+  widened.then(() => afterPaint(settle)); // (closing: the sidebar goes once main has widened the view over it)
 }
 // [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
@@ -9391,11 +9486,17 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
 // open stays in History, and a reply still being written there carries on.
 // [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
 // closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+let toggleSeq = 0;
 async function toggleSidebarByHand() {
-  const opening = $('toggle-sidebar').getAttribute('aria-pressed') !== 'true';
+  // What the toggle does is decided at the press, from what was last asked for (not from what the button shows yet): five quick
+  // presses are five flips, however long opening waits for main's answer below.
+  const opening = !sidebarWanted;
+  sidebarWanted = opening;
+  const mine = ++toggleSeq;
   if (opening) {
     let target = null;
     try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    if (mine !== toggleSeq || sidebarWanted !== opening) return; // pressed again (or changed by something else) while main answered: that decides
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
       setting: window.lumenSidebarNewChat !== false,
@@ -9414,7 +9515,7 @@ $('toggle-sidebar').onclick = () => {
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced()) earlyFreeze = freezePage();
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
@@ -9519,6 +9620,7 @@ const isNewTabPage = (tab) => Boolean(tab) && !tab.url && !tab.page && !tab.erro
 
 function enterFull() {
   if (chatFull) return;
+  settleStill?.(); // (a sidebar change still waiting for its paint is finished first: it would otherwise hide the sidebar again under the full chat)
   chatFull = true;
   document.body.classList.add('chat-full');
   window.browser.setChatFull?.(true); // main hides the tab's native view; see layout() in main.js
@@ -9577,7 +9679,7 @@ function followTabSidebar(state) {
   if (chatFull) return; // a full-page chat is the sidebar open (watchFullChatTab docks it back when its tab is left)
   if (sidebarPending > 0 && (!switched || first)) return; // (a state sent before this window's own answer, which it already carries: the welcome, a click before the first state)
   const want = Boolean(state.sidebar);
-  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first });
+  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) }); // (the state's own front tab: the strip may not have drawn it yet)
 }
 window.browser.onTabs(followTabSidebar);
 

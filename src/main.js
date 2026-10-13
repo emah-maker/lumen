@@ -241,7 +241,7 @@ const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
 const UI_ONLY_IPC = new Set([
-  'content-bounds', 'view:freeze', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm',
+  'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
@@ -1910,15 +1910,21 @@ function layout() {
     const overlay = visible && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
       ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
       : null;
-    setOverlay(tab, overlay);
-    if (!visible) continue;
-    if (tab.fullscreen) {
-      const [width, height] = win.getContentSize();
-      tab.view.setBounds({ x: 0, y: 0, width, height });
-    } else {
-      tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
+    // The full-width layout goes on BEFORE the view narrows and comes off AFTER it has widened again: the other way round, the page
+    // was laid out once at the narrow width (a resize event, the cards reflowing, widgets re-rendering) every time the sidebar closed.
+    if (overlay) setOverlay(tab, overlay);
+    if (visible) {
+      if (tab.fullscreen) {
+        const [width, height] = win.getContentSize();
+        tab.view.setBounds({ x: 0, y: 0, width, height });
+      } else {
+        tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
+      }
     }
+    if (!overlay) setOverlay(tab, null);
   }
+  spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
+  appleMusicWeb.clip(contentBounds);
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
   appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
   raiseOverlays();
@@ -4785,7 +4791,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
-  else if (mod && key === 'j') ui()?.send('toggle-sidebar');
+  else if (mod && key === 'j') toggleSidebarFromKeys();
   else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
@@ -4839,6 +4845,12 @@ function runExtraShortcut(action, wc) {
   return true;
 }
 
+// Ctrl+J / the menu: the sidebar opens or closes. Opening it from a page that has the keyboard moves the keyboard into its message box (the
+// UI's document focused its box, but the window's native focus stayed in the page, so typing went to the page); closing leaves it where it was.
+function toggleSidebarFromKeys() {
+  if (!tabSidebarOpen(tabs.find((t) => t.id === activeId))) ui()?.focus();
+  ui()?.send('toggle-sidebar');
+}
 // Ctrl+Shift+K / the menu: a fresh chat in the sidebar (opens it if closed); the renderer clicks its New chat button.
 function newSidebarChat() {
   ui()?.focus();
@@ -5808,7 +5820,7 @@ function macMenu() {
         { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: pv('zoomOut', () => zoomBy(wc(), -0.5)) },
         { label: t('menu.actualSize'), ...shown('Cmd+0'), click: pv('actualSize', () => zoomBy(wc(), 0)) },
         { type: 'separator' },
-        normal({ label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') }),
+        normal({ label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: toggleSidebarFromKeys }),
         normal({ label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat }),
         normal({ label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage }),
         { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: pv('devTools', () => wc()?.toggleDevTools()) },
@@ -8401,7 +8413,7 @@ if (TEST) {
   global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
-ipcMain.on('content-bounds', (_e, bounds) => {
+function applyContentBounds(bounds) {
   contentBounds = {
     x: Math.round(bounds.x),
     y: Math.round(bounds.y),
@@ -8411,7 +8423,11 @@ ipcMain.on('content-bounds', (_e, bounds) => {
   };
   if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
   layout();
-});
+}
+ipcMain.on('content-bounds', (_e, bounds) => applyContentBounds(bounds));
+// The same, answered once the page view has its new size: a sidebar closing without a slide waits for it before it leaves, so the
+// view has already widened over it and no frame shows an empty strip.
+ipcMain.handle('content-bounds:ack', (_e, bounds) => { applyContentBounds(bounds); return true; });
 
 // Each freeze and thaw bumps the window's freeze number. A capture that finishes after a thaw (the
 // sidebar settled before the snapshot was ready) must not hide the page: it used to, and nothing thawed
@@ -8419,6 +8435,7 @@ ipcMain.on('content-bounds', (_e, bounds) => {
 // flag is also set on the window that asked, not whichever window is current when the capture ends.
 // A freeze that is never thawed (a lost message) ends by itself.
 const freezeSeq = new WeakMap(); // window rec -> number
+const freezeReady = new WeakMap(); // window rec -> the freeze number whose snapshot was captured and sent (view:frozen hides the live view once it is on screen)
 let freezeCounter = 0;
 // Last resort only: the renderer thaws explicitly at the end of a spring or drag and pings view:freeze-alive while moving.
 const FREEZE_MAX_MS = 6000;
@@ -8442,7 +8459,9 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
   try {
     const image = await wc.capturePage();
     if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
-    withWindow(rec, () => { viewFrozen = true; layout(); });
+    // The live view stays where it is until the UI has the snapshot on screen (view:frozen below). Hiding it here, before the image
+    // had been decoded and painted, left the page area blank for a few frames at the start of every sidebar open and close.
+    freezeReady.set(rec, seq);
     armFreezeTimeout(rec, seq);
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
@@ -8459,6 +8478,13 @@ ipcMain.handle('view:warm', async () => {
   if (!wc) return false;
   try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one
   return true;
+});
+ipcMain.on('view:frozen', () => { // the snapshot is painted in the UI under the live view: now the view can go
+  const rec = curRec;
+  if (!rec || !rcAlive(rec) || freezeReady.get(rec) !== freezeSeq.get(rec) || viewFrozen) return; // thawed (or frozen again) meanwhile
+  armFreezeTimeout(rec, freezeSeq.get(rec));
+  viewFrozen = true;
+  layout();
 });
 ipcMain.on('view:freeze-alive', () => { // still animating: push the last-resort thaw back
   if (curRec && viewFrozen) armFreezeTimeout(curRec, freezeSeq.get(curRec));

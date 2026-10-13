@@ -444,8 +444,22 @@ function createWebPlayer(deps, spec) {
     probe(nt);
   }
 
+  // The page view just changed size (the sidebar opened): a card's view that is showing is cut to the new area at once, here, instead of
+  // staying as wide as it was until the page's next answer arrives (a moment in which it was drawn over the sidebar).
+  function clip(bounds) {
+    if (pinned || parked || !host || !alive() || !bounds || !view.getVisible()) return;
+    const b = view.getBounds();
+    const left = Math.max(b.x, bounds.x);
+    const top = Math.max(b.y, bounds.y);
+    const right = Math.min(b.x + b.width, bounds.x + bounds.width);
+    const bottom = Math.min(b.y + b.height, bounds.y + bounds.height);
+    if (right - left < MIN_SIDE || bottom - top < MIN_SIDE) { view.setVisible(false); return; } // (the next answer from the page shows it again, in place)
+    if (left !== b.x || top !== b.y || right - left !== b.width || bottom - top !== b.height) view.setBounds({ x: left, y: top, width: right - left, height: bottom - top });
+  }
+
   return {
     sync,
+    clip,
     status,
     onState(cb) { if (typeof cb !== 'function') return () => {}; listeners.add(cb); return () => listeners.delete(cb); },
     emitState: (message) => emit({ type: 'message', message }),
