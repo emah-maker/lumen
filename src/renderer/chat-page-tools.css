@@ -93,3 +93,41 @@ body.chat-page .notice.model-switch::before, body.chat-page .notice.model-switch
 @keyframes cp-hit { 0%, 55% { box-shadow: 0 0 0 3px var(--accent-soft); } 100% { box-shadow: 0 0 0 3px transparent; } }
 mark.cp-hit-word { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
 @media (prefers-reduced-motion: reduce) { .msg.cp-hit { animation: none; box-shadow: 0 0 0 3px var(--accent-soft); } .cp-pj-dialog { animation: none; } }
+
+/* ---------- drag chats into projects (renderer/chat-project-drag.js) ---------- */
+.cp-pj-item { position: relative; }
+.cp-pj-item .cp-pj { padding-left: 26px; }
+.cp-pj-chev { position: absolute; left: 4px; top: 6px; width: 20px; height: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.cp-pj-chev svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--t-fast) ease-out; }
+.cp-pj-item.open .cp-pj-chev svg { transform: rotate(90deg); }
+.cp-pj-chev:hover { background: var(--hover); }
+.cp-pj-chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cp-pj-chats { display: flex; flex-direction: column; margin: 0 0 var(--cp-1) 26px; padding-left: var(--cp-1); border-left: 1px solid var(--hairline); border-radius: var(--r-sm); }
+.cp-pj-chat { display: flex; align-items: center; width: 100%; min-height: 28px; padding: 0 var(--cp-2); border: none; border-radius: var(--r-md); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cp-pj-chat:hover { background: var(--cp-row); }
+.cp-pj-chat.current { background: var(--accent-soft); }
+.cp-pj-chat:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cp-pj-chat-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cp-pj-chats-empty { margin: 0; padding: 4px var(--cp-2); font-size: 12px; color: var(--muted); }
+
+/* a picked row (Ctrl/Shift+click) */
+.cp-list .chat-item.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* while dragging */
+body.cp-dragging, body.cp-dragging * { cursor: grabbing; user-select: none; }
+.chat-item.dragging, .cp-pj-chat.dragging { opacity: 0.5; }
+.cp-drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; display: flex; align-items: center; gap: var(--cp-2); max-width: 260px; padding: 6px 12px; border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text); font-size: 13px; pointer-events: none; box-shadow: 0 0 0 1px var(--accent), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
+.cp-drag-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cp-drag-count { flex: none; min-width: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent); color: var(--paper, #fff); font-size: 12px; font-weight: 600; text-align: center; }
+.cp-pj-item.drop-ok .cp-pj { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.cp-pj-item.drop-over .cp-pj { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+.cp-pj-item.drop-same .cp-pj { opacity: 0.6; }
+.cp-pj-chats.drop-over { box-shadow: inset 0 -2px 0 var(--accent); background: var(--accent-soft); }
+.cp-pj-chats.drop-same { opacity: 0.6; }
+.cp-pj-none { position: sticky; bottom: 0; margin: var(--cp-1) 0 0; padding: 6px 10px; border: 1px dashed var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 13px; text-align: center; }
+.cp-pj-none.drop-over { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.cp-list .chat-items.drop-none { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); border-radius: var(--r-md); }
+.cp-list .chat-items.drop-none.drop-over { box-shadow: inset 0 0 0 2px var(--accent); }
+.cp-list .chat-project .chat-menu-label::after { content: '\00a0\25b8'; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .cp-pj-chev svg { transition: none; } }
+:root.pref-reduce-motion .cp-pj-chev svg { transition: none; }

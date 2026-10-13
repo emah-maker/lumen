@@ -156,6 +156,14 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, onError = null, onStale = null
       if (failed) return 'failed';
       return started || running.has(chatId) ? 'started' : 'queued'; // (a start that ran and ended at once has already left `running`)
     },
+    // "Run now": a chat that waits for a slot starts at once, past the cap (the user's own choice). False when it is not waiting.
+    runNow(chatId) {
+      const i = waiting.findIndex((w) => w.chatId === chatId);
+      if (i < 0) return false;
+      const [w] = waiting.splice(i, 1);
+      begin(w.chatId, w.kind, w.alive, w.start);
+      return true;
+    },
     // The chat's run ended (or it was stopped): the next one in line may go.
     release(chatId) { running.delete(chatId); pump(); },
     // The watchdog: a slot whose run has been gone for `misses` sweeps in a row is released, and onStale says which.

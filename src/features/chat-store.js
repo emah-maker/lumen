@@ -346,6 +346,41 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     writeIndex();
     return true;
   }
+  // Several chats at once, in one write (drag and drop, "Move to project"). Moving is not activity: only the `project` field changes, never
+  // `updated`, so the list's order (the chats' recency) stays as it was. Chats already in that project, unknown or trashed ones are left out.
+  // Returns [{ id, from }] for the chats that moved (from: the project they were in, or null), which restoreProjects() puts back; null when
+  // nothing can be written (a degraded index, an unknown project).
+  const effectiveProject = (entry) => (entry?.project && projectById(entry.project) ? entry.project : null);
+  function moveToProject(ids, projectId = null) {
+    const idx = readIndex();
+    if (idx.degraded || (projectId && !projectById(projectId))) return null;
+    const to = projectId || null;
+    const moves = [];
+    for (const id of new Set(Array.isArray(ids) ? ids : [])) {
+      const entry = entryOf(id);
+      if (!entry || entry.trashed) continue;
+      const from = effectiveProject(entry);
+      if (from === to) continue;
+      moves.push({ id, from });
+      if (to) entry.project = to; else delete entry.project;
+    }
+    if (moves.length) writeIndex();
+    return moves;
+  }
+  // Undo of moveToProject(): each chat goes back to the project it was in (none, when that project has been removed since).
+  function restoreProjects(moves) {
+    const idx = readIndex();
+    if (idx.degraded || !Array.isArray(moves)) return 0;
+    let n = 0;
+    for (const m of moves) {
+      const entry = entryOf(m?.id);
+      if (!entry || entry.trashed) continue;
+      if (m.from && projectById(m.from)) entry.project = m.from; else delete entry.project;
+      n++;
+    }
+    if (n) writeIndex();
+    return n;
+  }
   // The project a chat is in, or null (a chat whose project was removed, or an index that lost its projects, has none).
   const projectOf = (chatId) => { const entry = entryOf(chatId); return (entry?.project && projectById(entry.project)) || null; };
 
@@ -468,7 +503,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     clearTimeout(indexTimer); indexTimer = null;
   }
 
-  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
+  return { list, has, load, save, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

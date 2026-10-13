@@ -11,17 +11,19 @@
   const keyOf = (id) => (id ? String(id) : 'new');
   const emptyDraft = (d) => !d || (!String(d.text || '').trim() && !(d.pastes || []).length);
 
-  function create(storage, now = Date.now) {
+  // `key`: the localStorage entry. The sidebar and the full-page chat share one origin's storage, so each keeps its own entry (chat-core.js): one
+  // surface saving its composer (it does so whenever the chat it shows changes) must never overwrite what the other has typed.
+  function create(storage, now = Date.now, key = KEY) {
     const load = () => {
       try {
-        const parsed = JSON.parse(storage.getItem(KEY) || '{}');
+        const parsed = JSON.parse(storage.getItem(key) || '{}');
         return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
       } catch { return {}; }
     };
     const save = (all) => {
       const keys = Object.keys(all);
       if (keys.length > MAX_DRAFTS) for (const k of keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - MAX_DRAFTS)) delete all[k];
-      try { if (Object.keys(all).length) storage.setItem(KEY, JSON.stringify(all)); else storage.removeItem(KEY); } catch {}
+      try { if (Object.keys(all).length) storage.setItem(key, JSON.stringify(all)); else storage.removeItem(key); } catch {}
     };
     return {
       // -> { text, pastes: [string] } or null

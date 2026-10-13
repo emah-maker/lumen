@@ -1400,6 +1400,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; animation: status-pulse 1.6s ease-in-out infinite; }
 @keyframes status-pulse { 50% { opacity: 0.55; } }
 :root.pref-reduce-motion .working[data-status]::after { animation: none; }
+.working[data-status]:has(.run-now) { display: inline-flex; align-items: center; gap: 8px; }
+.working .run-now { order: 2; border: 0; border-radius: var(--r-sm); padding: 2px 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.working .run-now:focus-visible { outline: 2px solid var(--accent); }
 
 /* Setup card: Claude Code not found yet (still clickable: it looks again), and where to get it. */
 .setup-option.missing { opacity: 0.75; }

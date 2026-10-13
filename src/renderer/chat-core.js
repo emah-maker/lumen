@@ -442,10 +442,17 @@ const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
 // What is typed (and the long pasted blocks waiting as chips) is saved per chat on every change (renderer/chat-drafts.js, localStorage), put
 // away when another chat opens and back when this one does, also after a restart. 'draftHold' keeps the box from saving while it is empty
 // between two chats (or before startChat).
-const drafts = (() => { try { return window.chatDrafts.create(window.localStorage); } catch { return null; } })();
+// The sidebar and the full-page chat are one origin's localStorage: each has its own entry, or one saving its (older, or empty) composer on a sync
+// overwrote what the other had typed for the same chat, and the next sync put that back in the box.
+const drafts = (() => { try { return window.chatDrafts.create(window.localStorage, Date.now, document.body.classList.contains('chat-page') ? `${window.chatDrafts.KEY}.page` : window.chatDrafts.KEY); } catch { return null; } })();
 let pastes = []; // long pasted blocks shown as chips and sent with the message (strings)
 let draftHold = true;
+let emptyOwner; // the id (null: not named yet) of the last empty chat whose box held text when it was left; undefined: none (see applySync)
 const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+// Saved on every change (updateSend), and again when the box loses focus or the page goes away.
+prompt.addEventListener('blur', () => saveDraft());
+window.addEventListener('pagehide', () => saveDraft());
+window.addEventListener('beforeunload', () => saveDraft());
 function restoreDraft() {
   draftHold = false;
   const d = drafts?.get(shownChatId);
@@ -1180,6 +1187,16 @@ function dropReplyActions() {
   for (const b of messages.querySelectorAll('.reply-regen, .reply-retry, .reply-actions-only')) b.remove();
 }
 
+// The working line's passing status. `runNow`: the chat waits for a free slot (the cap on chats working at once), and a button starts it now.
+function setStatus(working, text, runNow = false) {
+  if (text) working.dataset.status = text; else delete working.dataset.status;
+  working.querySelector('.run-now')?.remove();
+  if (!text || !runNow || !window.assistant?.chats?.runNow) return;
+  const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'run-now', textContent: t('chat.runNow'), title: t('chat.runNow.title') });
+  btn.onclick = () => { btn.disabled = true; window.assistant.chats.runNow().catch(() => {}).finally(() => { btn.disabled = false; }); };
+  working.append(btn);
+}
+
 // The working line and turn state of a reply that is now running (its user bubble already shown).
 function beginTurn() {
   dropReplyActions(); // (also a chat opened mid-run: its history ended on your message, so it showed the actions-only row)
@@ -1199,7 +1216,7 @@ function resumeLive(live) {
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
   // Waiting for a free slot (features/tab-chats.js): its message is not in the saved chat yet, so it is shown here.
   if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
-  if (live.queued?.status && turn.working) turn.working.dataset.status = live.queued.status;
+  if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, upload: a.upload });
@@ -1413,8 +1430,8 @@ window.assistant.onEvent((event) => {
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
-  if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
-  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
+  if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
+  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
@@ -2519,8 +2536,18 @@ function flushLazyHistory() {
 }
 function applySync(view) {
   runStateSeq++;
-  clearChatView();
+  // The chat this view already shows (or the one not started yet, which main has given an id): the box, its attachments and its pasted blocks are
+  // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
+  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
+  const unnamed = sameChat && !shownChatId;
+  clearChatView({ keepBox: sameChat });
+  if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  if (sameChat) saveDraft();
+  // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
+  // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
+  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) drafts?.rename(emptyOwner, view.id);
+  if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined; // (taken, or the box already has its own)
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
     // Kept for now: drawn after the next paint when the view is on screen (the tab strip and the page area come first), or when it is shown.
     lazyItems = view.items;
@@ -2701,14 +2728,18 @@ document.querySelectorAll('.chip').forEach((chip) => {
 });
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
-function clearChatView() {
-  saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
-  draftHold = true;
-  prompt.value = '';
-  pastes = [];
-  autosize();
-  renderAttachments();
-  queueMicrotask(restoreDraft);
+// `keepBox`: the same chat is drawn again (applySync): its box is not touched at all.
+function clearChatView({ keepBox = false } = {}) {
+  if (!keepBox) {
+    if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId; // (kept while other chats are shown in between)
+    saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+    draftHold = true;
+    prompt.value = '';
+    pastes = [];
+    autosize();
+    renderAttachments();
+    queueMicrotask(restoreDraft);
+  }
   runId++;
   shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
   lastAsk = null; // another chat: its last message isn't known here

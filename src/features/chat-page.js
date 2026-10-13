@@ -35,7 +35,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 const CHAT_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'settings:get', 'settings:set-model', 'openrouter:models',
@@ -121,10 +121,12 @@ function create(deps) {
   // sidebar or another tab, never replaces what it shows. The sidebar and a page with no chat of its own take everything.
   const chatOfPage = (wc) => { const t = everyChatTab().find((x) => x.view.webContents === wc); return t && deps.chatOf ? deps.chatOf(t.id) : null; };
   const pageWants = (wc, payload) => { const about = payload?.view?.id ?? payload?.chatId; const own = about ? chatOfPage(wc) : null; return !own || own === about; };
+  // `except`: a webContents, or a list of them, that are not sent to.
   function broadcast(channel, payload, except = null) {
     const pages = new Set(everyChatTab().map((t) => t.view.webContents));
     const scoped = channel === 'chat:sync' || channel === 'chat:run-start';
-    for (const wc of surfaces()) if (wc !== except && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
+    const skip = new Set(Array.isArray(except) ? except : [except]);
+    for (const wc of surfaces()) if (!skip.has(wc) && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
   }
   // A run's event to whoever asked, and to the other views when a page is open.
   function emit(sender, channel, payload) {

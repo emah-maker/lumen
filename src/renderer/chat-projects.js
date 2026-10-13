@@ -1,18 +1,20 @@
 // lumen://chat > Projects: named groups of chats that share instructions (like Claude Projects and ChatGPT Projects). Only the page
 // uses this file. The data lives in main (features/chat-store.js: `projects` and each chat's optional `project`); this draws the
 // rail's Projects block, the editor (name and instructions) and the "Move to project" picker, and calls the chat page's api.
-//   window.chatProjects.render({ host, projects, chats, active, onSelect(id|null), onAdd(), onEdit(project), onNewChat(project) })
+//   window.chatProjects.render({ host, projects, chats, active, expanded?, current?, onSelect(id|null), onToggle?(id), onOpen?(id), onAdd(), onEdit(project), onNewChat(project) })
+//     expanded: Set of project ids shown open (their chats listed under them: rows to open, and to drag out: chat-project-drag.js)
 //   window.chatProjects.editor({ api, project, onDone(result) })    result: { saved } or { removed }
-//   window.chatProjects.picker({ api, chat, projects, anchor, onDone(), onNew() })
+//   window.chatProjects.picker({ api, chat, projects, anchor, onPick?(projectId|null), onDone(), onNew(), onClose?() })
 (() => {
   const tr = (key, english) => (window.chatTr ? window.chatTr(key, english) : english);
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
   const FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>';
   const PLUS = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>';
+  const CHEVRON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>';
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
 
   // ---- the rail's block: a heading with +, then one row per project; the chosen project's own actions sit under it
-  function render({ host, projects, chats, active, onSelect, onAdd, onEdit, onNewChat }) {
+  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat }) {
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const head = el('div', { className: 'cp-pj-head' });
@@ -24,12 +26,38 @@
     const rows = [head];
     for (const p of projects) {
       const on = p.id === active;
+      const open = expanded.has(p.id);
+      const wrap = el('div', { className: `cp-pj-item${open ? ' open' : ''}` });
+      wrap.dataset.project = p.id;
       const row = el('button', { type: 'button', className: `cp-pj${on ? ' on' : ''}`, title: p.name });
       row.dataset.id = p.id;
       row.setAttribute('aria-pressed', String(on));
       row.append(icon(FOLDER), el('span', { className: 'cp-pj-name', textContent: p.name }), el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
       row.onclick = () => onSelect(on ? null : p.id);
-      rows.push(row);
+      wrap.append(row);
+      if (onToggle) {
+        const chev = el('button', { type: 'button', className: 'cp-pj-chev', title: tr(open ? 'chatpage.project.collapse' : 'chatpage.project.expand', open ? 'Hide chats' : 'Show chats') });
+        chev.setAttribute('aria-label', `${tr(open ? 'chatpage.project.collapse' : 'chatpage.project.expand', open ? 'Hide chats' : 'Show chats')}: ${p.name}`);
+        chev.setAttribute('aria-expanded', String(open));
+        chev.innerHTML = CHEVRON;
+        chev.onclick = (e) => { e.stopPropagation(); onToggle(p.id); };
+        wrap.append(chev);
+      }
+      rows.push(wrap);
+      if (open && onOpen) {
+        const list = el('div', { className: 'cp-pj-chats' });
+        list.dataset.project = p.id;
+        const mine = chats.filter((c) => c.project === p.id && !c.archived);
+        for (const c of mine) {
+          const b = el('button', { type: 'button', className: `cp-pj-chat${c.id === current ? ' current' : ''}`, title: c.title || '' });
+          b.dataset.id = c.id;
+          b.append(el('span', { className: 'cp-pj-chat-title', textContent: c.title || tr('chats.untitled', 'Chat') }));
+          b.onclick = () => onOpen(c.id);
+          list.append(b);
+        }
+        if (!mine.length) list.append(el('p', { className: 'cp-pj-chats-empty', textContent: tr('chatpage.project.emptyShort', 'No chats yet. Drag one here.') }));
+        rows.push(list);
+      }
       if (on) {
         const bar = el('div', { className: 'cp-pj-bar' });
         const instr = el('button', { type: 'button', className: 'cp-pj-act', textContent: tr(p.instructions ? 'chatpage.project.instructions' : 'chatpage.project.addInstructions', p.instructions ? 'Instructions' : 'Add instructions') });
@@ -100,7 +128,7 @@
   }
 
   // ---- "Move to project" from a chat row's menu: a small list next to it
-  function picker({ api, chat, projects, anchor, onDone, onNew }) {
+  function picker({ api, chat, projects, anchor, onPick = null, onDone, onNew, onClose = null }) {
     document.querySelector('.cp-pj-pick')?.remove();
     const menu = el('div', { className: 'cp-pj-pick' });
     menu.setAttribute('role', 'menu');
@@ -112,16 +140,16 @@
       b.onclick = async () => { close(); await run(); };
       return b;
     };
-    const set = (id) => async () => { await api.setProject(chat.id, id).catch(() => false); onDone(); };
+    const set = (id) => async () => { if (onPick) await onPick(id); else { await api.setProject(chat.id, id).catch(() => false); onDone(); } };
     for (const p of projects) menu.append(item(p.name, p.id === chat.project, set(p.id)));
     if (chat.project) menu.append(item(tr('chatpage.project.none', 'Remove from project'), false, set(null), 'none'));
-    menu.append(item(tr('chatpage.project.new', 'New project'), false, async () => onNew(chat), 'new'));
+    menu.append(item(tr('chatpage.project.newEllipsis', 'New project…'), false, async () => onNew(chat), 'new'));
     document.body.append(menu);
     const r = anchor.getBoundingClientRect();
     const h = menu.offsetHeight;
     menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = `${r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
-    const close = () => { menu.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key, true); };
+    const close = () => { const was = menu.isConnected; menu.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key, true); if (was) onClose?.(); };
     const away = (e) => { if (!menu.contains(e.target)) close(); };
     const key = (e) => {
       const list = [...menu.querySelectorAll('button')];
