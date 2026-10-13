@@ -6,7 +6,7 @@
 .macro-row + .macro-row { border-top: 1px solid var(--hairline); }
 .macro-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .macro-title { font-weight: 500; }
-.macro-chip { margin-left: 8px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); white-space: nowrap; }
+.macro-chip { margin-left: 8px; padding: 0 6px; border-radius: var(--r-pill); font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); white-space: nowrap; }
 .macro-actions { display: flex; flex: none; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .macros-empty { padding: 8px 0; }
 .macros-describe { padding: 6px 0 8px; display: flex; flex-direction: column; gap: 8px; }
@@ -27,8 +27,8 @@
 .macros-add { gap: 8px; }
 
 .macro-steps { display: flex; flex-direction: column; gap: 8px; }
-.macro-step { border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 10px; background: var(--field); }
-.macro-step.bad { border-color: var(--danger, #d70015); }
+.macro-step { border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 8px 10px; background: var(--field); }
+.macro-step.bad { border-color: var(--danger); }
 .macro-step.masked { border-style: dashed; }
 .macro-step-head { display: flex; align-items: center; gap: 8px; }
 .macro-step-n { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--hover); color: var(--muted); }

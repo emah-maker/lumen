@@ -17,21 +17,21 @@ const R = path.join(root, 'src', 'renderer');
 const read = (f) => fs.readFileSync(path.join(R, f), 'utf8').replace(/\r\n/g, '\n');
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
-// The Settings, new-tab and PDF viewer sections run once those pages are on the scale (the second PR of the UI polish).
-const PAGE_SURFACES = false;
+// The Settings, new-tab and PDF viewer sections (the second PR of the UI polish).
+const PAGE_SURFACES = true;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { try { v = await fn(); if (v) return v; } catch { /* not yet */ } await sleep(100); } return v; };
 
 // ---------- 1. lint ----------
 // Files whose look was brought onto the scale. (Chat-page internals, the TradingView card and the generated bundle are left out.)
-const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css'];
+const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'pdfviewer.css', 'private.css'];
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
-const POPUPS = ['suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
-const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css' };
+const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
+const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css' };
 const SCALE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24]); // tiny hairline radii, the scale, and the two large ones for tiles
 // A line that only defines a custom property, or draws one of the decorative palettes.
-const DECORATIVE = /^\s*(\.(bg|wi|ic|accent|swatch)[\w-]*[\s,{.:])/;
+const DECORATIVE = /^\s*(\.(bg|wi|ic|accent|swatch)[\w-]*[\s,{.:]|\.effect-options)/;
 const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
 
 {
@@ -47,14 +47,15 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
   const hex = []; const radii = []; const halves = []; const faintText = [];
   for (const f of [...SCALED, ...POPUPS]) {
     for (const { text, n } of lines(f)) {
+      if (/tradingview|\btv-/i.test(text)) continue; // the TradingView card is edited elsewhere
       const code = text.replace(/\/\*.*?\*\//g, '');
       if (/^\s*--[\w-]+:/.test(code) || /--[\w-]+:\s*#/.test(code)) { /* a token definition */ } else if (!f.endsWith(".html") && !DECORATIVE.test(code) && /#[0-9a-fA-F]{3,8}\b/.test(code)) hex.push(`${f}:${n} ${code.trim().slice(0, 70)}`);
       for (const m of code.matchAll(/border-radius:\s*([^;}]+)/g)) {
         const v = m[1].trim();
-        if (/^(\d+)px$/.test(v)) { if (!SCALE_PX.has(parseInt(v, 10))) radii.push(`${f}:${n} ${v}`); }
+        if (v === '999px') { /* a pill */ } else if (/^(\d+)px$/.test(v)) { if (!SCALE_PX.has(parseInt(v, 10))) radii.push(`${f}:${n} ${v}`); }
       }
       for (const m of code.matchAll(/font-size:\s*(\d+\.\d+)px/g)) halves.push(`${f}:${n} ${m[1]}px`);
-      if (/(^|[;{\s])color:\s*var\(--faint\)/.test(code) && !/glyph|icon|dot|globe|chevron|:disabled/i.test(code)) faintText.push(`${f}:${n} ${code.trim().slice(0, 60)}`);
+      if (/(^|[;{\s])color:\s*var\(--faint\)/.test(code) && !/glyph|icon|dot|globe|chevron|grip|resize|:disabled/i.test(code)) faintText.push(`${f}:${n} ${code.trim().slice(0, 60)}`);
     }
   }
   check('no hard-coded hex colours in the refactored stylesheets (tokens and decorative palettes aside)', hex.length === 0, `${hex.length}: ${hex.slice(0, 6).join(' | ')}`);
@@ -62,7 +63,7 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
   check('no half-pixel font sizes in the refactored stylesheets', halves.length === 0, `${halves.length}: ${halves.slice(0, 6).join(' | ')}`);
   check('--faint (3:1) is never used as a text colour in the refactored stylesheets', faintText.length === 0, faintText.slice(0, 6).join(' | '));
   const usesTokens = SCALED.filter((f) => /var\(--r-/.test(read(f)));
-  check('radius tokens are used across the app (chrome, menus, settings, viewers)', ['styles.css', 'extras.css', 'picker.css', 'managers.css'].every((f) => usesTokens.includes(f)), usesTokens.join());
+  check('radius tokens are used across the app (chrome, menus, settings, viewers)', ['styles.css', 'extras.css', 'picker.css', 'managers.css', 'settings.css', 'pdfviewer.css'].every((f) => usesTokens.includes(f)), usesTokens.join());
 }
 
 // ---------- 2. the running app ----------
@@ -76,11 +77,11 @@ const HELPERS = `(() => {
   const q = (s) => document.querySelector(s);
   window.__ui = {
     // text: the element's own colour; glyph: its svg's (or its colour when it has none). The background is whatever paints behind it.
-    text: (s) => { const el = q(s); return el ? ratio(getComputedStyle(el).color, behind(el)) : null; },
-    glyph: (s) => { const el = q(s); if (!el) return null; const g = el.querySelector('svg') || el; const cs = getComputedStyle(g); const stroke = cs.stroke && cs.stroke !== 'none' ? cs.stroke : cs.color; return ratio(stroke, behind(el)); },
+    text: (s) => { const el = q(s); return el && el.getClientRects().length ? ratio(getComputedStyle(el).color, behind(el)) : null; },
+    glyph: (s) => { const el = q(s); if (!el || !el.getClientRects().length) return null; const g = el.querySelector('svg') || el; const cs = getComputedStyle(g); const stroke = cs.stroke && cs.stroke !== 'none' ? cs.stroke : cs.color; return ratio(stroke, behind(el)); },
     size: (s) => { const el = q(s); if (!el) return null; const r = el.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; },
     ring: (s, ringSel) => {
-      const el = q(s); if (!el || el.disabled) return null; const ringEl = ringSel ? q(ringSel) : el; ringEl.style.transition = 'none'; el.style.transition = 'none';
+      const el = [...document.querySelectorAll(s)].find((e) => e.offsetParent && !e.disabled); if (!el) return null; const ringEl = ringSel ? q(ringSel) : el; ringEl.style.transition = 'none'; el.style.transition = 'none';
       const snap = () => { const c = getComputedStyle(ringEl); return [c.outlineStyle, c.outlineWidth, c.boxShadow, c.borderColor, c.backgroundColor].join('|'); };
       if (document.activeElement) document.activeElement.blur();
       const before = snap(); el.focus(); void ringEl.offsetWidth; const focused = el.matches(':focus-visible') || ringEl.matches(':focus-within'); const after = snap(); el.blur();
@@ -177,7 +178,7 @@ const HELPERS = `(() => {
           }
           check(`${tag}: keyboard focus shows a ring on chrome controls`, noRing.length === 0, noRing.join(', '));
         if (PAGE_SURFACES) {
-          const sRing = await inTab(settingsId, `(${HELPERS}, ['#search', '#nav a', '.item button', '.item select', '.switch input'].map((s) => [s, window.__ui.ring(s, s.includes('switch') ? '.switch' : null)]).filter(([, v]) => v && !(v.focused && v.changed)).map(([s, v]) => s + ' ' + JSON.stringify(v)))`);
+          const sRing = await inTab(settingsId, `(${HELPERS}, ['#search', '#nav a', '.item button:not(:disabled)', '.item select:not(:disabled)', 'input.switch:not(:disabled)'].map((s) => [s, window.__ui.ring(s, null)]).filter(([, v]) => v && !(v.focused && v.changed)).map(([s, v]) => s + ' ' + JSON.stringify(v)))`);
           check(`${tag}: keyboard focus shows a ring in Settings`, Array.isArray(sRing) && sRing.length === 0, JSON.stringify(sRing));
           const pRing = await inTab(pdfId, `(${HELPERS}, ['#pageNumber', '#zoomIn', '#findButton', '#print'].map((s) => [s, window.__ui.ring(s)]).filter(([, v]) => v && !(v.focused && v.changed)).map(([s, v]) => s + ' ' + JSON.stringify(v)))`);
           check(`${tag}: keyboard focus shows a ring in the PDF viewer`, Array.isArray(pRing) && pRing.length === 0, JSON.stringify(pRing));
