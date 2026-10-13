@@ -135,6 +135,8 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
 const slidesRt = slidesViewer.create();
+const emlViewer = require('./features/eml-viewer'); // saved emails (.eml) shown in a tab (renderer/eml.html)
+const emlRt = emlViewer.create();
 const sessionFiles = require('./features/session-files'); // file tabs in the saved session, and the "moved or deleted" page
 const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
 const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
@@ -176,7 +178,7 @@ const translate = require('./features/translate').createTranslate({
   popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
   openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
 });
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || emlViewer.isViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings > Tabs > Page unloading: When you return to one)
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
@@ -1179,7 +1181,7 @@ function readFileText(tab) {
   };
   let read = Promise.resolve('');
   if (pdfViewer.isViewerUrl(url)) read = wc.executeJavaScript('new Promise((done) => { let n = 0; const timer = setInterval(() => { if (window.lumenPdf && window.lumenPdf.firstPageText) { clearInterval(timer); done(window.lumenPdf.firstPageText()); } else if (++n > 100) { clearInterval(timer); done(""); } }, 100); })', true); // (the viewer's module may still be loading)
-  else if (slidesViewer.isViewerUrl(url)) { const deck = slidesViewer.deckUrlOf(url); if (deck) read = slidesViewer.loadSlideTexts(deck).then((slides) => slides[0] || ''); } else read = fileTabs.readTextHead(address);
+  else if (slidesViewer.isViewerUrl(url)) { const deck = slidesViewer.deckUrlOf(url); if (deck) read = slidesViewer.loadSlideTexts(deck).then((slides) => slides[0] || ''); } else if (!emlViewer.isViewerUrl(url)) read = fileTabs.readTextHead(address); // (an email's words are not read for grouping: its subject is the tab's title)
   read.then(apply).catch(() => apply(''));
 }
 function readPageText(tab) {
@@ -1801,7 +1803,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : emlViewer.isViewerUrl(url) ? emlViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -2476,6 +2478,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
+  emlRt.attach(tab); // a saved email gets its content once loaded (features/eml-viewer.js)
   slidesRt.attach(tab); // the slide viewer gets its deck once loaded (features/slides-viewer.js)
   pdfRt.attach(tab); // a PDF's address goes to Lumen's PDF viewer (features/pdf-viewer.js)
   translate.attach(tab);
@@ -2588,7 +2591,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
     // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
     const absent = sessionFiles.loadTarget(url, ERROR_URL, fs.existsSync); // a file that is not there (moved, deleted): the page that says so, not a blank viewer
-    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : url;
+    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : emlViewer.isLocalEml(url) ? emlViewer.viewerUrl(url) : url;
     wc.loadURL(first).catch(() => {});
   }
   return wc;
@@ -4622,17 +4625,25 @@ const downloads = createDownloads({
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
   // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
   openInstead: (item, contents) => {
-    if (!slidesViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() })) return false;
+    const mail = emlViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() });
+    if (!mail && !slidesViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() })) return false;
     const tab = contents && tabByContents(contents);
-    if (tab) return slidesRt.openInPlace(contents, item.getURL());
-    openTab(slidesViewer.viewerUrl(item.getURL()));
+    if (tab) return mail ? emlRt.openInPlace(contents, item.getURL()) : slidesRt.openInPlace(contents, item.getURL());
+    openTab(mail ? emlViewer.viewerUrl(item.getURL()) : slidesViewer.viewerUrl(item.getURL()));
     return true;
   },
   onCompleted: (entry) => {
-    if (!slidesViewer.shouldOpenFinished(entry)) return;
+    const mail = emlViewer.shouldOpenFinished(entry) && !String(entry.url).startsWith('blob:'); // (an attachment saved from the viewer is saved, not opened)
+    if (!mail && !slidesViewer.shouldOpenFinished(entry)) return;
     const from = entry.contents && !entry.contents.isDestroyed?.() ? tabByContents(entry.contents) : null;
     if (entry.contents && !from) return; // a private window's, a research tab's or a background download: not opened here
-    openTab(slidesViewer.viewerUrl(pathToFileURL(entry.path).href), { openerId: from?.id ?? null });
+    openTab((mail ? emlViewer : slidesViewer).viewerUrl(pathToFileURL(entry.path).href), { openerId: from?.id ?? null });
+  },
+  // A click on a finished .eml in the downloads panel (or the downloads menu) opens it in a Lumen tab, not in whatever program the system has for it.
+  openLocal: (file) => {
+    if (!emlViewer.shouldOpenFinished({ path: file })) return false;
+    openTab(emlViewer.viewerUrl(pathToFileURL(file).href));
+    return true;
   },
 });
 
@@ -7487,6 +7498,7 @@ app.on('before-quit', () => {
     try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
   downloads.flush(); // (the lists that save a moment after a change land now)
+  emlViewer.cleanTemp(); // (the copies of email attachments opened in tabs)
   usage.flush();
   quitting = true;
 });
@@ -7528,7 +7540,7 @@ pendingLinks.push(...linksIn(process.argv));
 app.on('open-url', (event, url) => { event.preventDefault(); openLinksFromOtherApps([url]); });
 app.on('open-file', (event, filePath) => { event.preventDefault(); openLinksFromOtherApps(fileUrlsFor([filePath])); });
 // File > Open File… (Cmd/Ctrl+O): pages, PDFs, images, text and media open in tabs, as in Chrome.
-const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'pptx', 'txt', 'md', 'json', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac'];
+const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'pptx', 'eml', 'txt', 'md', 'json', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac'];
 async function openFileDialog() {
   if (!win || win.isDestroyed()) return;
   const { canceled, filePaths } = await electronDialog.showOpenDialog(win, {
@@ -9614,7 +9626,7 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
     if (aiFileAutoOpened.size > 200) aiFileAutoOpened.delete(aiFileAutoOpened.keys().next().value);
   }
   const href = aiFilesLib.fileUrlOf(entry.path);
-  const url = entry.kind === 'pdf' ? pdfViewer.viewerUrl(href) : slidesViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? slidesViewer.viewerUrl(href) : href;
+  const url = entry.kind === 'pdf' ? pdfViewer.viewerUrl(href) : emlViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? emlViewer.viewerUrl(href) : slidesViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? slidesViewer.viewerUrl(href) : href;
   const rec = recOfSender(event.sender);
   const tab = rec ? withWindow(rec, () => openTab(url, { background: how === 'background' })) : openTab(url, { background: how === 'background' });
   return { ok: true, tabId: tab?.id ?? null };
@@ -9627,6 +9639,25 @@ ipcMain.handle('agent:undo-edits', (_e, runId) => agent.undoEdits(runId));
 // [annotate] "Show again" / "Clear" on a drawing step in the sidebar (ai/annotate.js).
 ipcMain.handle('agent:annotate', (_e, action) => (action === 'show' || action === 'clear' ? agent.annotateAgain(action) : false));
 // The PDF viewer's Print button (its page has no IPC but this one, from permissions-preload.js): the same preview as Ctrl+P.
+// The email viewer's Save and Open buttons (its page has no IPC but these, from permissions-preload.js): the sender must be the viewer itself, and
+// the attachment is found in the file the viewer's own address names. Nothing is run: Open takes a few safe types (a PDF, a picture, text, another
+// email) to a new tab from a private temp copy.
+const emlSenderFile = (e) => (e.senderFrame === e.sender.mainFrame ? emlViewer.emlUrlOf(e.senderFrame?.url) : null);
+ipcMain.handle('eml:bytes', async (e, index) => {
+  const file = emlSenderFile(e);
+  const parsed = file && Number.isInteger(index) ? await emlViewer.load(file) : null;
+  return parsed && parsed.parts && parsed.parts[index] ? Uint8Array.from(parsed.parts[index]) : null;
+});
+ipcMain.handle('eml:open', async (e, index) => {
+  const file = emlSenderFile(e);
+  if (!file || !Number.isInteger(index)) return false;
+  const copy = await emlViewer.tempCopy(file, index, app.getPath('temp'));
+  if (!copy) return false;
+  const tab = tabByContents(e.sender);
+  const href = pathToFileURL(copy).href;
+  openTab(href, { openerId: tab?.id ?? null });
+  return true;
+});
 ipcMain.on('pdf:print', (e) => { if (e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url)) printTab(e.sender); });
 aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without

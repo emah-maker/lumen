@@ -7013,6 +7013,7 @@ const PAGE_ICONS = {
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
   'file-pdf': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25M6 11.75h4M6 9.5h4"/>',
   'file-slides': '<rect x="2.25" y="3.25" width="11.5" height="7.5" rx="1"/><path d="M8 10.75v2.5M5.5 13.25h5"/>',
+  'file-mail': '<rect x="2.25" y="3.5" width="11.5" height="9" rx="1.25"/><path d="m2.75 4.75 5.25 4 5.25-4"/>',
   'file-image': '<rect x="2.25" y="3" width="11.5" height="10" rx="1.25"/><circle cx="5.9" cy="6.3" r="1"/><path d="m2.5 12 3.6-3.4 2.4 2.2 1.7-1.5 3.3 2.7"/>',
   'file-sheet': '<rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1"/><path d="M2.25 6.25h11.5M2.25 9.75h11.5M6.25 2.75v10.5"/>',
   'file-code': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="m6.6 8.2-1.4 1.6 1.4 1.6M9.4 8.2l1.4 1.6-1.4 1.6"/>',

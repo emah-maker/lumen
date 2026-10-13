@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- An email's content is untrusted. The page draws its headers with DOM calls; the body goes into a sandboxed iframe (no scripts) that carries its own,
+       stricter CSP (remote pictures blocked until the user asks). img-src allows http(s) here only because the iframe inherits this policy: the iframe's
+       own policy is what blocks them. Nothing here is fetched: no scripts but this page's own, no connections, no frames of web pages, no forms. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data: http: https:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Email</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="eml.css" />
+</head>
+<body>
+  <header id="bar">
+    <svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4.25 5.5-4.25"/></svg>
+    <div id="name"></div>
+  </header>
+  <section id="head" aria-label="Message headers">
+    <h1 id="subject"></h1>
+    <dl id="fields"></dl>
+  </section>
+  <section id="remote" hidden>
+    <span id="remote-text"></span>
+    <button id="load-remote" type="button">Load remote images</button>
+  </section>
+  <section id="attachments" aria-label="Attachments" hidden>
+    <h2 id="att-title"></h2>
+    <ul id="att-list"></ul>
+  </section>
+  <main id="body">
+  </main>
+  <div id="message" class="message" hidden></div>
+  <script src="eml.js"></script>
+</body>
+</html>

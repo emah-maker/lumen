@@ -6,7 +6,7 @@
 //
 //   addressOf(url)         the file's own address behind a tab's address, or '' when the tab is not a file
 //   identify(url, opts)    { kind, label, typeName, ext, name, folder, local, address, title, topicUrl, topicText, groupKey, groupName } or null
-//   iconKind(url)          which icon the strip shows for the tab: 'pdf' | 'slides' | 'image' | 'sheet' | 'code' | 'file' ('' for a web page)
+//   iconKind(url)          which icon the strip shows for the tab: 'pdf' | 'slides' | 'mail' | 'image' | 'sheet' | 'code' | 'file' ('' for a web page)
 //
 // Nothing here ever includes a full path in what leaves the computer: topicUrl and the names use at most the last two folder names.
 
@@ -15,6 +15,7 @@ const KINDS = {
   slides: { exts: ['pptx', 'ppt', 'pps', 'ppsx', 'key', 'odp'], label: 'Slides', typeName: 'Slides' },
   sheet: { exts: ['xlsx', 'xls', 'xlsm', 'csv', 'tsv', 'ods', 'numbers'], label: 'Files', typeName: 'Spreadsheet' },
   doc: { exts: ['docx', 'doc', 'odt', 'rtf', 'pages', 'epub'], label: 'Files', typeName: 'Document' },
+  mail: { exts: ['eml'], label: 'Email', typeName: 'Email' },
   image: { exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'heic', 'tif', 'tiff', 'ico'], label: 'Images', typeName: 'Image' },
   text: { exts: ['txt', 'md', 'markdown', 'log', 'tex', 'rst', 'org'], label: 'Files', typeName: 'Text' },
   code: { exts: ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'sh', 'ps1', 'sql', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'htm', 'css', 'scss', 'm', 'r', 'swift', 'kt', 'ipynb'], label: 'Files', typeName: 'Code' },
@@ -45,7 +46,7 @@ function addressOf(url) {
     const inner = parse(u.searchParams.get('u') || '');
     return inner && (isHttp(inner) || inner.protocol === 'file:') ? inner.href : '';
   }
-  if (u.protocol === 'file:' && /\/renderer\/slides\.html$/i.test(u.pathname)) {
+  if (u.protocol === 'file:' && /\/renderer\/(slides|eml)\.html$/i.test(u.pathname)) {
     const inner = parse(u.searchParams.get('u') || '');
     return inner && inner.protocol === 'file:' ? inner.href : '';
   }
@@ -131,7 +132,7 @@ function iconKind(url) {
   const address = addressOf(url);
   if (!address) return '';
   const kind = kindOfExt(extOf(decode(parse(address).pathname.split('/').pop() || '')));
-  return ['pdf', 'slides', 'image', 'sheet', 'code'].includes(kind) ? kind : 'file';
+  return ['pdf', 'slides', 'mail', 'image', 'sheet', 'code'].includes(kind) ? kind : 'file';
 }
 
 // A new group made from one file tab by hand ("New Group"): named for the file's folder, else its type.
