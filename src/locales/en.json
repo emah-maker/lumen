@@ -9,6 +9,8 @@
   "agent.stop": "Stop",
   "agent.usingTab": "{name} is using this tab",
   "agent.usingOther": "{name} is working in another tab",
+  "agent.usingShort": "Using tab",
+  "agent.usingOtherShort": "Other tab",
   "agent.waiting": "Waiting for another chat to finish. It starts as soon as there is room.",
   "agent.startFailed": "Couldn't start this chat. Try again.",
   "agent.engineStopped": "This chat stopped without finishing. Send the message again.",

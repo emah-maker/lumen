@@ -7,7 +7,7 @@
 (function (root) {
   function pillState({ running, target, mcpActive } = {}) {
     const away = Boolean(running && target && !target.front);
-    return { away, textKey: away ? 'agent.usingOther' : 'agent.usingTab', visible: Boolean(mcpActive || (running && !away)) };
+    return { away, textKey: away ? 'agent.usingOther' : 'agent.usingTab', shortKey: away ? 'agent.usingOtherShort' : 'agent.usingShort', visible: Boolean(mcpActive || (running && !away)) };
   }
   const api = { pillState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -72,7 +72,8 @@
         <div class="agent-pill" id="agent-pill" role="status">
           <span class="agent-dot" aria-hidden="true"></span>
           <span id="agent-pill-text">Lumen is using this tab</span>
-          <button type="button" id="agent-stop" data-i18n="agent.stop">Stop</button>
+          <span id="agent-pill-short" class="pill-short" aria-hidden="true" data-i18n="agent.usingShort">Using tab</span>
+          <button type="button" id="agent-stop" title="Stop" data-i18n-title="agent.stop"><svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><rect class="solid" x="4.5" y="4.5" width="7" height="7" rx="1.5"/></svg><span class="btn-label" data-i18n="agent.stop">Stop</span></button>
         </div>
         <button class="icon-btn download-btn" id="downloads" type="button" aria-label="Downloads" data-i18n-aria-label="toolbar.downloads" hidden>
           <svg viewBox="0 0 24 24" class="download-ring" aria-hidden="true">

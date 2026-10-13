@@ -107,6 +107,22 @@
 }
 .update-dismiss:hover { background: var(--hover); color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in var(--t-fast) ease-out; } }
+/* Compact pills. app.js (fitToolbarPills) sets data-compact on .toolbar-end from what fits: 1 = icon and short label, 2 = icon
+   only. The full words stay in the DOM, clipped (never display:none), so they are still the accessible name; the tooltip has them too. */
+.update-pill { position: relative; }
+.update-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) :is(#agent-pill-text, #update-pill .update-text) { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .agent-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) #update-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .pill-short { display: inline; }
+.toolbar-end[data-compact="1"] .update-dot { display: block; }
+.toolbar-end[data-compact="2"] :is(.pill-short, .update-dot) { display: none; }
+.toolbar-end[data-compact="2"] .btn-icon { display: block; }
+.toolbar-end[data-compact="2"] :is(#agent-stop, #update-action) { display: grid; place-items: center; width: var(--hit-min); height: var(--hit-min); padding: 0; }
+.toolbar-end[data-compact="2"] .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end[data-compact="2"] .agent-pill { padding-left: 8px; padding-right: 2px; }
+.toolbar-end[data-compact="2"] #update-pill { padding-left: 2px; }
+.toolbar-end[data-compact="2"] #update-action[hidden] { display: none; }
 
 /* [ai controls] AI turned off on this tab's site (the chip), and "Undo tab changes" under a reply. */
 .page-context.ai-off { color: var(--text, inherit); background: var(--accent-soft, rgba(10, 132, 255, 0.12)); }

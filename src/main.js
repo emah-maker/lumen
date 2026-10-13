@@ -4,6 +4,7 @@ const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipbo
 try { require('module').enableCompileCache?.(require('path').join(require('os').tmpdir(), 'lumen-compile-cache')); } catch { /* compiled as before */ }
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
+if (TEST) require('./test-mode').standInWebStore(); // (an extension test's download server: before the extension library loads and keeps its fetch)
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
 // A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
@@ -7837,6 +7838,7 @@ if (TEST) {
   global.__openHistoryPage = openHistoryPage;
   global.__zoomBy = (step) => zoomBy(activeTab()?.webContents, step);
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
+  global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };

@@ -19,10 +19,25 @@
   const pill = Object.assign(document.createElement('div'), { id: 'update-pill', className: 'update-pill', hidden: true });
   pill.setAttribute('role', 'status');
   const text = Object.assign(document.createElement('span'), { className: 'update-text' });
+  // A compact toolbar (app.js fitToolbarPills) shows a dot and the button's words, then only the button's icon; the long words stay
+  // in the DOM, clipped, as the pill's name, and in its title.
+  const dot = Object.assign(document.createElement('span'), { className: 'update-dot' });
+  dot.setAttribute('aria-hidden', 'true');
   const action = Object.assign(document.createElement('button'), { type: 'button', id: 'update-action' });
+  const SVG = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(SVG, 'svg');
+  icon.setAttribute('viewBox', '0 0 16 16');
+  icon.setAttribute('class', 'btn-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  const iconPath = document.createElementNS(SVG, 'path');
+  icon.append(iconPath);
+  const label = Object.assign(document.createElement('span'), { className: 'btn-label' });
+  action.append(icon, label);
+  const ICON_DOWNLOAD = 'M8 3v7M5 7.5 8 10.5l3-3M4.5 13h7';
+  const ICON_RETRY = 'M13 8a5 5 0 1 1-1.5-3.5M13 3v2.5h-2.5';
   const close = Object.assign(document.createElement('button'), { type: 'button', id: 'update-dismiss', className: 'update-dismiss', title: window.t('updates.notNow'), textContent: '×' });
   close.setAttribute('aria-label', window.t('updates.hide'));
-  pill.append(text, action, close);
+  pill.append(dot, text, action, close);
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   let applying = false; // a click's apply() is still running: a double click must not start a second
@@ -48,7 +63,8 @@
     if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued; // queued: nothing left to click
     action.disabled = applying || Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
-    action.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    iconPath.setAttribute('d', ready || busy || failed || moveFailed ? ICON_RETRY : ICON_DOWNLOAD);
+    label.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => {
