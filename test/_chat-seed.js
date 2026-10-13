@@ -33,14 +33,14 @@ function snapshot(c, exchanges, kb) {
   return { settings: { model: 'claude-opus-5' }, messages };
 }
 
-// opts: { chats = 50, big = 60 } : `chats` saved chats of 2 to 12 exchanges, and the newest has `big` exchanges (the long chat).
+// opts: { chats = 50, big = 60, kb = 3, scale = 1 } : `chats` saved chats of 2 to 12 exchanges (times `scale`), and the newest has `big` exchanges (the long chat).
 // Returns { ids (newest first), bigId }.
-async function seed(profile, { chats = 50, big = 60, kb = 3 } = {}) {
+async function seed(profile, { chats = 50, big = 60, kb = 3, scale = 1 } = {}) {
   const app = await electron.launch({ args: [root], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', ANTHROPIC_API_KEY: 'sk-ant-test' } });
   try {
     await (await app.firstWindow()).waitForSelector('.tab');
     const snaps = [];
-    for (let c = 0; c < chats; c++) snaps.push(snapshot(c, c === 0 ? big : 2 + (c % 11), kb));
+    for (let c = 0; c < chats; c++) snaps.push(snapshot(c, c === 0 ? big : (2 + (c % 11)) * scale, kb));
     return await app.evaluate(({ app: electronApp, safeStorage }, { snaps: list, dir }) => {
       const { createChatStore } = process.mainModule.require(`${dir}/src/features/chat-store.js`);
       const path = process.mainModule.require('path');

@@ -3394,6 +3394,11 @@ messages.addEventListener('scroll', () => {
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
 }, { passive: true });
+let lazyItems = null; // a chat handed over while the sidebar was hidden, drawn when it is shown (applySync)
+let historyTarget = null; // while an older slice is built: where append() puts what it makes (a fragment, put above the chat in one go)
+let typedAt = -1e9; // when a key was last pressed in this window: the older part of a chat is not drawn under someone's typing
+document.addEventListener('keydown', () => { typedAt = performance.now(); }, { capture: true, passive: true });
+let historyDrawing = 0; // the chat being drawn newest first; a new chat (clearChatView) ends the one before
 let restoring = false; // showHistory is adding a whole chat: one scroll at its end, not a layout per message (that was O(n^2) on a long chat)
 function scrollToBottom(force = false) {
   if (restoring) return;
@@ -3403,6 +3408,8 @@ function scrollToBottom(force = false) {
 }
 
 function append(el, { force = false } = {}) {
+  if (historyTarget) { historyTarget.append(el); return el; } // (an older slice of a chat being drawn: see drawEarlier)
+  flushLazyHistory(); // (a chat synced while the sidebar was closed is drawn before anything is added to it)
   $('empty').hidden = true;
   // Queued messages ("Sends when this reply finishes") stay at the very end, under the running reply.
   const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(':scope > .notice.queued');
@@ -5202,10 +5209,62 @@ function showHistory(items) {
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom(); // (the "jump to latest" button follows where the view ended)
 }
+// A long chat is drawn newest first: the last few exchanges at once (about a screenful), the older ones a slice at a time after it, above them,
+// so opening or switching to a long chat never holds the window up for the whole chat (one slice is a few milliseconds of work).
+const FIRST_DRAW = { chars: 3000, items: 1 }; // the newest part: at least this much (characters of text, or items), then to the start of an exchange
+const LATER_DRAW = { chars: 2500, items: 1 }; // each slice of the older part
+const itemSize = (item) => (item.text ? item.text.length : 0) + (item.images?.length || 0) * 400 + (item.generated?.length || 0) * 400 + 120;
+// Where the newest part starts (0: the whole chat is drawn at once). It begins at one of your messages, so every part is whole exchanges.
+function historySplit(items, { chars, items: count } = FIRST_DRAW) {
+  let start = items.length;
+  let size = 0;
+  while (start > 0 && (items.length - start < count || size < chars)) { start--; size += itemSize(items[start]); }
+  while (start > 0 && items[start].role !== 'user') start--;
+  return start;
+}
 function renderHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
-  const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
-  const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
+  const cut = historySplit(items);
+  const newest = renderLatest(cut ? items.slice(cut) : items);
+  if (cut) drawEarlier(items.slice(0, cut), newest);
+}
+function drawEarlier(older, newest) {
+  const mine = ++historyDrawing;
+  let end = older.length;
+  let below = newest; // the first reply entry of what is drawn below the next slice (a model switch between two slices is marked from it)
+  let handle = null;
+  const cancel = () => { if (handle == null) return; if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle); clearTimeout(handle); handle = null; };
+  const step = (idle) => {
+    cancel();
+    if (mine !== historyDrawing || !messages.isConnected) return;
+    if (idle && (navigator.scheduling?.isInputPending?.() || performance.now() - typedAt < 600)) { later(); return; } // (a key is waiting, or someone is typing: the older messages wait)
+    const start = historySplit(older.slice(0, end), LATER_DRAW);
+    const slice = older.slice(start, end);
+    const fragment = document.createDocumentFragment();
+    const userEntries = [];
+    const replyEntries = [];
+    historyTarget = fragment;
+    try { drawItems(slice, userEntries, replyEntries); } finally { historyTarget = null; }
+    decorateEntries(userEntries, replyEntries);
+    if (below && replyEntries.length) markModelSwitches([replyEntries[replyEntries.length - 1], below]);
+    // Put in above everything drawn so far, keeping what is on screen where it is.
+    const first = [...messages.children].find((el) => el.id !== 'empty');
+    const before = messages.scrollHeight;
+    const top = messages.scrollTop;
+    messages.insertBefore(fragment, first || null);
+    const atTop = top <= 1; // (held at the very top, as with Home: it stays there and the next slice follows at once, down to the first message)
+    messages.scrollTop = atTop ? 0 : top + (messages.scrollHeight - before);
+    if (replyEntries.length) below = replyEntries[0];
+    end = start;
+    if (end > 0) { if (atTop) { cancel(); handle = setTimeout(step, 0); } else later(); }
+  };
+  // Older slices wait for idle time (a tab switch, a key or a scroll comes first); a quick scroll to the top asks for the next slice at once.
+  const later = () => { cancel(); handle = typeof requestIdleCallback === 'function' ? requestIdleCallback(() => step(true), { timeout: 400 }) : setTimeout(() => step(true), 50); };
+  const onScroll = () => { if (mine !== historyDrawing || end <= 0) messages.removeEventListener('scroll', onScroll); else if (messages.scrollTop < 400) step(); };
+  messages.addEventListener('scroll', onScroll, { passive: true });
+  later();
+}
+function drawItems(items, userEntries, replyEntries) {
   for (const item of items) {
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -5268,6 +5327,12 @@ function renderHistory(items) {
     bubble.classList.add('restored');
     append(bubble);
   }
+}
+// The newest part of the chat, with what belongs to its end: the last message can be asked again, a cut-off run can go on.
+function renderLatest(items) {
+  const userEntries = []; // [{ bubble, item }]: each message of yours, for its row (time, Copy, Edit, versions)
+  const replyEntries = []; // [{ bubble, item }]: each reply that closes an exchange, for its model, time and thumbs
+  drawItems(items, userEntries, replyEntries);
   // Its last exchange can be asked again: the last message, with its images.
   const lastIndex = items.length - 1;
   let u = lastIndex - 1;
@@ -5305,7 +5370,12 @@ function renderHistory(items) {
     notice.append(' ', button);
     append(notice);
   }
-  // Under each reply and message: model, time, thumbs, versions (chat-actions.js).
+  decorateEntries(userEntries, replyEntries);
+  messages.scrollTop = messages.scrollHeight;
+  return replyEntries[0] || null;
+}
+// Under each reply and message: model, time, thumbs, versions (chat-actions.js).
+function decorateEntries(userEntries, replyEntries) {
   for (const { bubble, item } of replyEntries) labelReply(bubble, item.model, item.auto, { at: item.at, feedback: item.feedback });
   markModelSwitches(replyEntries);
   for (const { bubble, item } of userEntries) {
@@ -5316,7 +5386,6 @@ function renderHistory(items) {
     }
     markEditable(bubble, { at: item.at, versions });
   }
-  messages.scrollTop = messages.scrollHeight;
 }
 window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 
@@ -5331,10 +5400,27 @@ window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } 
   runId = id;
 });
 // The other view opened another chat, started a new one, or deleted this one.
+// A chat that arrives while this view is hidden (the sidebar closed: main sends the chat of each tab you switch to) is drawn when the view is
+// shown, not now: drawing every message of a long chat on every tab switch was the biggest cost of a switch in the browser window. A running
+// chat (view.live) is drawn at once, as its events need the page; so is any chat while the view is on screen.
+// (app.js's body class: the sidebar is closed, whatever its warm-up layout (.prewarm) is doing; the chat page has no such class and is always shown)
+const viewHidden = () => document.body.classList.contains('sidebar-hidden') && !document.body.classList.contains('chat-full');
+new MutationObserver(() => { if (!viewHidden()) flushLazyHistory(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] }); // (the sidebar opens, or the chat goes full-page: the chat held back is drawn)
+function flushLazyHistory() {
+  if (!lazyItems) return;
+  const items = lazyItems;
+  lazyItems = null;
+  showHistory(items);
+}
 function applySync(view) {
   clearChatView();
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
-  showHistory(view?.items);
+  if (!view?.live && Array.isArray(view?.items) && view.items.length) {
+    // Kept for now: drawn after the next paint when the view is on screen (the tab strip and the page area come first), or when it is shown.
+    lazyItems = view.items;
+    $('empty').hidden = true; // (the chat has messages: it is not the empty one)
+    if (!viewHidden()) requestAnimationFrame(() => setTimeout(flushLazyHistory, 0));
+  } else showHistory(view?.items);
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
@@ -5371,6 +5457,7 @@ messages.addEventListener('click', (e) => {
 
 new ResizeObserver(() => {
   chatRoot.style.setProperty('--composer-h', `${$('composer').offsetHeight}px`);
+  if ($('composer').offsetHeight) flushLazyHistory(); // (the sidebar shown: the chat it was handed while hidden)
   if ($('composer').offsetHeight && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
 
@@ -5521,6 +5608,8 @@ function clearChatView() {
     autosize();
     updateSend();
   }
+  lazyItems = null;
+  historyDrawing++;
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
   window.tabsAsk?.reset(); // "@" chips and the once-per-chat "all tabs" confirm start over
   $('empty').hidden = false;

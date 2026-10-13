@@ -31,15 +31,18 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const indexFile = path.join(dir, 'index.json');
   const chatFile = (id) => path.join(dir, `${id}.json`);
 
-  const writeAtomic = (file, data) => {
+  const writeAtomic = (file, data, text) => {
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ enc: encrypt(JSON.stringify(data)) }));
+    fs.writeFileSync(tmp, JSON.stringify({ enc: encrypt(text ?? JSON.stringify(data)) }));
     fs.renameSync(tmp, file); // never a half-written file
   };
-  const readEnc = (file) => {
+  const readEnc = (file, seen) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return data.enc ? JSON.parse(decrypt(data.enc)) : data;
+    if (!data.enc) return data;
+    const text = decrypt(data.enc);
+    if (seen) seen.text = text; // (load() remembers what the file holds: see savedDigest)
+    return JSON.parse(text);
   };
 
   let index = null; // { current, chats: [{ id, title, renamed, created, updated, model, usage }] }
@@ -123,13 +126,29 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return true;
   }
   const remember = (idx) => { known.clear(); for (const c of idx.chats) known.add(c.id); };
+  // A change that only moves the "open chat" pointer (switchChat, on every tab switch) is written a moment later, once: the index is read back
+  // from disk, merged, encrypted and replaced each time it is written, which is work a tab switch must not wait for. Any other write carries
+  // the pointer along, and flush() (quitting) writes what is pending.
+  let indexTimer = null;
+  const INDEX_DEFER_MS = 4000; // (after the last change: switching tabs one after another writes once, when it stops)
   const writeIndex = () => {
+    clearTimeout(indexTimer);
+    indexTimer = null;
     const idx = readIndex();
     if (idx.degraded || !available()) return;
     syncFromDisk(idx);
     writeAtomic(indexFile, idx);
     remember(idx);
   };
+  const writeIndexSoon = () => {
+    clearTimeout(indexTimer);
+    indexTimer = setTimeout(() => { indexTimer = null; try { writeIndex(); } catch { /* retried on the next write */ } }, INDEX_DEFER_MS);
+    indexTimer.unref?.();
+  };
+  const flush = () => { if (indexTimer) writeIndex(); };
+  // The last text written for each chat (a digest): saving a chat that has not changed since (leaving it on a tab switch) writes nothing.
+  const savedDigest = new Map();
+  const digestOf = (text) => crypto.createHash('sha1').update(text).digest('base64');
 
   const newId = () => crypto.randomBytes(8).toString('hex');
 
@@ -173,7 +192,12 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   function load(id) {
     if (!has(id)) return null;
     for (let attempt = 1; ; attempt++) {
-      try { return readEnc(chatFile(id)); } catch (err) {
+      try {
+        const seen = {};
+        const snapshot = readEnc(chatFile(id), seen);
+        if (seen.text !== undefined) savedDigest.set(id, digestOf(seen.text)); // (saving it back unchanged, as a tab switch does on leaving the chat, writes nothing)
+        return snapshot;
+      } catch (err) {
         if (!TRANSIENT.has(err?.code)) return null; // damaged or undecryptable: retrying will not help
         if (attempt < READ_TRIES) { pause(20 * attempt); continue; }
         // Still unreadable: say so, but keep the entry. Something outside Lumen (a scanner, a sync client) may hand the
@@ -193,9 +217,14 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!snapshot?.messages?.length) return true; // an empty chat is not worth a list entry
     const idx = readIndex();
     if (idx.degraded) return false; // the index can't be read right now: leave everything on disk as it is
-    writeAtomic(chatFile(id), snapshot);
-    fileChecks.delete(id);
+    const text = JSON.stringify(snapshot);
+    const digest = digestOf(text);
     let entry = idx.chats.find((c) => c.id === id);
+    // Nothing changed since the last write (and its file and list entry are still there): nothing to encrypt, write or index.
+    if (entry && !entry.trashed && savedDigest.get(id) === digest && fs.existsSync(chatFile(id))) return true;
+    writeAtomic(chatFile(id), snapshot, text);
+    savedDigest.set(id, digest);
+    fileChecks.delete(id);
     const isNew = !entry;
     if (!entry) {
       entry = { id, title: '', renamed: false, created: now() };
@@ -395,6 +424,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     const idx = readIndex();
     if (idx.degraded || !syncFromDisk(idx) || !idx.chats.some((c) => c.id === id)) return false;
     textCache.delete(id);
+    savedDigest.delete(id);
     idx.chats =idx.chats.filter((c) => c.id !== id);
     if (idx.current === id) idx.current = null;
     fs.rmSync(chatFile(id), { force: true }); // (one file: the chat the user deleted)
@@ -404,9 +434,13 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   }
 
   function current() { return readIndex().current; }
-  function setCurrent(id) {
-    readIndex().current = ID_RE.test(String(id)) ? id : null;
-    writeIndex();
+  // `defer`: the pointer changes at once, and the file a moment later (see writeIndexSoon).
+  function setCurrent(id, { defer = false } = {}) {
+    const idx = readIndex();
+    const next = ID_RE.test(String(id)) ? id : null;
+    if (defer && !idx.degraded && idx.current === next) return;
+    idx.current = next;
+    if (defer && !idx.degraded) writeIndexSoon(); else writeIndex();
   }
 
   // The one chat Lumen kept before there was a history list (chat.json) becomes its first entry.
@@ -430,10 +464,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // on disk stay, unreadable until the keychain is back; save() refuses while it is not.
   function clearAll() {
     index = null; // forgotten in memory only; read again from disk when needed
-    known.clear(); foreign.clear(); fileChecks.clear();
+    known.clear(); foreign.clear(); fileChecks.clear(); savedDigest.clear();
+    clearTimeout(indexTimer); indexTimer = null;
   }
 
-  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, migrate, newId, clearAll };
+  return { list, has, load, save, projects, saveProject, removeProject, setProject, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
