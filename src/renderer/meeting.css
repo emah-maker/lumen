@@ -5,7 +5,7 @@
 #meeting-btn.active { color: var(--accent); background: var(--accent-soft); }
 .meeting-badge {
   position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
-  background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
 }
 .meeting-panel { z-index: var(--z-panel-over); display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
 
