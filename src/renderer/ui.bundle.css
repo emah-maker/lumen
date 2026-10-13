@@ -308,10 +308,10 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.monogram { display: grid; place-items: center; font-size: 10px; font-weight: 600; line-height: 1; border-radius: var(--r-xs); color: var(--on-accent); background: hsl(var(--mono-hue, 210) 42% 40%); user-select: none; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
-/* [ai manners] A tab the AI opened: a 10px sparkle after its title. No motion. It goes when the tab becomes yours (you click or type in it, pin it, move it). */
-.tab-ai-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
+/* [ai manners] A tab the AI opened: a small sparkle on the favicon's top-right corner. It takes no room in the row (zero width, pulled back over the gap before it), so a pinned tab and an icon-only tab show it too. No motion. It goes when the tab becomes yours (you click or type in it, pin it, move it). */
+.tab-ai-mark { display: none; flex: none; position: relative; width: 0; height: 0; margin: 0 0 0 -8px; pointer-events: none; color: var(--accent); opacity: 0.95; z-index: 1; }
 .tab.ai-opened .tab-ai-mark { display: block; }
-.tab-ai-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
+.tab-ai-mark svg { position: absolute; left: -6px; top: -11px; display: block; width: 9px; height: 9px; fill: currentColor; stroke: var(--bg, transparent); stroke-width: 1.4px; paint-order: stroke; overflow: visible; }
 /* [ai off-tab] a tab the AI is kept off: a small slashed sparkle after the title */
 .tab-off-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
 .tab.ai-kept-off .tab-off-mark { display: block; }
@@ -320,7 +320,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-off-mark svg { display: block; width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; } /* an outlined shield with a sparkle */
 @container tab (max-width: 60px) { .tab-off-mark { display: none !important; } }
 .tab.pinned .tab-ai-mark, .tab.sleeping .tab-ai-mark { opacity: 0.6; }
-@container tab (max-width: 60px) { .tab-ai-mark { display: none !important; } }
+@container tab (max-width: 72px) { .tab-ai-mark { margin-left: -2px; } } /* (the row's gap is 2px in an icon-only tab) */
 /* [ai manners] The sidebar's "hide the tabs the AI opened" toggle: shown while the AI has tabs open (or the toggle is on), with their count. */
 .icon-btn.hide-ai-tabs { position: relative; width: 28px; height: 28px; flex: none; }
 .hide-ai-count { position: absolute; top: 0; right: -1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: var(--r-sm); background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 13px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }

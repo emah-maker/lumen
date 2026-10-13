@@ -37,7 +37,7 @@ const J = (v) => JSON.stringify(v);
   check('close: a tab the user pinned after the AI opened it is not closed even if handOver was missed', ids(M.closeSelection([mk(9, { pinned: true })])) === '');
   check('close setting: only off / ask / always, anything else is off', J(['off', 'ask', 'always', 'x', null, 1].map(M.cleanCloseSetting)) === '["off","ask","always","off","off","off"]');
   check('after a run: nothing opened, nothing to offer', M.closeAfterRun({ setting: 'always', n: 0 }) === 'none');
-  check('after a run: Off shows nothing under the reply; Ask asks; Always closes', M.closeAfterRun({ setting: 'off', n: 2 }) === 'none' && M.closeAfterRun({ setting: 'ask', n: 2 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 2 }) === 'close');
+  check('after a run: Never (off) still puts the Close button under the reply; Ask asks; Always closes', M.closeAfterRun({ setting: 'off', n: 2 }) === 'offer' && M.closeAfterRun({ setting: 'ask', n: 2 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 2 }) === 'close');
 }
 
 // ---- hands-off mode: the pure rule
@@ -241,7 +241,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       check('close: Undo is recorded only for tabs that really closed', /results\.filter\(\(r\) => r\.item\)/.test(close) && /await closeAiTab\(rec, tab\)\) \? \{ item \}/.test(close));
       const unload = /wc\.on\('will-prevent-unload'[\s\S]*?tab\.unloadAsked = true/.exec(main)?.[0] || '';
       check('close: a "Leave site?" page is kept open without the question (which would bring the tab to the front)', /tab\.aiClosing/.test(unload) && /tab\.closing = false/.test(unload) && unload.indexOf('tab.aiClosing') < unload.indexOf('unloadAsked = true'));
-      check('close: Always closes through the same guarded path and reports what it kept', /aiTabsClose\(\{ runId \}, \{ auto: true \}\)\.then\(\(r\) => \{[^}]*kept: r\.kept, token: r\.token \}\); if \(r\.closed\) aiCloseNote\(/.test(main));
+      check('close: Always closes through the same guarded path and reports what it kept', /aiTabsClose\(\{ runId \}, \{ auto: true \}\)\.then\(\(r\) => \{[^}]*kept: r.kept, busy: r.busy, token: r\.token \}\); if \(r\.closed\) aiCloseNote\(/.test(main));
       check('popups: a link or window.open from a tab the AI opened opens behind, as the AI\'s own (all three open paths)', (main.match(/\.\.\.fromAiTab\(\)/g) || []).length >= 4 && /const background = disposition === 'background-tab' \|\| manners\.isAiTab\(tab\)/.test(main));
       check('shortcuts: Ctrl/Cmd/Alt keys in an AI tab do not hand it to the user', /if \(!\(input\.control \|\| input\.meta \|\| input\.alt\)\) userTookOver\(tab\)/.test(main));
       check('hidden tabs: Ctrl+Tab and Ctrl+1-9 skip the tabs the strip hides', /const list = tabs\.filter\(\(t\) => !aiTabHidden\(t\)\)/.test(main) && /const shown = tabs\.filter\(\(x\) => !aiTabHidden\(x\)\)/.test(main));

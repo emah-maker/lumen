@@ -29,6 +29,18 @@ if (!global.__lumenTmpCleanup) {
       try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* still in use: the runner's per-suite TEMP folder sweeps it */ }
     }
   });
+  // A suite's own clean-up of a folder it made (after its checks ran) must not fail the suite when Windows still holds a closed
+  // Lumen's files (EPERM / EBUSY after its retries): that took hardening, apple-music-ui and others down with every check passed.
+  // The folder is left for the exit handler above and the runner's per-suite TEMP sweep. Anything outside the temp folder, and every
+  // other error, still throws.
+  const rm = fs.rmSync;
+  fs.rmSync = function rmSync(target, ...rest) {
+    try { return rm.call(this, target, ...rest); } catch (e) {
+      const inTmp = typeof target === 'string' && path.resolve(target).toLowerCase().startsWith(root.toLowerCase() + path.sep);
+      if (inTmp && (e.code === 'EPERM' || e.code === 'EBUSY')) { console.log(`NOTE  ${path.basename(target)} is still in use (${e.code}); left for the sweep`); return undefined; }
+      throw e;
+    }
+  };
   // Ctrl+C / a terminated run still goes through the exit handler above.
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(1));
 }

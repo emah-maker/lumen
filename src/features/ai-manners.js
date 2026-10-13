@@ -30,6 +30,15 @@ function handOver(tab) {
   return true;
 }
 const isAiTab = (tab) => Boolean(tab && tab.openedBy);
+// The mark as the saved session keeps it: { chatId, at } or null. A run id means nothing after a restart (ids start again), so it
+// is not kept: a restored tab belongs to its chat, and "close this chat's tabs", the tab menu and the setting still reach it.
+const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0 } : null);
+// Puts a saved mark back on a restored tab (not on one that is pinned or was placed by hand: that tab is the user's).
+function restoreMark(tab, saved) {
+  if (!tab || !saved || typeof saved !== 'object' || tab.pinned || tab.userMoved) return tab;
+  const chatId = typeof saved.chatId === 'string' && saved.chatId ? saved.chatId : null;
+  return markOpened(tab, { chatId, runId: null }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
+}
 // Has the user taken this tab over without handOver having been called (pinned, dragged to a place by hand)?
 // A group the AI or Lumen's own automatic grouping put it in does not count: only a move or a pin of the user's.
 const takenOver = (tab) => Boolean(tab?.openedBy && (tab.pinned || tab.userMoved));
@@ -55,14 +64,24 @@ function closeSelection(tabs, { runId = null, chatId = null, boundIds = [], busy
   });
 }
 
+// The tabs `closeSelection` would take but for a run working in them right now: they are kept, and the toast says so
+// ("Kept 1 tab the AI is still using"), so Close never shuts a page under a working chat and never skips one silently.
+function busyKept(tabs, opts = {}) {
+  const busy = new Set(opts.busyIds || []);
+  if (!busy.size) return [];
+  const bound = new Set(opts.boundIds || []);
+  return closeSelection(tabs, { ...opts, busyIds: [] }).filter((tab) => busy.has(tab.id) && !bound.has(tab.id));
+}
+
 const CLOSE_SETTINGS = ['off', 'ask', 'always'];
 const cleanCloseSetting = (value) => (CLOSE_SETTINGS.includes(value) ? value : 'off');
 // What happens when a run that opened `n` closeable tabs ends: 'none' (it opened none), 'offer' (a quiet
-// "Close N tabs" under the reply), 'ask' (the same, as a question), 'close' (closes them, with Undo).
+// "Close N tabs this chat opened" button under the reply: the setting's Never, the default), 'ask' (the same, as a question),
+// 'close' (closes them, with Undo).
 function closeAfterRun({ setting = 'off', n = 0 } = {}) {
   if (!n) return 'none';
   const s = cleanCloseSetting(setting);
-  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'none'; // Off: nothing under the reply (the tab menu and the chat's row still close them)
+  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'offer'; // Never closes nothing by itself, but the button is always under a reply that opened tabs
 }
 
 // ---- hands-off mode
@@ -217,7 +236,7 @@ const userInput = {
 
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
-  markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
+  markOpened, handOver, isAiTab, takenOver, closeSelection, busyKept, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
