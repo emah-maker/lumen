@@ -1,4 +1,4 @@
-/* global document, window, performance, PerformanceObserver, requestAnimationFrame */
+/* global document, window */
 // The whole-app performance report: how heavy Lumen is on a LONG-LIVED profile, not a fresh one. Hidden run (LUMEN_TEST_BACKGROUND), throwaway
 // profile, no real network (every host resolves to a local stand-in; the widgets, the music engines and TradingView frames all talk to it).
 //
@@ -197,7 +197,6 @@ async function action(app, ui, cdp, label, run, settleMs = 400) {
 async function measure(stand) {
   const profile = copyDir(SEED_DIR);
   if (flag('lite') || flag('off')) { const f = path.join(profile, 'settings.json'); const s = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {}; s.performanceMode = flag('lite') ? 'on' : 'off'; fs.writeFileSync(f, JSON.stringify(s)); }
-  const base = `https://127.0.0.1:${stand.port}`;
   const out = { seed: { tabs: TABS, chats: 50 }, startup: {}, idle: {} };
   const crxServer = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
   await new Promise((r) => crxServer.listen(0, '127.0.0.1', r));

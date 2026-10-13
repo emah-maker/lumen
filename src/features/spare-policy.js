@@ -13,12 +13,18 @@ function memoryTight(f = {}) {
   return lumen > LUMEN_BYTES_CAP;
 }
 
-// state: { hasSpare, firstTabDone, memory: facts }. Returns 'make' (none yet, fine to start one), 'keep', 'drop' (memory is
-// tight: free it) or 'wait' (none, and not now: start-up still loading, or memory tight).
-function spareAction({ hasSpare = false, firstTabDone = false, memory = {} } = {}) {
+// How long a spare may sit unused: a renderer process (about 100 MB in Task Manager) for someone who has stopped opening new tabs is
+// a cost with no benefit. It is dropped after this, and made again by the next new tab.
+const IDLE_MS = 30 * 60 * 1000;
+const isIdle = (lastUsedAt, now = Date.now()) => lastUsedAt > 0 && now - lastUsedAt > IDLE_MS;
+
+// state: { hasSpare, firstTabDone, memory: facts, idle } (idle: nobody has taken a spare for IDLE_MS). Returns 'make' (none yet, fine to
+// start one), 'keep', 'drop' (memory is tight, or it has gone unused: free it) or 'wait' (none, and not now: start-up still loading,
+// memory tight, or nobody uses it).
+function spareAction({ hasSpare = false, firstTabDone = false, memory = {}, idle = false } = {}) {
   const tight = memoryTight(memory);
-  if (hasSpare) return tight ? 'drop' : 'keep';
-  return firstTabDone && !tight ? 'make' : 'wait';
+  if (hasSpare) return tight || idle ? 'drop' : 'keep';
+  return firstTabDone && !tight && !idle ? 'make' : 'wait';
 }
 
-module.exports = { memoryTight, spareAction, LOW_FREE_FRACTION, LOW_FREE_BYTES, LUMEN_BYTES_CAP };
+module.exports = { memoryTight, spareAction, isIdle, IDLE_MS, LOW_FREE_FRACTION, LOW_FREE_BYTES, LUMEN_BYTES_CAP };

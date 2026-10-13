@@ -15,5 +15,9 @@ module.exports = async function sparePolicyUnits(check) {
   check('spare: none yet, memory tight -> wait', sp.spareAction({ hasSpare: false, firstTabDone: true, memory: { pressure: true } }) === 'wait', '');
   check('spare: one exists, memory fine -> keep (never a second)', sp.spareAction({ hasSpare: true, firstTabDone: true, memory: roomy }) === 'keep', '');
   check('spare: one exists, memory tight -> drop', sp.spareAction({ hasSpare: true, firstTabDone: true, memory: { totalBytes: 8 * GB, freeBytes: 0.5 * GB } }) === 'drop', '');
+  const t0 = 1e12;
+  check('spare: used a minute ago is not idle, 31 minutes ago is', !sp.isIdle(t0, t0 + 60e3) && sp.isIdle(t0, t0 + 31 * 60e3) && !sp.isIdle(0, t0), '');
+  check('spare: one exists, nobody has used it for a long while -> drop', sp.spareAction({ hasSpare: true, firstTabDone: true, memory: roomy, idle: true }) === 'drop', '');
+  check('spare: none, nobody uses it -> wait (the next new tab makes one)', sp.spareAction({ hasSpare: false, firstTabDone: true, memory: roomy, idle: true }) === 'wait', '');
   check('spare: no arguments is a wait', sp.spareAction() === 'wait', '');
 };

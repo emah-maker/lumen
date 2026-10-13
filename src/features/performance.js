@@ -8,7 +8,7 @@
 // four stay loaded, the disk caches are smaller, no blur and no animation in Lumen's own pages (the
 // page adds the pref-lite class), streaming replies redraw less often, non-urgent work that runs
 // after startup (update check, model lists) waits longer, background tasks run one at a time, and at
-// most one idle Claude Code chat keeps its process warm (4 otherwise: features/warm-chats.js). It
+// most one idle Claude Code chat keeps its process warm (2 otherwise: features/warm-chats.js). It
 // never removes a feature.
 const fs = require('fs');
 const os = require('os');
@@ -28,7 +28,7 @@ function hardwareReasons({ totalMem = os.totalmem(), cpus = os.cpus().length } =
 }
 
 const LIMITS = {
-  normal: { sleepAfterMs: 20 * 60e3, maxLiveBackgroundTabs: Infinity, diskCacheBytes: 256 * MB, codeCacheBytes: 192 * MB, startupDelayMs: 0, maxBackgroundTasks: 3, streamRedrawMs: 0, maxWarmChats: 4 },
+  normal: { sleepAfterMs: 20 * 60e3, maxLiveBackgroundTabs: Infinity, diskCacheBytes: 256 * MB, codeCacheBytes: 192 * MB, startupDelayMs: 0, maxBackgroundTasks: 3, streamRedrawMs: 0, maxWarmChats: 2 },
   lite: { sleepAfterMs: 5 * 60e3, maxLiveBackgroundTabs: 4, diskCacheBytes: 96 * MB, codeCacheBytes: 64 * MB, startupDelayMs: 45e3, maxBackgroundTasks: 1, streamRedrawMs: 100, maxWarmChats: 1 },
 };
 
