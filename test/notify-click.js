@@ -87,7 +87,8 @@ const http = require('http');
     await N((_e, id) => global.__notifyClick.switchTab(id), other);
     const nowhere = await tell({ chatId: 'chat-d', tabId: gone, homeTab: gone, aiNavTabId: gone }, 'done');
     await click(nowhere);
-    check('with no tab left the window still comes forward and the chat opens', (await active()) === other && (await ui.evaluate(() => window.__openChat)).includes('chat-d'), await active());
+    // (the sidebar hears of the chat a moment after the window comes forward, as in the checks above: wait for it)
+    check('with no tab left the window still comes forward and the chat opens', (await active()) === other && await waitFor(async () => (await ui.evaluate(() => window.__openChat)).includes('chat-d')), await active());
 
     // a toast clicked from the Action Center (an activation with no click of its own) goes where the click would have
     await N((_e, id) => global.__notifyClick.switchTab(id), other);
