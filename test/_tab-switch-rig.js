@@ -253,12 +253,15 @@ async function burst(rig, { n = 20, gap = 100, targets = null, end = null } = {}
   const main = await app.evaluate(() => { const p = global.__tsp; p.on = false; clearInterval(p.sampler); return { samples: p.samples, lag: p.lag.slice(), state: global.__tabSleep.state(), active: global.__agent.browser.activeTab()?.id }; });
   const hist = await ui.evaluate(() => { window.__tsu.on = false; return window.__tsu.hist.slice(); });
   const last = clicks[clicks.length - 1];
-  const shown = main.samples.find((s) => s.t >= last.t && s.id === last.id && s.visible);
+  // (main's Date.now() and the UI's performance clock can differ by a few ms, so a sample just before last.t can still be this click's: any
+  // sample of the last tab, visible, after the click before it (a different tab, 'gap' ms earlier) is the last click's)
+  const prev = clicks[clicks.length - 2];
+  const shown = main.samples.find((s) => s.t > (prev ? prev.t : last.t - 50) && s.id === last.id && s.visible);
   const per = clicks.map((c) => { const h = hist.find((x) => x.id === c.id && x.t >= c.t); return h ? h.t - c.t : NaN; });
   const viewGap = clicks.map((c) => { const h = hist.find((x) => x.id === c.id && x.t >= c.t); const v = h && main.samples.find((x) => x.id === c.id && x.visible && x.t >= c.t); return h && v ? v.t - h.t : NaN; });
   const woke = before.filter((b) => !b.view && main.state.find((x) => x.id === b.id)?.view).length;
   const thawed = before.filter((b) => b.frozen && !main.state.find((x) => x.id === b.id)?.frozen).length;
-  return { order, per: stats(per.filter(Number.isFinite)), viewGap: stats(viewGap.filter(Number.isFinite)), finalMs: shown ? shown.t - last.t : NaN, finalOk: main.active === last.id, woke, thawed, lagMax: Math.max(0, ...main.lag), perRaw: per };
+  return { order, per: stats(per.filter(Number.isFinite)), viewGap: stats(viewGap.filter(Number.isFinite)), finalMs: shown ? Math.max(0, shown.t - last.t) : NaN, finalOk: main.active === last.id, woke, thawed, lagMax: Math.max(0, ...main.lag), perRaw: per };
 }
 
 // Typing in the address bar: n keys, each from the keyDown to the field's input event.
