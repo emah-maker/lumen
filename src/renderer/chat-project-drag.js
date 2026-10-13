@@ -67,7 +67,7 @@
     // ---- the drag
     let down = null; // a press on a row that may become a drag
     let state = null; // { ids, ghost, target, expandTimer, expandFor, none }
-    let swallowClick = false;
+    let releasedAt = 0; // when a drag was released: the click that follows it is not a click on the row under the pointer
     const folded = new Set();
 
     const targetAt = (x, y) => {
@@ -120,7 +120,6 @@
         host.append(none);
       }
       state = { ids, ghost, target: null, none, expandTimer: null, expandFor: null };
-      swallowClick = true;
       place(e);
       paint();
     }
@@ -147,12 +146,13 @@
       clearPaint();
       state = null;
       down = null;
-      setTimeout(() => { swallowClick = false; }, 0);
+      releasedAt = performance.now();
       onEnd();
     }
     function cancel() { finish(); }
 
     document.addEventListener('pointerdown', (e) => {
+      releasedAt = 0; // (a new press: whatever followed the last drag is over)
       if (e.button !== 0 || e.pointerType === 'touch' || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
       const open = e.target.closest?.('.chat-open, .cp-pj-chat');
       const row = open?.closest(ROW);
@@ -183,7 +183,7 @@
     }, true);
     document.addEventListener('pointercancel', () => { if (state) cancel(); else down = null; }, true);
     window.addEventListener('blur', () => { if (state) cancel(); });
-    document.addEventListener('click', (e) => { if (swallowClick) { e.preventDefault(); e.stopPropagation(); } }, true); // the release over a row is not a click on it
+    document.addEventListener('click', (e) => { if (releasedAt && performance.now() - releasedAt < 120 && e.target.closest?.(ROW + ', .cp-pj-item, .cp-pj-chats, .cp-pj-none')) { releasedAt = 0; e.preventDefault(); e.stopPropagation(); } }, true); // the release over a row is not a click on it
     document.addEventListener('selectstart', (e) => { if (state) e.preventDefault(); });
 
     void folded; void reducedMotion;

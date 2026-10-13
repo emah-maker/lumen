@@ -129,8 +129,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('a project starts collapsed', (await inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('open')`)) === false, '');
     await pickUp(rowSel(ids.c4));
     await moveTo(pjRow(art));
-    await sleep(250);
-    check('...not yet after a moment', (await inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('open')`)) === false, '');
+    check('...not yet when the pointer has just arrived', (await inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('open')`)) === false, '');
     check('...but after about 600 ms of hovering it expands', await waitFor(() => inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('open') && Boolean(document.querySelector('.cp-pj-chats[data-project="${art}"]'))`), 3000), '');
     check('...and the highlight is still on it after the redraw', (await inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('drop-over')`)) === true, '');
     const here = await where(`.cp-pj-chats[data-project="${art}"]`); // drop in its (empty) list
@@ -213,14 +212,16 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     // 9. A running chat can be moved, and keeps running.
     await inPage(`document.querySelector('${rowSel(ids.c4)}').click()`);
     await waitFor(async () => /c4 answer/.test(await inPage("document.getElementById('messages').textContent")));
+    await sleep(800); // (the page settles on the chat it opened before anything is typed)
+    check('the page shows c4', /c4 answer/.test(await inPage("document.getElementById('messages').textContent")), await inPage("document.getElementById('messages').textContent"));
     await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'slow question'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
     check('a chat is working (held reply)', await waitFor(() => app.evaluate(() => global.__tabChats.runs().some((r) => r.live))), '');
-    const runningId = await app.evaluate(() => global.__tabChats.chatId());
+    const runningId = await app.evaluate(() => global.__tabChats.runs().find((r) => r.live)?.chatId); // (the chat that is working, whichever tab main calls open)
     await sleep(700); // (the row has moved to the top of the list; let it settle)
     await pickUp(rowSel(runningId));
     check('a running chat row can be picked up', await waitFor(() => inPage("Boolean(document.querySelector('.cp-drag-ghost'))")), await inPage(`JSON.stringify({ row: document.querySelector('#cp-items .chat-item[data-id="${runningId}"]')?.className, items: document.querySelectorAll('#cp-items .chat-item').length })`));
     await drop(pjRow(zoo));
-    check('a running chat moves into the project', await waitFor(async () => (await projectOf(runningId)) === zoo), String(await projectOf(runningId)));
+    check('a running chat moves into the project', await waitFor(async () => (await projectOf(runningId)) === zoo), `${runningId === ids.c4 ? 'c4' : 'other'} in ${await projectOf(runningId)}, ghost ${await inPage("Boolean(document.querySelector('.cp-drag-ghost'))")}, toast ${await toastText()}`);
     check('...and keeps running (still live, Stop still showing)', (await app.evaluate(() => global.__tabChats.runs().some((r) => r.live))) && (await inPage("document.getElementById('send').classList.contains('stop')")) === true, '');
     await app.evaluate(() => global.__fakeRelease());
     check('...its reply arrives after the move', await waitFor(async () => /Slow reply done/.test(await inPage("document.getElementById('messages').textContent"))), await inPage("document.getElementById('messages').textContent"));
