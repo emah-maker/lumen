@@ -9807,6 +9807,7 @@ app.whenReady().then(async () => {
   instance.ensureStartMenuShortcut(app, shell, APP_ID); // the shortcut a notification is named from (carries the app ID)
   setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app, APP_ID); // Explorer and notifications say Lumen, not Electron
+  instance.fixAssociationIconsAtStartup(app); // PDF, HTML and SVG files show Lumen's icon, not Electron's (the exe's own)
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();

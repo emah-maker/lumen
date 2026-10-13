@@ -8,8 +8,11 @@
 // even when the user never picked Lumen. The user's real choice is the UserChoice ProgId.
 const path = require('path');
 const { execFile } = require('child_process');
+const instance = require('./instance');
 
 const PROG_ID = 'LumenHTML';
+// The icon for Lumen's registry entries: the shipped .ico for the installed exe, the exe itself for a dev run.
+const registrationIcon = (exe) => (instance.isInstalledExe() ? instance.appIcon() : `${exe},0`);
 const CLIENT_KEY = 'Software\\Clients\\StartMenuInternet\\Lumen';
 
 function reg(args) {
@@ -38,7 +41,8 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   };
   async function registerOnWindows() {
     const exe = process.execPath;
-    const icon = `${exe},0`;
+    // Lumen.exe's own icon is Electron's (the exe stays untouched, see features/instance.js): name the shipped .ico.
+    const icon = registrationIcon(exe);
     const open = `${launchCommand()} "%1"`;
     const values = [
       [`HKCU\\Software\\Classes\\${PROG_ID}`, null, 'Lumen HTML Document'],
@@ -111,4 +115,4 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
 }
 
-module.exports = { create, PROG_ID, progIdIs };
+module.exports = { create, PROG_ID, progIdIs, registrationIcon };

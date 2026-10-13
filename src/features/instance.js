@@ -39,6 +39,48 @@ function appNameValues(exe, appId, icon) {
   ];
 }
 
+// File types Lumen is associated with (package.json build.fileAssociations names, test/assoc-icons-units.js keeps them
+// in step) and the ProgID setup.js registers. The installer writes each one's DefaultIcon as Lumen.exe,0, which
+// is Electron's atom: the exe is deliberately left untouched (Smart App Control), so Explorer showed that atom on every
+// PDF, HTML and SVG file Lumen opens. Point each at the shipped .ico instead.
+const ASSOCIATION_PROG_IDS = ['HTML Document', 'PDF Document', 'SVG Image', 'LumenHTML'];
+
+// `reg query <key> /ve` output -> the default value's data, or null.
+const regDefault = (out) => { const m = /\((?:Default)\)\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/m.exec(String(out || '')) || /<NO NAME>\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/m.exec(String(out || '')); return m ? m[1] : null; };
+
+// Rewrites DefaultIcon of every ProgID whose open command runs this exe (never someone else's: Chrome's PDF
+// handler keeps its own) when it is not already `icon`. Resolves to the ProgIDs it changed. `run(args)` is `reg`
+// with the output (null on failure), injectable for tests.
+async function fixAssociationIcons(exe, icon, run) {
+  const changed = [];
+  const classes = 'HKCU\\Software\\Classes\\';
+  for (const id of ASSOCIATION_PROG_IDS) {
+    const command = regDefault(await run(['query', `${classes}${id}\\shell\\open\\command`, '/ve']));
+    if (!command || !command.toLowerCase().includes(path.win32.resolve(exe).toLowerCase())) continue;
+    const key = `${classes}${id}\\DefaultIcon`;
+    if (regDefault(await run(['query', key, '/ve'])) === icon) continue;
+    if ((await run(['add', key, '/ve', '/t', 'REG_SZ', '/d', icon, '/f'])) !== null) changed.push(id);
+  }
+  return changed;
+}
+
+// Tell Explorer to redraw file icons (SHChangeNotify(SHCNE_ASSOCCHANGED)); without it the old icon stays until the
+// icon cache is rebuilt. Called only after fixAssociationIcons changed something, so once per update.
+function notifyAssociationsChanged(execFile = require('child_process').execFile) {
+  const script = "Add-Type -Namespace Lumen -Name Shell -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'; [Lumen.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)";
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 15000 }, () => {});
+}
+
+// Startup, installed exe only (never dev or test electron.exe, #450): background, silent on any failure.
+function fixAssociationIconsAtStartup(app) {
+  if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return Promise.resolve([]);
+  const { execFile } = require('child_process');
+  const run = (args) => new Promise((resolve) => execFile('reg.exe', args, { windowsHide: true, timeout: 5000 }, (err, out) => resolve(err ? null : String(out))));
+  return fixAssociationIcons(process.execPath, appIcon(), run)
+    .then((changed) => { if (changed.length) notifyAssociationsChanged(); return changed; })
+    .catch(() => []);
+}
+
 // Per-user paths (what `--install-shortcuts` writes to) plus the all-users equivalents: a
 // perMachine NSIS install (e.g. into Program Files) puts its shortcuts in the machine-wide
 // Desktop/Start Menu instead, which the per-user-only paths never reached — leaving a shortcut
@@ -241,4 +283,4 @@ function tellStuck() {
   try { require('electron').dialog.showErrorBox('Lumen did not start', message); } catch {}
 }
 
-module.exports = { isInstalledExe, appIcon, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };
+module.exports = { isInstalledExe, appIcon, ASSOCIATION_PROG_IDS, fixAssociationIcons, fixAssociationIconsAtStartup, notifyAssociationsChanged, regDefault, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };
