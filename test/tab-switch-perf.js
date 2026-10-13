@@ -7,8 +7,14 @@
 //   - no UI long task over 100 ms;
 //   - switching to a tab whose chat is unchanged writes nothing to the chats folder (it used to write the chat and its index, twice, every time);
 //   - a long chat is drawn newest first and is whole a moment later, and a chat handed to a closed sidebar is drawn when it opens;
-//   - the unloading status poll does nothing while Settings is closed.
+//   - the unloading status poll does nothing while Settings is closed;
+//   - a burst of 20 switches 100 ms apart over unloaded, frozen and normal tabs: the strip answers at once, the final tab is on screen within 300 ms of
+//     the last input, at most two tabs are woken (not every tab passed), the event loop is never held up, and switching never re-adds a view;
+//   - the view is shown within 50 ms of main starting a switch, for a normal, a frozen and an unloaded tab (the recorder's own numbers);
+//   - Record tab-switch timings: off by default and not even loaded, records when on, exports a file with no address in it, stops when turned off.
 require('./_tmp-cleanup');
+const fs = require('fs');
+const path = require('path');
 const rig = require('./_tab-switch-rig');
 
 const CEIL = {
@@ -92,6 +98,66 @@ const CEIL = {
       return { n };
     });
     check('the unloading status is not polled while Settings is closed', polls.n === 0, JSON.stringify(polls));
+
+    // ---- a burst of switches over unloaded, frozen and normal tabs: latest switch wins
+    const slept = await rig.sleepSome(r);
+    check('12 tabs are unloaded and 6 frozen for the burst', slept.sleeping.length === 12 && slept.frozen.length === 6, JSON.stringify(slept));
+    await app.evaluate(({ BrowserWindow }) => {
+      const cv = BrowserWindow.getAllWindows()[0].contentView;
+      const w = (global.__viewOps = { add: 0, remove: 0 });
+      for (const [name, key] of [['addChildView', 'add'], ['removeChildView', 'remove']]) { const orig = cv[name].bind(cv); cv[name] = (...a) => { w[key]++; return orig(...a); }; }
+    });
+    const liveIds = r.ids.filter((id) => !slept.sleeping.includes(id) && !slept.frozen.includes(id));
+    const awake = await rig.burst(r, { n: 12, gap: 100, targets: liveIds });
+    const ops = await app.evaluate(() => ({ ...global.__viewOps }));
+    check('switching between loaded tabs never adds or removes a view', ops.add === 0 && ops.remove === 0, JSON.stringify(ops));
+    check('...the strip shows each clicked tab at once (optimistic highlight; median ms)', awake.per.med <= 50, fmt(awake.per));
+    for (const kind of ['loaded', 'unloaded', 'frozen']) {
+      const st = await app.evaluate(() => global.__tabSleep.state());
+      const end = kind === 'unloaded' ? st.find((s) => !s.view && s.sleeping)?.id : kind === 'frozen' ? st.find((s) => s.frozen)?.id : null;
+      const b = await rig.burst(r, { n: 20, gap: 100, end: end ?? null });
+      console.log(`burst ending on a ${kind} tab: strip ${fmt(b.per)}  final on screen ${Math.round(b.finalMs)} ms  woke ${b.woke} thawed ${b.thawed} lag ${Math.round(b.lagMax)}`);
+      check(`burst of 20 ending on a ${kind} tab: the final tab is active with its view visible within 300 ms of the last input`, b.finalOk && b.finalMs <= 300, `ok ${b.finalOk} ${b.finalMs} ms`);
+      check(`...at most 2 unloaded tabs were woken, not every tab passed through (woke ${b.woke}, thawed ${b.thawed})`, b.woke <= 2, `${b.woke}`);
+      check(`...the main event loop is held up less than ${CEIL.lagMax} ms`, b.lagMax <= CEIL.lagMax, `${b.lagMax}`);
+    }
+
+    // ---- the recorder: off by default, its module not even loaded
+    check('Record tab-switch timings is off by default and its module is not loaded', await app.evaluate(() => !global.__switchTiming.on() && !global.__switchTiming.loaded() && global.__switchTiming.data() === null));
+    await app.evaluate(() => global.__settings.backend.set('recordSwitchTimings', true));
+    const state0 = await app.evaluate(() => global.__tabSleep.state());
+    const cases = [['live', state0.find((s) => s.view && !s.frozen && !s.sleeping)?.id], ['frozen', state0.find((s) => s.frozen)?.id], ['unloaded', state0.find((s) => !s.view && s.sleeping)?.id]];
+    const outcomes = {};
+    for (const [kind, id] of cases) {
+      if (id == null) { check(`a ${kind} tab exists to switch to`, false, 'none'); continue; }
+      await sleep(600); // (not a burst: a lone switch)
+      await ui.evaluate((tab) => document.querySelector(`#tabs .tab[data-id="${tab}"]`).click(), id);
+      await sleep(900);
+      const data = await app.evaluate(() => global.__switchTiming.data());
+      outcomes[kind] = data.switches[data.switches.length - 1];
+    }
+    for (const [kind, o] of Object.entries(outcomes)) {
+      console.log(`recorded ${kind}: ${JSON.stringify(o.ms)} reloaded ${o.reloaded} visibility ${o.visibilityBefore}->${o.visibilityAfter} lag ${o.loopLagMaxMs} cpu ${JSON.stringify(o.cpuPercent)}`);
+      check(`${kind} tab: recorded as ${kind}, its view shown within 50 ms of main starting the switch`, o.state === kind && o.ms.mainToShown !== null && o.ms.mainToShown <= 50, JSON.stringify(o));
+      check(`${kind} tab: the click reached main quickly and the UI strip reported`, o.ms.inputToMain !== null && o.ms.inputToMain < 100 && o.ms.inputToStrip !== null, JSON.stringify(o.ms));
+      check(`${kind} tab: a frame came within 1 s of showing it (a frozen tab resumed, not stuck)`, o.ms.shownToPaint !== null && o.ms.shownToPaint <= 1000, JSON.stringify(o.ms));
+    }
+    check('an unloaded tab is recorded as reloaded; a live one is not', outcomes.unloaded?.reloaded === true && outcomes.live?.reloaded === false);
+    // the export: a file at a place the test picks (the save dialog is stubbed), with no address, title or site in it
+    const outFile = path.join(r.profile, 'timings-export.json');
+    await app.evaluate((_e, f) => { global.__switchTimingSaveDialog = async () => ({ canceled: false, filePath: f }); }, outFile);
+    const exported = await app.evaluate(() => global.__switchTiming.exportNow());
+    const text = fs.readFileSync(outFile, 'utf8');
+    check('Export timings writes the chosen file', exported.ok && exported.count >= 3 && JSON.parse(text).switches.length === exported.count, JSON.stringify(exported));
+    check('...and it holds no address, host or page title', !/https?:|127\.0\.0\.1|localhost|Page \d|Video \d|Dom \d|Timers \d/.test(text.replace(/"privacy": "[^"]*"/, '')), text.slice(0, 300));
+    const gpuStatus = JSON.parse(text).gpuFeatureStatus;
+    check('...with the GPU feature status', gpuStatus && typeof gpuStatus === 'object', JSON.stringify(gpuStatus));
+    await app.evaluate(() => global.__settings.backend.set('recordSwitchTimings', false));
+    const recorded = (await app.evaluate(() => global.__switchTiming.data())).switches.length;
+    await sleep(600);
+    await ui.evaluate((tab) => document.querySelector(`#tabs .tab[data-id="${tab}"]`).click(), r.ids[0]);
+    await sleep(500);
+    check('turned off again: later switches are not recorded', (await app.evaluate(() => global.__switchTiming.data())).switches.length === recorded && await app.evaluate(() => !global.__switchTiming.on()), '');
 
     check('no page errors in the browser UI', r.errors.length === 0, r.errors.join(' | '));
   } finally {

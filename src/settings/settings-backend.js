@@ -143,6 +143,7 @@ const DEFAULTS = {
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
   imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
+  recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
   aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings > AI: Show what the AI couldn't do)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
@@ -376,7 +377,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -730,11 +731,12 @@ function create(deps) {
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'recordSwitchTimings': deps.onSwitchTimingChange?.(); break;
       case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
       case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'sidebarNewChat' || key === 'recordSwitchTimings') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
@@ -970,6 +972,9 @@ function create(deps) {
     handle('prefs:sleep-unload-all', () => deps.tabSleep?.unloadAll() ?? 0);
     handle('prefs:sleep-site', () => deps.tabSleep?.currentSite() ?? '');
     handle('prefs:sleep-reset', resetSleep);
+    handle('prefs:switch-timing-count', () => deps.switchTiming?.count() ?? 0); // [diagnostics] Settings > Advanced > Record tab-switch timings
+    handle('prefs:switch-timing-export', () => deps.switchTiming?.export() ?? { ok: false, reason: 'unavailable' });
+    handle('prefs:switch-timing-clear', () => deps.switchTiming?.clear());
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
     // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out

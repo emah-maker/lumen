@@ -63,6 +63,15 @@ const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: r
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./browser/importer'));
+// [diagnostics] Settings > Advanced > Record tab-switch timings (features/switch-timing.js). Off by default: the module is not even loaded until the setting is on.
+const switchTiming = lazy(() => require('./features/switch-timing').create({
+  metrics: () => app.getAppMetrics(), gpuStatus: () => app.getGPUFeatureStatus(),
+  versions: { lumen: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, platform: process.platform, arch: process.arch },
+}));
+let switchTimingOn = false;
+let switchTimingLoaded = false;
+let switchInput = null; // { source, at }: the input now calling switchTab (set by the user's own click or Ctrl+Tab, and only then)
+let switchHandle = null; // { h, id }: the switch being recorded
 const cliAuth = lazy(() => require('./ai/cli-auth'));
 const spotifyRedirectPort = () => require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 // The SDK needs `new`, which the plain get-trap `lazy()` proxy above can't forward, so it gets its
@@ -1885,7 +1894,11 @@ function layout() {
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
   // the address bar. While the UI has focus, a view shown here gives focus back for half a second.
   const uiHadFocus = Boolean(ui()?.isFocused());
-  for (const tab of tabs.filter(alive)) {
+  // The tab coming to the front is shown first, then the others are hidden: no frame with nothing to show, and the show is not queued behind other tabs' work.
+  const live = tabs.filter(alive);
+  const front = live.findIndex((t) => t.id === activeId);
+  if (front > 0) live.unshift(...live.splice(front, 1));
+  for (const tab of live) {
     const visible = tab.id === activeId;
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
@@ -2983,6 +2996,7 @@ function hoverIntentFor(rec) {
       if (!rcAlive(rec)) return;
       withWindow(rec, () => {
         const t = find(id);
+        if (why === 'press' && rapidSwitching()) return; // (switching in a burst: the click's own switch wakes the tab it ends on)
         if (!t || !tabWake.hoverGate(wakeFacts(t), { memoryLow: low, room: why === 'hover' ? awakeRoom() : Infinity }).go) return;
         wakeAhead(t, why);
       });
@@ -2995,8 +3009,17 @@ const wakeSender = (event) => { const rec = recOfSender(event.sender); return wa
 ipcMain.on('tab:hover', (event, id, on) => { const rec = wakeSender(event); if (!rec || !Number.isInteger(id)) return; const h = hoverIntentFor(rec); if (on) h.enter(id); else h.leave(id); });
 ipcMain.on('tab:down', (event, id) => { const rec = wakeSender(event); if (rec && Number.isInteger(id)) hoverIntentFor(rec).down(id); });
 // A keyboard switch (Ctrl+Tab, Alt+Cmd+Arrow) goes at once; the tab it would reach next wakes behind it, so a second press is instant too.
+// Held or repeated Ctrl+Tab cycles through the strip without waking each tab it would reach next: only once the cycling pauses does the tab after the one it stopped on wake.
+let keyboardAheadTimer = null;
 function wakeAfterKeyboard(direction) {
   if (!wakeOn()) return;
+  clearTimeout(keyboardAheadTimer);
+  const rec = curRec;
+  keyboardAheadTimer = setTimeout(() => { if (rcAlive(rec)) withWindow(rec, () => wakeNextAhead(direction)); }, KEYBOARD_AHEAD_MS);
+  keyboardAheadTimer.unref?.();
+}
+const KEYBOARD_AHEAD_MS = 250;
+function wakeNextAhead(direction) {
   const list = tabs.filter((t) => !aiTabHidden(t));
   const at = list.findIndex((t) => t.id === activeId);
   const next = list.length > 1 && at >= 0 ? list[(at + direction + list.length) % list.length] : null;
@@ -3188,9 +3211,66 @@ function asAiSwitch(fn) {
   aiToolSwitch = true;
   try { return fn(); } finally { aiToolSwitch = before; }
 }
+// Switching in quick succession (a burst of clicks, Ctrl+Tab held): the latest switch wins. The tab you land on is shown at once; an
+// unloaded or frozen tab you only pass through is not woken (a reload per tab passed piled up behind the one you wanted). A tab you
+// stop on wakes SWITCH_SETTLE_MS later; a lone switch wakes it at once.
+const RAPID_SWITCH_MS = 400;
+const SWITCH_SETTLE_MS = 150;
+let lastSwitchAt = 0;
+const rapidSwitching = () => Date.now() - lastSwitchAt < RAPID_SWITCH_MS;
+const SWITCH_WORLD = 1005; // the isolated world of the recorder's probes (never the page's own)
+function beginSwitchTiming(tab, input) {
+  const wc = tab.view?.webContents;
+  const live = Boolean(wc) && !wc.isDestroyed();
+  const url = live ? realUrl(wc) : tab.sleepUrl || '';
+  const h = switchTiming.begin({
+    source: input?.source, inputAt: input?.at, tab: tab.id, page: isWebUrl(url) ? 'web' : 'lumen',
+    state: tab.sleeping ? (placeholderWanted(tab) ? 'placeholder' : 'unloaded') : tab.frozen ? 'frozen' : 'live',
+    pid: live ? wc.getOSProcessId() : null, throttled: live && !unthrottled.has(tab.id) && !agentContents.has(wc),
+  });
+  switchHandle = h ? { h, id: tab.id } : null;
+  if (h && live) probeSwitch(tab, h, false); // (what the page's visibility was as the switch began: still hidden, normally)
+  return h;
+}
+// One rAF in the tab, in an isolated world (it never runs the page's own code): the first frame the tab's renderer makes once it is visible.
+function probeSwitch(tab, h, paint) {
+  const wc = tab.view?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  const code = paint ? 'new Promise((r) => requestAnimationFrame(() => r([performance.timeOrigin + performance.now(), document.visibilityState])))' : 'document.visibilityState';
+  wc.executeJavaScriptInIsolatedWorld(SWITCH_WORLD, [{ code }]).then((v) => {
+    if (!paint) h.visibilityBefore(v);
+    else if (activeId !== tab.id || switchHandle?.h !== h) h.superseded();
+    else h.paint(v[0], v[1]);
+  }).catch(() => {});
+}
+function syncSwitchTiming() {
+  const on = readSettings().recordSwitchTimings === true;
+  if (on === switchTimingOn) return;
+  switchTimingOn = on;
+  if (on || switchTimingLoaded) { switchTimingLoaded = true; switchTiming.setEnabled(on); }
+  if (!on) { switchHandle = null; switchInput = null; }
+}
+app.whenReady().then(syncSwitchTiming);
+ipcMain.on('tab:switch-strip', (_e, id, at) => { if (switchTimingOn && switchHandle && switchHandle.id === id && Number.isFinite(at)) switchHandle.h.strip(at); });
+async function exportSwitchTimings() {
+  if (!switchTimingLoaded || !switchTiming.count()) return { ok: false, reason: 'empty' };
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+  const options = { title: 'Export tab-switch timings', defaultPath: path.join(app.getPath('documents'), `lumen-tab-switch-timings-${stamp}.json`), filters: [{ name: 'JSON', extensions: ['json'] }] };
+  const { canceled, filePath } = await (TEST && global.__switchTimingSaveDialog ? global.__switchTimingSaveDialog(options) : electronDialog.showSaveDialog(win, options));
+  if (canceled || !filePath) return { ok: false, reason: 'canceled' };
+  await fs.promises.writeFile(filePath, switchTiming.exportJson(), 'utf8');
+  return { ok: true, filePath, count: switchTiming.count() };
+}
+if (TEST) global.__switchTiming = { on: () => switchTimingOn, loaded: () => switchTimingLoaded, sync: syncSwitchTiming, data: () => (switchTimingLoaded ? switchTiming.exportData() : null), exportNow: exportSwitchTimings };
+
 function switchTab(id, { wake = true } = {}) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return false;
+  const input = switchInput; // set only by the user's own click or Ctrl+Tab: the agent, the tests and the app's own switches always load the tab at once
+  switchInput = null;
+  const timing = switchTimingOn ? beginSwitchTiming(tab, input) : null;
+  const rapid = Boolean(input) && rapidSwitching();
+  if (input) lastSwitchAt = Date.now();
   if (id !== activeId) {
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
@@ -3205,19 +3285,39 @@ function switchTab(id, { wake = true } = {}) {
     sendTabs();
     return true;
   }
-  if (tab.sleeping && !tab.frozen && placeholderWanted(tab)) wakeTab(tab, { placeholder: true }); // [tabs] "When you return to an unloaded tab: Show a Reload button"
-  else if (tab.sleeping || tab.frozen) wakeTab(tab);
+  // What waking a tab is: the resume (a frozen page) or the reload (an unloaded one). Started before the view is shown, never awaited.
+  const wakeNow = () => {
+    const was = tab.sleeping;
+    if (tab.sleeping && !tab.frozen && placeholderWanted(tab)) wakeTab(tab, { placeholder: true }); // [tabs] "When you return to an unloaded tab: Show a Reload button"
+    else if (tab.sleeping || tab.frozen) wakeTab(tab);
+    if (was && timing) timing.reloaded();
+  };
+  const needsWake = tab.sleeping || tab.frozen;
+  const deferWake = needsWake && rapid;
+  if (needsWake && !deferWake) wakeNow();
   activeId = id;
+  layout(); // the new tab is shown first: before extensions, dialogs, chat, the strip's state
+  if (timing) { timing.shown(); if (tab.view) probeSwitch(tab, timing, true); }
+  if (deferWake) {
+    // Passing through: nothing is loaded for this tab unless the user stays on it.
+    const settle = setTimeout(() => {
+      if (activeId !== id || !tabs.includes(tab) || !(tab.sleeping || tab.frozen)) return;
+      wakeNow();
+      layout();
+      if (timing && tab.view) probeSwitch(tab, timing, true);
+      sendTabs();
+    }, SWITCH_SETTLE_MS);
+    settle.unref?.();
+  }
   adoptPreloaded(tab);
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
   if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
-  layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
   if (!aiToolSwitch) { followTabChat(tab); shownPick = ownPickOfOpenChat(); announceModelIfChanged(); } // (the user went to this tab: the pickers show its chat's model; a window's refresh or focus does not change it)
   // [chat per tab] the sidebar shows this tab's chat. Only a run's own tool call (aiToolSwitch: agentOpenTab / agentSwitchTab) moves the run instead; any other switch is the user's, whatever async scope it happens to run in
-  sendTabs();
+  if (rapid) sendTabsSoon(); else sendTabs(); // (a burst of switches sends the strip one state per frame)
   schedulePreload(4000); // (the neighbours of the tab now in front, once things are quiet)
   return true;
 }
@@ -4769,7 +4869,7 @@ const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab
 function cycleTab(direction) {
   const list = tabs.filter((t) => !aiTabHidden(t));
   const index = list.findIndex((t) => t.id === activeId);
-  if (list.length) { switchTab(list[(index + direction + list.length) % list.length].id); wakeAfterKeyboard(direction); }
+  if (list.length) { switchInput = { source: 'key', at: switchTimingOn ? performance.timeOrigin + performance.now() : null }; switchTab(list[(index + direction + list.length) % list.length].id); switchInput = null; wakeAfterKeyboard(direction); }
 }
 
 function reloadActive({ ignoreCache = false, always = false } = {}) {
@@ -8259,6 +8359,8 @@ const settingsBackend = settingsPage.create({
   onTabSleepChange: () => tabSleepSettingChanged(),
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
+  onSwitchTimingChange: () => syncSwitchTiming(),
+  switchTiming: { count: () => (switchTimingLoaded ? switchTiming.count() : 0), export: exportSwitchTimings, clear: () => { if (switchTimingLoaded) switchTiming.clear(); } }, // [diagnostics] Settings > Advanced > Record tab-switch timings
   onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
@@ -8410,7 +8512,7 @@ ipcMain.on('missingfile:choose', async (event) => {
   wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
 });
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
-ipcMain.on('tab:switch', (_e, id) => switchTab(id));
+ipcMain.on('tab:switch', (_e, id, at) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; switchTab(id); switchInput = null; });
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
   moveTab(id, toIndex);
   // An in-strip drag holds its tab hidden until this: the strip shows it in the slot it landed in.
