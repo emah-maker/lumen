@@ -2424,6 +2424,15 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
   wc.on('render-process-gone', (_e, details) => {
     if (details.reason === 'clean-exit' || tab.closing || !tabs.includes(tab)) return;
+    // A full-page chat that crashed comes back as itself (the box keeps its text: it is saved with every keystroke), not as the "crashed" page: a chat tab is
+    // locked to its own page, so that page would have replaced the tab with an ordinary one that Reload could not turn back into the chat. Three crashes in a
+    // minute (a chat that crashes as it opens) fall through to the crashed page.
+    if (tab.managerPage === 'chat') {
+      console.error(`[lumen] chat page process gone (${details.reason}, exit ${details.exitCode ?? '?'}); reloading it`);
+      const now = Date.now();
+      tab.chatCrashes = (tab.chatCrashes || []).filter((at) => now - at < 60e3).concat(now);
+      if (tab.chatCrashes.length <= 3) { setImmediate(() => { if (!wc.isDestroyed() && tabs.includes(tab)) wc.reload(); }); return; }
+    }
     const failedUrl = tab.lastUrl || '';
     tab.hungAsked = false;
     setImmediate(() => {
@@ -5416,7 +5425,10 @@ function pushChatView(wc) {
   if (runIsLive(run)) run.sender = wc; // its events go to the sidebar that shows it now
   const view = chatView();
   wc.send('chat:sync', { view });
-  chatPageRt?.broadcast('chat:sync', { view }, wc);
+  // A chat page already on this chat is not told: the sidebar showing it too changes nothing there, and drawing the chat again scrolled it to the
+  // bottom (and, before the composer was left alone on a sync, wiped what was being typed).
+  const same = (chatPageRt?.everyChatTab() || []).filter((t) => chatBind.chatOf(t.id) === chatId).map((t) => t.view.webContents);
+  chatPageRt?.broadcast('chat:sync', { view }, [wc, ...same]);
 }
 // The sidebar of the window just entered shows the chat of its front tab.
 // `push`: tell the sidebar (false when the sender already shows it).
