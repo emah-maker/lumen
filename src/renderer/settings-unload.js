@@ -210,7 +210,7 @@ function buildUnloading(slot) {
   const reset = h('button', {
     type: 'button', id: 'unload-reset', text: un('reset', 'Reset to defaults'),
     onclick: async () => {
-      st = await S.tabSleep.reset();
+      Object.assign(st, await S.tabSleep.reset());
       for (const k of st.tabSleepChoices.keys) window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: k } }));
       applyPageClasses();
       flash(resetResult, un('resetDone', 'Page unloading settings are back to their defaults.'), 'ok');
