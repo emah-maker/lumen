@@ -263,7 +263,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:new-in-project', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -9283,7 +9283,7 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), ...(c.project ? { project: c.project } : {}), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
+      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), pinned: Boolean(c.pinned), archived: Boolean(c.archived), ...((c.project || pendingProject.get(c.id)) ? { project: c.project || pendingProject.get(c.id) } : {}), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
 }));
@@ -9334,6 +9334,38 @@ const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: Stri
 ipcMain.handle('chats:project-save', (_e, project) => { const out = chats().saveProject(projectFields(project)); if (out) syncProjectInstructions(); return out; });
 ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; });
 ipcMain.handle('chats:project-set', (_e, id, projectId) => { const ok = chats().setProject(String(id), projectId ? String(projectId) : null); if (ok) syncProjectInstructions(); return ok; });
+// Drag and drop, and the row menu's "Move to project": one or several chats in one write, then every list redraws (pushAttention).
+// Answers { moves: [{ id, from }] } (what actually moved: the toast's Undo hands it back to chats:project-restore) or null. Moving is not
+// activity (the recency order stays) and does not touch a running chat. A chat still working on its first reply has no saved entry yet:
+// its project waits in pendingProject, as for a chat started inside a project.
+const chatIdList = (ids) => (Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, 200) : []);
+ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
+  const list = chatIdList(ids);
+  const target = projectId ? String(projectId) : null;
+  if (target && !chats().projects().some((p) => p.id === target)) return null;
+  const moves = chats().moveToProject(list, target);
+  if (!moves) return null;
+  for (const id of list) {
+    if (moves.some((m) => m.id === id) || chats().has(id) || !chatRuns.has(id) || !runIsLive(chatRuns.get(id))) continue;
+    const from = pendingProject.get(id) || null;
+    if (from === target) continue;
+    if (target) pendingProject.set(id, target); else pendingProject.delete(id);
+    moves.push({ id, from });
+  }
+  if (moves.length) { syncProjectInstructions(); pushAttention(); }
+  return { moves };
+});
+ipcMain.handle('chats:project-restore', (_e, moves) => {
+  const list = (Array.isArray(moves) ? moves : []).slice(0, 200).filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, from: m.from ? String(m.from) : null }));
+  let n = chats().restoreProjects(list);
+  for (const m of list) {
+    if (chats().has(m.id) || !chatRuns.has(m.id)) continue;
+    if (m.from && chats().projects().some((p) => p.id === m.from)) pendingProject.set(m.id, m.from); else pendingProject.delete(m.id);
+    n++;
+  }
+  if (n) { syncProjectInstructions(); pushAttention(); }
+  return n;
+});
 ipcMain.handle('chats:new-in-project', (event, projectId) => {
   if (!chats().projects().some((p) => p.id === String(projectId))) return null;
   startNewChat(event);

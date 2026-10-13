@@ -313,7 +313,7 @@
       const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + (clickHint() ? ' · ' + clickHint() : '') : '';
       const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + ' · ' + clickHint() : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
-      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
+      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage, chat.projectName].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
       if (chat.pinned) li.classList.add('pinned');

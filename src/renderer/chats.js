@@ -38,8 +38,9 @@
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats: fresh } = await api.list();
-    const chats = live.order(fresh);
+    const { current, chats: fresh, projects } = await api.list();
+    const names = new Map((projects || []).map((p) => [p.id, p.name]));
+    const chats = live.order(fresh).map((c) => (c.project && names.has(c.project) ? { ...c, projectName: names.get(c.project) } : c)); // (a row says which project it is in)
     const play = live.flip();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
