@@ -43,7 +43,7 @@ function appNameValues(exe, appId, icon) {
 // in step) and the ProgID setup.js registers. The installer writes each one's DefaultIcon as Lumen.exe,0, which
 // is Electron's atom: the exe is deliberately left untouched (Smart App Control), so Explorer showed that atom on every
 // PDF, HTML and SVG file Lumen opens. Point each at the shipped .ico instead.
-const ASSOCIATION_PROG_IDS = ['HTML Document', 'PDF Document', 'SVG Image', 'LumenHTML'];
+const ASSOCIATION_PROG_IDS = ['HTML Document', 'PDF Document', 'SVG Image', 'Email Message', 'LumenHTML'];
 
 // `reg query <key> /ve` output -> the default value's data, or null.
 const regDefault = (out) => { const m = /\((?:Default)\)\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/m.exec(String(out || '')) || /<NO NAME>\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/m.exec(String(out || '')); return m ? m[1] : null; };

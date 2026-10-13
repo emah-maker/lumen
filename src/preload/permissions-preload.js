@@ -153,3 +153,12 @@ try {
 if (location.origin === 'lumen-pdf://app') {
   contextBridge.exposeInMainWorld('lumenPdfHost', Object.freeze({ print: () => ipcRenderer.send('pdf:print') }));
 }
+
+// Lumen's email viewer page (features/eml-viewer.js, renderer/eml.html: a file page of the app itself, never a sandboxed frame) may read an
+// attachment's bytes (to save it) and ask to open a safe one in a tab, and nothing else. Main checks the sender again.
+if (location.protocol === 'file:' && /\/renderer\/eml\.html$/i.test(location.pathname) && window === window.top) {
+  contextBridge.exposeInMainWorld('lumenEmlHost', Object.freeze({
+    bytes: (index) => ipcRenderer.invoke('eml:bytes', Number(index)),
+    open: (index) => ipcRenderer.invoke('eml:open', Number(index)),
+  }));
+}

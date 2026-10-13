@@ -102,6 +102,9 @@ function createDownloads(deps) {
     return target;
   }
 
+  // A finished file opens in the system's program, except the kinds Lumen shows itself in a tab (deps.openLocal: an .eml).
+  const openFile = (file) => (deps.openLocal?.(file) ? true : deps.shell.openPath(file));
+
   function progress() {
     const active = downloads.filter((d) => d.state === 'progressing' && d.total > 0);
     const sum = active.reduce((a, d) => [a[0] + d.received, a[1] + d.total], [0, 0]);
@@ -245,7 +248,7 @@ function createDownloads(deps) {
     const items = downloads.slice(0, 10).map((d) => {
       const percent = d.total ? `${Math.round((d.received / d.total) * 100)}%` : '';
       if (d.state === 'completed') {
-        return { label: menuLabel(d.name, 80), click: () => deps.shell.openPath(d.path) };
+        return { label: menuLabel(d.name, 80), click: () => openFile(d.path) };
       }
       if (d.state === 'progressing') {
         const status = d.awaitingOk ? t('downloads.waitingOk') : d.paused ? (percent ? t('downloads.pausedAt', { percent }) : t('downloads.paused')) : percent || t('downloads.downloading');
@@ -292,7 +295,7 @@ function createDownloads(deps) {
     const d = downloads.find((x) => x.id === id);
     if (action === 'restore') return restore(id);
     if (!d) return false;
-    if (action === 'open' && d.state === 'completed' && exists(d)) { deps.shell.openPath(d.path); return true; }
+    if (action === 'open' && d.state === 'completed' && exists(d)) { openFile(d.path); return true; }
     if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
     if (action === 'pause' && d.state === 'progressing' && d.item && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
     if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }

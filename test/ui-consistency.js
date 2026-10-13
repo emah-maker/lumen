@@ -24,11 +24,11 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
 // ---------- 1. lint ----------
 // Files whose look was brought onto the scale. (Chat-page internals, the TradingView card and the generated bundle are left out.)
-const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'pdfviewer.css', 'private.css'];
+const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'pdfviewer.css', 'eml.css', 'private.css'];
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
 const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
-const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css' };
+const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css', 'eml.html': 'tokens.css' };
 const SCALE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24]); // tiny hairline radii, the scale, and the two large ones for tiles
 // A line that only defines a custom property, or draws one of the decorative palettes.
 const DECORATIVE = /^\s*(\.(bg|wi|ic|accent|swatch)[\w-]*[\s,{.:]|\.effect-options)/;

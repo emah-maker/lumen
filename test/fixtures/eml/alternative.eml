@@ -1,0 +1,18 @@
+From: Alice Example <alice@example.com>
+To: Bob <bob@example.com>, carol@example.com
+Cc: Dave <dave@example.com>
+Date: Tue, 06 Oct 2026 09:30:00 +0000
+Message-ID: <m1@example.com>
+MIME-Version: 1.0
+Subject: Both parts
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=utf-8
+
+PLAIN VERSION of the message
+--ALT
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>HTML <b>VERSION</b> of the message</p></body></html>
+--ALT--
