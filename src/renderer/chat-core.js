@@ -2568,10 +2568,14 @@ messages.addEventListener('click', (e) => {
   else window.browser.newTab(link.href);
 });
 
+// The height is read once, before anything is written (a write restyles every message, and a read after it forces that at once), and the
+// variable is only set when the height moved.
+let composerHeight = -1;
 new ResizeObserver(() => {
-  chatRoot.style.setProperty('--composer-h', `${$('composer').offsetHeight}px`);
-  if ($('composer').offsetHeight) flushLazyHistory(); // (the sidebar shown: the chat it was handed while hidden)
-  if ($('composer').offsetHeight && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
+  const height = $('composer').offsetHeight;
+  if (height !== composerHeight) { composerHeight = height; chatRoot.style.setProperty('--composer-h', `${height}px`); }
+  if (height) flushLazyHistory(); // (the sidebar shown: the chat it was handed while hidden)
+  if (height && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
 
 // The box sizes itself (CSS field-sizing: content, with a one-line minimum and a cap of 40% of the window), so nothing is measured

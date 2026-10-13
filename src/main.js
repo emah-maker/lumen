@@ -1861,7 +1861,7 @@ function sendTabs(coalesced = false) {
   keepPinnedFirst();
   const state = tabState();
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
-  ui()?.send('tabs', state);
+  if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose navigation keeps changing).
@@ -2014,7 +2014,8 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
-let spareForTest = false; // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it)
+let newTabUsedAt = Date.now(); // when a new tab last took (or asked for) the spare: an unused one is dropped after spare-policy IDLE_MS
+let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure-app-perf.js)
 const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
 let spareForced = false; // tests: make one regardless of start-up state
 // One scheduler for the always-on housekeeping timers and one shared memory sample (features/scheduler.js). While every
@@ -2034,7 +2035,7 @@ function closeSpareNewTab() {
 }
 function makeSpareNewTab() {
   if ((TEST && !spareForTest) || spareNewTab || !app.isReady()) return;
-  if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory() }) !== 'make') return; // (still starting up, or short of memory: the check below makes it later)
+  if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory(), idle: sparePolicy.isIdle(newTabUsedAt) }) !== 'make') return; // (still starting up, short of memory, or no new tab for a long while: the check below makes it later)
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
@@ -2052,16 +2053,20 @@ scheduler.every('spare-policy', 60 * 1000, async () => {
   const memory = await scheduler.memorySample(); // (shared with the tab-sleep sweep)
   const facts = Object.keys(memory).length ? memory : spareMemory();
   if (!TEST || spareForTest) {
-    const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: facts });
+    const action = sparePolicy.spareAction({ hasSpare: Boolean(spareNewTab), firstTabDone, memory: facts, idle: sparePolicy.isIdle(newTabUsedAt) });
     if (action === 'drop') closeSpareNewTab();
     else if (action === 'make') makeSpareNewTab();
   }
+  // the warm renderer (about:blank, for the next web page): likewise freed when memory is tight or no page has taken one for a while
+  if (warmTab && (sparePolicy.isIdle(warmUsedAt) || sparePolicy.memoryTight(facts))) { const w = warmTab; warmTab = null; try { w.view.webContents.close(); } catch { /* gone */ } }
+  else if (!warmTab && !sparePolicy.memoryTight(facts)) makeWarmTab();
   // the spare chat page: dropped with the new-tab one when memory is tight, and when no chat page has been used for half an hour
   if (spareChat && (Date.now() - chatPageUsedAt > SPARE_CHAT_IDLE_MS || sparePolicy.spareAction({ hasSpare: true, firstTabDone, memory: facts }) === 'drop')) closeSpareChat();
   else if (!spareChat && chatPageUsedAt) makeSpareChat();
 }, { whenHidden: 2 * 60 * 1000 });
 // { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
+  newTabUsedAt = Date.now();
   const s = spareNewTab;
   if (!s) return null;
   spareNewTab = null;
@@ -2123,11 +2128,12 @@ if (TEST) global.__spareChat = { enable: (on = true) => { spareChatForTest = on;
 // loads in it at once. Another is made a moment later. (It costs a renderer's memory: not on a PC short of memory, nor
 // with Performance mode switched on by hand.)
 let warmTab = null; // { view, prefs }
+let warmUsedAt = Date.now(); // when a page last took (or asked for) the warm renderer: an unused one is dropped after spare-policy IDLE_MS
 const warmPending = new WeakSet(); // a tab's page that hasn't left the warm view's about:blank yet (no address, no history)
-let warmForTest = false;
+let warmForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // (same switch as the spare new-tab page)
 const warmTabsOn = () => (!TEST || warmForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
 function makeWarmTab() {
-  if (warmTab || !app.isReady() || !warmTabsOn() || quitting) return;
+  if (warmTab || !app.isReady() || !warmTabsOn() || quitting || sparePolicy.isIdle(warmUsedAt)) return;
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // a tab's size, not 0×0
@@ -2140,8 +2146,9 @@ const warmSoon = (ms = 600) => { clearTimeout(warmTimer); warmTimer = setTimeout
 // The warm view, for a web page in the profile's session with no back/forward list to restore; null if there is none
 // ready (or its page settings changed since). The page's address comes from wireView's loadURL.
 function takeWarmTab() {
+  warmUsedAt = Date.now();
   const s = warmTab;
-  if (!s) return null;
+  if (!s) { warmSoon(); return null; } // (none, as after an idle drop: one is made for the page after this)
   warmTab = null;
   warmSoon();
   const wc = s.view.webContents;
@@ -7291,6 +7298,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label });
+    tabStripGate.forget(rec); // (the fresh page has no strip: the next send goes out even if the state is what the old page had)
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     followFront({ push: false }); // [chat per tab] this window's tab's chat
     const items = agent.transcript();

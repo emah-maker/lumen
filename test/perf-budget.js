@@ -17,12 +17,14 @@ const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modul
 // uiKB 650 -> 700, idleIntervals 4 -> 5 (0.5.5): the UI bundle measures 675 KB; a fifth, cheap unref'd timer (the 15 s background-task tick, next to the run-slot sweep, the AI status refresh, the sleep sweep and the extension update check) idles at 0.2% CPU with 15 tabs.
 // modules 250 -> 270 and uiKB 700 -> 750 (0.5.x, 2026-10-05): measured 258 modules and a 725 KB UI after the Gmail setup, file uploads, Bypass permissions and Codex/Grok engine work; each is a real feature, none an eager SDK or a stray bundle.
 // modules 270 -> 285 and uiKB 750 -> 775 (2026-10-07): main already measured 277 modules and a 759 KB UI before the start-up work (the budget had been failing); the queue, idle-reaper-free helpers and match patterns add three small modules.
+// requireMs 2500 -> 1000 (2026-10): main.js requires measure 125-180 ms warm; the suite now warms the disk with a throwaway launch first, so a cold checkout no longer trips it.
 // idleIntervals 5 -> 6: the spare new-tab page's 60 s freshness check (newtab-speed, #321) is a sixth, cheap unref'd timer.
 // modules 285 -> 335 and uiKB 775 -> 870 (2026-10-10): the 0.5.22 release already measured 312 modules and 823 KB (the budget had been failing since the Codex/Grok, device-access and chrome work); today's UI round adds profile-guard, nav-history, device-permissions/chooser, chat-title, plain-math and remote-pdf (319 modules, 840 KB). Each is a real feature; no SDK or bundle is loaded eagerly (the LAZY check above still passes).
 // uiKB 870 -> 950 (0.5.23): the chat round (Markdown blocks and code extras, message versions and actions, the canvas, per-chat
 // drafts, the chat library's undo/pin/archive/search) measured 903 KB. Mermaid (3.5 MB) is not in it: it loads on the first diagram.
 // uiKB 950 -> 1000 (chat UI polish): main measured about 941 KB (LF) and 956 KB with Windows CRLF line endings, so the 950 ceiling already failed on a CRLF checkout; the polish adds roughly 3 KB of CSS and a label observer, and nothing is loaded eagerly that was not before.
-const CEILING = { requireMs: 2500, modules: 335, preloadKB: 40, uiKB: 1000, idleIntervals: 6 };
+// Idle ceilings (2026-10, fresh profile, one tab): measured ~3 pages, 5 processes, ~2% CPU, ~650-1300 MB (it swings by a quarter with what Windows counts as shared); the ceilings are about twice that, so a new always-on page, a poller or a spare process shows.
+const CEILING = { requireMs: 1000, modules: 335, preloadKB: 40, uiKB: 1000, idleIntervals: 6, idleContents: 6, idleProcesses: 9, idleCpuPct: 15, idleMemMB: 2000, longTaskMs: 150, prefsMs: 40 };
 
 (async () => {
   let failures = 0;
@@ -46,7 +48,15 @@ const CEILING = { requireMs: 2500, modules: 335, preloadKB: 40, uiKB: 1000, idle
   check('a check made this week is not repeated', perf.trimCodeCache(dir, 1000) === 'skipped', '');
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
-  // Startup of the real app.
+  // Startup of the real app. A launch right after npm ci or a fresh checkout reads every module from a cold disk (the require time then
+  // reads 2-4x what a warm run does), so one throwaway launch warms the files first; the measured launch is the second.
+  {
+    const warmProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-perfwarm-'));
+    const warm = await electron.launch({ args: [root], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: warmProfile, LUMEN_TEST_BACKGROUND: '1' } });
+    try { await (await warm.firstWindow()).waitForSelector('.tab'); } catch { /* the measured launch reports it */ }
+    await warm.close().catch(() => {});
+    try { fs.rmSync(warmProfile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* left in the temp folder */ }
+  }
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-perfbudget-'));
   const app = await electron.launch({ args: [root], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
   try {
@@ -68,6 +78,71 @@ const CEILING = { requireMs: 2500, modules: 335, preloadKB: 40, uiKB: 1000, idle
     check(`setInterval timers running when idle <= ${CEILING.idleIntervals}`, intervals.length <= CEILING.idleIntervals, JSON.stringify(intervals));
     const marks = await app.evaluate(() => global.__perf.marks());
     check('startup reached the UI', Number.isFinite(marks.uiReady), JSON.stringify(marks));
+
+    // What runs when nothing is asked of the app (scripts/measure-app-perf.js prints the long-lived-profile version of these): no spare chat
+    // page before a chat page has been used, no music engine page without a card for it, a handful of renderers, and little CPU and memory.
+    const idleSet = await app.evaluate(({ app: a, webContents }) => ({
+      spareChat: Boolean(global.__spareChat?.has?.()),
+      spotify: Boolean(global.__spotifyWeb?.view?.()), apple: Boolean(global.__appleMusicWeb?.view?.()),
+      contents: webContents.getAllWebContents().filter((w) => !w.isDestroyed()).map((w) => w.getURL().split('/src/').pop().slice(0, 60)),
+      processes: a.getAppMetrics().length,
+    }));
+    check('no spare chat page before a chat page has been used', !idleSet.spareChat, '');
+    check('no music engine page without a card for it', !idleSet.spotify && !idleSet.apple, JSON.stringify(idleSet));
+    check(`always-on pages at idle with one tab <= ${CEILING.idleContents}`, idleSet.contents.length <= CEILING.idleContents, JSON.stringify(idleSet.contents));
+    check(`Electron processes at idle with one tab <= ${CEILING.idleProcesses}`, idleSet.processes <= CEILING.idleProcesses, idleSet.processes);
+    await app.evaluate(({ app: a }) => a.getAppMetrics()); // (the first sample starts the window)
+    await new Promise((r) => setTimeout(r, 8000));
+    const idle = await app.evaluate(({ app: a }) => { const ms = a.getAppMetrics(); return { cpu: ms.reduce((s, m) => s + m.cpu.percentCPUUsage, 0), memMB: ms.reduce((s, m) => s + m.memory.workingSetSize, 0) / 1024 }; });
+    check(`idle CPU over 8 s <= ${CEILING.idleCpuPct}% of one core (${idle.cpu.toFixed(1)}%)`, idle.cpu <= CEILING.idleCpuPct, idle.cpu);
+    check(`memory at idle with one tab <= ${CEILING.idleMemMB} MB working set (${Math.round(idle.memMB)} MB)`, idle.memMB <= CEILING.idleMemMB, Math.round(idle.memMB));
+
+    // Long tasks (over 50 ms) in the UI renderer during the common actions: opening and closing the sidebar, typing in the address bar.
+    await ui.evaluate(() => { window.__lt = []; new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push(e.duration); }).observe({ entryTypes: ['longtask'] }); });
+    await ui.click('#toggle-sidebar'); await new Promise((r) => setTimeout(r, 900));
+    await ui.click('#toggle-sidebar'); await new Promise((r) => setTimeout(r, 900));
+    await ui.focus('#address'); await ui.keyboard.type('lumen browser', { delay: 15 }); await ui.keyboard.press('Escape');
+    const worstTask = await ui.evaluate(() => Math.round(Math.max(0, ...window.__lt)));
+    check(`worst UI long task while the sidebar opens, closes and the address bar is typed in <= ${CEILING.longTaskMs} ms (${worstTask} ms)`, worstTask <= CEILING.longTaskMs, worstTask);
+    // The settings the app reads on nearly every tab event (the strip's state asks for the default zoom) are checked once per settings write,
+    // not per call (checking the home widgets alone re-laid-out the whole grid: 212 us a call with 12 widgets, 5 us now), and a caller's change to
+    // what it gets back never reaches the next caller.
+    const pm = await app.evaluate(() => {
+      const b = global.__settings.backend;
+      b.prefs();
+      const t0 = process.hrtime.bigint();
+      for (let i = 0; i < 200; i++) b.prefs();
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      const first = b.prefs(); first.defaultZoom = 99;
+      const leaked = b.prefs().defaultZoom === 99;
+      b.set('defaultZoom', 1.25);
+      const after = b.prefs().defaultZoom;
+      b.set('defaultZoom', 1);
+      return { ms, leaked, after, back: b.prefs().defaultZoom };
+    });
+    check(`200 reads of the checked settings take <= ${CEILING.prefsMs} ms (${pm.ms.toFixed(1)} ms)`, pm.ms <= CEILING.prefsMs, pm.ms);
+    check('the checked settings follow a write, and a caller changing its copy does not change the next', !pm.leaked && pm.after === 1.25 && pm.back === 1, JSON.stringify(pm));
+
+    // The "Using: <page>" chip above the composer is redrawn only when what it shows changed: the same tab state arriving again (every title
+    // tick, loading flag and favicon of the tab in front sends one) writes nothing into the composer, whose height would otherwise move and
+    // restyle the whole chat.
+    {
+      const site = require('http').createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Chip page</title><body>chip</body>'); });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      try {
+        await ui.evaluate(() => { window.__lastTabs = null; window.browser.onTabs((s) => { window.__lastTabs = JSON.parse(JSON.stringify(s)); }); });
+        await app.evaluate((_e, url) => global.__agent.execute('navigate', { url }), `http://127.0.0.1:${site.address().port}/`);
+        await ui.waitForFunction(() => !document.getElementById('page-context').hidden && document.querySelector('.pc-title')?.textContent.includes('Chip page'), null, { timeout: 8000 });
+        await new Promise((r) => setTimeout(r, 600));
+        await ui.evaluate(() => { window.__chipMuts = 0; new MutationObserver((l) => { window.__chipMuts += l.length; }).observe(document.getElementById('composer'), { subtree: true, attributes: true, childList: true, characterData: true }); });
+        await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows().find((x) => /index.html/.test(x.webContents.getURL())); return w.webContents.executeJavaScript('window.__lastTabs').then((s) => { for (let i = 0; i < 5; i++) w.webContents.send('tabs', s); }); });
+        await new Promise((r) => setTimeout(r, 400));
+        const muts = await ui.evaluate(() => window.__chipMuts);
+        check('the same tab state arriving five times changes nothing in the composer', muts === 0, `${muts} DOM changes`);
+      } catch (err) {
+        check('the same tab state arriving five times changes nothing in the composer', false, err.message);
+      } finally { site.close(); }
+    }
 
     // Performance mode reaches the page: the class that removes blur and motion.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('prefs:ui', { lite: true }));
