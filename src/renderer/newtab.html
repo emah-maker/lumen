@@ -719,6 +719,7 @@
     /* The search: a magnifier in the header opens a field; the results are a panel over the card (the layout under it never moves). */
     .am-searchfield { display: none; flex: 1 1 auto; min-width: 0; }
     .am-search-open .am-searchfield { display: block; }
+    .mc-card .w-head .w-link { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; } /* (in the smallest card the header is wider than the card: the Open link gives way, the search button stays inside) */
     .am-search-open .w-head h2, .am-search-open .w-head .mk-badge { display: none; }
     .am-searchfield input { box-sizing: border-box; width: 100%; height: 22px; font: inherit; font-size: 12px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--field); color: var(--text); }
     .am-searchfield input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
