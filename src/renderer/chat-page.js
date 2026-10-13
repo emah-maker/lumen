@@ -125,7 +125,7 @@
     inProjectView: () => Boolean(projectView),
     isExpanded: (id) => expanded.has(id),
     expand: (id) => { expanded.add(id); drawProjects(); },
-    announce: (text) => announce(text),
+    announce: (text) => window.announce?.(text),
     move: (ids, projectId) => moveChats(ids, projectId),
     onEnd: () => { drag.selection.paint(); if (dirtyDuringDrag) { dirtyDuringDrag = false; renderList(); } },
   });
@@ -254,11 +254,11 @@
       const bar = tools.undoToast(text, 8000, async () => {
         const back = await api.restoreProjects(out.moves);
         await renderList();
-        if (back) announce(tr('chatpage.project.undone', 'Move undone'));
+        if (back) window.announce?.(tr('chatpage.project.undone', 'Move undone'));
         return back > 0;
       });
       bar.dataset.projectMove = '1';
-      announce(text);
+      window.announce?.(text);
     }
     await renderList();
     return true;
