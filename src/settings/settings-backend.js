@@ -128,6 +128,7 @@ const DEFAULTS = {
   tabSleepDim: true, // [tabs] an unloaded tab shows a dimmed icon in the strip
   tabSleepShowFreed: true, // [tabs] an unloaded tab's hover card says about how much memory it freed
   tabSleepOnReturn: 'reload', // [tabs] reload | placeholder: switching to an unloaded tab loads it at once, or shows a page with a Reload button
+  tabReadyRecent: 3, // [tabs] keep this many of the latest background tabs' renderers out of the OS background state (efficiency mode), so a switch to them draws at once; the tab under the pointer always is (0: only that; features/tab-ready.js)
   tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
@@ -263,6 +264,7 @@ function validate(key, value) {
     case 'tabSleepKeepRecent': return pick(Number(value), TS.KEEP_RECENT_CHOICES, null);
     case 'tabSleepNever': return TS.cleanHosts(value);
     case 'tabSleepFreezeFirstMinutes': return pick(Number(value), require('../features/tab-wake').FREEZE_FIRST_CHOICES, null);
+    case 'tabReadyRecent': return pick(Number(value), require('../features/tab-ready').RECENT_CHOICES, null);
     case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
@@ -731,6 +733,7 @@ function create(deps) {
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'tabReadyRecent': deps.onTabReadyChange?.(); break;
       case 'recordSwitchTimings': deps.onSwitchTimingChange?.(); break;
       case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
       case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
@@ -773,7 +776,7 @@ function create(deps) {
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
-      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES, readyRecent: require('../features/tab-ready').RECENT_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
       clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,

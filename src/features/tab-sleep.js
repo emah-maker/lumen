@@ -58,7 +58,7 @@ const DEFAULTS = {
   tabSleepSoon: [], tabSleepSoonMinutes: 5, tabSleepDim: true, tabSleepShowFreed: true, tabSleepOnReturn: 'reload',
 };
 // Every setting of the section (the master switch included), for "Reset to defaults".
-const KEYS = ['tabSleep', ...Object.keys(DEFAULTS), 'tabPreload'];
+const KEYS = ['tabSleep', ...Object.keys(DEFAULTS), 'tabPreload', 'tabReadyRecent'];
 
 const cleanMinutes = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 && n <= MAX_MINUTES ? n : null; };
 // "Unload after": a number of minutes, or 0 for Never (no idle timer; memory pressure, the cap and the site list still apply).
@@ -166,9 +166,18 @@ function memoryLow(s, memory) {
   return s.lumenGb > 0 && Number.isFinite(m.lumenBytes) && m.lumenBytes > s.lumenGb * 1024 ** 3;
 }
 
+// Is memory so low that even the latest tabs go? Half the "low" free-memory threshold, or Lumen over its own GB limit (the user's own
+// number). The operating system's pressure flag (macOS) has one level only: it is "low", not this. Below this the latest tabs (see
+// recentTabs) are spared by the memory rule, because they are the ones switched back to after a pause and a reload there is real waiting.
+function memoryCritical(s, memory) {
+  const m = memory || {};
+  if (m.totalBytes > 0 && Number.isFinite(m.freeBytes) && typeof m.pressure !== 'boolean' && m.freeBytes / m.totalBytes * 100 < s.freePercent / 2) return true;
+  return s.lumenGb > 0 && Number.isFinite(m.lumenBytes) && m.lumenBytes > s.lumenGb * 1024 ** 3;
+}
+
 // The ids of the `n` most recently used background tabs (not the active one, not asleep, and only tabs the user has
 // looked at: `viewedAt` is read when a tab has one). These are the ones the user is likely to go back to next, so the idle
-// timer does not take them; memory pressure and the awake cap still can.
+// timer does not take them, nor does ordinary low memory (memoryCritical does); the awake cap still can.
 function recentTabs(tabs, n) {
   if (!(n > 0)) return new Set();
   return new Set(tabs
@@ -189,6 +198,7 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
   const out = { sleep: [], how: s.how, low: false, capExcess: 0 };
   if (s.mode === 'off') return out;
   out.low = s.useMemory && memoryLow(s, memory);
+  const critical = out.low && memoryCritical(s, memory);
   const perfMs = Number.isFinite(limits.sleepAfterMs) ? limits.sleepAfterMs : Infinity;
   const idleMs = Math.min(s.minutes > 0 ? s.minutes * 60e3 : Infinity, perfMs); // (Never, but Performance mode on: Performance mode's time)
   const newTabMs = Math.min(idleMs, NEW_TAB_IDLE_MS);
@@ -207,7 +217,7 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
     if (t.newTab && idle >= newTabMs) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); } // (a new-tab page: soon, in every mode that sleeps tabs)
     else if (idle >= soonMs && hostListed(t.host, s.soon)) { out.sleep.push({ id: t.id, why: 'site' }); chosen.add(t.id); } // (a listed site: its own shorter timer; the recent-tabs rule does not hold it)
     else if (useIdle && idle >= idleMs && !recent.has(t.id)) { out.sleep.push({ id: t.id, why: 'idle' }); chosen.add(t.id); }
-    else if (out.low && idle >= s.memoryIdleMs) { out.sleep.push({ id: t.id, why: 'memory' }); chosen.add(t.id); }
+    else if (out.low && idle >= s.memoryIdleMs && (critical || !recent.has(t.id))) { out.sleep.push({ id: t.id, why: 'memory' }); chosen.add(t.id); } // (the latest tabs wait for memory to be very low)
   }
   // Too many background tabs awake: the ones used least recently go first, none used in the last minute.
   const cap = Math.min(s.maxAwake > 0 ? s.maxAwake : Infinity, Number.isFinite(limits.maxLiveBackgroundTabs) ? limits.maxLiveBackgroundTabs : Infinity);
@@ -311,4 +321,4 @@ function wakeBounds(contentBounds, { fullscreen = false, full = null } = {}) {
   return { x: Math.round(Number(b?.x) || 0), y: Math.round(Number(b?.y) || 0), width: width > 1 ? width : 800, height: height > 1 ? height : 600 };
 }
 
-module.exports = { migrate, PRESSURE_LEVELS, PRESSURES, ON_RETURN, SOON_MINUTE_CHOICES, MAX_AWAKE_LIMIT, KEYS, cleanAfter, cleanMaxAwake, cleanPattern, tally, MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, KEEP_RECENT_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, NEW_TAB_IDLE_MS, recentTabs, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };
+module.exports = { migrate, PRESSURE_LEVELS, PRESSURES, ON_RETURN, SOON_MINUTE_CHOICES, MAX_AWAKE_LIMIT, KEYS, cleanAfter, cleanMaxAwake, cleanPattern, tally, MODES, HOWS, MINUTE_CHOICES, FREE_PERCENT_CHOICES, LUMEN_GB_CHOICES, MAX_AWAKE_CHOICES, KEEP_RECENT_CHOICES, MAX_MINUTES, MEMORY_IDLE_MS, NEW_TAB_IDLE_MS, recentTabs, memoryCritical, DEFAULTS, normalize, cleanMinutes, cleanHost, cleanHosts, hostListed, memoryLow, decideSleep, keepReason, pageBusyScript, pageBusy, wakePlan, wakeBounds, sameAddress };

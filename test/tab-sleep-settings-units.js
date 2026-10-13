@@ -162,7 +162,11 @@ check('new tab: it counts as a page (not "internal") for keepReason', TS.keepRea
   check('recent: 5 keeps them all', ids(dflt(t, { tabSleepKeepRecent: 5 })).length === 0);
   check('recent: the active tab and sleeping tabs do not take a place', JSON.stringify(ids(dflt([tab(9, 1, { active: true }), tab(8, 2, { sleeping: true }), ...t]))) === '[1,2]');
   check('recent: a tab never looked at (woken ahead or preloaded) takes no place', JSON.stringify(ids(dflt([tab(6, 5, { viewedAt: 0 }), ...t]))) === '[1,2]' && TS.recentTabs([tab(6, 5, { viewedAt: 0 }), tab(7, 6, { viewedAt: 1 })], 3).size === 1);
-  check('recent: low memory still takes them (after 2 minutes idle)', JSON.stringify(ids(dflt(t, {}, lowMem))) === '[1,2,3,4,5]', JSON.stringify(dflt(t, {}, lowMem).sleep));
+  check('recent: ordinary low memory leaves the latest tabs alone (they are the ones switched back to after a pause)', JSON.stringify(ids(dflt(t, {}, lowMem))) === '[1,2]', JSON.stringify(dflt(t, {}, lowMem).sleep));
+  const critMem = { totalBytes: 100, freeBytes: 4 }; // under half of the 10% threshold
+  check('recent: very low memory (under half the threshold) still takes them (after 2 minutes idle)', JSON.stringify(ids(dflt(t, {}, critMem))) === '[1,2,3,4,5]', JSON.stringify(dflt(t, {}, critMem).sleep));
+  check('recent: Lumen over its own GB limit takes them', JSON.stringify(ids(dflt(t, { tabSleepLumenGb: 1 }, { totalBytes: 100, freeBytes: 90, lumenBytes: 2 * 1024 ** 3 }))) === '[1,2,3,4,5]');
+  check('recent: macOS pressure (one level only) is ordinary low memory: spared', JSON.stringify(ids(dflt(t, {}, { pressure: true }))) === '[1,2]' && TS.memoryCritical(TS.normalize({}), { pressure: true }) === false);
   check('recent: the awake cap still takes the least recent first', (() => { const r = dflt([tab(1, 70), tab(2, 60), tab(3, 50), tab(4, 40)], { tabSleepMaxAwake: 2, tabSleepMode: 'memory' }, okMem); return r.capExcess === 2 && JSON.stringify(ids(r).slice(0, 2)) === '[1,2]'; })());
   check('pinned tabs never sleep by default', ids(dflt([tab(1, 300, { pinned: true })])).length === 0 && ids(dflt([tab(1, 300, { pinned: true })], {}, lowMem)).length === 0);
   check('...unless turned off', JSON.stringify(ids(dflt([tab(1, 300, { pinned: true })], { tabSleepKeepPinned: false, tabSleepKeepRecent: 0 }))) === '[1]');

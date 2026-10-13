@@ -21,6 +21,11 @@ const SETTLE_MS = 1500; // a switch that never reports its paint or strip is clo
 
 const wallNow = () => performance.timeOrigin + performance.now();
 const round = (n) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : null);
+// os.getPriority() of a renderer on Windows: 19 is the idle class Chromium gives a hidden tab's process (background), 10 below normal, 0 normal.
+// (Efficiency mode, EcoQoS, which Chromium turns on with it, cannot be read from here: the priority class is the visible half of the same state.)
+const priorityLabel = (n) => (!Number.isFinite(n) ? null : n >= 15 ? 'idle' : n >= 5 ? 'below-normal' : n > -4 ? 'normal' : n > -10 ? 'above-normal' : 'high');
+const idleBucket = (ms) => (!Number.isFinite(ms) ? 'never' : ms < 5e3 ? 'under 5 s' : ms < 60e3 ? '5-60 s' : ms < 600e3 ? '1-10 min' : 'over 10 min');
+const quantile = (xs, p) => { const v = xs.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? round(v[Math.min(v.length - 1, Math.max(0, Math.ceil(p * v.length) - 1))]) : null; };
 const diff = (a, b) => (Number.isFinite(a) && Number.isFinite(b) ? round(b - a) : null);
 
 // deps: { now, monitor (-> { enable, disable, reset, max }), metrics (-> app.getAppMetrics()), gpuStatus (-> app.getGPUFeatureStatus()), versions }
@@ -90,6 +95,15 @@ function create(deps = {}) {
       visibilityBefore: null,
       visibilityAfter: null,
       throttledBackground: Boolean(facts.throttled),
+      kept: ['hover', 'recent'].includes(facts.ready) ? facts.ready : null, // kept ready (tab-ready.js) when the switch began: 'hover', 'recent' or not
+      idleMs: Number.isFinite(facts.idleMs) ? Math.round(facts.idleMs) : null, // since the tab was last in front (null: never was)
+      priorityBefore: Number.isFinite(facts.priority) ? facts.priority : null, // the renderer's OS priority as the switch began (see priorityLabel)
+      priorityBeforeLabel: priorityLabel(facts.priority),
+      priorityAfter: null,
+      priorityAfterLabel: null,
+      onBattery: Boolean(facts.onBattery),
+      visibleCalls: null, // setVisible calls made while the switch settled (a final switch: 2, a show and a hide)
+      layoutDeferred: Boolean(facts.rapid), // (a switch in a burst: its view swap waited for the frame and went to the latest tab)
       superseded: false,
       loopLagMaxMs: null,
       cpuPercent: null,
@@ -110,8 +124,33 @@ function create(deps = {}) {
       shown: () => { t.shown = now(); cpuNow(); }, // (the call is the CPU baseline: usage is measured since the last call)
       paint: (at, visibility) => { if (h.closed) return; t.paint = Number.isFinite(at) ? at : now(); rec.visibilityAfter = typeof visibility === 'string' ? visibility.slice(0, 12) : null; if (t.strip !== null) finish(h); },
       strip: (at) => { if (h.closed) return; t.strip = Number.isFinite(at) ? at : now(); if (t.paint !== null) finish(h); },
+      after: ({ priority, visibleCalls } = {}) => {
+        if (Number.isFinite(priority)) { rec.priorityAfter = priority; rec.priorityAfterLabel = priorityLabel(priority); }
+        if (Number.isFinite(visibleCalls) && Number.isFinite(facts.visibleCallsAtStart)) rec.visibleCalls = visibleCalls - facts.visibleCallsAtStart;
+      },
       superseded: () => { rec.superseded = true; },
       finish: () => finish(h),
+    };
+  }
+
+  // Groups of switches side by side: the question "is the slow one the tab that sat idle in efficiency mode?" answered from the numbers.
+  function summarize(list) {
+    const group = (keyOf) => {
+      const by = {};
+      for (const r of list) {
+        if (!r.ms || r.superseded) continue;
+        const k = keyOf(r);
+        (by[k] ||= []).push(r);
+      }
+      return Object.fromEntries(Object.entries(by).map(([k, rs]) => [k, { n: rs.length, inputToPaintMedian: quantile(rs.map((r) => r.ms.inputToPaint), 0.5), inputToPaintP95: quantile(rs.map((r) => r.ms.inputToPaint), 0.95), shownToPaintMedian: quantile(rs.map((r) => r.ms.shownToPaint), 0.5), shownToPaintP95: quantile(rs.map((r) => r.ms.shownToPaint), 0.95) }]));
+    };
+    return {
+      byState: group((r) => r.state),
+      byIdleBefore: group((r) => idleBucket(r.idleMs)),
+      byRendererPriorityBefore: group((r) => r.priorityBeforeLabel || 'unknown'),
+      byKeptReady: group((r) => r.kept || 'no'),
+      byTrigger: group((r) => (r.layoutDeferred ? 'burst' : r.source)),
+      maxVisibleCallsPerSwitch: Math.max(0, ...list.map((r) => r.visibleCalls || 0)),
     };
   }
 
@@ -131,7 +170,9 @@ function create(deps = {}) {
       if (open) finish(open);
       return {
         format: 'lumen-tab-switch-timings',
-        version: 1,
+        version: 2, // 2: kept, idleMs, priorityBefore/After, onBattery, visibleCalls, layoutDeferred per switch; summary; settings; flags
+        ...(deps.extra ? (() => { try { return deps.extra() || {}; } catch { return {}; } })() : {}), // (the tab settings, the switches and the OS: numbers and names only, see main.js)
+        summary: summarize(ring),
         privacy: 'Numbers and kinds only: no URL, title or site is recorded. Times are milliseconds.',
         exportedAt: new Date().toISOString(),
         app: deps.versions || null,
