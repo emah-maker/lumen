@@ -116,6 +116,19 @@
   const search = tools.searcher(api, () => drawItems());
   let lastChats = [];
   let lastCurrent = null;
+  const expanded = new Set(); // projects shown open in the rail (their chats listed under them)
+  let dirtyDuringDrag = false;
+  // Drag chats onto a project, and pick several with Ctrl/Shift+click (renderer/chat-project-drag.js).
+  const drag = window.chatProjectDrag.create({
+    items, host: $('cp-projects'),
+    chats: () => lastChats, projects: () => lastProjects,
+    inProjectView: () => Boolean(projectView),
+    isExpanded: (id) => expanded.has(id),
+    expand: (id) => { expanded.add(id); drawProjects(); },
+    announce: (text) => window.announce?.(text),
+    move: (ids, projectId) => moveChats(ids, projectId),
+    onEnd: () => { drag.selection.paint(); if (dirtyDuringDrag) { dirtyDuringDrag = false; renderList(); } },
+  });
   const live = tools.liveOrder(items, () => { if (!items.querySelector('.chat-rename-input')) renderList(); });
   function drawItems() {
     const query = search.query;
@@ -125,6 +138,7 @@
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
+    drag.selection.paint();
     play();
     if (!shown.length && (query || view === 'archived' || projectView)) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : projectView ? tr('chatpage.project.empty', 'No chats in this project yet. Start one here, or move a chat in from its ⋯ menu.') : tr('chats.noArchived', 'No archived chats') }));
   }
@@ -135,12 +149,15 @@
     pageTools.setTitle(mine?.title || '');
   }
   async function renderList() {
+    if (drag.active()) { dirtyDuringDrag = true; return; } // (the rows under the pointer stay put until the drop)
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focused = focusedRow?.dataset.id;
     const focusedAt = focused ? [...items.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats, projects } = await api.list();
     lastChats = chats;
     lastProjects = Array.isArray(projects) ? projects : [];
+    for (const id of [...expanded]) if (!lastProjects.some((p) => p.id === id)) expanded.delete(id);
+    drag.selection.prune();
     if (projectView && !lastProjects.some((p) => p.id === projectView)) projectView = null;
     lastCurrent = current;
     if (!searchBox) { searchBox = tools.search((q) => search.set(q)); items.before(searchBox); }
@@ -169,7 +186,9 @@
     const host = $('cp-projects');
     if (!lastProjects.length && !lastChats.length) { host.hidden = true; return; }
     pj.render({
-      host, projects: lastProjects, chats: lastChats, active: projectView,
+      host, projects: lastProjects, chats: lastChats, active: projectView, expanded, current: lastCurrent,
+      onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); drawProjects(); },
+      onOpen: (id) => openChat(id),
       onSelect: (id) => { projectView = id; if (id) view = 'chats'; renderList(); },
       onAdd: () => editProject(null),
       onEdit: (p) => editProject(p),
@@ -185,6 +204,7 @@
         prompt.focus();
       },
     });
+    drag.refresh();
   }
   function editProject(project, then) {
     pj.editor({ api, project, onDone: async (r) => {
@@ -194,14 +214,53 @@
       if (r.saved && then) then(r.saved);
     } });
   }
+  // The chats a row's menu acts on: the picked ones when this row is among several, else just this one.
+  const idsFor = (chat) => (drag.selection.has(chat.id) && drag.selection.size > 1 ? drag.selection.ids() : [chat.id]);
   function moveToProject(chat) {
     const b = window.chatIconButton('project', tr('chatpage.project.move', 'Move to project'));
-    b.onclick = () => pj.picker({
-      api, chat, projects: lastProjects, anchor: b.closest('.chat-item') || b,
-      onDone: () => renderList(),
-      onNew: (c) => editProject(null, async (saved) => { await api.setProject(c.id, saved.id).catch(() => false); renderList(); }),
-    });
+    b.setAttribute('aria-haspopup', 'menu');
+    b.onclick = () => {
+      const row = b.closest('.chat-item');
+      const id = chat.id;
+      pj.picker({
+        api, chat, projects: lastProjects, anchor: row || b,
+        onPick: (projectId) => moveChats(idsFor(chat), projectId),
+        onDone: () => {},
+        onNew: (c) => editProject(null, async (saved) => { await moveChats(idsFor(c), saved.id); }),
+        onClose: () => { if (!document.activeElement || document.activeElement === document.body) items.querySelector(`.chat-item[data-id="${id}"] .chat-more`)?.focus(); },
+      });
+    };
     return b;
+  }
+  // One or several chats into a project (null: out of any). The rows move at once, main keeps it and tells every list, and a toast
+  // offers Undo. Moving is not activity, so nothing is reordered. Dropping on the project a chat is already in changes nothing.
+  async function moveChats(ids, projectId) {
+    const target = projectId || null;
+    const changing = ids.filter((id) => (lastChats.find((c) => c.id === id)?.project || null) !== target);
+    if (!changing.length) return false;
+    const name = lastProjects.find((p) => p.id === target)?.name || '';
+    for (const c of lastChats) if (changing.includes(c.id)) { if (target) c.project = target; else delete c.project; }
+    drawProjects();
+    drawItems();
+    const out = await api.moveToProject(changing, target).catch(() => null);
+    if (!out) { toast(tr('chatpage.project.moveFailed', 'Could not move the chat.')); await renderList(); return false; }
+    drag.selection.clear();
+    if (out.moves.length) {
+      const n = out.moves.length;
+      const text = target
+        ? (n === 1 ? tr('chatpage.project.moved', 'Moved to {name}') : tr('chatpage.project.movedMany', 'Moved {n} chats to {name}')).replace('{name}', name).replace('{n}', n)
+        : (n === 1 ? tr('chatpage.project.removed', 'Removed from its project') : tr('chatpage.project.removedMany', 'Removed {n} chats from their projects')).replace('{n}', n);
+      const bar = tools.undoToast(text, 8000, async () => {
+        const back = await api.restoreProjects(out.moves);
+        await renderList();
+        if (back) window.announce?.(tr('chatpage.project.undone', 'Move undone'));
+        return back > 0;
+      });
+      bar.dataset.projectMove = '1';
+      window.announce?.(text);
+    }
+    await renderList();
+    return true;
   }
   $('cp-archived').onclick = () => { view = view === 'archived' ? 'chats' : 'archived'; renderList(); };
   async function openChat(id, { share = false } = {}) {
