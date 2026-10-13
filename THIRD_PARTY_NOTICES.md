@@ -24,6 +24,7 @@ full license texts are in the linked projects and, for npm packages, in each pac
 | electron-updater, builder-util-runtime (electron-builder's updater and its runtime) | MIT | https://github.com/electron-userland/electron-builder |
 | openai | Apache-2.0 | https://github.com/openai/openai-node |
 | tldts-experimental (includes data from the Public Suffix List, MPL-2.0) | MIT | https://github.com/remusao/tldts |
+| postal-mime (reads saved emails, .eml, in features/eml.js, loaded on first use) | MIT-0 | https://github.com/postalsys/postal-mime |
 | qrcode-generator (makes the QR codes in features/qr.js, loaded on first use; MIT is compatible with GPL-3.0-or-later) | MIT | https://github.com/kazuhikoarase/qrcode-generator |
 | koffi and its prebuilt @koromix/koffi-win32-x64 (the FFI that calls Windows' webauthn.dll for passkeys, features/webauthn-windows.js; Windows builds only, loaded on first use) | MIT | https://github.com/Koromix/koffi |
 | pdf.js (pdfjs-dist 6.4.299: `pdf.min.mjs`, `pdf.worker.min.mjs`, the viewer component, CMaps, standard fonts and WebAssembly decoders, copied unmodified into `src/vendor/pdfjs/` with their licenses; Lumen's PDF viewer) | Apache-2.0 | https://github.com/mozilla/pdf.js |

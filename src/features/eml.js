@@ -15,6 +15,9 @@ const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'ima
 const OPEN_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|avif)|text\/plain|message\/rfc822)$/i;
 const OPEN_EXTS = /\.(pdf|png|jpe?g|gif|webp|bmp|avif|txt|eml)$/i;
 
+// A name for a part that has none (an inline picture, a forwarded message).
+const EXT_OF_TYPE = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp', 'image/avif': '.avif', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/html': '.html', 'message/rfc822': '.eml' };
+
 class EmlError extends Error {}
 
 const isEmlName = (name) => /\.eml$/i.test(String(name || '').split(/[?#]/)[0]);
@@ -65,8 +68,7 @@ async function parse(buffer) {
     parts.push(bytes);
     const type = clean(a.mimeType).toLowerCase() || 'application/octet-stream';
     const cid = clean(a.contentId).replace(/^<|>$/g, '');
-    const ext = type === 'message/rfc822' ? '.eml' : '';
-    const name = safeName(a.filename, `attachment-${index + 1}${ext}`);
+    const name = safeName(a.filename, `${type.startsWith('image/') ? 'image' : type === 'message/rfc822' ? 'message' : 'attachment'}-${index + 1}${EXT_OF_TYPE[type] || ''}`);
     if (cid && INLINE_IMAGE_TYPES.has(type) && bytes.length <= MAX_INLINE_IMAGE && inlineTotal + bytes.length <= MAX_INLINE_TOTAL) {
       inlineTotal += bytes.length;
       images[cid] = `data:${type};base64,${Buffer.from(bytes).toString('base64')}`;
