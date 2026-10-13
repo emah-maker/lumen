@@ -86,6 +86,8 @@ const open = (exe) => `"${exe}" "%1"`;
   const cp = require('child_process');
   const writesSeen = [];
   const realExecFile = cp.execFile;
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' }); // (CI runs on Linux)
   cp.execFile = (file, args, opts, cb) => { writesSeen.push(args); cb(null, ''); };
   try {
     delete require.cache[require.resolve('../src/features/setup')]; // (its execFile is bound at load)
@@ -93,7 +95,7 @@ const open = (exe) => `"${exe}" "%1"`;
     const setup = create({ app: {}, shell: { openExternal: async () => {} }, readSettings: () => ({}), writeSettings: () => {}, importer: {}, importBrowser: () => {}, freshInstall: () => false });
     const result = await setup.makeDefault();
     assert.strictEqual(result.ok, true);
-  } finally { cp.execFile = realExecFile; }
+  } finally { cp.execFile = realExecFile; Object.defineProperty(process, 'platform', realPlatform); }
   const icons = writesSeen.filter((a) => a[0] === 'add' && /DefaultIcon$/.test(a[1]) || (a[0] === 'add' && a.includes('ApplicationIcon')));
   assert.strictEqual(icons.length, 3, 'LumenHTML DefaultIcon, the client DefaultIcon, and Capabilities ApplicationIcon');
   for (const a of icons) {
