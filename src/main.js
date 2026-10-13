@@ -837,6 +837,27 @@ app.on('login', (event, webContents, details, authInfo, callback) => {
   });
 });
 
+// ---------- page-first keys: Ctrl+S, Ctrl+P, Ctrl+F... reach the page before Lumen's own action (features/page-first-keys.js) ----------
+// The preload (preload/page-first-keys-preload.js) says it runs in a frame, then reports each Ctrl / Cmd chord once the page has had it.
+// Frames are named by process and routing id (a WebFrameMain object is not a stable key).
+const pageFirstReady = new Set();
+const frameKey = (f) => `${f.processId}:${f.routingId}`;
+// A frame is covered when the preload ran in it, or in the main frame above it and every frame between is the same origin (the preload
+// hooks those; a cross-origin frame is out of its reach, so a key typed there stays Lumen's at once, as before).
+function pageFirstCovered(frame) {
+  for (let f = frame; f; f = f.parent) {
+    if (pageFirstReady.has(frameKey(f))) return true;
+    const up = f.parent;
+    if (!up || (f.origin !== up.origin && !/^(about:|data:)/.test(f.url))) return false;
+  }
+  return false;
+}
+const pageFirstKeys = lazy(() => require('./features/page-first-keys').create({ isReady: pageFirstCovered }));
+ipcMain.on('page-first-keys:ready', (event) => { if (event.senderFrame) { if (pageFirstReady.size > 4000) pageFirstReady.clear(); pageFirstReady.add(frameKey(event.senderFrame)); } });
+ipcMain.on('page-first-keys:done', (event, report) => pageFirstKeys.done(event.sender, report));
+const PAGE_FIRST_PRELOAD = path.join(__dirname, 'preload', 'page-first-keys-preload.js');
+if (TEST) global.__pageFirst = { ready: () => [...pageFirstReady], keys: pageFirstKeys, frameKey };
+
 // ---------- page dialogs: window.alert/confirm/prompt (page-dialogs-preload.js) ----------
 
 // Per-page-load state: how many dialogs it has shown, and whether the user muted further ones
@@ -919,6 +940,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
@@ -1186,6 +1208,7 @@ const privateWindows = createPrivateWindows({
   t, strings: () => i18n().strings, locale: () => i18n().locale,
   print: (wc, host) => printTab(wc, host), // Print… in a private window: the same preview, over that window
   testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
+  pageFirstKeys, // page-first keys in a private tab (features/page-first-keys.js)
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
   // The protections a normal tab has: Safe Browsing (until the ad blocker takes over onBeforeRequest, which
   // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
@@ -1196,6 +1219,7 @@ const privateWindows = createPrivateWindows({
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') });
+    ses.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD }); // (private-window.js holds the keys)
     ses.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD }); // [hide activity]
     ses.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys (private: Windows is told so; Lumen keeps nothing), or hidden (features/passkeys.js)
     settingsBackend.mirrorSession(ses);
@@ -2425,6 +2449,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
     // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
     if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
+    // Page-first keys (Ctrl+S, Ctrl+P, Ctrl+F...; features/page-first-keys.js) go to the page, and Lumen's action runs only if the page did not handle them.
+    if (input.type === 'keyDown' && pageFirstKeys.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab()?.webContents === wc) handleShortcut({ preventDefault() {} }, input); })) return;
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now() && handsOff.mayFocus(tab.rec)) ui()?.focus(); }); // see layout()

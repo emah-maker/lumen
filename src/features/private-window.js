@@ -273,7 +273,11 @@ function createPrivateWindows(deps) {
       update();
     });
     wc.on('page-favicon-updated', (_e, favicons) => loadFavicon(rec, tab, favicons.filter((u) => typeof u === 'string' && u)));
-    wc.on('before-input-event', (event, input) => handleShortcut(rec, event, input));
+    wc.on('before-input-event', (event, input) => {
+      // Ctrl+S, Ctrl+P, Ctrl+F... go to the page first; the private window's own action runs only if it did not handle them (features/page-first-keys.js)
+      if (input.type === 'keyDown' && deps.pageFirstKeys?.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab(rec)?.view.webContents === wc) handleShortcut(rec, { preventDefault() {} }, input); })) return;
+      handleShortcut(rec, event, input);
+    });
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
     deps.chromeIdentity?.(wc);
