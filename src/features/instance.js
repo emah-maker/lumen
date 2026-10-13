@@ -56,7 +56,7 @@ async function fixAssociationIcons(exe, icon, run) {
   const classes = 'HKCU\\Software\\Classes\\';
   for (const id of ASSOCIATION_PROG_IDS) {
     const command = regDefault(await run(['query', `${classes}${id}\\shell\\open\\command`, '/ve']));
-    if (!command || !command.toLowerCase().includes(path.resolve(exe).toLowerCase())) continue;
+    if (!command || !command.toLowerCase().includes(path.win32.resolve(exe).toLowerCase())) continue;
     const key = `${classes}${id}\\DefaultIcon`;
     if (regDefault(await run(['query', key, '/ve'])) === icon) continue;
     if ((await run(['add', key, '/ve', '/t', 'REG_SZ', '/d', icon, '/f'])) !== null) changed.push(id);
