@@ -1,0 +1,35 @@
+From: Alice Example <alice@example.com>
+To: Bob <bob@example.com>, carol@example.com
+Cc: Dave <dave@example.com>
+Date: Tue, 06 Oct 2026 09:30:00 +0000
+Message-ID: <m1@example.com>
+MIME-Version: 1.0
+Subject: Files attached
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: text/plain; charset=utf-8
+
+See the attached files.
+--MIX
+Content-Type: application/pdf; name="tiny.pdf"
+Content-Disposition: attachment; filename="tiny.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBv
+Ymo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlw
+ZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgMjAwIDIwMF0+PmVuZG9iagp0cmFpbGVy
+PDwvUm9vdCAxIDAgUj4+CiUlRU9GCg==
+--MIX
+Content-Type: image/png; name="red.png"
+Content-Disposition: attachment; filename="red.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEUlEQVR4nGP4z8DwnwGMgRQAH+4D
+/dJQfRoAAAAASUVORK5CYII=
+--MIX
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+
+attachment notes line
+--MIX--
