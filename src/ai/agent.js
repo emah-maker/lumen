@@ -371,7 +371,7 @@ const TOOLS = [
   },
   {
     name: 'list_files',
-    description: 'List a local folder, newest first (folder: desktop (default), downloads (Lumen list first), documents or a path; match: "*.png"). read: a downloaded file or .eml text. For upload_file.',
+    description: 'List a local folder, newest first (folder: desktop (default), downloads (Lumen list first), documents or a path; match: "*.png"). read: a download or .eml text. For upload_file.',
     input_schema: {
       type: 'object',
       properties: { folder: { type: 'string' }, match: { type: 'string' }, limit: { type: 'integer' }, read: { type: 'string' } },
