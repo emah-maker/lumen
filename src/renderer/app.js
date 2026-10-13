@@ -3012,6 +3012,7 @@ function mcpPillRefresh() {
     if (!text) return;
     if (mcpPillText === null) mcpPillText = text.textContent;
     text.textContent = driving ? (document.body.classList.contains('agent-window') && mcpStepNow ? mcpStepNow : t('mcp.driving', { client: mcpWho })) : mcpPillText;
+    $('agent-pill').title = text.textContent; // (the tooltip carries the full words when a compact toolbar shows only a short label)
   };
   clearTimeout(mcpPillTimer);
   if (driving) showPill();
@@ -3093,6 +3094,41 @@ window.assistant.onMcpEvent?.((event) => {
       break;
   }
 });
+
+// The toolbar's pills (an update, "<AI> is using this tab") never crowd the address field: the end column goes compact in steps,
+// data-compact 1 (a dot and a short label) then 2 (icons only; extras.css), as far as it takes to fit. It tries each step from the
+// full pills down and keeps the first that leaves every item whole inside the column, clear of the address and inside the window,
+// whatever mix of pills, extension icons and window width there is. (Offsets, not rects: the pills slide in with a transform.)
+(() => {
+  const end = document.querySelector('.toolbar-end');
+  const omni = document.querySelector('.omnibox');
+  if (!end || !omni) return;
+  const fits = () => {
+    const kids = [...end.children].filter((c) => c.getClientRects().length);
+    if (!kids.length) return true;
+    const box = end.getBoundingClientRect();
+    const last = kids[kids.length - 1];
+    return box.left >= omni.getBoundingClientRect().right - 0.5 && box.right <= innerWidth + 0.5
+      && kids[0].offsetLeft >= end.offsetLeft - 0.5 && last.offsetLeft + last.offsetWidth <= end.offsetLeft + end.offsetWidth + 0.5;
+  };
+  let fitting = false;
+  const fitToolbarPills = () => {
+    if (fitting) return;
+    fitting = true;
+    try {
+      let level = 0;
+      end.dataset.compact = '0';
+      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+    } finally { fitting = false; }
+  };
+  const ro = new ResizeObserver(fitToolbarPills);
+  ro.observe(end);
+  ro.observe(document.querySelector('.toolbar'));
+  const mo = new MutationObserver(fitToolbarPills); // (a pill shown or hidden, its words changed, a button toggled)
+  mo.observe(end, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style'] });
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  fitToolbarPills();
+})();
 
 // Stop on the pill ends external sessions when the sidebar agent isn't running.
 $('agent-stop')?.addEventListener('click', () => {

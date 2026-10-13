@@ -2898,7 +2898,7 @@ else globalThis.screenIntent = api; // (the renderer: globalThis is the window)
 (function (root) {
   function pillState({ running, target, mcpActive } = {}) {
     const away = Boolean(running && target && !target.front);
-    return { away, textKey: away ? 'agent.usingOther' : 'agent.usingTab', visible: Boolean(mcpActive || (running && !away)) };
+    return { away, textKey: away ? 'agent.usingOther' : 'agent.usingTab', shortKey: away ? 'agent.usingOtherShort' : 'agent.usingShort', visible: Boolean(mcpActive || (running && !away)) };
   }
   const api = { pillState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -3190,7 +3190,19 @@ function setAssistantIdentity(group) {
   const emptyName = who === ASSISTANTS.AI || who === ASSISTANTS.Auto ? 'Lumen' : who.name;
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
+  if (pill && !document.body.classList.contains('mcp-active')) setPillText('agent.usingTab', 'agent.usingShort', who.name);
+}
+
+// The toolbar's "<AI> is using this tab" pill: the full words (also the pill's tooltip and, clipped in a narrow window, its
+// accessible name) and the short label a compact toolbar shows instead (app.js fitToolbarPills).
+function setPillText(key, shortKey, name) {
+  const pill = $('agent-pill-text');
+  if (!pill) return;
+  pill.textContent = t(key, { name });
+  const short = $('agent-pill-short');
+  if (short) short.textContent = t(shortKey, { name });
+  const box = $('agent-pill');
+  if (box) box.title = pill.textContent;
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
@@ -3428,8 +3440,7 @@ function renderWorkingIn() {
   el.hidden = !show;
   const state = window.agentPill.pillState({ running, target: agentTarget });
   document.body.classList.toggle('agent-away', state.away); // (the toolbar pill and the page's frame are only for the tab the AI is in; styles.css)
-  const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t(state.textKey, { name: assistantIdentity?.name || 'AI' });
+  if (!document.body.classList.contains('mcp-active')) setPillText(state.textKey, state.shortKey, assistantIdentity?.name || 'AI');
   if (!show) return;
   const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
   el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));
@@ -9896,6 +9907,7 @@ function mcpPillRefresh() {
     if (!text) return;
     if (mcpPillText === null) mcpPillText = text.textContent;
     text.textContent = driving ? (document.body.classList.contains('agent-window') && mcpStepNow ? mcpStepNow : t('mcp.driving', { client: mcpWho })) : mcpPillText;
+    $('agent-pill').title = text.textContent; // (the tooltip carries the full words when a compact toolbar shows only a short label)
   };
   clearTimeout(mcpPillTimer);
   if (driving) showPill();
@@ -9977,6 +9989,41 @@ window.assistant.onMcpEvent?.((event) => {
       break;
   }
 });
+
+// The toolbar's pills (an update, "<AI> is using this tab") never crowd the address field: the end column goes compact in steps,
+// data-compact 1 (a dot and a short label) then 2 (icons only; extras.css), as far as it takes to fit. It tries each step from the
+// full pills down and keeps the first that leaves every item whole inside the column, clear of the address and inside the window,
+// whatever mix of pills, extension icons and window width there is. (Offsets, not rects: the pills slide in with a transform.)
+(() => {
+  const end = document.querySelector('.toolbar-end');
+  const omni = document.querySelector('.omnibox');
+  if (!end || !omni) return;
+  const fits = () => {
+    const kids = [...end.children].filter((c) => c.getClientRects().length);
+    if (!kids.length) return true;
+    const box = end.getBoundingClientRect();
+    const last = kids[kids.length - 1];
+    return box.left >= omni.getBoundingClientRect().right - 0.5 && box.right <= innerWidth + 0.5
+      && kids[0].offsetLeft >= end.offsetLeft - 0.5 && last.offsetLeft + last.offsetWidth <= end.offsetLeft + end.offsetWidth + 0.5;
+  };
+  let fitting = false;
+  const fitToolbarPills = () => {
+    if (fitting) return;
+    fitting = true;
+    try {
+      let level = 0;
+      end.dataset.compact = '0';
+      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+    } finally { fitting = false; }
+  };
+  const ro = new ResizeObserver(fitToolbarPills);
+  ro.observe(end);
+  ro.observe(document.querySelector('.toolbar'));
+  const mo = new MutationObserver(fitToolbarPills); // (a pill shown or hidden, its words changed, a button toggled)
+  mo.observe(end, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style'] });
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  fitToolbarPills();
+})();
 
 // Stop on the pill ends external sessions when the sidebar agent isn't running.
 $('agent-stop')?.addEventListener('click', () => {
@@ -12929,10 +12976,25 @@ const tabSearch = (() => {
   const pill = Object.assign(document.createElement('div'), { id: 'update-pill', className: 'update-pill', hidden: true });
   pill.setAttribute('role', 'status');
   const text = Object.assign(document.createElement('span'), { className: 'update-text' });
+  // A compact toolbar (app.js fitToolbarPills) shows a dot and the button's words, then only the button's icon; the long words stay
+  // in the DOM, clipped, as the pill's name, and in its title.
+  const dot = Object.assign(document.createElement('span'), { className: 'update-dot' });
+  dot.setAttribute('aria-hidden', 'true');
   const action = Object.assign(document.createElement('button'), { type: 'button', id: 'update-action' });
+  const SVG = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(SVG, 'svg');
+  icon.setAttribute('viewBox', '0 0 16 16');
+  icon.setAttribute('class', 'btn-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  const iconPath = document.createElementNS(SVG, 'path');
+  icon.append(iconPath);
+  const label = Object.assign(document.createElement('span'), { className: 'btn-label' });
+  action.append(icon, label);
+  const ICON_DOWNLOAD = 'M8 3v7M5 7.5 8 10.5l3-3M4.5 13h7';
+  const ICON_RETRY = 'M13 8a5 5 0 1 1-1.5-3.5M13 3v2.5h-2.5';
   const close = Object.assign(document.createElement('button'), { type: 'button', id: 'update-dismiss', className: 'update-dismiss', title: window.t('updates.notNow'), textContent: '×' });
   close.setAttribute('aria-label', window.t('updates.hide'));
-  pill.append(text, action, close);
+  pill.append(dot, text, action, close);
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   let applying = false; // a click's apply() is still running: a double click must not start a second
@@ -12958,7 +13020,8 @@ const tabSearch = (() => {
     if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued; // queued: nothing left to click
     action.disabled = applying || Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
-    action.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    iconPath.setAttribute('d', ready || busy || failed || moveFailed ? ICON_RETRY : ICON_DOWNLOAD);
+    label.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => {

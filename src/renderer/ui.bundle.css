@@ -561,13 +561,11 @@ body.agent-active.agent-away:not(.mcp-active) .agent-pill { display: none; }
 #agent-stop { height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text); font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
 #agent-stop:hover { background: var(--hover); }
 
-/* Narrow window: "Lumen is using this tab" is ~150px the address field can't spare, so the pill
-   keeps its live dot and Stop, and the words stay for screen readers (clipped, not display:none). */
-@media (max-width: 1000px) {
-  .agent-pill { gap: 6px; padding-left: 8px; }
-  #agent-pill-text, #update-pill .update-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  #update-pill { padding-left: 2px; } /* (just the button and the x; the words are the pill's title) */
-}
+/* Narrow window: the pills (this one and the update pill) go compact in steps, in extras.css (.toolbar-end[data-compact]),
+   as far as the toolbar needs; app.js fitToolbarPills picks the step from what actually fits, so no mix of pills overlaps the address. */
+.btn-icon, .pill-short, .update-dot { display: none; }
+.btn-icon { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.btn-icon .solid { fill: currentColor; stroke: none; }
 
 /* Extension icons can't push the ⋯ and AI buttons out of the window: the toolbar's end column is
    max-content, so enough icons at the 800px minimum ran it past the right edge (body clips it). The
@@ -1645,6 +1643,22 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 }
 .update-dismiss:hover { background: var(--hover); color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in var(--t-fast) ease-out; } }
+/* Compact pills. app.js (fitToolbarPills) sets data-compact on .toolbar-end from what fits: 1 = icon and short label, 2 = icon
+   only. The full words stay in the DOM, clipped (never display:none), so they are still the accessible name; the tooltip has them too. */
+.update-pill { position: relative; }
+.update-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) :is(#agent-pill-text, #update-pill .update-text) { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .agent-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) #update-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .pill-short { display: inline; }
+.toolbar-end[data-compact="1"] .update-dot { display: block; }
+.toolbar-end[data-compact="2"] :is(.pill-short, .update-dot) { display: none; }
+.toolbar-end[data-compact="2"] .btn-icon { display: block; }
+.toolbar-end[data-compact="2"] :is(#agent-stop, #update-action) { display: grid; place-items: center; width: var(--hit-min); height: var(--hit-min); padding: 0; }
+.toolbar-end[data-compact="2"] .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end[data-compact="2"] .agent-pill { padding-left: 8px; padding-right: 2px; }
+.toolbar-end[data-compact="2"] #update-pill { padding-left: 2px; }
+.toolbar-end[data-compact="2"] #update-action[hidden] { display: none; }
 
 /* [ai controls] AI turned off on this tab's site (the chip), and "Undo tab changes" under a reply. */
 .page-context.ai-off { color: var(--text, inherit); background: var(--accent-soft, rgba(10, 132, 255, 0.12)); }

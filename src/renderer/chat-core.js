@@ -282,7 +282,19 @@ function setAssistantIdentity(group) {
   const emptyName = who === ASSISTANTS.AI || who === ASSISTANTS.Auto ? 'Lumen' : who.name;
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(emptyName) : t('sidebar.empty', { name: emptyName });
   const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
+  if (pill && !document.body.classList.contains('mcp-active')) setPillText('agent.usingTab', 'agent.usingShort', who.name);
+}
+
+// The toolbar's "<AI> is using this tab" pill: the full words (also the pill's tooltip and, clipped in a narrow window, its
+// accessible name) and the short label a compact toolbar shows instead (app.js fitToolbarPills).
+function setPillText(key, shortKey, name) {
+  const pill = $('agent-pill-text');
+  if (!pill) return;
+  pill.textContent = t(key, { name });
+  const short = $('agent-pill-short');
+  if (short) short.textContent = t(shortKey, { name });
+  const box = $('agent-pill');
+  if (box) box.title = pill.textContent;
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
@@ -520,8 +532,7 @@ function renderWorkingIn() {
   el.hidden = !show;
   const state = window.agentPill.pillState({ running, target: agentTarget });
   document.body.classList.toggle('agent-away', state.away); // (the toolbar pill and the page's frame are only for the tab the AI is in; styles.css)
-  const pill = $('agent-pill-text');
-  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t(state.textKey, { name: assistantIdentity?.name || 'AI' });
+  if (!document.body.classList.contains('mcp-active')) setPillText(state.textKey, state.shortKey, assistantIdentity?.name || 'AI');
   if (!show) return;
   const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
   el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));
