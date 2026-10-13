@@ -93,6 +93,9 @@ const path = require('path');
     global.__release = null;
     global.__agent.reset();
     global.__agent.messages.settings = { model: 'claude-opus-5', adhdMode: true };
+    // The sidebar's chat is on Auto (a profile that never chose a model): left to route, it picks the OpenAI model this profile has a key
+    // for and never reaches the fake Claude below, so Auto's choice is pinned to the fake.
+    global.__agent.routeAuto = (messages) => { if (messages.settings?.model === 'auto') messages.settings.model = 'claude-opus-5'; };
     global.__agent.getClient = () => ({ beta: { messages: { stream: () => {
       turn++;
       const message = turn === 1
@@ -137,6 +140,9 @@ const path = require('path');
   await waitFor(() => app.evaluate(() => global.__tabChats.runs().every((r) => !r.live)));
   await clickTab(idW1);
   await sleep(600);
+  // (a chat that finished while its tab's sidebar was closed is drawn when the sidebar opens: renderer/chat-core.js flushLazyHistory)
+  await app.evaluate((_e, id) => global.__tabChats.setSidebar(id, true), idW1);
+  await waitFor(() => ui.evaluate(() => document.querySelectorAll('.step').length > 0));
   const after = await ui.evaluate(() => ({ hidden: document.getElementById('working-in').hidden, away: document.body.classList.contains('agent-away'), steps: document.querySelectorAll('.step').length, done: document.querySelectorAll('.step.done').length }));
   check('when the run ends the line and the away state go', after.hidden && !after.away, JSON.stringify(after));
   check('the step list survived the tab switches', after.steps >= 1 && after.done === after.steps, JSON.stringify(after));

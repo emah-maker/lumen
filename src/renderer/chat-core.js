@@ -531,7 +531,9 @@ function renderWorkingIn() {
 window.assistant.onAgentTarget?.((info) => { agentTarget = info || null; renderWorkingIn(); });
 optional('working-in').onclick = () => window.assistant.showAgentTarget?.();
 
+let runStateSeq = 0; // counts every change of what this view shows as running (setRunning) or as the chat (applySync): reconcile() drops an answer older than that
 function setRunning(value) {
+  if (running !== value) runStateSeq++;
   running = value;
   if (!value) agentTarget = null;
   renderWorkingIn();
@@ -2505,6 +2507,7 @@ function flushLazyHistory() {
   showHistory(items);
 }
 function applySync(view) {
+  runStateSeq++;
   clearChatView();
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
@@ -2524,9 +2527,13 @@ window.assistant.onSync?.(({ view } = {}) => applySync(view));
 // changed the view.
 async function reconcile() {
   let answer = null;
+  const seq = runStateSeq;
   try { answer = await window.assistant.resync?.(); } catch {}
   const view = answer?.view;
   if (!view || !view.id) return true;
+  // The view moved on (a run began or ended, another chat was drawn) while main was answering: that answer describes a moment that is gone.
+  // Taking it redrew the chat from a snapshot taken mid-run, wiping the reply that had just finished (Send now: the follow-up and its answer).
+  if (seq !== runStateSeq) return true;
   return takeView(view);
 }
 function takeView(view) {

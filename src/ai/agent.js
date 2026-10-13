@@ -1825,8 +1825,13 @@ class Agent {
     return false;
   }
 
+  // Leaves the open chat for an empty one and stops ITS reply. Only the open chat's own run is stopped: stop() also stops the only
+  // live run when the open conversation was swapped under it, which here is another chat's run (a tab or a new chat is opened while a
+  // different chat works: that chat has to keep going).
   reset() {
-    this.stop();
+    const own = this.runs.get(this.messages);
+    if (own) own.controller.abort();
+    else if (this.controller && this.runs.size === 0) this.controller.abort();
     this.detach();
   }
 
