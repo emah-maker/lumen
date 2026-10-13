@@ -36,7 +36,7 @@ function fake(url = 'http://example.test/', ready = true) {
 const press = (key, extra = {}) => ({ type: 'keyDown', key, control: true, shift: false, alt: false, meta: false, ...extra });
 const report = (key, prevented, extra = {}) => ({ key, ctrl: true, meta: false, shift: false, alt: false, prevented, ...extra });
 {
-  const keys = create({ isReady: (f) => f.ready });
+  const keys = create({ isReady: (f) => f.ready, platform: 'win32' }); // (Ctrl presses: pin the platform, or on macOS they are not the shortcut)
   const wc = fake(); let ran = 0;
   check('hold: a page-first key on a web page is left to the page', keys.hold(wc, press('s'), () => { ran++; }) === true);
   check('hold: nothing runs before the page has answered', ran === 0 && keys.pending(wc) === 1);
@@ -60,7 +60,7 @@ const report = (key, prevented, extra = {}) => ({ key, ctrl: true, meta: false, 
 }
 {
   let t = 1000;
-  const keys = create({ isReady: () => true, now: () => t });
+  const keys = create({ isReady: () => true, now: () => t, platform: 'win32' });
   const wc = fake(); let ran = 0;
   keys.hold(wc, press('s'), () => { ran++; });
   t += 5000;
