@@ -125,7 +125,7 @@ const widgets = [
       const wc = global.__home.webContents;
       global.__navs = 0;
       global.__navUrls = [];
-      wc.on('did-start-navigation', (e) => { global.__navs++; global.__navUrls.push(String(e.url).slice(0, 80)); });
+      wc.on('did-start-navigation', (e) => { if (e.isSameDocument) return; global.__navs++; global.__navUrls.push(String(e.url).slice(0, 80)); });
       wc.on('did-frame-navigate', () => { global.__navs++; });
     });
     await home(`(() => { window.__resizes = []; addEventListener('resize', () => window.__resizes.push(innerWidth)); document.querySelectorAll('.w-card, .w-card iframe').forEach((e) => { e.__keep = true; }); document.body.__keep = true; return true; })()`);
@@ -214,6 +214,73 @@ const widgets = [
     check('Ctrl+J with the keyboard in the UI opens it with the message box focused', await settled(true) && await waitFor(() => ui.evaluate(() => document.activeElement?.id === 'prompt')), await ui.evaluate(() => document.activeElement?.id));
     await ctrlJ('ui');
     await settled(false);
+
+    // ---- no black: while the sidebar opens, and while its edge is dragged, no frame has a large near-black area; the not-yet-painted area is
+    // the page's own colour in both themes (window, content view and views are painted with it), and the drag sends at most one size per frame.
+    const near = (cut) => app.evaluate(async ({ BrowserWindow }, c) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      const tab = global.__agent.browser.activeTab().webContents;
+      const frac = (img) => { const b = img.toBitmap(); let k = 0; for (let i = 0; i < b.length; i += 4) if ((0.2126 * b[i + 2] + 0.7152 * b[i + 1] + 0.0722 * b[i]) / 255 < c) k++; return k / (b.length / 4); };
+      const [a, t] = await Promise.all([w.webContents.capturePage(), tab.capturePage()]);
+      return Math.max(frac(a), frac(t));
+    }, cut);
+    const blackWatch = (cut) => app.evaluate(({ BrowserWindow }, c) => {
+      global.__black = { worst: 0, frames: 0, stop: false };
+      const w = BrowserWindow.getAllWindows()[0];
+      const tab = global.__agent.browser.activeTab().webContents;
+      const frac = (img) => { const b = img.toBitmap(); let k = 0; for (let i = 0; i < b.length; i += 4) if ((0.2126 * b[i + 2] + 0.7152 * b[i + 1] + 0.0722 * b[i]) / 255 < c) k++; return k / (b.length / 4); };
+      (async () => { while (!global.__black.stop) { const [a, t] = await Promise.all([w.webContents.capturePage(), tab.capturePage().catch(() => null)]); global.__black.worst = Math.max(global.__black.worst, frac(a), t ? frac(t) : 0); global.__black.frames++; } })();
+    }, cut);
+    const blackStop = () => app.evaluate(() => { global.__black.stop = true; return global.__black; });
+    const dragEdge = async (moves = 20) => {
+      await app.evaluate(({ BrowserWindow }) => {
+        const v = BrowserWindow.getAllWindows()[0].contentView.children.find((c) => c.webContents === global.__agent.browser.activeTab().webContents);
+        global.__sb = 0;
+        if (!v.__wrapped) { const o = v.setBounds.bind(v); v.setBounds = (b) => { global.__sb++; return o(b); }; v.__wrapped = true; }
+      });
+      await ui.evaluate(() => { window.__raf = 0; window.__rafStop = false; const t = () => { window.__raf++; if (!window.__rafStop) requestAnimationFrame(t); }; requestAnimationFrame(t); });
+      const widthBefore = await ui.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
+      await app.evaluate(async ({ BrowserWindow }, n) => {
+        global.__sb = 0;
+        const wc = BrowserWindow.getAllWindows()[0].webContents;
+        const [x, y] = await wc.executeJavaScript(`(() => { const r = document.getElementById('sidebar-resize').getBoundingClientRect(); return [Math.round(r.left + 2), Math.round(r.top + 200)]; })()`);
+        const ev = (type, px) => wc.sendInputEvent({ type, x: px, y, button: 'left', clickCount: 1, modifiers: type === 'mouseUp' ? [] : ['leftButtonDown'] });
+        ev('mouseDown', x);
+        for (let i = 1; i <= n; i++) { ev('mouseMove', x - i * 6); await new Promise((r) => setTimeout(r, 16)); }
+        ev('mouseUp', x - n * 6);
+        await new Promise((r) => setTimeout(r, 120));
+      }, moves);
+      const out = await app.evaluate(() => global.__sb);
+      const frames = await ui.evaluate(() => { window.__rafStop = true; return window.__raf; });
+      const widthAfter = await ui.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
+      return { setBounds: out, frames, widthBefore, widthAfter };
+    };
+    for (const theme of ['light', 'dark']) {
+      await app.evaluate(({ nativeTheme }, t) => { nativeTheme.themeSource = t; }, theme);
+      await sleep(600);
+      const want = theme === 'dark' ? '#1c1c1e' : '#f5f5f7';
+      check(`[${theme}] the window is painted with the UI's colour (not black) until a view draws`, (await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor())).toLowerCase() === want, await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor()));
+      const cut = theme === 'dark' ? 0.02 : 0.08; // dark theme: the page is #1c1c1e (luminance 0.11), so only real black counts
+      await blackWatch(cut);
+      await toggle();
+      await sleep(900);
+      let black = await blackStop();
+      check(`[${theme}] opening the sidebar on the new-tab page: no frame has over 2% near-black (worst ${(black.worst * 100).toFixed(2)}% in ${black.frames} frames)`, black.worst < 0.02 && black.frames >= 5, JSON.stringify(black));
+      check(`[${theme}] the page itself is not near-black either (light page stays light, dark page is the theme colour)`, theme === 'dark' ? (await near(0.02)) < 0.02 : (await near(0.08)) < 0.02, await near(0.08));
+      await blackWatch(cut);
+      const drag = await dragEdge(20);
+      black = await blackStop();
+      check(`[${theme}] dragging the sidebar's edge moves it`, drag.widthAfter > drag.widthBefore + 20, JSON.stringify(drag));
+      check(`[${theme}] dragging: no frame has over 2% near-black (worst ${(black.worst * 100).toFixed(2)}%)`, black.worst < 0.02 && black.frames >= 5, JSON.stringify(black));
+      check(`[${theme}] dragging sends at most one size per frame (${drag.setBounds} sizes in ${drag.frames} frames)`, drag.setBounds <= drag.frames, JSON.stringify(drag));
+      check(`[${theme}] after the drag the page view and the sidebar tile the content area exactly`, !(m = await tilesSoon(true)), m);
+      check(`[${theme}] after the drag the page was never given a snapshot to stand in (none left over)`, await ui.evaluate(() => !document.querySelector('.page-snapshot') && !document.body.classList.contains('resizing')), '');
+      await toggle();
+      await settled(false);
+      await app.evaluate(({ BrowserWindow }) => { const v = BrowserWindow.getAllWindows()[0].contentView.children.find((c) => c.webContents === global.__agent.browser.activeTab().webContents); if (v) v.__wrapped = true; });
+    }
+    await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; });
+    await ui.evaluate(() => localStorage.removeItem('sidebarWidth'));
 
     // ---- the spare new-tab page (a page made ready before it is asked for) taken at the moment the sidebar opens
     let g;

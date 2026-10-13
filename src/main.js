@@ -68,6 +68,17 @@ const importer = lazy(() => require('./browser/importer'));
 const switchTiming = lazy(() => require('./features/switch-timing').create({
   metrics: () => app.getAppMetrics(), gpuStatus: () => app.getGPUFeatureStatus(),
   versions: { lumen: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, platform: process.platform, arch: process.arch },
+  extra: () => { // what could explain a slow switch besides the switch itself: the settings that decide whether a tab is loaded and kept ready, the OS, the launch switches (no site, no address)
+    const st = readSettings();
+    const s = tabSleep.normalize(st);
+    const os = require('os');
+    return {
+      settings: { tabSleep: st.tabSleep !== false, unloadAfterMinutes: s.minutes, how: s.how, freezeFirstMinutes: s.freezeFirst, keepRecent: s.keepRecent, pressure: st.tabSleepPressure ?? null, onReturn: s.onReturn, tabReadyRecent: tabReady.cleanRecent(st.tabReadyRecent), tabPreload: st.tabPreload ?? null, performanceMode: perfMode.mode() },
+      os: { release: os.release(), cpus: os.cpus().length, totalMemoryMB: Math.round(os.totalmem() / 1048576), freeMemoryMB: Math.round(os.freemem() / 1048576), onBattery: onBatteryNow() },
+      launchSwitches: process.argv.slice(1).filter((a) => a.startsWith('--')).map((a) => a.split('=')[0]),
+      keptReadyNow: readyState().map((r) => r.why),
+    };
+  },
 }));
 let switchTimingOn = false;
 let switchTimingLoaded = false;
@@ -1891,6 +1902,17 @@ let viewFrozen = false;
 // UI catches up; navigating the tab anywhere ends it.
 let chatFullTab = null;
 
+// What a Lumen page (the new-tab page above all) is painted on before, and wherever, its renderer has not drawn: the page's own background in
+// the current theme, never the default black. Set on the tab views, the window and its content view (the UI's colour), kept up with the theme.
+const pageBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff');
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7');
+function paintBackgrounds(rec) {
+  try { rec.win.setBackgroundColor(windowBackground()); } catch { /* gone */ }
+  try { rec.win.contentView.setBackgroundColor(windowBackground()); } catch { /* an older shell */ }
+  for (const t of rec.tabs) { try { const u = t.view?.webContents.getURL(); if (t.view && (!u || isNewTab(u))) t.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
+  for (const s of [spareNewTab, spareChat]) { try { s?.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
+}
+let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
@@ -1905,7 +1927,7 @@ function layout() {
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
-    tab.view.setVisible(show);
+    if (tab.view.getVisible() !== show) { tab.view.setVisible(show); viewVisibleCalls++; } // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
@@ -2017,7 +2039,7 @@ function makeSpareNewTab() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
-  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} // (taken while still loading: the theme's color, not white)
+  try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   // A spare whose renderer died (out of memory, killed) is replaced shortly, not found dead at the next Ctrl+T.
@@ -2075,7 +2097,7 @@ function makeSpareChat() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs, preload: managers.preloadFor('chat'), additionalArguments: [chatPage.SPARE_FLAG] } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {}
-  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {}
+  try { view.setBackgroundColor(pageBackground()); } catch {}
   const s = { view, prefs: JSON.stringify(prefs), locale: i18n().locale, committed: false, at: Date.now() };
   view.webContents.once('dom-ready', () => { s.committed = true; }); // (its preload is in by then: it can be handed to a tab)
   view.webContents.once('render-process-gone', () => { if (spareChat === s) { closeSpareChat(); setTimeout(makeSpareChat, 2000).unref?.(); } });
@@ -2243,7 +2265,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
   if ((plainNewTab || settings || historyPage || managerPage) && !spare && !chatSpare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
-    try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
+    try { view.setBackgroundColor(pageBackground()); } catch {} }
+  if (plainNewTab) { try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ } } // (a spare or adopted one too: made before the theme may have changed)
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   if (openedBy && !curRec?.agent) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened (an agent's own window is not marked: nothing there is the user's, so nothing is hidden or closed for them)
@@ -2692,7 +2715,7 @@ function wakeTab(tab, { placeholder = false } = {}) {
   raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
-  if (!warm && !chatSpare) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
+  if (!warm && !chatSpare) { try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ } } // (until the page paints: the theme's color, not a white flash in dark mode)
   if (placeholder) tab.placeholder = { url: tab.sleepUrl, title: tab.sleepTitle || '', history }; // (the page and its history wait in the tab until Reload)
   wireView(tab, tab.sleepUrl || newTabUrl(), placeholder ? null : history, { loaded: Boolean(chatSpare) || placeholder });
   if (placeholder) view.webContents.loadURL(`${UNLOADED_URL}?${new URLSearchParams({ url: tab.sleepUrl, title: tab.sleepTitle || '', mb: String(tab.freedMb || 0) })}`).catch(() => {});
@@ -3021,8 +3044,95 @@ function hoverIntentFor(rec) {
   return h;
 }
 const wakeSender = (event) => { const rec = recOfSender(event.sender); return wakeOn() && rec && winRecs.has(rec) && rcAlive(rec) ? rec : null; };
-ipcMain.on('tab:hover', (event, id, on) => { const rec = wakeSender(event); if (!rec || !Number.isInteger(id)) return; const h = hoverIntentFor(rec); if (on) h.enter(id); else h.leave(id); });
-ipcMain.on('tab:down', (event, id) => { const rec = wakeSender(event); if (rec && Number.isInteger(id)) hoverIntentFor(rec).down(id); });
+ipcMain.on('tab:hover', (event, id, on) => {
+  if (!Number.isInteger(id)) return;
+  readyPointer(event, id, on ? 'enter' : 'leave');
+  const rec = wakeSender(event);
+  if (!rec) return;
+  const h = hoverIntentFor(rec);
+  if (on) h.enter(id); else h.leave(id);
+});
+ipcMain.on('tab:down', (event, id) => {
+  if (!Number.isInteger(id)) return;
+  readyPointer(event, id, 'down');
+  const rec = wakeSender(event);
+  if (rec) hoverIntentFor(rec).down(id);
+});
+
+// ---- tabs kept ready: the renderer of the tab you are about to switch to is not parked (features/tab-ready.js) ----
+// Chromium parks a hidden tab's renderer at background priority (and, on Windows 11, in efficiency mode), so the first frame after a pause is slow.
+// The tab under the pointer, and the latest few background tabs, are kept out of that state (setBackgroundThrottling(false)), within limits: see tab-ready.js.
+const tabReady = lazy(() => require('./features/tab-ready'));
+let readyForTest = false; // tests leave it off unless one turns it on (test/tab-ready.js)
+const readyOn = () => !TEST || readyForTest;
+const readies = new Map(); // window record -> { ctl, hoverId, intent, timer }
+function readyFor(rec) {
+  let r = readies.get(rec);
+  if (r) return r;
+  r = { ctl: null, hoverId: null, intent: null, timer: null };
+  r.ctl = tabReady.create({
+    apply: (id, on, token) => withWindow(rec, () => {
+      const t = tabs.find((x) => x.id === id);
+      if (!alive(t)) return null;
+      const wc = t.view.webContents;
+      if ((token && token !== wc) || agentContents.has(wc) || unthrottled.has(id)) return null; // (a woken page, or one a run or an agent window keeps unthrottled itself)
+      wc.setBackgroundThrottling(!on);
+      return on ? wc : null;
+    }),
+  });
+  r.intent = tabWake.createHoverIntent({ delayMs: tabReady.HOVER_MS, onIntent: (id) => { r.hoverId = id; syncReady(rec); } });
+  readies.set(rec, r);
+  if (rec.win && !rec.win.isDestroyed()) {
+    for (const ev of ['minimize', 'restore', 'show', 'hide']) rec.win.on(ev, () => scheduleReadySync(rec));
+    rec.win.once('closed', () => { clearTimeout(r.timer); for (const id of r.ctl.ids()) r.ctl.forget(id); readies.delete(rec); });
+  }
+  return r;
+}
+const readyFact = (t) => ({
+  id: t.id, active: t.id === activeId, lastActive: Math.max(t.viewedAt || 0, t.lastActiveAt || 0),
+  ready: alive(t) && !t.frozen && !t.sleeping && !t.placeholder && !t.closing,
+  token: alive(t) ? t.view.webContents : null,
+});
+const onBatteryNow = () => { if (TEST && global.__tabReadyBattery != null) return global.__tabReadyBattery; try { return require('electron').powerMonitor.isOnBatteryPower(); } catch { return false; } };
+function readyState(rec = curRec) { // what is kept ready now, and why: the diagnostics export and the tests read it
+  const r = readies.get(rec);
+  return r ? r.ctl.ids().map((id) => ({ id, why: r.ctl.why(id) })) : [];
+}
+function syncReady(rec = curRec) {
+  if (!readyOn() || !rcAlive(rec)) return;
+  const r = readyFor(rec);
+  withWindow(rec, () => {
+    const settings = readSettings();
+    const sleepS = tabSleep.normalize(settings);
+    const facts = tabs.map(readyFact);
+    let memoryLow = false;
+    try { memoryLow = sleepS.useMemory && Boolean(scheduler.lastMemory()) && tabSleep.memoryLow(sleepS, scheduler.lastMemory()); } catch { /* unknown: not low */ }
+    const want = tabReady.wanted(facts, {
+      activeId, hoverId: r.hoverId, recent: settings.tabReadyRecent, onBattery: onBatteryNow(), memoryLow,
+      perfMode: perfMode.mode() === 'on', windowActive: !win.isMinimized() && win.isVisible(),
+    });
+    r.ctl.sync(want, facts);
+  });
+}
+function scheduleReadySync(rec) {
+  if (!readyOn() || !rcAlive(rec)) return;
+  const r = readyFor(rec);
+  if (r.timer) return;
+  r.timer = setTimeout(() => { r.timer = null; syncReady(rec); }, tabReady.SYNC_MS);
+  r.timer.unref?.();
+}
+// The pointer on a tab in the strip: 'enter' (60 ms rest), 'leave', 'down' (the click is on its way).
+function readyPointer(event, id, kind) {
+  if (!readyOn()) return;
+  const rec = recOfSender(event.sender);
+  if (!rec || !winRecs.has(rec) || !rcAlive(rec)) return;
+  const r = readyFor(rec);
+  if (kind === 'enter') r.intent.enter(id);
+  else if (kind === 'down') r.intent.down(id);
+  else { r.intent.leave(id); if (r.hoverId === id) { r.hoverId = null; syncReady(rec); } }
+}
+if (TEST) global.__tabReady = { enable: (on = true) => { readyForTest = on; }, battery: (on) => { global.__tabReadyBattery = on; }, sync: () => syncReady(), state: () => readyState(), hover: (id) => { const r = readyFor(curRec); r.hoverId = id; syncReady(); }, throttling: (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? { pid: t.view.webContents.getOSProcessId(), priority: osPriority(t.view.webContents.getOSProcessId()) } : null; }, visibleCalls: () => viewVisibleCalls };
+const osPriority = (pid) => { try { return require('os').getPriority(pid); } catch { return null; } }; // Windows: 19 idle (background), 10 below normal, 0 normal, -7 above normal
 // A keyboard switch (Ctrl+Tab, Alt+Cmd+Arrow) goes at once; the tab it would reach next wakes behind it, so a second press is instant too.
 // Held or repeated Ctrl+Tab cycles through the strip without waking each tab it would reach next: only once the cycling pauses does the tab after the one it stopped on wake.
 let keyboardAheadTimer = null;
@@ -3234,7 +3344,7 @@ const SWITCH_SETTLE_MS = 150;
 let lastSwitchAt = 0;
 const rapidSwitching = () => Date.now() - lastSwitchAt < RAPID_SWITCH_MS;
 const SWITCH_WORLD = 1005; // the isolated world of the recorder's probes (never the page's own)
-function beginSwitchTiming(tab, input) {
+function beginSwitchTiming(tab, input, rapid = false) {
   const wc = tab.view?.webContents;
   const live = Boolean(wc) && !wc.isDestroyed();
   const url = live ? realUrl(wc) : tab.sleepUrl || '';
@@ -3242,6 +3352,9 @@ function beginSwitchTiming(tab, input) {
     source: input?.source, inputAt: input?.at, tab: tab.id, page: isWebUrl(url) ? 'web' : 'lumen',
     state: tab.sleeping ? (placeholderWanted(tab) ? 'placeholder' : 'unloaded') : tab.frozen ? 'frozen' : 'live',
     pid: live ? wc.getOSProcessId() : null, throttled: live && !unthrottled.has(tab.id) && !agentContents.has(wc),
+    rapid, ready: readies.get(curRec)?.ctl.why(tab.id) || null, // 'hover' | 'recent' | null: was it kept ready (tab-ready.js) when the switch began
+    idleMs: tab.lastActiveAt ? Date.now() - tab.lastActiveAt : null, // how long since the tab was last in front
+    priority: live ? osPriority(wc.getOSProcessId()) : null, onBattery: onBatteryNow(), visibleCallsAtStart: viewVisibleCalls,
   });
   switchHandle = h ? { h, id: tab.id } : null;
   if (h && live) probeSwitch(tab, h, false); // (what the page's visibility was as the switch began: still hidden, normally)
@@ -3255,7 +3368,7 @@ function probeSwitch(tab, h, paint) {
   wc.executeJavaScriptInIsolatedWorld(SWITCH_WORLD, [{ code }]).then((v) => {
     if (!paint) h.visibilityBefore(v);
     else if (activeId !== tab.id || switchHandle?.h !== h) h.superseded();
-    else h.paint(v[0], v[1]);
+    else { h.paint(v[0], v[1]); h.after({ priority: osPriority(wc.getOSProcessId()), visibleCalls: viewVisibleCalls }); }
   }).catch(() => {});
 }
 function syncSwitchTiming() {
@@ -3283,8 +3396,8 @@ function switchTab(id, { wake = true } = {}) {
   if (!tab) return false;
   const input = switchInput; // set only by the user's own click or Ctrl+Tab: the agent, the tests and the app's own switches always load the tab at once
   switchInput = null;
-  const timing = switchTimingOn ? beginSwitchTiming(tab, input) : null;
   const rapid = Boolean(input) && rapidSwitching();
+  const timing = switchTimingOn ? beginSwitchTiming(tab, input, rapid) : null;
   if (input) lastSwitchAt = Date.now();
   if (id !== activeId) {
     const leaving = tabs.find((t) => t.id === activeId);
@@ -3311,8 +3424,11 @@ function switchTab(id, { wake = true } = {}) {
   const deferWake = needsWake && rapid;
   if (needsWake && !deferWake) wakeNow();
   activeId = id;
-  layout(); // the new tab is shown first: before extensions, dialogs, chat, the strip's state
-  if (timing) { timing.shown(); if (tab.view) probeSwitch(tab, timing, true); }
+  if (rapid) frameLayout(tab, timing); // (a burst: the tab you land on is shown within a frame, the ones passed through are never composited)
+  else {
+    layout(); // the new tab is shown first: before extensions, dialogs, chat, the strip's state
+    if (timing) { timing.shown(); if (tab.view) probeSwitch(tab, timing, true); }
+  }
   if (deferWake) {
     // Passing through: nothing is loaded for this tab unless the user stays on it.
     const settle = setTimeout(() => {
@@ -3334,7 +3450,28 @@ function switchTab(id, { wake = true } = {}) {
   // [chat per tab] the sidebar shows this tab's chat. Only a run's own tool call (aiToolSwitch: agentOpenTab / agentSwitchTab) moves the run instead; any other switch is the user's, whatever async scope it happens to run in
   if (rapid) sendTabsSoon(); else sendTabs(); // (a burst of switches sends the strip one state per frame)
   schedulePreload(4000); // (the neighbours of the tab now in front, once things are quiet)
+  scheduleReadySync(curRec); // (which tabs to keep ready now: after the switch has settled, once per burst)
   return true;
+}
+// A burst of switches (Ctrl+Tab held, clicks in a row): the view swap waits one frame and goes to the latest tab only, so a tab passed through is
+// not shown and hidden again (each a GPU frame). The strip is not held back: it answers at once (sendTabs, above).
+const FRAME_MS = 16;
+const frameLayouts = new Map(); // window record -> { timer, tab, timing }
+function frameLayout(tab, timing) {
+  const rec = curRec;
+  const p = frameLayouts.get(rec);
+  if (p) { p.timing?.superseded(); p.tab = tab; p.timing = timing; return; } // (the timer is already running: it lays out the latest tab)
+  const next = { tab, timing, timer: null };
+  frameLayouts.set(rec, next);
+  next.timer = setTimeout(() => {
+    frameLayouts.delete(rec);
+    if (!rcAlive(rec)) return;
+    withWindow(rec, () => {
+      layout();
+      if (next.timing) { next.timing.shown(); if (next.tab.view && activeId === next.tab.id) probeSwitch(next.tab, next.timing, true); }
+    });
+  }, FRAME_MS);
+  next.timer.unref?.();
 }
 
 // `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
@@ -7055,6 +7192,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
   const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore), agent: agentOf ? { label: agentOf.label, used: false, madeAt: Date.now() } : null };
   winRecs.add(rec);
+  try { w.contentView.setBackgroundColor(windowBackground()); } catch { /* an older shell */ } // (what shows where no view has drawn yet: the UI's colour, not black)
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);
   bindContext(w.webContents, () => rec);
@@ -7356,6 +7494,7 @@ const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ 
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
+  for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, () => paintBackgrounds(rec)); // (the not-yet-painted area matches the page in the new theme)
   if (process.platform === 'darwin') return;
   for (const rec of winRecs) if (rcAlive(rec)) { try { rec.win.setTitleBarOverlay(titleBarOverlay()); } catch {} }
 });
@@ -8382,6 +8521,7 @@ const settingsBackend = settingsPage.create({
   onTabSleepChange: () => tabSleepSettingChanged(),
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
+  onTabReadyChange: () => { for (const rec of [...winRecs]) scheduleReadySync(rec); },
   onSwitchTimingChange: () => syncSwitchTiming(),
   switchTiming: { count: () => (switchTimingLoaded ? switchTiming.count() : 0), export: exportSwitchTimings, clear: () => { if (switchTimingLoaded) switchTiming.clear(); } }, // [diagnostics] Settings > Advanced > Record tab-switch timings
   onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
