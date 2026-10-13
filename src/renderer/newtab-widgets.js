@@ -84,6 +84,13 @@ const el = (tag, cls, text) => {
   if (text !== undefined && text !== null) e.textContent = String(text);
   return e;
 };
+// Tests only: the new-tab page's own script is the only code in this page (script-src 'self'), so only the test harness (main, via
+// executeJavaScript) can set this. It swaps the embed's origin for a local stand-in, so a test never reaches tradingview.com.
+const tvFrameSrc = (u) => {
+  const o = globalThis.__tvTestOrigin;
+  if (typeof o !== 'string' || !/^https:\/\/127\.0\.0\.1:\d+$/.test(o)) return u;
+  try { const p = new URL(u); return o + p.pathname + p.search + p.hash; } catch { return u; }
+};
 // Only the TradingView embed pages features/tradingview-view.js builds (a watchlist's hash is long: 8000).
 const tvUrl = (u) => { if (typeof u !== 'string' || u.length >= 8000 || !/^https:\/\/[^\s"'<>\\]+$/i.test(u)) return null; try { const p = new URL(u); return p.hostname === 's.tradingview.com' && !p.port && !p.username && ['/widgetembed/', '/embed-widget/mini-symbol-overview/', '/embed-widget/market-overview/'].includes(p.pathname) ? u : null; } catch { return null; } };
 const safeUrl = (u) => (typeof u === 'string' && u.length < 2000 && /^https:\/\/[^\s"'<>\\]+$/i.test(u) ? u : null);
@@ -1058,13 +1065,17 @@ const WIDGET_RENDERERS = {
     card.el.classList.add('embed', 'tradingview');
     if (list) card.el.classList.add('tv-watchlist');
     if (text(d.note, 200)) card.body.append(el('p', 'w-note tv-note', text(d.note, 200)));
-    const frame = document.createElement('iframe');
-    frame.className = 'w-frame';
-    // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
-    frame.referrerPolicy = 'no-referrer';
-    frame.loading = 'lazy';
-    frame.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
+    const newFrame = () => {
+      const f = document.createElement('iframe');
+      f.className = 'w-frame';
+      // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
+      f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+      f.referrerPolicy = 'no-referrer';
+      f.loading = 'lazy';
+      f.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
+      return f;
+    };
+    let frame = newFrame();
     // The frame sits in a box that clips and positions it, so a small card can swap what TradingView shows
     // and shrink it to fit (features/tradingview-fit.js: the full chart is all toolbar below ~300 x 230, the
     // mini price view clips below ~190 x 104, a watchlist's tab row eats 45 px). The address is set once the
@@ -1095,9 +1106,10 @@ const WIDGET_RENDERERS = {
     // The embeds read their options from the hash, and a change to only the hash is a same-page jump the frame never reloads for
     // (the other theme's address differs from this one only there): go through a blank page so the widget starts over.
     const load = (src) => {
+      src = tvFrameSrc(src);
       const same = (() => { try { const a = new URL(frame.src); const b = new URL(src); a.hash = ''; b.hash = ''; return frame.src && a.href === b.href; } catch { return false; } })();
       if (!same) { frame.src = src; return; }
-      frame.addEventListener('load', () => { if (shown === src) frame.src = src; }, { once: true });
+      frame.addEventListener('load', () => { if (tvFrameSrc(shown) === src) frame.src = src; }, { once: true });
       frame.src = 'about:blank';
     };
     const place = () => {
@@ -1114,7 +1126,7 @@ const WIDGET_RENDERERS = {
       was = next;
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(wrap);
-    else frame.src = url;
+    else frame.src = tvFrameSrc(url);
     // The system scheme (which the in-app dark setting drives) or the page's background changed: load the other theme's address.
     const restyle = () => {
       if (!frame.isConnected) return;
@@ -1122,7 +1134,7 @@ const WIDGET_RENDERERS = {
       if (next === src0) return;
       src0 = next;
       small = pickUrl(false);
-      if (shown) place(); else frame.src = src0;
+      if (shown) place(); else frame.src = tvFrameSrc(src0);
     };
     scheme.addEventListener('change', restyle);
     new MutationObserver(restyle).observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -1142,6 +1154,51 @@ const WIDGET_RENDERERS = {
       place();
     });
     card.head.append(menu);
+    // Reload: the embed is TradingView's own page in a cross-origin frame (Lumen fetches no quotes, so the shared Refresh has nothing to
+    // ask main for), and a cross-origin frame can't be told to reload itself. A new frame at the same address starts the widget over,
+    // which re-reads its quotes and chart, and keeps the card's symbols, interval and theme because they are in that address.
+    // The button turns and is off while it loads (so a double click is one reload); a frame that never finishes loads shows Try again.
+    let reloading = false;
+    let stall = 0;
+    let problem = null;
+    const reloadBtn = iconButton(ICON_REFRESH, `Reload ${symbol}`, () => reload());
+    reloadBtn.classList.add('w-reload');
+    const settle = (on) => { reloading = on; reloadBtn.classList.toggle('spinning', on); reloadBtn.disabled = on; reloadBtn.setAttribute('aria-busy', on ? 'true' : 'false'); };
+    const fail = () => {
+      clearTimeout(stall);
+      settle(false);
+      if (problem) return;
+      wrap.hidden = true;
+      const note = el('p', 'w-note');
+      note.append(el('strong', null, 'Couldn’t reload'), navigator.onLine === false ? 'You appear to be offline.' : 'TradingView didn’t answer.');
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${symbol} again`);
+      retry.classList.add('w-retry');
+      retry.addEventListener('click', () => reload());
+      const actions = el('div', 'w-actions');
+      actions.append(retry);
+      problem = [note, actions];
+      card.body.append(note, actions);
+    };
+    function reload() {
+      if (reloading || !frame.isConnected && !problem) return;
+      if (problem) { for (const n of problem) n.remove(); problem = null; wrap.hidden = false; }
+      settle(true);
+      if (navigator.onLine === false) { fail(); return; }
+      const next = newFrame();
+      next.loading = 'eager'; // pressed, so wanted now: a lazy frame in a card scrolled out of view would never load
+      next.addEventListener('load', () => { if (next !== frame) return; clearTimeout(stall); settle(false); }, { once: true });
+      if (shown) next.src = tvFrameSrc(shown); // before it is in the page, so the empty page's own load is not counted as this one
+      frame.replaceWith(next);
+      frame = next;
+      was = null;
+      place(); // styles the new frame (size, scale, see-through); the address is already set, so it loads nothing twice
+      if (!shown) { clearTimeout(stall); settle(false); return; } // not laid out yet: the box will load it when it has a size
+      clearTimeout(stall);
+      stall = setTimeout(fail, globalThis.__tvTestStallMs || 20e3);
+    }
+    card.head.append(reloadBtn);
   },
 
   // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.
