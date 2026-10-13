@@ -21,6 +21,9 @@
     // The list's title and usage change with a reply; refresh once it ends.
     if (!on) setTimeout(renderList, 400);
   };
+  // A screen reader says who each message is from: every message is a labelled group ("You", "Assistant").
+  const labelMsg = (el) => { if (el.nodeType !== 1 || !el.classList.contains('msg') || el.getAttribute('role')) return; const mine = el.classList.contains('user'); if (!mine && el.classList.contains('reply-actions-only')) return; el.setAttribute('role', 'group'); el.setAttribute('aria-label', t(mine ? 'chatpage.who.you' : 'chatpage.who.ai')); };
+  new MutationObserver((list) => { for (const m of list) m.addedNodes.forEach(labelMsg); }).observe($('messages'), { childList: true });
   chatHost.chatChanged = () => renderList();
   chatHost.synced = (view) => window.chatPageTools.setTemporary(view?.temporary); // another view started or left a temporary chat
   // The empty chat greets by the name set for the new-tab page ("Good evening, Sam"), or asks what it can help with.

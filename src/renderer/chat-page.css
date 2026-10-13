@@ -243,3 +243,18 @@ body.chat-page .composer :is(.attach-btn, .screen-btn, .send):focus-visible { ou
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- reading comfort (chat UI polish) ---------- */
+/* Prose stops at about 72 characters a line, the span readers follow comfortably; code, tables, math and pictures keep the column's full width. */
+body.chat-page .msg.assistant > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 72ch; }
+/* A long code block keeps its language label and Copy in view while it scrolls past (overflow: clip, not hidden, so the header can stick to the list). */
+body.chat-page .msg.assistant .code-block { overflow: clip; }
+body.chat-page .msg.assistant .code-head { position: sticky; top: calc(var(--cp-2) * -1); z-index: var(--z-raised, 1); background: linear-gradient(var(--field), var(--field)) var(--bg); }
+/* A failed reply: an icon and a bar, a readable size, and Try again as the way out. */
+body.chat-page .error { color: var(--text); position: relative; margin: var(--cp-3) 0; padding: 12px var(--cp-3) 12px 44px; font-size: 14px; line-height: 1.5; border-radius: 12px; box-shadow: inset 3px 0 0 var(--danger); }
+body.chat-page .error::before { content: "!"; position: absolute; left: 14px; top: 12px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 13px/1 system-ui, sans-serif; color: #fff; background: var(--danger); }
+body.chat-page .error .error-details { color: var(--text); } /* (the muted grey on the red tint was 4.2:1 in dark) */
+body.chat-page .error .btn { height: 30px; padding: 0 14px; font-size: 13px; box-shadow: 0 0 0 1px var(--border); }
+/* The composer's keys, said once under the box (not on a narrow window, where the on-screen keyboard has its own send). */
+body.chat-page .cp-hint::after { content: "\00a0\00b7\00a0"; }
+@media (max-width: 760px) { body.chat-page .cp-hint { display: none; } }

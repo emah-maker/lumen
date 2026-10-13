@@ -63,9 +63,12 @@ body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 .cp-retry-group { font-size: 11.5px; color: var(--muted); }
 
 /* ---------- under a reply: read aloud and retry sit with the other small buttons ---------- */
-.reply-speak {
-  flex: none; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
-}
+/* Read aloud: in the corner row, right to left Copy, Regenerate, Retry, Read aloud; the same size, spacing and tooltip. An older reply (no Regenerate) shows it beside Copy. */
+.msg.assistant .reply-speak { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.assistant:has(> .reply-regen) .reply-speak { right: 80px; opacity: 0.75; }
+.msg.assistant:hover .reply-speak, .msg.assistant:has(> .reply-regen):hover .reply-speak, .msg.assistant .reply-speak:focus-visible, .msg.assistant .reply-speak.on { opacity: 1; }
+.msg.assistant .reply-speak svg { width: 16px; height: 16px; }
+.msg.assistant .reply-speak:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .reply-speak svg, .reply-retry svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* Retry with another model: in the corner row with Regenerate and Copy (right to left: Copy, Regenerate, Retry), the same size and spacing. */
 .msg.assistant .reply-retry { position: absolute; bottom: -24px; right: 52px; width: 28px; height: 26px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
