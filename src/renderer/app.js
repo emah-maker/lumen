@@ -1185,7 +1185,7 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  // [ai manners] a tab the AI opened: a small sparkle after its title (updateTabEl; styles.css .tab-ai-mark)
+  // [ai manners] a tab the AI opened: a small sparkle on its favicon's corner (updateTabEl; styles.css .tab-ai-mark)
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
@@ -1193,7 +1193,7 @@ function createTabEl(id) {
   const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
   offMark.setAttribute('aria-hidden', 'true');
   offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 10 2.4v3c0 2.3-1.6 3.9-4 5-2.4-1.1-4-2.7-4-5v-3Z"/><path class="off-spark" d="M6 3.7l.5 1.4 1.4.5-1.4.5L6 7.5l-.5-1.4-1.4-.5 1.4-.5Z"/></svg>';
-  inner.append(globeIcon(), chatMark, title, aiMark, offMark, close);
+  inner.append(globeIcon(), aiMark, chatMark, title, offMark, close); // (aiMark sits right after the icon: it is drawn over the icon's corner)
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.

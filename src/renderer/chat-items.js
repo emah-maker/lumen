@@ -441,12 +441,13 @@
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
-        const closeLabel = tr('chats.closeTabs', 'Close this chat’s tabs');
+        const closeLabel = tr('chats.closeTabs', 'Close tabs opened by this chat');
         const closeTabs = iconButton('closetabs', closeLabel);
         closeTabs.onclick = async () => {
           closeTabs.disabled = true;
           const out = await api.closeTabs(chat.id).catch(() => null);
-          say(out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : tr('chats.closeTabs.none', 'This chat has no tabs it opened'));
+          const busyNote = out?.busy > 0 ? tr(out.busy === 1 ? 'chat.aiTabs.busy.one' : 'chat.aiTabs.busy.other', out.busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.').replace('{count}', out.busy) : '';
+          say([out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : busyNote ? '' : tr('chats.closeTabs.none', 'This chat has no tabs it opened'), busyNote].filter(Boolean).join(' '));
           closeTabs.remove();
         };
         tabActions.push(closeTabs);
