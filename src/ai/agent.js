@@ -40,7 +40,7 @@ const localPdf = require('./local-pdf'); // navigate / open_tab: a local .pdf th
 const pdfViewer = require('../features/pdf-viewer'); // a PDF in Lumen's own viewer: the PDF's address is the page's address for every rule below
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const emlViewer = require('../features/eml-viewer'); // an email (.eml) open in its viewer: read as text, once the user shared it
-const emlLib = require('../features/eml');
+const emlLib = { isEmlName: (n) => /\.eml$/i.test(String(n || '')), parseFile: (...a) => require('../features/eml').parseFile(...a), toText: (...a) => require('../features/eml').toText(...a) }; // (the parser loads when an email is read)
 const fileTabs = require('../features/file-tabs'); // [screen context] the file a tab shows (a PDF in the viewer, a file:// page): the card asks about it, never a page
 const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools

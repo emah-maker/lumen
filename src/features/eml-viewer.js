@@ -14,13 +14,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
-const eml = require('./eml');
+const eml = () => require('./eml'); // loaded when an email is first read (it pulls in postal-mime): not at startup
+const isEmlName = (name) => /\.eml$/i.test(String(name || '').split(/[?#]/)[0]);
 
 const VIEWER_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'eml.html')).href;
 
 const bareOf = (url) => String(url || '').split(/[?#]/)[0];
 const isViewerUrl = (url) => typeof url === 'string' && bareOf(url).toLowerCase() === VIEWER_URL.toLowerCase();
-const isLocalEml = (url) => { try { const u = new URL(url); return u.protocol === 'file:' && eml.isEmlName(u.pathname); } catch { return false; } };
+const isLocalEml = (url) => { try { const u = new URL(url); return u.protocol === 'file:' && isEmlName(u.pathname); } catch { return false; } };
 function emlUrlOf(url) {
   if (!isViewerUrl(url)) return null;
   try { const u = new URL(url).searchParams.get('u') || ''; return isLocalEml(u) ? u : null; } catch { return null; }
@@ -29,9 +30,9 @@ const viewerUrl = (emlUrl) => `${VIEWER_URL}?${new URLSearchParams({ u: emlUrl }
 const displayUrl = (url) => emlUrlOf(url) || '';
 
 // A download Chromium starts for a local .eml opened in a tab: show it instead.
-const shouldOpenInPlace = ({ url, filename } = {}) => isLocalEml(url) && eml.isEmlName(filename || url);
+const shouldOpenInPlace = ({ url, filename } = {}) => isLocalEml(url) && isEmlName(filename || url);
 // A finished download from the web: open it, unless the user chose Save As for it.
-const shouldOpenFinished = ({ path: file, saveAs } = {}) => Boolean(file) && !saveAs && eml.isEmlName(file);
+const shouldOpenFinished = ({ path: file, saveAs } = {}) => Boolean(file) && !saveAs && isEmlName(file);
 
 const nameOf = (url) => { try { return path.basename(fileURLToPath(url)).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120); } catch { return 'Email'; } };
 
@@ -44,11 +45,11 @@ async function load(emlUrl) {
   let stat;
   try { stat = await fs.promises.stat(file); } catch { return { error: 'The file could not be found. It may have been moved or deleted.' }; }
   if (!stat.isFile()) return { error: 'This is not a file.' };
-  if (stat.size > eml.MAX_FILE_BYTES) return { error: 'This email is too large to open here.' };
+  if (stat.size > eml().MAX_FILE_BYTES) return { error: 'This email is too large to open here.' };
   const key = `${file.toLowerCase()}|${stat.size}|${stat.mtimeMs}`;
   if (CACHE.has(key)) return CACHE.get(key);
   let parsed;
-  try { parsed = await eml.parse(await fs.promises.readFile(file)); } catch (err) { return { error: err instanceof eml.EmlError ? err.message : 'The email could not be read.' }; }
+  try { parsed = await eml().parse(await fs.promises.readFile(file)); } catch (err) { return { error: err instanceof eml().EmlError ? err.message : 'The email could not be read.' }; }
   CACHE.set(key, parsed);
   while (CACHE.size > CACHE_MAX) CACHE.delete(CACHE.keys().next().value);
   return parsed;
@@ -57,8 +58,8 @@ async function load(emlUrl) {
 // The email as text for the AI (read_page on the viewer, list_files read): undefined error text on failure.
 async function loadText(emlUrl, opts) {
   const parsed = await load(emlUrl);
-  if (parsed.error) throw new eml.EmlError(parsed.error);
-  return eml.toText(parsed, opts);
+  if (parsed.error) throw new (eml().EmlError)(parsed.error);
+  return eml().toText(parsed, opts);
 }
 
 const TEMP_FILES = [];
@@ -68,7 +69,7 @@ async function tempCopy(emlUrl, index, tmpRoot = os.tmpdir()) {
   const a = parsed.model && parsed.model.attachments[index];
   if (!a || !a.openable) return '';
   const dir = await fs.promises.mkdtemp(path.join(tmpRoot, 'lumen-eml-'));
-  const file = path.join(dir, eml.safeName(a.name));
+  const file = path.join(dir, eml().safeName(a.name));
   await fs.promises.writeFile(file, parsed.parts[index], { mode: 0o600 });
   TEMP_FILES.push(dir);
   return file;
