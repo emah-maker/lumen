@@ -112,7 +112,7 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
     const viaDialog = await waitFor(() => tabFor(app, files.plain), 10000);
     check('Ctrl+O on an .eml shows the viewer in a tab', Boolean(viaDialog));
     // (b) the command line / "Open with"
-    await app.evaluate(({}, p) => global.__taskbar.secondInstance(['Lumen.exe', p]), files['html-cid']);
+    await app.evaluate((_e, p) => global.__taskbar.secondInstance(['Lumen.exe', p]), files['html-cid']);
     const viaArgs = await waitFor(() => tabFor(app, files['html-cid']), 10000);
     check('the command line (Open with) shows the viewer in a tab', Boolean(viaArgs));
     // (c) a file: address (typed, dropped on the page, a link): the tab loads it
@@ -133,7 +133,7 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
     // (e) a click on a finished download in the downloads panel
     const entry = await waitFor(() => app.evaluate(() => global.__downloads.list().find((d) => d.name === 'nested.eml' && d.state === 'completed')?.id));
     const before = (await viewerTabs(app)).length;
-    await app.evaluate(({}, id) => global.__managers.downloads.act(id, 'open'), entry);
+    await app.evaluate((_e, id) => global.__managers.downloads.act(id, 'open'), entry);
     const viaPanel = await waitFor(async () => (await viewerTabs(app)).length > before && (await viewerTabs(app)), 10000);
     check('clicking the finished .eml in the downloads panel opens a viewer tab (not another program)', Boolean(viaPanel), before);
     check('no entry point left a window, a dialog or an extra download behind', (await windowCount(app)) === wins0 && fs.readdirSync(dl).filter((f) => f.endsWith('.eml')).length === 1);
@@ -149,7 +149,7 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
     check('the strip shows the subject', Boolean(titles), (await tabTitles(ui)).join('|'));
     const icon = await ui.evaluate(() => { const tabs = Array.from(document.querySelectorAll('.tab')); const el = tabs.find((x) => x.querySelector('.tab-title')?.textContent === 'Lunch on Friday'); return el ? el.querySelector('svg')?.innerHTML || '' : null; });
     check('the strip shows the envelope icon', typeof icon === 'string' && /m2\.75 4\.75 5\.25 4/.test(icon), icon);
-    await app.evaluate(({}, id) => global.__aiTabs.switchTo(id), t.id);
+    await app.evaluate((_e, id) => global.__aiTabs.switchTo(id), t.id);
     const address = await waitFor(async () => { const v = await ui.inputValue('#address'); return v.startsWith('file:') && v.endsWith('plain.eml') && v; }, 8000);
     check("the address bar shows the file's address", address === url(files.plain) || decodeURI(address) === decodeURI(url(files.plain)), address);
     // Back / forward / reload
@@ -196,10 +196,10 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
     for (const name of Object.keys(expect)) {
       const dlFile = path.join(dl, `${name}.eml`);
       fs.copyFileSync(files[name], dlFile);
-      await app.evaluate(({}, [p, n]) => { const list = global.__managers.downloads.list; list.unshift({ id: 9000 + list.length, name: n, path: p, state: 'completed', received: 1, total: 1, started: Date.now(), endedAt: Date.now(), url: 'file:///x', speed: 0 }); }, [dlFile, `${name}.eml`]);
-      const id = await app.evaluate(({}, n) => global.__managers.downloads.list.find((d) => d.name === n && d.path.includes('downloads'))?.id, `${name}.eml`);
+      await app.evaluate((_e, [p, n]) => { const list = global.__managers.downloads.list; list.unshift({ id: 9000 + list.length, name: n, path: p, state: 'completed', received: 1, total: 1, started: Date.now(), endedAt: Date.now(), url: 'file:///x', speed: 0 }); }, [dlFile, `${name}.eml`]);
+      const id = await app.evaluate((_e, n) => global.__managers.downloads.list.find((d) => d.name === n && d.path.includes('downloads'))?.id, `${name}.eml`);
       const known = (await viewerTabs(app)).map((x) => x.id);
-      await app.evaluate(({}, i) => global.__managers.downloads.act(i, 'open'), id);
+      await app.evaluate((_e, i) => global.__managers.downloads.act(i, 'open'), id);
       const opened = await waitFor(async () => (await viewerTabs(app)).find((x) => !known.includes(x.id) && viewerFile(x.url) === url(dlFile)), 10000);
       const st = opened && (await waitState(app, opened.contentsId));
       check(`${name}: opens from the downloads panel, subject ${expect[name].subject}`, st && st.title === expect[name].subject, st && st.title);
@@ -226,7 +226,7 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
 
     // links: open in a new tab, never in the viewer
     const html = await tabFor(app, files['html-cid']);
-    await app.evaluate(({}, id) => global.__aiTabs.switchTo(id), html.id);
+    await app.evaluate((_e, id) => global.__aiTabs.switchTo(id), html.id);
     await sleep(800);
     // Where the link is: the first pixels of the link colour (#0062cc) inside the body frame (the page itself can't be asked, the frame has no scripts).
     const point = await app.evaluate(async ({ webContents }, id) => {
@@ -294,7 +294,7 @@ const FIX = path.join(__dirname, 'fixtures', 'eml');
     check('after a restart the email tabs are back (two files stay two tabs)', Boolean(restored), (await tabsOf(app)).map((x) => path.basename(decodeURIComponent(x.url))).join(' | '));
     const again = (await tabsOf(app)).find((x) => shown(x) === norm(url(files.attachments)));
     if (again) {
-      await app.evaluate(({}, id) => global.__aiTabs.switchTo(id), again.id);
+      await app.evaluate((_e, id) => global.__aiTabs.switchTo(id), again.id);
       const rs = await waitState(app, (await tabsOf(app)).find((x) => x.id === again.id).contentsId);
       check('a restored tab draws the email and keeps its title', rs && rs.title === 'Files attached' && rs.attachments.length === 3, rs && rs.title);
     } else check('a restored tab draws the email and keeps its title', false, 'no tab');

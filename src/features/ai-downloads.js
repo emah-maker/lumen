@@ -6,7 +6,7 @@
 //   - wait_for {download:true} waits for the download in progress or the newest one and says the same;
 //   - any other tool result, and the next message's <browser_state>, carry a download that finished since the AI last heard of one,
 //     the user's own included (once each, within the last few minutes);
-//   - list_files {folder:"downloads"} lists that same list first, and {read:<path or name>} reads a text, Word (.docx) or Markdown file in it.
+//   - list_files {folder:"downloads"} lists that same list first, and {read:<path or name>} reads a text, Word (.docx), Markdown or email (.eml) file in it.
 // A download that started during the AI's own action in a chat is that chat's own file (no card to read it, like a file it wrote:
 // features/ai-files.js); any other is asked about once, like a local file the user shares (#424). Outside agents (MCP) never download:
 // features/downloads.js refuses a download from their window (#352).
@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { docxText, isDocxName } = require('./docx-text');
 const { PptxError } = require('./pptx');
+const eml = require('./eml'); // a saved email (.eml): headers, body, attachment list as text
 class Say extends Error {} // a message meant for the model, as it is
 
 const NOTE_WINDOW_MS = 5 * 60 * 1000; // a finished download is mentioned this long
@@ -112,6 +113,7 @@ async function readText(entry, { offset = 0, maxChars = READ_CHARS } = {}) {
   try {
     if (!fs.existsSync(entry.path)) throw new Say(`${entry.name} is no longer at ${entry.path}.`);
     if (isDocxName(entry.path)) full = await docxText(await fs.promises.readFile(entry.path));
+    else if (eml.isEmlName(entry.path)) full = eml.toText(await eml.parseFile(entry.path), { limit: 400000 }); // (cut to READ_CHARS below; the rest by offset)
     else if (TEXT_EXTS.has(ext)) {
       const stat = await fs.promises.stat(entry.path);
       if (stat.size > 20 * 1024 * 1024) throw new Say(`${entry.name} is too large to read here (${sizeText(stat.size)}).`);
@@ -120,7 +122,7 @@ async function readText(entry, { offset = 0, maxChars = READ_CHARS } = {}) {
     else if (ext === 'pptx') throw new Say(`${entry.name} is a PowerPoint deck: open_tab with its path shows it, then read_pdf reads its slide text.`);
     else throw new Say(`Lumen cannot read the text of a .${ext || 'unknown'} file. Tell the user where it is: ${entry.path}`);
   } catch (err) {
-    if (err instanceof Say || err instanceof PptxError) throw new Error(err.message);
+    if (err instanceof Say || err instanceof PptxError || err instanceof eml.EmlError) throw new Error(err.message);
     throw new Error(`${entry.name} could not be read.`);
   }
   const from = Math.min(Math.max(0, Math.floor(Number(offset)) || 0), full.length);

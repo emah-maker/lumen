@@ -178,6 +178,13 @@
         ],
         "name": "SVG Image",
         "role": "Viewer"
+      },
+      {
+        "ext": [
+          "eml"
+        ],
+        "name": "Email Message",
+        "role": "Viewer"
       }
     ],
     "mac": {
