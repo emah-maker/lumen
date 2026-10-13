@@ -7498,9 +7498,9 @@ app.on('before-quit', () => {
     try { settingsFile.writeJsonAtomic(HISTORY_FILE(), historyList(), 0); } catch { /* disk full or locked: the older file stays */ }
   }
   downloads.flush(); // (the lists that save a moment after a change land now)
-  emlViewer.cleanTemp(); // (the copies of email attachments opened in tabs)
   usage.flush();
   quitting = true;
+  emlViewer.cleanTemp(); // (the copies of email attachments opened in tabs)
 });
 const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ exit: (code) => app.exit(code) })); // (loaded when quitting starts)
 let uiReady = false; // the window's UI has loaded and its tabs are open
