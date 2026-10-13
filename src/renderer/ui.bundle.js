@@ -8508,9 +8508,10 @@ $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.c
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
 // ---------- waking a sleeping tab ahead of the click (main.js, features/tab-wake.js) ----------
-// The pointer resting on a sleeping tab (150 ms, timed in main) or pressing it starts the page loading; leaving first cancels.
+// The pointer resting on a sleeping tab (150 ms, timed in main) or pressing it starts the page loading; leaving first cancels. On a loaded tab
+// the same two messages keep its renderer out of the operating system's background state for the click that follows (main.js, features/tab-ready.js).
 let wakeHoverId = null;
-const sleepingTabOf = (target) => { const el = target.closest?.('.tab'); return el && el.classList.contains('sleeping') ? Number(el.dataset.id) : null; };
+const sleepingTabOf = (target) => { const el = target.closest?.('.tab'); return el && !el.classList.contains('active') ? Number(el.dataset.id) : null; };
 $('tabs').addEventListener('pointerover', (e) => {
   if (e.pointerType === 'touch') return;
   const id = sleepingTabOf(e.target);
@@ -9567,40 +9568,18 @@ resizer.addEventListener('pointerdown', (e) => {
   const startWidth = $('sidebar').getBoundingClientRect().width;
   resizer.setPointerCapture(e.pointerId);
   document.body.classList.add('resizing');
-  // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
-  // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
-  const frozen = !snapshot && !motionReduced() ? freezePage() : null;
-  // Until the snapshot is up (a full-page capture takes 50-200 ms) the page is still live, and resizing it
-  // every frame made the site reflow on each one: the first moments of a drag stuttered. Its size is held for
-  // the whole drag and sent once at the end, as the sidebar's spring does (heldRect).
-  let ended = false;
-  const held = frozen && !heldRect;
-  if (held) {
-    heldRect = viewport.getBoundingClientRect();
-    if (lastSnapshotEdge) viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge); // body.resizing paints it behind the held page
-    frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
-  }
+  // The live page follows the edge: no still picture stands in for it. Its size goes to main once per frame at most (move waits for
+  // the frame, and reportBounds sends only a size that changed), and the area it has not caught up with is the page's own background
+  // colour (main.js pageBackground() on the view, the window and the UI's viewport), never the default black.
   let frame = 0;
-  // A still pointer sends no moves, and main thaws a freeze that has been quiet for 6 s: keep it alive until the drag ends.
-  // Capped (freeze-keepalive.js): a pointer held for over a minute stops pinging and main thaws the page.
-  const alive = freezeKeepAlive(freezeAlive);
   const move = (ev) => {
     cancelAnimationFrame(frame);
-    freezeAlive();
     frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
   };
-  const up = async () => {
-    ended = true;
-    alive.stop();
+  const up = () => {
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
-    localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
-    if (frozen) {
-      await frozen;
-      if (held) { heldRect = null; reportBounds(); } // the page's final size, once, while it is still hidden
-      thawPage();
-    }
-    if (!snapshot) viewport.style.removeProperty('--snapshot-edge');
+    requestAnimationFrame(() => localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)))); // (after the last move's frame)
   };
   resizer.addEventListener('pointermove', move);
   // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
