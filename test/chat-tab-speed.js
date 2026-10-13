@@ -113,6 +113,8 @@ const best = (xs) => { const s = xs.filter((x) => x >= 0); return s.length ? Mat
     check('its address is the chat page, with nothing added to it', /renderer\/chat-page\.html$/.test(url), url);
 
     // ---- the long chat
+    // (a long chat is drawn newest first, the older messages filling in above while the window is idle: the first screenful is there at once, the whole chat a moment later)
+    for (let i = 0; i < 100 && !(Number(await inPage(opened, "document.querySelectorAll('#messages .msg').length")) >= 120); i++) await speed.sleep(100);
     const state = await inPage(opened, `(() => {
       const m = document.getElementById('messages');
       return JSON.stringify({ msgs: m.querySelectorAll('.msg').length, atBottom: m.scrollHeight - m.scrollTop - m.clientHeight < 150, mermaid: typeof window.mermaid, boxes: document.querySelectorAll('.code-block[data-diagram]').length, drawn: document.querySelectorAll('.code-block.mermaid-ok').length });
