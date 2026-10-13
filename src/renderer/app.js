@@ -1613,9 +1613,10 @@ $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.c
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
 // ---------- waking a sleeping tab ahead of the click (main.js, features/tab-wake.js) ----------
-// The pointer resting on a sleeping tab (150 ms, timed in main) or pressing it starts the page loading; leaving first cancels.
+// The pointer resting on a sleeping tab (150 ms, timed in main) or pressing it starts the page loading; leaving first cancels. On a loaded tab
+// the same two messages keep its renderer out of the operating system's background state for the click that follows (main.js, features/tab-ready.js).
 let wakeHoverId = null;
-const sleepingTabOf = (target) => { const el = target.closest?.('.tab'); return el && el.classList.contains('sleeping') ? Number(el.dataset.id) : null; };
+const sleepingTabOf = (target) => { const el = target.closest?.('.tab'); return el && !el.classList.contains('active') ? Number(el.dataset.id) : null; };
 $('tabs').addEventListener('pointerover', (e) => {
   if (e.pointerType === 'touch') return;
   const id = sleepingTabOf(e.target);

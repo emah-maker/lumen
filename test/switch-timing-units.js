@@ -50,6 +50,28 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   check('...still once after more switches', calls.gpu === 1, String(calls.gpu));
   check('an unknown source or state is stored as "other" / "live"', (() => { const x = rec.begin({ source: 'http://evil.example', state: 'x', page: 'y', tab: 'z' }); const r = x.record; x.finish(); return r.source === 'other' && r.state === 'live' && r.tab === null; })());
 
+  // ---- what explains a slow switch: priority, idle time, kept ready, view calls
+  {
+    const x = rec.begin({ source: 'click', tab: 90, page: 'web', state: 'live', pid: 77, ready: 'recent', idleMs: 30 * 60e3, priority: 19, onBattery: true, rapid: true, visibleCallsAtStart: 10 });
+    x.shown();
+    x.paint(undefined, 'visible');
+    x.after({ priority: 0, visibleCalls: 12 });
+    x.strip();
+    const r = x.record;
+    check('priority before and after are kept, with a label (19 is idle: Chromium parked the renderer)', r.priorityBefore === 19 && r.priorityBeforeLabel === 'idle' && r.priorityAfter === 0 && r.priorityAfterLabel === 'normal', JSON.stringify(r));
+    check('kept-ready, idle time, battery, deferred layout and view calls are kept', r.kept === 'recent' && r.idleMs === 1800000 && r.onBattery === true && r.layoutDeferred === true && r.visibleCalls === 2, JSON.stringify(r));
+    check('an unknown ready value is dropped', (() => { const y = rec.begin({ source: 'click', tab: 91, ready: 'https://evil.example' }); const k = y.record.kept; y.finish(); return k === null; })());
+    const sum = rec.exportData().summary;
+    check('the export has a summary by idle time, renderer priority and kept-ready, with medians and p95', sum.byIdleBefore['over 10 min']?.n === 1 && sum.byRendererPriorityBefore.idle?.n === 1 && sum.byKeptReady.recent?.n === 1 && Number.isFinite(sum.byKeptReady.recent.inputToPaintMedian) && sum.maxVisibleCallsPerSwitch === 2, JSON.stringify(sum));
+  }
+  {
+    const withExtra = ST.create({ monitor: () => hist, metrics: () => [], extra: () => ({ settings: { tabReadyRecent: 3 }, os: { release: '10.0' }, launchSwitches: ['--x'] }) });
+    withExtra.setEnabled(true);
+    withExtra.begin({ source: 'click', tab: 1 }).finish();
+    const e = withExtra.exportData();
+    check('the export carries the settings, the OS and the launch switches from deps.extra', e.settings.tabReadyRecent === 3 && e.os.release === '10.0' && e.launchSwitches[0] === '--x');
+  }
+
   // ---- the ring buffer
   rec.clear();
   for (let i = 0; i < 260; i++) rec.begin({ source: 'click', tab: i, page: 'lumen' }).finish();
@@ -58,7 +80,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
 
   // ---- the export holds no URL, title or site
   const text = rec.exportJson();
-  check('the export is valid JSON in the documented format', JSON.parse(text).format === 'lumen-tab-switch-timings' && JSON.parse(text).version === 1);
+  check('the export is valid JSON in the documented format', JSON.parse(text).format === 'lumen-tab-switch-timings' && JSON.parse(text).version === 2);
   check('the export contains no URL, address, host or title', !/https?:|:\/\/|www\.|\.com|\.org|\.net|title|url|host/i.test(text.replace(/"privacy": "[^"]*"/, '')), text.slice(0, 200));
   check('every field of a record is a number, a boolean, null or one of a few words', all.every((r) => Object.values(r).every((v) => v === null || ['number', 'boolean'].includes(typeof v) || ['click', 'key', 'other', 'web', 'lumen', 'live', 'frozen', 'unloaded', 'placeholder', 'hidden', 'visible'].includes(v) || typeof v === 'object')));
 
@@ -72,7 +94,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
   check('the setting is off by default', /\n {2}recordSwitchTimings: false,/.test(backend));
   check('main.js loads the recorder through the lazy proxy only', /const switchTiming = lazy\(\(\) => require\('\.\/features\/switch-timing'\)/.test(main) && !/^const .*require\('\.\/features\/switch-timing'\)/m.test(main.replace(/const switchTiming = lazy[^\n]*\n/, '')));
-  check('switchTab does recorder work only while the setting is on', /const timing = switchTimingOn \? beginSwitchTiming\(tab, input\) : null;/.test(main));
+  check('switchTab does recorder work only while the setting is on', /const timing = switchTimingOn \? beginSwitchTiming\(tab, input, rapid\) : null;/.test(main));
 
   console.log(failures ? `${failures} failed` : 'all passed');
   process.exit(failures ? 1 : 0);
