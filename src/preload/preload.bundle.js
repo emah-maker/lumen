@@ -446,8 +446,10 @@ window.addEventListener('DOMContentLoaded', () => document.documentElement.class
 
 contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
+  setContentBoundsAck: (bounds) => ipcRenderer.invoke('content-bounds:ack', bounds), // resolves once the page view has its new size
   freezeView: (size) => ipcRenderer.invoke('view:freeze', size),
   thawView: () => ipcRenderer.send('view:thaw'),
+  freezeShown: () => ipcRenderer.send('view:frozen'), // the snapshot is on screen: main may hide the live page under it
   freezeAlive: () => ipcRenderer.send('view:freeze-alive'),
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),

@@ -1256,9 +1256,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 /* Page snapshot during the sidebar animation: pinned to the page's top-left at its original size,
    so the sidebar slides over it; any uncovered strip takes the page's own edge colour. */
 .viewport:has(.page-snapshot), body.resizing .viewport { background: var(--snapshot-edge, var(--bg)); } /* a resize drag: until the snapshot lands, the area the held page hasn't filled reads as the page's edge, not a stale surface */
-.page-snapshot.fade-in { animation: snapshot-in var(--t-press) ease-out; }
-@keyframes snapshot-in { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .page-snapshot.fade-in { animation: none; } }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
 
 /* The AI button shows the selected model's company mark. */
