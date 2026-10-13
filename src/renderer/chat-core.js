@@ -2539,6 +2539,9 @@ async function reconcile() {
 function takeView(view) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
+  // A reply that was just stopped (Stop, or Send now) is already over in main while its 'done' is still on the way here: that is not a stale
+  // view. Taking main's view now redraws the chat and drops the message waiting to go next (Send now's follow-up never left).
+  if (running && turn && (turn.stopRequested || turn.interrupted) && view.id === shownChatId && !view.live) return true;
   if (action === 'adopt') { nameChat(view.id); return true; } // (a chat not named yet: now it is)
   applySync(view);
   return false;
