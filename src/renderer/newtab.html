@@ -26,6 +26,7 @@
       }
     }
     html, body { margin: 0; min-height: 100%; }
+    html { background: var(--bg); } /* from the first frame, in CSS: the canvas is never the default black while a script or a resize catches up */
     /* No native scrollbar and no reserved gutter, so the page and its background run to the right edge on every background
        (a native Windows scrollbar always takes layout width, and a reserved gutter is painted black). The page still scrolls
        with the wheel, keys and touch. newtab-scrollbar.js draws a thin overlay thumb on top of the page, fixed to the right

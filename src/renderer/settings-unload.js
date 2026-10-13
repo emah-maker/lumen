@@ -111,9 +111,12 @@ function buildUnloading(slot) {
   const cap = kw(row(un('cap', 'Most background tabs kept loaded'), un('capDesc', 'Beyond this many, the tabs unused longest unload (never one used in the last minute). Unlimited sets no cap.'), ...capControls), 'maximum limit live cap count');
   cap.querySelector('.text').append(capNote);
   follow(cap);
-  const recent = kw(select('tabSleepKeepRecent', un('keepRecent', 'Always keep the latest tabs loaded'), un('keepRecentDesc', 'The tabs you used last are the ones you go back to, so the timer leaves them alone. Low memory and the limit above can still unload them.'),
+  const recent = kw(select('tabSleepKeepRecent', un('keepRecent', 'Always keep the latest tabs loaded'), un('keepRecentDesc', 'The tabs you used last are the ones you go back to, so the timer leaves them alone, and so does ordinary low memory (only very low memory, or your own GB limit, unloads them). The limit above can still unload them.'),
     C.keepRecent.map((n) => [n, n ? String(n) : un('none', 'None')]), { number: true }), 'recent latest');
   follow(recent);
+  const ready = kw(select('tabReadyRecent', un('readyRecent', 'Keep the latest tabs ready'), un('readyRecentDesc', 'Windows parks a tab you are not looking at in a low-power state, so the first moment after you come back can be slow. Lumen keeps this many of your latest tabs out of that state (and the tab under your pointer, always). Costs a little battery; on battery only one, and none when memory is low or the window is hidden.'),
+    C.readyRecent.map((n) => [n, n ? String(n) : un('readyNone', 'Only the tab under the pointer')]), { number: true }), 'ready latest recent power efficiency priority slow switch');
+  follow(ready);
 
   // ---- 2. memory pressure ----
   const pressure = kw(select('tabSleepPressure', un('pressure', 'Unload sooner when memory is low'), un('pressureDesc', 'When free memory runs low, tabs unused for even a short time unload, oldest first. Low acts under 5% free (after 5 minutes unused), Medium under 10% (2 minutes), Aggressive under 20% (1 minute). On a Mac, Lumen follows the system’s own memory pressure.'),
