@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.30 (2026-10-13)
+
 - **A chat that is working is no longer stopped when you open a new tab or a new chat.** With exactly one chat working, opening a tab that had no chat of its own (or pressing New chat) ended that chat with "Stopped.", and its tab never showed it finished. Only the chat you leave is stopped now, and only if it was the one running.
 - **Send now no longer loses your message.** While a reply was being stopped, the chat could redraw itself from a snapshot taken a moment earlier, which dropped the message waiting to go next (and, with Ctrl+Enter, put it back in the box unsent).
 
