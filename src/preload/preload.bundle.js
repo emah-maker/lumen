@@ -528,6 +528,7 @@ contextBridge.exposeInMainWorld('browser', {
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
   addressTouched: () => ipcRenderer.send('address:touched'),
+  prepareSettings: () => ipcRenderer.send('prepare-settings'), // [settings intent] the menu button was pressed: Settings starts loading
   onSuggestionPicked: on('suggest:picked'),
   // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),

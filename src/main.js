@@ -248,8 +248,9 @@ let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
 
 // Only the settings tab's own top-level settings document may use the prefs:* calls.
+let spareSettings = null; // [settings intent] { view, timer }: the Settings page loading in a view of its own, before it is a tab (see prepareSettings)
 function isSettingsSender(event) {
-  return tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+  return (tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender) || (spareSettings && spareSettings.view.webContents === event.sender))
     && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url);
 }
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
@@ -265,7 +266,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
@@ -1492,6 +1493,7 @@ function extensionsMenu() {
 // doesn't open with scroll arrows or run past the window. { x, y, right } is the button's left,
 // bottom and right edge in the UI's window coordinates (`right` is missing from older callers).
 function showAppMenu({ x, y, right }) {
+  prepareSettings(); // [settings intent] (the menu holds Settings: it is most often what the user is after)
   const wc = activeTab()?.webContents;
   const web = isWebUrl(wc?.getURL());
   const chunk = (items, id, label, order) => ({ items, fold: id ? { id, label, order } : null });
@@ -8644,6 +8646,37 @@ accentCss = require('./features/accent-css').create({ rendererDir: path.join(__d
 for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
+// [settings intent] The user is about to open Settings (pressed the menu button, or is typing lumen://settings): the page starts loading
+// in a view of its own now, and the tab takes it over when the open follows. Nothing is kept: with no open within SPARE_SETTINGS_MS it is closed.
+const SPARE_SETTINGS_MS = 5000;
+function dropSpareSettings() {
+  const s = spareSettings;
+  if (!s) return;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+}
+function prepareSettings() {
+  if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
+  try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
+  const s = { view, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
+  s.timer.unref?.();
+  view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
+  spareSettings = s;
+  view.webContents.loadURL(settingsPage.urlFor('')).catch(() => {});
+}
+function takeSpareSettings() {
+  const s = spareSettings;
+  if (!s) return null;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  const wc = s.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed()) { try { wc.close(); } catch { /* gone */ } return null; }
+  return s.view;
+}
+ipcMain.on('prepare-settings', () => prepareSettings());
 function openSettingsPage(section = '', { replace = null } = {}) {
   const url = settingsPage.urlFor(section);
   const existing = tabs.find((t) => t.settings && alive(t));
@@ -8655,7 +8688,13 @@ function openSettingsPage(section = '', { replace = null } = {}) {
     switchTab(existing.id);
     return existing.id;
   }
-  const { id } = openTab(url, { settings: true });
+  const spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  const { id } = openTab(url, { settings: true, view: spare });
+  if (spare) {
+    const wc = spare.webContents;
+    const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
+    if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }
+  }
   if (replace) takePlace(id, replace);
   return id;
 }
@@ -8675,7 +8714,7 @@ function replaceTab(oldId, url) {
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
 if (TEST) {
-  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
+  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, prepare: prepareSettings, hasSpare: () => Boolean(spareSettings), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
 function applyContentBounds(bounds) {
@@ -8941,7 +8980,7 @@ ipcMain.on('nav:history-menu', (e, direction, point) => {
 if (TEST) global.__navHistoryMenu = (direction) => navHistoryTemplate(direction).map((i) => ({ label: i.label || '---', click: i.click }));
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
+ipcMain.handle('suggest:query', async (_e, query) => { if (/^\s*(lumen:\/\/)?settings\b/i.test(String(query))) prepareSettings(); /* [settings intent] */ await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));

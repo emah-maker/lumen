@@ -54,7 +54,9 @@ const PAGE_PROBE = `(() => {
 })()`;
 
 // One open from the given app. Returns the metrics (ms from the call) and the tab id.
-async function openOnce(app, section, { settleMs = 2500 } = {}) {
+// intent (the page the app menu is in): a real pointerdown on the menu button, then the pick of Settings `pickMs` later (a click is about 90 ms after
+// the press, and a menu pick is later still); the time is counted from the pointerdown. Without it the open is a function call, counted from the call.
+async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 } = {}) {
   await app.evaluate(({ webContents }, { code }) => {
     global.__gap = { max: 0, over: [], on: true, last: Date.now() };
     const g = global.__gap;
@@ -73,8 +75,15 @@ async function openOnce(app, section, { settleMs = 2500 } = {}) {
     }
   }, { code: PAGE_PROBE });
   await sleep(100);
-  const t0Id = await app.evaluate((_e, s) => { const t0 = Date.now(); const id = global.__settings.open(s); return { t0, id }; }, section);
-  const { t0, id } = t0Id;
+  let t0;
+  if (ui) {
+    t0 = Date.now();
+    await ui.evaluate(() => document.getElementById('app-menu').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 })));
+    await sleep(Math.max(0, pickMs - (Date.now() - t0)));
+  }
+  const opened = await app.evaluate((_e, s) => { const at = Date.now(); const id = global.__settings.open(s); return { at, id }; }, section);
+  if (!ui) t0 = opened.at;
+  const id = opened.id;
   const inPage = (code) => app.evaluate(async (_e, [i, c]) => { try { const wc = global.__settings.contents(i); return wc ? await wc.executeJavaScript(c, true) : null; } catch { return null; } }, [id, code]);
   // as soon as the first paint is seen, focus a toggle and press Space
   const end = Date.now() + 15000;
@@ -115,17 +124,17 @@ async function openOnce(app, section, { settleMs = 2500 } = {}) {
 }
 
 // cold: the first open in a fresh app; warm: close that tab and open again in the same app.
-async function measure(profile, section = '') {
+async function measure(profile, section = '', { intent = false } = {}) {
   const app = await electron.launch({ args: [root], env: env(profile) });
   const pid = app.process().pid;
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
     await sleep(9000); // let the browser's own startup work finish (ad-block lists, looking for the CLIs): the first open is "cold" for Settings, not for the browser
-    const cold = await openOnce(app, section);
+    const cold = await openOnce(app, section, { ui: intent ? ui : null });
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
     await sleep(1200);
-    const warm = await openOnce(app, section);
+    const warm = await openOnce(app, section, { ui: intent ? ui : null });
     return { cold, warm };
   } finally { await app.close().catch(() => { try { process.kill(pid); } catch {} }); }
 }
