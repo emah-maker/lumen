@@ -17,11 +17,7 @@ const { start, waitFor, makeChecker } = require('./_files-rig');
     for (let i = 0; i < 60; i++) rig.file(`docs/reports/report-${String(i).padStart(2, '0')}.txt`, 'r');
     const loose = rig.file('Loose Notes.txt', 'loose');
     const recent = rig.file('recent-thing.txt', 'recent');
-    await app.evaluate(({ shell }) => { // (no Explorer window in a test)
-      global.__shown = [];
-      shell.showItemInFolder = (p) => { global.__shown.push(p); };
-      shell.openPath = async (p) => { global.__shown.push(p); return ''; };
-    });
+    await app.evaluate(() => { global.__shown = []; global.__filesShell = (name, p) => { global.__shown.push(p); return name === 'open' ? '' : undefined; }; }); // (no Explorer window and no program starts in a test)
 
     await rig.files('pin', { path: dir });
     await rig.files('pin', { path: loose });

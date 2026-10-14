@@ -5105,7 +5105,7 @@ ${out.text}${note}
   // ---- [/uploads]
 
   // ---- [device access] Settings > AI > "Let the AI use files on this computer" (features/device-access.js)
-  deviceOpts() { return { profile: this.browser.profileDir?.() || '' }; }
+  deviceOpts() { return { profile: this.browser.profileDir?.() || '', home: this.browser.homeDir?.() || undefined }; } // (homeDir: tests only, so a search never touches the real home folder)
   requireDeviceAccess() { if (this.browser.deviceAccess?.() !== true) throw new Error(deviceAccess.OFF_TEXT); }
   // upload_file paths: each checked (exists, a regular file, not in a credentials folder or Lumen's profile, under the size cap).
   localFiles(paths) {

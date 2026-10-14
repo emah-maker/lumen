@@ -13176,7 +13176,7 @@ const filesPicker = (() => {
     close();
     const files = bridge();
     if (how.attach) {
-      Promise.resolve(files.attach(id)).then((ok) => { if (ok !== false) window.showSidebarFor?.(); }).catch(() => {}); // the sidebar comes to the front with the file on it
+      Promise.resolve(files.attach(id)).catch(() => {}); // (main sends the bytes to the composer and the sidebar comes to the front: app.js lumenFiles.onAttach)
     } else if (how.show) files.show(id);
     else files.open(id);
   }

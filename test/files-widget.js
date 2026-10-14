@@ -87,12 +87,19 @@ const { start, sleep, waitFor, makeChecker } = require('./_files-rig');
     // ---- the + menu ----
     await inTab("document.querySelector('.w-card.files .fl-add').click()");
     check('+ opens a menu: Pin a file…, Pin a folder…', await waitFor(async () => (await menuItems()).join() === 'Pin a file…,Pin a folder…'), JSON.stringify(await menuItems()));
-    await inTab("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    const picked = rig.file('picked/Syllabus.txt', 'syllabus');
+    await app.evaluate((_e, p) => { global.__filesPick = () => p; }, picked); // (the test answers for the OS dialog)
+    await inTab("[...document.querySelectorAll('.fl-menu [role=menuitem]')].find((b) => b.textContent === 'Pin a file…').click()");
+    check('Pin a file… pins what the dialog returned', await waitFor(async () => (await rows('Pinned')).includes('Syllabus.txt')), JSON.stringify(await rows('Pinned')));
+    const fl = await rig.files('list');
+    check('the entry stores only a path, name, size and times (never contents)', fl.pinned.every((e) => Object.keys(e).every((k) => ['id', 'path', 'name', 'kind', 'size', 'mtime', 'openedAt', 'pinnedAt', 'pinned', 'missing', 'source'].includes(k))), JSON.stringify(Object.keys(fl.pinned[0] || {})));
 
     // ---- keyboard ----
     check('every control in the card has a name and the card has a focus style', await inTab("[...document.querySelectorAll('.w-card.files button')].every((b) => (b.getAttribute('aria-label') || b.textContent || b.title).trim())"), '');
-    await inTab("document.querySelector('.fl-row .fl-main').focus()");
-    await rig.key('page', 'Enter', []);
+    await app.evaluate(() => global.__agent.browser.switchTab(global.__homeTab.id));
+    await sleep(300);
+    await inTab("[...document.querySelectorAll('.fl-row')].find((r) => r.querySelector('.w-title').textContent === 'loose.txt').querySelector('.fl-main').focus()");
+    await app.evaluate(() => { const wc = global.__homeTab.webContents; for (const type of ['rawKeyDown', 'char', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'Return' }); });
     await sleep(300);
     check('Enter on a focused row opens it', (await rig.tabs()).length >= before + 2, JSON.stringify(await rig.tabs()));
 

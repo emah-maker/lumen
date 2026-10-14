@@ -92,10 +92,12 @@ function create(deps) {
       return { pinned: again.pinned, recent: again.recent, remember: deps.remember?.() !== false };
     },
 
-    // { path } (the UI's own request, or a tab or download's menu), or { pick: 'file' | 'folder' } (a dialog) -> Entry | null
+    // { path } (the UI's own request, or a tab or download's menu), { id } (a row the page was given by list() or search(): the Files card's
+    // Pin on a recent file, no path from the page), or { pick: 'file' | 'folder' } (a dialog) -> Entry | null
     async pin(arg) {
       await load();
       let p = isAbs(arg?.path) ? arg.path : null;
+      if (!p && typeof arg?.id === 'string') p = resolve(arg.id)?.path || null;
       if (!p && (arg?.pick === 'file' || arg?.pick === 'folder')) p = await deps.pick?.(arg.pick);
       if (!isAbs(p)) return null;
       let st;

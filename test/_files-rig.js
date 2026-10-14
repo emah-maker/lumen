@@ -39,6 +39,7 @@ async function start({ widget = { w: 4, h: 7 }, tag = 'files' } = {}) {
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
+  await app.evaluate(() => { global.__shown = []; global.__filesShell = (name, p) => { global.__shown.push(p); return name === 'open' ? '' : undefined; }; }); // (no Explorer window and no program starts in a test)
   const rig = {
     app, ui, tree, profile, errors, WIDGET_ID,
     file: (rel, text = 'x') => { const p = path.join(tree, rel); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); return p; },
@@ -53,11 +54,10 @@ async function start({ widget = { w: 4, h: 7 }, tag = 'files' } = {}) {
     inTab: (js) => app.evaluate((_e, code) => global.__homeTab.webContents.executeJavaScript(code), js),
     tabs: () => app.evaluate(() => global.__agent.browser.listTabs()),
     // A file in a tab, as File > Open does: the tab is how a "recent" file gets recorded.
-    openFileTab: (p) => app.evaluate(async (_e, p) => {
-      const { pathToFileURL } = require('url');
-      const t = global.__agent.browser.openTab(pathToFileURL(p).href);
+    openFileTab: (p) => app.evaluate(async (_e, href) => {
+      const t = global.__agent.browser.openTab(href);
       await new Promise((r) => t.webContents.once('did-finish-load', r));
-    }, p),
+    }, require('url').pathToFileURL(p).href),
     // The UI's own bridge (window.lumenFiles, preload.js): what the picker uses.
     files: (call, ...args) => ui.evaluate(([c, a]) => window.lumenFiles[c](...a), [call, args]),
     key: (where, keyCode, modifiers) => app.evaluate(({ BrowserWindow }, [where, keyCode, modifiers]) => {

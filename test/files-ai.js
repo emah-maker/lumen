@@ -41,7 +41,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
 
   const app = await electron.launch({
     args: [path.join(__dirname, '..')],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1', USERPROFILE: home, HOME: home },
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },
     colorScheme: null,
   });
   const ui = await app.firstWindow();
@@ -56,6 +56,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
   }, [code, arg]);
   const scans = () => files('return { scans: f.stats.scans, worker: f.indexer.stats.scan };');
 
+  await app.evaluate((_e, h) => { global.__homeDir = h; }, home); // (the AI's folder lookups use this home, never the real one)
   // The OS's own programs and dialogs are not started: opens and "show in folder" are recorded here instead.
   await app.evaluate(() => { global.__shellCalls = []; global.__filesShell = (name, p) => { global.__shellCalls.push([name, p]); return ''; }; });
 
@@ -99,7 +100,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
   const none = await run('list_files', { find: 'zebra crossing manual' });
   check('find: nothing anywhere says so (and the scan ran once more)', /No pinned, recent or indexed file matches/.test(none.text) && (await scans()).worker === 2, none.text);
   const secret = put(path.join(home, 'Desktop', '.env'), 'KEY=1');
-  check('find: a credentials file is never offered', !/\.env/.test((await run('list_files', { find: '.env' })).text) && fs.existsSync(secret), '');
+  check('find: a credentials file is never offered', !/[/\\]\.env/.test((await run('list_files', { find: '.env' })).text) && fs.existsSync(secret), '');
 
   // ---- a missing file: noticed, greyed out, skipped by the lookup
   fs.unlinkSync(slides);
@@ -134,7 +135,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
   const tabsBeforeIx = await app.evaluate(() => global.__settings.tabs().length);
   await ui.evaluate((id) => window.lumenFiles.open(id), searched[0].id);
   check('UI bridge: a search result that is only indexed opens too, and joins Recent', await waitFor(async () => (await app.evaluate(() => global.__settings.tabs().length)) === tabsBeforeIx + 1) && await waitFor(async () => (await ui.evaluate(() => window.lumenFiles.list())).recent.some((e) => e.name === 'Quiz answers.txt')), '');
-  const sent = await app.evaluate(async () => { const got = []; const ui0 = require('electron').BrowserWindow.getAllWindows()[0].webContents; const orig = ui0.send.bind(ui0); ui0.send = (ch, ...a) => { if (ch === 'files:attach-file') got.push({ name: a[0].name, bytes: a[0].data.length }); return orig(ch, ...a); }; const e = (await global.__files.search('lab report'))[0]; const r = await global.__files.attach(e.id); ui0.send = orig; return { r, got }; });
+  const sent = await app.evaluate(async ({ BrowserWindow }) => { const got = []; const ui0 = BrowserWindow.getAllWindows()[0].webContents; const orig = ui0.send.bind(ui0); ui0.send = (ch, ...a) => { if (ch === 'files:attach-file') got.push({ name: a[0].name, bytes: a[0].data.length }); return orig(ch, ...a); }; const e = (await global.__files.search('lab report'))[0]; const r = await global.__files.attach(e.id); ui0.send = orig; return { r, got }; });
   check('attach: the file goes to the sidebar composer as bytes', sent.r.ok === true && sent.got.length === 1 && sent.got[0].name === 'Lab report.txt' && sent.got[0].bytes === 3, JSON.stringify(sent));
   const newtabHas = await app.evaluate(async ({ webContents }) => {
     const wc = webContents.getAllWebContents().find((w) => /renderer\/newtab\.html/.test(w.getURL()));
