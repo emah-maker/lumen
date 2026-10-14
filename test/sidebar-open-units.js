@@ -23,7 +23,7 @@ check('no arguments: the setting counts as on (the default), the chat as not emp
 // the setting
 check('setting: on by default, a real on/off value', DEFAULTS.sidebarNewChat === true && validate('sidebarNewChat', false) === false && validate('sidebarNewChat', 'no') === null, JSON.stringify([DEFAULTS.sidebarNewChat, validate('sidebarNewChat', false), validate('sidebarNewChat', 'no')]));
 const backend = read('src/settings/settings-backend.js');
-check('setting: carried to the UI with the other preferences, and a change is pushed at once', /sidebarNewChat: p\.sidebarNewChat !== false/.test(backend) && /key === 'sidebarNewChat'\)/.test(backend));
+check('setting: carried to the UI with the other preferences, and a change is pushed at once', /sidebarNewChat: p\.sidebarNewChat !== false/.test(backend) && /key === 'sidebarNewChat'( \|\| key === '\w+')*\) \(deps\.broadcastUi/.test(backend));
 check('setting: ui-prefs.js keeps it where app.js reads it', /window\.lumenSidebarNewChat = p\.sidebarNewChat !== false/.test(read('src/renderer/ui-prefs.js')));
 const settings = read('src/renderer/settings.js');
 const en = JSON.parse(read('src/locales/en.json'));

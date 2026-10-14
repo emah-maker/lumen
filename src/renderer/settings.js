@@ -2795,6 +2795,20 @@ function buildSystem(card) {
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
+  // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 24 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
+    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
+  const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
+  const showGfxNote = () => {
+    const g = st.graphics;
+    const mode = st.prefs?.graphicsMode || 'auto';
+    const on = mode === 'light' || (mode === 'auto' && g?.integrated);
+    const why = mode === 'auto' ? (g?.why || '') : tr('settings.graphics.chosen', 'your choice');
+    gfxNote.textContent = tr(on ? 'settings.graphics.note.light' : 'settings.graphics.note.full', on ? 'Light is on ({why}{device}).' : 'Full effects are on ({why}{device}).', { why, device: g?.device ? `: ${g.device}` : '' });
+  };
+  showGfxNote();
+  gfxRow.querySelector('.text').append(gfxNote);
+  card.append(gfxRow);
   buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
   buildSwitchTiming(card.at('advanced-more'));
   if (st.platform === 'darwin') {
