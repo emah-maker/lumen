@@ -130,6 +130,6 @@ async function measure(profile, section = '') {
   } finally { await app.close().catch(() => { try { process.kill(pid); } catch {} }); }
 }
 
-const tmpProfile = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-settingsperf-'));
+const tmpProfile = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ss-settingsperf-'));
 
 module.exports = { seedProfile, measure, tmpProfile, openOnce, env, root, sleep };
