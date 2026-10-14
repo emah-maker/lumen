@@ -701,7 +701,7 @@ class ClaudeCodeEngine {
     };
     if (!await this.ensureBin()) return notInstalled();
     userSettings = userSettings || Boolean(this.needUserSettings);
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort }, { fresh, emit });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.

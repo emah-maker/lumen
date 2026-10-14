@@ -214,12 +214,14 @@ function createMirror({ render, folderOf, onError = () => {}, fsp = fs.promises 
   }
   const remember = async (folder, id, file) => { where.set(id, { folder, file }); (await scan(folder)).set(id, file); };
 
-  // A path in `dir` for `name` that no other chat's file uses.
-  async function freePath(dir, name, id, folder) {
+  // A path in `dir` for `name` that no other chat's file uses. `shelf`: a place files are put aside in (Removed, Deleted): there every
+  // existing name is taken, the chat's own older copy too.
+  async function freePath(dir, name, id, { shelf = false } = {}) {
     const base = name.replace(/\.md$/i, '');
     return path.join(dir, `${await uniqueName(base, async (n) => {
       const p = path.join(dir, `${n}.md`);
       if (!(await exists(p))) return false;
+      if (shelf) return true;
       const owner = frontMatterId(await readHead(p));
       return owner !== id; // (a file that is this chat's own is not "taken")
     })}.md`);
@@ -236,7 +238,7 @@ function createMirror({ render, folderOf, onError = () => {}, fsp = fs.promises 
     if (!file) return false;
     const dir = path.join(chatsDir(folder), sub);
     await fsp.mkdir(dir, { recursive: true });
-    const dest = await freePath(dir, path.basename(file), id, folder);
+    const dest = await freePath(dir, path.basename(file), id, { shelf: true });
     await fsp.rename(file, dest);
     (await scan(folder)).delete(id);
     if (where.get(id)?.folder === folder) where.delete(id);
@@ -263,10 +265,10 @@ function createMirror({ render, folderOf, onError = () => {}, fsp = fs.promises 
       let target = old && path.basename(old) === wanted ? old : null;
       if (old && !target) {
         // The title changed: the file follows it (a collision gets a suffix, as a new file would).
-        target = await freePath(dir, wanted, id, folder);
+        target = await freePath(dir, wanted, id);
         if (norm(target) !== norm(old)) { try { await fsp.rename(old, target); (await scan(folder)).delete(id); } catch { target = old; } } else target = old;
       }
-      if (!target) target = await freePath(dir, wanted, id, folder);
+      if (!target) target = await freePath(dir, wanted, id);
       if (old && target === old && digests.get(id) === digest) return 'same';
       await writeText(target, text);
       digests.set(id, digest);

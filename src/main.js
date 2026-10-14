@@ -5183,7 +5183,7 @@ const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id);
 // The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
 function workFolderInfo(settings = agent.messages.settings) {
   const own = typeof settings?.workFolder === 'string' ? settings.workFolder : '';
-  const dir = own || (typeof settings?.projectWorkFolder === 'string' ? settings.projectWorkFolder : '');
+  const dir = own || (typeof settings?.projectWorkFolder === 'string' ? settings.projectWorkFolder : projectWorkFolderFor(chatId)); // (a new chat has no settings yet: its project decides)
   return dir ? { path: dir, shown: projectFolders.shortPath(dir, { home: require('os').homedir() }), source: own ? 'chat' : 'project' } : null;
 }
 const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
@@ -9823,7 +9823,7 @@ ipcMain.handle('chats:export', async (_e, id, format) => {
 });
 if (TEST) global.__chatFiles = () => fs.readdirSync(path.join(app.getPath('userData'), 'chats')).length;
 if (TEST) global.__chatPdf = (id) => { const out = chatMarkdown(String(id)); return out ? chatPdf(out) : null; };
-if (TEST) global.__projectFolders = { setDocuments: (dir) => { documentsOverride = dir || null; }, documents: () => documentsDir(), idle: async () => { await mirrorDebounce.flush(); await mirrorChain; }, pending: () => mirrorDebounce.pending(), mirrorFolderOf, workFolderInfo };
+if (TEST) global.__projectFolders = { setDocuments: (dir) => { documentsOverride = dir || null; }, documents: () => documentsDir(), idle: async () => { await mirrorDebounce.flush(); await mirrorChain; }, pending: () => mirrorDebounce.pending(), mirrorFolderOf, mirrorSoon: mirrorChatSoon, workFolderInfo };
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 
 // ---------- pictures the AI made (features/gen-images.js) ----------
