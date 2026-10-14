@@ -136,14 +136,16 @@
     dark.addEventListener('change', schedule);
     reduced.addEventListener('change', schedule);
 
-    return {
+    const api = {
       el: box,
       refresh: schedule, // after the state was replaced (a picture picked or removed, shuffle changed)
       hover(over) { hovered = over || null; schedule(); }, // { background } or { effect }: just that, the rest as chosen
       // For tests: what is drawn now.
       info: () => ({ background: box.dataset.bg, tone: box.dataset.tone, effect: box.dataset.effect, glass: box.dataset.glass, clockStyle: box.dataset.clockStyle, greetingFont: box.dataset.greetingFont, accent: getComputedStyle(box).getPropertyValue('--accent').trim(), fx: fx?.info() || null }),
     };
+    window.NewTabPreview.last = api; // (the tests read what is drawn: info())
+    return api;
   }
 
-  window.NewTabPreview = { create };
+  window.NewTabPreview = { create, last: null };
 })();
