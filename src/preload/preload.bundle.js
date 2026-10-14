@@ -531,6 +531,7 @@ contextBridge.exposeInMainWorld('browser', {
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
+  onOpenFilesPicker: on('files:picker'), // Ctrl+Shift+F (renderer/files-picker.js)
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).

@@ -42,6 +42,7 @@ const SECTIONS = [
       ['shortcuts.bookmarkAllTabs', ['mod+shift+d']],
       ['shortcuts.bookmarks', ['mod+shift+o']],
       ['shortcuts.openFile', ['mod+o']],
+      ['shortcuts.findFiles', ['mod+shift+f']],
       ['shortcuts.clearData', [{ mac: 'mod+shift+backspace' }, { other: 'mod+shift+delete' }]],
     ],
   },

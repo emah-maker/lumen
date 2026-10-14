@@ -261,6 +261,241 @@ function tdSend(id, action, extra = {}) {
   };
   next();
 }
+// ---- the Files card (features/files.js) ----
+// The card asks main for the list itself, through the page's own bridge (window.lumenFiles, preload/files-newtab-preload.js), and hears when it
+// changes: the list never travels through the page's hash. The bridge hands out ids; a click sends the id back and main opens the file, so
+// the page never names a path to open. Names and folders are only ever set with textContent. One list call serves every Files card on the page.
+const FILE_ICONS = { // constant markup; nothing from a file name goes in it
+  folder: '<path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/>',
+  page: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/>',
+  pdf: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 11.6c1.6-1.5 2.4-3.4 2.4-4.6 0 1.3 1.4 3 3 3.4-1.7-.1-3.6.4-5.4 1.2z"/>',
+  doc: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 8h5.4M5.3 10h5.4M5.3 12h3"/>',
+  slides: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><rect x="5.2" y="7.4" width="5.6" height="3.6" rx=".6"/>',
+  sheet: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.2 8.2h5.6M5.2 10.6h5.6M7.8 6.8v6"/>',
+  mail: '<rect x="1.8" y="3.4" width="12.4" height="9.2" rx="1.6"/><path d="m2.4 4.6 5.6 4.2 5.6-4.2"/>',
+  image: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><circle cx="5.6" cy="6.4" r="1.1"/><path d="m2.4 12 3.6-3.4 2.4 2.2 2-1.8 3.2 3"/>',
+  zip: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M7 5.6h1.4M7 7.4h1.4M7 9.2h1.4"/><rect x="6.5" y="10.4" width="2.4" height="2" rx=".5"/>',
+  code: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="m6.6 8-1.4 1.5 1.4 1.5M9.4 8l1.4 1.5L9.4 11"/>',
+};
+const FILE_KINDS = {
+  pdf: 'pdf', doc: 'doc', docx: 'doc', rtf: 'doc', odt: 'doc', txt: 'doc', md: 'doc', pages: 'doc',
+  ppt: 'slides', pptx: 'slides', key: 'slides', odp: 'slides', xls: 'sheet', xlsx: 'sheet', csv: 'sheet', tsv: 'sheet', numbers: 'sheet', ods: 'sheet',
+  eml: 'mail', msg: 'mail', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', heic: 'image', bmp: 'image',
+  zip: 'zip', rar: 'zip', '7z': 'zip', tar: 'zip', gz: 'zip', js: 'code', ts: 'code', py: 'code', json: 'code', html: 'code', css: 'code', java: 'code', c: 'code', cpp: 'code', rs: 'code', go: 'code',
+};
+const fileKind = (e) => (e.kind === 'folder' ? 'folder' : FILE_KINDS[/\.([A-Za-z0-9]{1,5})$/.exec(e.name)?.[1]?.toLowerCase()] || 'page');
+function fileIcon(e) {
+  const kind = fileKind(e);
+  const wrap = el('span', `fl-icon k-${kind}`);
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML = `<svg viewBox="0 0 16 16">${FILE_ICONS[kind]}</svg>`;
+  return wrap;
+}
+// "just now", "5 min ago", "3 h ago", "Yesterday", "4 d ago", then the date.
+function fileAgo(ms, now = Date.now()) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const sec = Math.max(0, (now - ms) / 1000);
+  if (sec < 45) return 'just now';
+  if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min ago`;
+  if (sec < 86400) return `${Math.round(sec / 3600)} h ago`;
+  const startToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
+  const days = Math.ceil((startToday - ms) / 86400e3);
+  if (days <= 1) return 'Yesterday';
+  if (days < 7) return `${days} d ago`;
+  return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', ...(new Date(ms).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
+}
+// The folder a file is in, as the last two folders of its path ("Documents › Chapter 4"); a folder shows the one above it.
+function fileWhere(e) {
+  const parts = String(e.path || '').split(/[\\/]+/).filter(Boolean);
+  parts.pop();
+  const tail = parts.slice(-2);
+  return tail.length ? tail.join(' › ') : '';
+}
+const fileSize = (n) => (!Number.isFinite(n) || n < 0 ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
+const cleanFile = (e) => (e && typeof e === 'object' && typeof e.id === 'string' && e.id.length > 0 && e.id.length < 100 && typeof e.name === 'string'
+  ? { id: e.id, name: text(e.name, 260) || 'Untitled', path: text(e.path, 1000), kind: e.kind === 'folder' ? 'folder' : 'file', size: Number.isFinite(e.size) ? e.size : null, mtime: Number.isFinite(e.mtime) ? e.mtime : 0, openedAt: Number.isFinite(e.openedAt) ? e.openedAt : 0, pinned: e.pinned === true, missing: e.missing === true }
+  : null);
+const FILES_PINNED_MAX = 20;
+const FILES_RECENT_MAX = 12;
+const filesCards = new Set(); // { el, draw }: the Files cards on this page
+const fileFinds = new Map(); // entry id -> { busy } | { list: [candidates] } | { none: true }: "Find it", kept across redraws
+let filesData = null; // { pinned, recent, remember } as last heard
+let filesAsking = null;
+let filesHooked = false;
+function filesLoad() {
+  const bridge = globalThis.lumenFiles;
+  if (!bridge) return Promise.resolve(filesData);
+  if (filesAsking) return filesAsking;
+  filesAsking = Promise.resolve().then(() => bridge.list()).then((d) => {
+    const all = (v, max) => (Array.isArray(v) ? v : []).map(cleanFile).filter(Boolean).slice(0, max);
+    filesData = d && typeof d === 'object' ? { pinned: all(d.pinned, FILES_PINNED_MAX), recent: all(d.recent, FILES_RECENT_MAX), remember: d.remember !== false } : filesData;
+    for (const id of [...fileFinds.keys()]) if (![...(filesData?.pinned || []), ...(filesData?.recent || [])].some((x) => x.id === id && x.missing)) fileFinds.delete(id);
+    return filesData;
+  }).catch(() => filesData).finally(() => { filesAsking = null; });
+  return filesAsking;
+}
+function filesRefresh() {
+  return filesLoad().then(() => {
+    for (const c of [...filesCards]) { if (c.el.isConnected || !c.seen) c.draw(); else filesCards.delete(c); }
+  });
+}
+function filesHook() {
+  if (filesHooked || !globalThis.lumenFiles) return;
+  filesHooked = true;
+  let timer = 0;
+  // (a burst of changes, such as a folder pinned and indexed, is one redraw)
+  globalThis.lumenFiles.onChanged(() => { clearTimeout(timer); timer = setTimeout(() => { if (!document.hidden) filesRefresh(); else filesData = null; }, 40); });
+  // A page that comes back to the front hears nothing it missed while hidden: it asks again (main also re-checks missing files then).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && filesCards.size) filesRefresh(); });
+}
+// The right-click (and "…") menu of a row. Closes on a click elsewhere, Esc, a change of the list, or the page losing focus.
+let fileMenu = null;
+function closeFileMenu(refocus = false) {
+  if (!fileMenu) return;
+  const { root, opener } = fileMenu;
+  fileMenu = null;
+  root.remove();
+  document.removeEventListener('pointerdown', fileMenuOutside, true);
+  document.removeEventListener('keydown', fileMenuKeys, true);
+  removeEventListener('blur', fileMenuBlur);
+  if (refocus && opener?.isConnected) opener.focus({ preventScroll: true });
+}
+const fileMenuOutside = (e) => { if (fileMenu && !fileMenu.root.contains(e.target)) closeFileMenu(); };
+const fileMenuBlur = () => closeFileMenu();
+function fileMenuKeys(e) {
+  if (!fileMenu) return;
+  const items = [...fileMenu.root.querySelectorAll('[role="menuitem"]')];
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFileMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1]?.focus(); }
+  else if (e.key === 'Tab') { e.preventDefault(); closeFileMenu(true); }
+}
+function openFileMenu(opener, x, y, entries) { // entries: [[label, run]]
+  closeFileMenu();
+  const root = el('div', 'w-stack-menu w-ui fl-menu');
+  root.setAttribute('role', 'menu');
+  for (const [label, run] of entries) {
+    const item = el('button', 'w-stack-menu-item', label);
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => { closeFileMenu(); run(); });
+    root.append(item);
+  }
+  document.body.append(root);
+  const r = root.getBoundingClientRect();
+  root.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  root.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+  fileMenu = { root, opener };
+  document.addEventListener('pointerdown', fileMenuOutside, true);
+  document.addEventListener('keydown', fileMenuKeys, true);
+  addEventListener('blur', fileMenuBlur);
+  root.querySelector('button')?.focus({ preventScroll: true });
+}
+// What a click, a menu item or a button does. Main answers { ok: false } when the file is gone: the list is read again and the row turns grey.
+const filesDo = (call) => Promise.resolve().then(call).catch((err) => console.error('files', err)).finally(() => { filesRefresh(); });
+const fileOpen = (e) => filesDo(() => globalThis.lumenFiles.open(e.id));
+const fileShow = (e) => filesDo(() => globalThis.lumenFiles.show(e.id));
+const fileTogglePin = (e) => filesDo(() => (e.pinned ? globalThis.lumenFiles.unpin(e.id) : globalThis.lumenFiles.pin({ id: e.id })));
+const fileRemove = (e) => filesDo(() => globalThis.lumenFiles.remove(e.id));
+const filePick = (kind) => filesDo(() => globalThis.lumenFiles.pin({ pick: kind }));
+function fileFind(e) {
+  fileFinds.set(e.id, { busy: true });
+  filesRefresh();
+  Promise.resolve().then(() => globalThis.lumenFiles.find(e.id)).then((r) => {
+    const list = (Array.isArray(r?.candidates) ? r.candidates : []).filter((c) => c && typeof c.path === 'string' && typeof c.name === 'string').slice(0, 6)
+      .map((c) => ({ path: text(c.path, 1000), name: text(c.name, 260), size: Number.isFinite(c.size) ? c.size : null, mtime: Number.isFinite(c.mtime) ? c.mtime : 0 }));
+    fileFinds.set(e.id, list.length ? { list } : { none: true });
+  }).catch(() => fileFinds.set(e.id, { none: true })).finally(() => filesRefresh());
+}
+function fileMenuFor(e) {
+  const items = [e.missing ? ['Find it', () => fileFind(e)] : [e.kind === 'folder' ? 'Open folder' : 'Open', () => fileOpen(e)], ['Show in folder', () => fileShow(e)]];
+  items.push([e.pinned ? 'Unpin' : 'Pin', () => fileTogglePin(e)], ['Remove from list', () => fileRemove(e)]);
+  return items;
+}
+const ICON_MORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6h.01M6 6h.01M9.6 6h.01"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.2v7.6M2.2 6h7.6"/></svg>';
+function fileRow(e, now) {
+  const row = el('div', `w-row fl-row${e.missing ? ' missing' : ''}${e.pinned ? ' pinned' : ''}`);
+  row.setAttribute('role', 'listitem');
+  row.dataset.id = e.id;
+  const main = el('button', 'fl-main');
+  main.type = 'button';
+  main.dataset.fid = e.id;
+  main.dataset.role = 'main';
+  main.title = e.path || e.name;
+  const words = el('span', 'w-main');
+  words.append(el('span', 'w-title', e.name));
+  const sub = el('span', 'w-sub');
+  if (e.missing) {
+    sub.textContent = 'moved or deleted';
+    sub.classList.add('late');
+    main.setAttribute('aria-label', `${e.name}, moved or deleted`);
+  } else {
+    const when = e.pinned ? '' : fileAgo(e.openedAt, now);
+    const where = fileWhere(e);
+    sub.textContent = [where, when].filter(Boolean).join(' · ');
+    if (when) { sub.dataset.t = String(e.openedAt); sub.dataset.where = where; }
+  }
+  words.append(sub);
+  main.append(fileIcon(e), words);
+  if (e.missing) main.setAttribute('aria-disabled', 'true'); // (a click does nothing: Find it is the way on)
+  main.addEventListener('click', () => { if (e.missing) row.querySelector('.fl-find')?.focus(); else fileOpen(e); });
+  row.addEventListener('contextmenu', (ev) => {
+    if (!globalThis.lumenFiles) return;
+    ev.preventDefault();
+    ev.stopPropagation(); // (the card's own menu, newtab-stacks.js, is not for a row)
+    const keyboard = ev.clientX === 0 && ev.clientY === 0;
+    const r = main.getBoundingClientRect();
+    openFileMenu(main, keyboard ? r.left + 24 : ev.clientX, keyboard ? r.bottom : ev.clientY, fileMenuFor(e));
+  });
+  row.append(main);
+  if (e.missing) {
+    const find = el('button', 'w-btn fl-find', 'Find it');
+    find.type = 'button';
+    find.dataset.fid = e.id;
+    find.dataset.role = 'find';
+    find.setAttribute('aria-label', `Find ${e.name}`);
+    const st = fileFinds.get(e.id);
+    if (st?.busy) { find.disabled = true; find.textContent = 'Looking…'; }
+    find.addEventListener('click', () => fileFind(e));
+    row.append(find);
+  }
+  const more = iconButton(ICON_MORE, `More for ${e.name}`, () => { const r = more.getBoundingClientRect(); openFileMenu(more, r.left, r.bottom + 4, fileMenuFor(e)); });
+  more.classList.add('fl-more');
+  more.dataset.fid = e.id;
+  more.dataset.role = 'more';
+  more.setAttribute('aria-haspopup', 'menu');
+  row.append(more);
+  return row;
+}
+// What "Find it" found near the old place: pick one and the entry points at it again.
+function fileCandidates(e) {
+  const st = fileFinds.get(e.id);
+  if (!st || st.busy) return null;
+  const box = el('div', 'fl-cands');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', `Possible matches for ${e.name}`);
+  if (st.none) {
+    box.append(el('p', 'fl-none', 'Nothing like it nearby.'));
+    const gone = el('button', 'w-btn', 'Remove from list');
+    gone.type = 'button';
+    gone.addEventListener('click', () => fileRemove(e));
+    box.append(gone);
+    return box;
+  }
+  for (const c of st.list) {
+    const b = el('button', 'fl-cand');
+    b.type = 'button';
+    b.title = c.path;
+    const where = fileWhere({ path: c.path });
+    b.append(el('span', 'w-title', c.name), el('span', 'w-sub', [where, fileSize(c.size), c.mtime ? fileAgo(c.mtime) : ''].filter(Boolean).join(' · ')));
+    b.setAttribute('aria-label', `Use ${c.name}${where ? ` in ${where}` : ''}`);
+    b.addEventListener('click', () => { fileFinds.delete(e.id); filesDo(() => globalThis.lumenFiles.relocate(e.id, c.path)); });
+    box.append(b);
+  }
+  return box;
+}
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -1400,6 +1635,91 @@ const WIDGET_RENDERERS = {
     list.append(rows, live);
     card.body.append(compact, list);
     card.el.setAttribute('aria-label', `${text(w.title, 60) || 'AI status'}: ${text(d.summary, 90)}`);
+  },
+
+  // Files (features/files.js): pinned folders and files, then the ones opened lately. Rows are what fitLists trims, from the bottom, to the
+  // card's height ("+N more"); a missing file is grey, says "moved or deleted" and offers Find it. The list is read through the page's own
+  // bridge (see filesLoad above), so this card has no data of its own.
+  files(w, card) {
+    card.el.classList.add('files');
+    filesHook();
+    const add = iconButton(ICON_PLUS, 'Pin a file or folder', () => {
+      const r = add.getBoundingClientRect();
+      openFileMenu(add, r.left, r.bottom + 4, [['Pin a file…', () => filePick('file')], ['Pin a folder…', () => filePick('folder')]]);
+    });
+    add.setAttribute('aria-haspopup', 'menu');
+    add.classList.add('fl-add');
+    card.head.append(add);
+    const wrap = el('div', 'fl-wrap');
+    card.body.append(wrap);
+    for (const c of [...filesCards]) if (c.id === w.id) filesCards.delete(c); // (a card drawn again replaces its old one)
+    const entry = { id: w.id, el: card.el, seen: false, draw: null };
+    const section = (label, list, empty, now) => {
+      const sec = el('section', 'fl-sec');
+      sec.setAttribute('aria-label', label);
+      sec.append(el('h3', 'fl-h', label));
+      if (!list.length) { sec.append(el('p', 'fl-empty', empty)); return sec; }
+      const rows = el('div', 'w-list');
+      rows.setAttribute('role', 'list');
+      for (const e of list) {
+        rows.append(fileRow(e, now));
+        const cands = e.missing ? fileCandidates(e) : null;
+        if (cands) rows.append(cands);
+      }
+      sec.append(rows);
+      return sec;
+    };
+    const paint = (now) => { // the times move on (a minute at a time) without asking main again
+      for (const s of card.el.querySelectorAll('.w-sub[data-t]')) s.textContent = [s.dataset.where, fileAgo(Number(s.dataset.t), now)].filter(Boolean).join(' · ');
+    };
+    paint.coarse = true;
+    const draw = () => {
+      entry.seen ||= card.el.isConnected;
+      const had = document.activeElement;
+      const key = had && card.el.contains(had) && had.dataset?.fid ? `${had.dataset.role}|${had.dataset.fid}` : null;
+      const now = Date.now();
+      wrap.replaceChildren();
+      const data = filesData;
+      if (!globalThis.lumenFiles) wrap.append(el('p', 'w-note', 'Files can’t be shown on this page.'));
+      else if (!data) {
+        const skel = el('div', 'w-skel');
+        skel.setAttribute('aria-label', 'Loading files');
+        skel.setAttribute('role', 'status');
+        skel.append(el('i'), el('i'), el('i'));
+        wrap.append(skel);
+      } else if (!data.pinned.length && !data.recent.length) {
+        const empty = el('div', 'fl-first');
+        empty.append(el('p', 'w-note', data.remember ? 'Pin a folder or open a file to see it here' : 'Pin a folder or a file to see it here. Lumen isn’t remembering the files you open (Settings → Privacy and security).'));
+        const acts = el('div', 'w-actions');
+        for (const [label, kind] of [['Pin a file…', 'file'], ['Pin a folder…', 'folder']]) {
+          const b = el('button', 'w-btn', label);
+          b.type = 'button';
+          b.addEventListener('click', () => filePick(kind));
+          acts.append(b);
+        }
+        empty.append(acts);
+        wrap.append(empty);
+      } else {
+        wrap.append(
+          section('Pinned', data.pinned, 'Nothing pinned yet. Use + to pin a file or a folder.', now),
+          section('Recent', data.recent, data.remember ? 'Files you open show up here.' : 'Not remembering files you open (Settings → Privacy and security).', now),
+        );
+      }
+      if (key) {
+        const [role, fid] = key.split('|');
+        const again = [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid && n.dataset.role === role) || [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid);
+        again?.focus({ preventScroll: true });
+      }
+      paint(now);
+      requestAnimationFrame(() => { if (card.el.isConnected) window.settleWidgetCard?.(card.el); });
+    };
+    entry.draw = draw;
+    filesCards.add(entry);
+    liveTicks.set(card.el, paint);
+    wakeLive();
+    draw();
+    if (!filesData) filesLoad().then(() => draw());
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'Files'}`);
   },
 
   embed(w, card) {

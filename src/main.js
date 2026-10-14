@@ -1494,6 +1494,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: reopenLastClosed },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+        { label: t('menu.findFiles'), accelerator: 'CmdOrCtrl+Shift+F', click: openFilesPicker },
         ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
@@ -4068,6 +4069,11 @@ function openTabSearch() {
   ui()?.focus();
   ui()?.send('tabsearch:open');
 }
+// [files] The quick file picker (renderer/files-picker.js): pinned and recent files, and what is in pinned folders.
+function openFilesPicker() {
+  ui()?.focus();
+  ui()?.send('files:picker');
+}
 function reopenClosed(index, url) {
   if (!Number.isInteger(index) || closedTabs[index] !== url) return false; // the list changed meanwhile
   closedTabs.splice(index, 1);
@@ -4961,6 +4967,7 @@ function handleShortcut(event, input) {
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') reopenLastClosed();
   else if (mod && input.shift && key === 'a') openTabSearch();
+  else if (mod && input.shift && !input.alt && key === 'f') openFilesPicker(); // (before Find: Ctrl+F is Find in page, Ctrl+Shift+F is the file picker)
   else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
   else if (mod && input.shift && !input.alt && key === 'w') closeCurrentWindow();
@@ -5986,6 +5993,7 @@ function macMenu() {
         { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: pv('reopenTab', reopenLastClosed) },
         normal({ label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch }),
         normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
+        normal({ label: t('menu.findFiles'), ...shown('Cmd+Shift+F'), click: openFilesPicker }),
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),

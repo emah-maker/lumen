@@ -39,6 +39,7 @@ const PAGE_FIRST = [
   { combo: 'mod+shift+j', does: 'Downloads', not: 'darwin' },
   { combo: 'mod+shift+k', does: 'New sidebar chat' },
   { combo: 'mod+shift+a', does: 'Search tabs' },
+  { combo: 'mod+shift+f', does: 'Find files' },
   { combo: 'mod+shift+l', does: 'Chat as a page' },
   { combo: 'mod+,', does: 'Settings' },
 ];

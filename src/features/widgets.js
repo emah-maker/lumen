@@ -160,6 +160,7 @@ async function engineAct(am, name, action, x, cached) {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
+  files: () => ({}),
   applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app }),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
@@ -1012,6 +1013,18 @@ const CONNECTORS = {
     summary: (c) => `${c.cd.date}${c.cd.time ? ` ${c.cd.time}` : ''}`,
     async fetch() { return {}; },
     present: (c) => ({ label: c.cd.label, date: c.cd.date, time: c.cd.time, target: LW.countdownTarget(c.cd) }),
+  },
+  // Files (renderer/newtab-widgets.js, features/files.js): the user's pinned and recently opened files. Nothing here: the card asks the
+  // main process for the list itself (the new-tab page's own bridge, preload/files-newtab-preload.js) and hears when it changes, so the
+  // list never goes through this file, the page's hash or settings.json. A path is only ever opened, shown or pinned by id in main.
+  files: {
+    label: 'Files',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows the files and folders you pinned and the ones you opened lately. It never leaves this computer.' }; },
+    title: () => 'Files',
+    summary: () => 'Pinned and recent files',
+    async fetch() { return {}; },
   },
   timer: {
     label: 'Timer',
