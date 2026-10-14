@@ -181,7 +181,7 @@
 //  - the system prompt (replaced, as always) says so in agent.js's GROK_BUILD_FULL_NOTE.
 // A background task never gets full access (nobody is there to watch it): the engine ignores the setting when `background`.
 
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile } = require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');

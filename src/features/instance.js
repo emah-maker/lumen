@@ -26,7 +26,7 @@ function appIcon() {
 function fixAppName(app, appId = 'com.lumen.browser') {
   if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return;
   const values = appNameValues(process.execPath, appId, appIcon());
-  const { execFile } = require('child_process');
+  const { execFile } = require('../ai/cli-utils');
   for (const [key, name, data] of values) execFile('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', data, '/f'], { windowsHide: true, timeout: 8000 }, () => {});
 }
 // [key, value name, data] for fixAppName: pure, for the tests.
@@ -66,7 +66,7 @@ async function fixAssociationIcons(exe, icon, run) {
 
 // Tell Explorer to redraw file icons (SHChangeNotify(SHCNE_ASSOCCHANGED)); without it the old icon stays until the
 // icon cache is rebuilt. Called only after fixAssociationIcons changed something, so once per update.
-function notifyAssociationsChanged(execFile = require('child_process').execFile) {
+function notifyAssociationsChanged(execFile = require('../ai/cli-utils').execFile) {
   const script = "Add-Type -Namespace Lumen -Name Shell -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'; [Lumen.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)";
   execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 15000 }, () => {});
 }
@@ -74,7 +74,7 @@ function notifyAssociationsChanged(execFile = require('child_process').execFile)
 // Startup, installed exe only (never dev or test electron.exe, #450): background, silent on any failure.
 function fixAssociationIconsAtStartup(app) {
   if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return Promise.resolve([]);
-  const { execFile } = require('child_process');
+  const { execFile } = require('../ai/cli-utils');
   const run = (args) => new Promise((resolve) => execFile('reg.exe', args, { windowsHide: true, timeout: 5000 }, (err, out) => resolve(err ? null : String(out))));
   return fixAssociationIcons(process.execPath, appIcon(), run)
     .then((changed) => { if (changed.length) notifyAssociationsChanged(); return changed; })
@@ -185,7 +185,7 @@ function reclaimProfileLock() {
     'exit 0',
   ].join('; ');
   try {
-    require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8000, windowsHide: true });
+    require('../ai/cli-utils').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8000, windowsHide: true });
     return true;
   } catch {
     return false; // a live instance exists (exit 3) or cleanup failed
@@ -204,7 +204,7 @@ const PING_EXIT = { 0: 'live', 2: 'quitting', 3: 'busy' };
 const pingResult = (code) => PING_EXIT[code] || 'none';
 function pingRunningInstance(app) {
   if (process.platform !== 'win32') return 'none';
-  const { spawnSync } = require('child_process');
+  const { spawnSync } = require('../ai/cli-utils');
   // A tiny synchronous probe. The timers are generous: under CPU load a live instance can take a second to answer, and a ping
   // that gave up early used to read as "nobody there".
   const probe = `const s=require('net').connect(${JSON.stringify(pipePath(app))});let t;

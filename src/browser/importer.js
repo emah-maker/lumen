@@ -220,7 +220,7 @@ function parsePlistXml(xml) {
 function readSafariPlist(file) {
   const bytes = fs.readFileSync(file);
   if (bytes.subarray(0, 6).toString() !== 'bplist') return parsePlistXml(bytes.toString('utf8'));
-  const xml = require('child_process').execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], { maxBuffer: 64 * 1024 * 1024 });
+  const xml = require('../ai/cli-utils').execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], { maxBuffer: 64 * 1024 * 1024 });
   return parsePlistXml(xml.toString('utf8'));
 }
 

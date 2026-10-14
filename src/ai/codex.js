@@ -54,7 +54,7 @@
 // (view_image is the name), apply_patch_freeform is removed, web_search_request is deprecated (web_search = "disabled" replaces it).
 // Still needs a signed-in run: the tool set Codex really exposes (unified_exec stays on), `resume` with the options before it, the
 // exact failure words (describeFailure matches broadly), and the --image=<file> form.
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile } = require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');

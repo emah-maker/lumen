@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, probe: probeCli } = require('../ai/cli-utils');
 const { exists, lookup: which, validModel } = require('../ai/cli-utils');
 const launcher = require('../automation/launcher');
 // `electron` is only there in the main process; units.js loads this file in plain Node.
@@ -805,9 +805,8 @@ function setupAiAgents(deps) {
     if (!bin) return Promise.resolve(null);
     if (!versions.has(bin)) {
       versions.set(bin, new Promise((resolve) => {
-        try {
-          execFile(bin, ['--version'], { shell: false, windowsHide: true, timeout: 8000, cwd: os.homedir() }, (err, stdout) => resolve(err ? null : (/(\d+\.\d+\.\d+[\w.+-]*)/.exec(String(stdout)) || [])[1] || null));
-        } catch { resolve(null); }
+        // Hidden, piped, and asked once more if the program is mid-update (agy self-updates): a failure is just "no version", never shown.
+        probeCli(bin, ['--version'], { timeout: 8000, cwd: os.homedir() }).then((r) => resolve(r.ok ? (/(\d+\.\d+\.\d+[\w.+-]*)/.exec(r.stdout) || [])[1] || null : null), () => resolve(null));
       }).then((v) => { if (!v) versions.delete(bin); return v; })); // (a failure is tried again next time)
     }
     return versions.get(bin);

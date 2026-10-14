@@ -13,7 +13,7 @@
 // system prompt (Lumen's is appended), the home folder as its working directory, and no permission
 // prompts (bypassPermissions). Lumen's browser tools still go through the MCP server and its approval card.
 
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile } = require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');

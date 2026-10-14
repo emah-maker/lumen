@@ -34,7 +34,7 @@
 // main.js hooks in with createUpdates(...).start(); the IPC is settings:updates-* (privileged).
 const fs = require('fs');
 const path = require('path');
-const { spawn, execFile, execFileSync } = require('child_process');
+const { spawn, execFile, execFileSync } = require('../ai/cli-utils');
 
 const OWNER = 'emah-maker';
 const REPO = 'lumen';
