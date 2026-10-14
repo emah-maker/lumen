@@ -168,6 +168,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await save('newTabClockStyle', 'classic'); await save('newTabGreetingFont', 'classic'); await save('newTabClockCard', 'none'); await save('newTabClockSize', 'm'); await save('newTabSearchWidth', 640); await save('newTabWidgetGlass', 'solid');
     await contrast('after the clock, greeting and glass choices, over Nebula with bubbles');
 
+    // ---------- Graphics: Light ----------
+    await save('newTabWidgetGlass', 'frosted');
+    const blur = () => sp("getComputedStyle(document.querySelector('#bg-preview .ntp-card')).backdropFilter");
+    check('Graphics: Full effects: the preview frosted cards blur what is behind them', (await blur()) !== 'none', await blur());
+    await save('graphicsMode', 'light');
+    f = await until(async () => { const x = await fx(); return x?.fx?.light && x; });
+    check('Graphics: Light: the preview draws no blur and the effect runs in its lighter form', (await blur()) === 'none' && (await pv()).accent && Boolean(f), JSON.stringify({ blur: await blur(), f }));
+    await save('graphicsMode', 'full');
+    await save('newTabWidgetGlass', 'solid');
+
     // ---------- the effects: animating, still with Reduce motion, stopped when off screen, no long tasks ----------
     await sp(`window.__long = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__long.push(Math.round(e.duration)); }).observe({ type: 'longtask', buffered: false }); } catch {} true`);
     const frames = async (ms) => { const a = (await fx())?.fx?.frames ?? -1; await sleep(ms); const b = (await fx())?.fx?.frames ?? -1; return b - a; };
