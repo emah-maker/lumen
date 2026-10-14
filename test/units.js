@@ -803,6 +803,9 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const committed = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n') : '');
   check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
   check('ui bundle: no inline script (the CSP allows none)', !/<script>/.test(out.html), '');
+  const set = require('../scripts/bundle-renderer').bundle('settings');
+  check('settings bundle: settings.html, settings.bundle.js and settings.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('settings.html') === set.html && committed('settings.bundle.js') === set.js && committed('settings.bundle.css') === set.css, '');
+  check('settings bundle: no inline script (the CSP allows none)', !/<script>/.test(set.html), '');
 }
 
 // ---- launcher.js: the first process hands over to the launcher (macOS: with the links it was sent)

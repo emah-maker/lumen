@@ -4412,7 +4412,7 @@ const setup = require('./features/setup').create({
 });
 ipcMain.handle('settings:setup-state', () => setup.state());
 ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
-ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:default-browser', (_e, o) => setup.isDefault(o?.cached ? { maxAgeMs: 60000 } : {})); // (cached: Settings opening shows the last answer at once)
 ipcMain.handle('settings:make-default', () => setup.makeDefault());
 ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 

@@ -2,7 +2,7 @@
 // like System Settings: a large title, then grouped lists of rows. Deep things open as sub-pages.
 // Everything goes through window.lumenSettings (settings-preload.js); the backend is
 // settings-backend.js.
-const S = window.lumenSettings;
+const S = window.settingsEarly ? window.settingsEarly(window.lumenSettings) : window.lumenSettings; // (renderer/settings-early.js)
 const $ = (id) => document.getElementById(id);
 
 function h(tag, props = {}, ...children) {
@@ -741,8 +741,8 @@ async function buildAi(card) {
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
   const defaultNote = status('default-browser-status');
   const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('settings.default.button', 'Make default') });
-  const renderDefault = async () => {
-    const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
+  const renderDefault = async (cachedFirst) => { // (opening Settings may show the last answer; coming back to the page asks again)
+    const yes = await S.ai.isDefaultBrowser?.({ cached: cachedFirst === true }).catch(() => null);
     defaultButton.hidden = yes === true;
     flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Another browser is the default.'), '');
   };
@@ -758,7 +758,7 @@ async function buildAi(card) {
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
   card.at('default-browser').append(defaultRow);
-  renderDefault();
+  renderDefault(true);
 }
 
 // A Relaunch button in the row of a setting that only takes effect at launch; shown while that
@@ -3059,6 +3059,15 @@ function initNavKeys() {
   window.addEventListener('resize', edgeFade);
 }
 
+// The page a link or the remembered category would show, without touching anything: which builders to start before the route is run.
+function guessView() {
+  const id = location.hash.slice(1);
+  const sub = slots.get(id);
+  if (sub?.isSub) return { cat: sub.cat, sub: id };
+  if (categories.has(id)) return { cat: id, sub: null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
+}
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
@@ -3100,7 +3109,9 @@ async function init() {
     $('search').disabled = true;
     return;
   }
+  performance.mark('settings:init');
   const [first, strings] = await Promise.all([S.get(), S.strings?.().catch(() => null)]);
+  performance.mark('settings:data');
   st = first;
   // [subagents] the sidebar's Helpers button changes the same setting: coming back to this page shows what it is now
   window.addEventListener('focus', async () => {
@@ -3215,7 +3226,9 @@ async function init() {
     allDone = true;
     document.body.dataset.ready = '1';
   })();
-  await buildOne('ai-model'); // (its sub-pages and rows in other categories are needed to resolve any link)
+  // (AI model's builder also makes the sub-pages and rows other pages link to, so it always runs; the page's own builders run beside it)
+  await Promise.all([buildOne('ai-model'), ...neededBuilds(guessView()).map(buildOne)]);
+  performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
   document.fonts?.ready.then(fitDescs).catch(() => {});

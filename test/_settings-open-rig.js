@@ -95,7 +95,7 @@ async function openOnce(app, section, { settleMs = 2500 } = {}) {
     await sleep(8);
   }
   await sleep(settleMs);
-  const page = await inPage('window.__rig ? JSON.stringify(window.__rig) : null');
+  const page = await inPage('window.__rig ? JSON.stringify({ ...window.__rig, marks: performance.getEntriesByType("mark").map((m) => [m.name, Math.round(performance.timeOrigin + m.startTime)]) }) : null');
   const rig = page ? JSON.parse(page) : null;
   const gap = await app.evaluate(() => { global.__gap.on = false; return { max: global.__gap.max, over: global.__gap.over }; });
   const placeholders = await inPage(`[...document.querySelectorAll('.pane:not([hidden])')].map((p) => /Loading|Checking/.test(p.textContent)).some(Boolean)`);
@@ -110,6 +110,7 @@ async function openOnce(app, section, { settleMs = 2500 } = {}) {
     longtasks: after(rig.longtasks).map((e) => ({ at: e.start - t0, dur: e.dur })),
     loafs: after(rig.loafs).map((e) => ({ at: e.start - t0, dur: e.dur, block: e.block })),
     placeholders: Boolean(placeholders),
+    origin: rel(rig.origin), marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
   };
 }
 
