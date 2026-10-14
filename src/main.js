@@ -8707,6 +8707,8 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
     const shot = target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image;
+    await new Promise((r) => setImmediate(r)); // (the resize and the JPEG encode are each ~5 ms of main: as two tasks, input and frames get a turn between them)
+    if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // (thawed in that turn)
     return shot.toJPEG(snapshotSizer.JPEG_QUALITY);
   } catch {
     return null;

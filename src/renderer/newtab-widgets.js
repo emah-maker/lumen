@@ -1679,6 +1679,7 @@ const WIDGET_RENDERERS = {
     const tick = (now) => { paint(now); if (Date.now() - filesAskedAt > 50e3 && !document.hidden) filesRefresh(); };
     tick.coarse = true;
     const draw = () => {
+      const t0 = performance.now();
       entry.seen ||= card.el.isConnected;
       const had = document.activeElement;
       const key = had && card.el.contains(had) && had.dataset?.fid ? `${had.dataset.role}|${had.dataset.fid}` : null;
@@ -1717,6 +1718,7 @@ const WIDGET_RENDERERS = {
       }
       paint(now);
       requestAnimationFrame(() => { if (card.el.isConnected) window.settleWidgetCard?.(card.el); });
+      window.__filesPerf?.push(['card-draw', performance.now() - t0]); // (a test makes the array)
     };
     entry.draw = draw;
     filesCards.add(entry);

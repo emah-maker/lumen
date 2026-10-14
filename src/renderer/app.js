@@ -2406,7 +2406,7 @@ function edgeColor(img) {
     const canvas = document.createElement('canvas');
     canvas.width = 1;
     canvas.height = 24;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }); // (a CPU canvas: getImageData on a GPU one waits for the readback, a 30 ms stall on the frame that opens a freeze)
     ctx.drawImage(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, 0, 0, 1, 24);
     const d = ctx.getImageData(0, 0, 1, 24).data;
     let r = 0, g = 0, b = 0;

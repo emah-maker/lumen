@@ -64,9 +64,14 @@ const filesPicker = (() => {
     list.setAttribute('role', 'listbox');
     const mod = MAC ? '⌘' : 'Ctrl';
     const foot = Object.assign(document.createElement('div'), { className: 'files-picker-foot' });
-    for (const [keys, label] of [['↵', tr('filesPicker.hintOpen', 'Open')], [`${mod} ↵`, tr('filesPicker.hintShow', 'Show in folder')], ['Alt ↵', tr('filesPicker.hintAttach', 'Attach to chat')], ['Esc', tr('filesPicker.hintClose', 'Close')]]) {
+    // The Enter key is drawn, not typed as "↵": that glyph is in none of the UI's fonts, and the first layout that met it paid ~22 ms for the
+    // system's font fallback search (a dropped frame the first time the picker opened).
+    const ENTER = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 2.5v3.2a1 1 0 0 1-1 1H3M5 4 3 6.7 5 9.4"/></svg>';
+    for (const [mods, label] of [['', tr('filesPicker.hintOpen', 'Open')], [mod, tr('filesPicker.hintShow', 'Show in folder')], ['Alt', tr('filesPicker.hintAttach', 'Attach to chat')], ['Esc', tr('filesPicker.hintClose', 'Close')]]) {
       const hint = document.createElement('span');
-      hint.append(Object.assign(document.createElement('kbd'), { textContent: keys }), ` ${label}`);
+      const kbd = Object.assign(document.createElement('kbd'), { textContent: mods === 'Esc' ? 'Esc' : mods ? `${mods} ` : '' });
+      if (mods !== 'Esc') kbd.insertAdjacentHTML('beforeend', ENTER);
+      hint.append(kbd, ` ${label}`);
       foot.append(hint);
     }
     box.append(input, list, foot);
@@ -75,44 +80,51 @@ const filesPicker = (() => {
     input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => query(input.value), DEBOUNCE_MS); });
     input.addEventListener('keydown', onKey);
     list.addEventListener('pointerdown', (e) => e.preventDefault()); // the focus stays in the box
+    const rowOf = (e) => { const li = e.target.closest?.('.files-picker-item'); return li ? Number(li.dataset.i) : -1; };
+    list.addEventListener('mousemove', (e) => { const i = rowOf(e); if (i >= 0 && i !== selected) select(i); });
+    list.addEventListener('click', (e) => { const i = rowOf(e); if (rows[i]) activate(rows[i], {}); });
     window.addEventListener('blur', () => { if (isOpen()) close(); });
   }
 
-  const name = (e, ranges) => {
-    const span = Object.assign(document.createElement('span'), { className: 'files-picker-name' });
-    if (!ranges.size) { span.textContent = e.name; return span; }
+  // The name with its matched letters in <mark>s, set into the row's own name span.
+  const setName = (span, e, ranges) => {
+    if (!ranges.size) { span.textContent = e.name; return; }
+    const frag = document.createDocumentFragment();
     let run = '';
     let marked = false;
-    const flush = () => { if (!run) return; span.append(marked ? Object.assign(document.createElement('mark'), { textContent: run }) : document.createTextNode(run)); run = ''; };
+    const flush = () => { if (!run) return; frag.append(marked ? Object.assign(document.createElement('mark'), { textContent: run }) : document.createTextNode(run)); run = ''; };
     for (let i = 0; i < e.name.length; i++) {
       const m = ranges.has(i);
       if (m !== marked) { flush(); marked = m; }
       run += e.name[i];
     }
     flush();
-    return span;
+    span.append(frag);
   };
 
+  // A row is cloned from one template (constant markup; names and folders are only set with textContent): a clone costs a fraction of
+  // making and wiring seven elements by hand, 30 times an answer. The hover and the click are one listener on the list (build).
+  const FOLDER_ICON = '<svg viewBox="0 0 16 16"><path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/></svg>';
+  let template = null;
   function row(item, i) {
+    if (!template) {
+      template = document.createElement('li');
+      template.setAttribute('role', 'option');
+      template.innerHTML = '<span class="files-picker-badge" aria-hidden="true"></span><span class="files-picker-text"><span class="files-picker-name"></span><span class="files-picker-where"></span></span>';
+    }
     const e = item.entry;
-    const li = document.createElement('li');
+    const li = template.cloneNode(true);
     li.className = `files-picker-item${i === selected ? ' selected' : ''}${e.missing ? ' missing' : ''}`;
     li.id = `files-picker-item-${i}`;
-    li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(i === selected));
     li.dataset.kind = e.kind;
-    const ext = extOf(e);
-    const badge = Object.assign(document.createElement('span'), { className: `files-picker-badge${e.kind === 'folder' ? ' folder' : ''}`, textContent: ext || '' });
-    badge.setAttribute('aria-hidden', 'true');
-    if (e.kind === 'folder') badge.innerHTML = '<svg viewBox="0 0 16 16"><path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/></svg>';
-    const text = Object.assign(document.createElement('span'), { className: 'files-picker-text' });
-    const where = Object.assign(document.createElement('span'), { className: 'files-picker-where', textContent: e.missing ? tr('filesPicker.missing', 'moved or deleted') : folderOf(e.path) });
-    text.append(name(e, item.ranges), where);
-    li.append(badge, text);
+    li.dataset.i = String(i);
+    const [badge, text] = li.children;
+    if (e.kind === 'folder') { badge.className = 'files-picker-badge folder'; badge.innerHTML = FOLDER_ICON; } else badge.textContent = extOf(e);
+    setName(text.firstChild, e, item.ranges);
+    text.lastChild.textContent = e.missing ? tr('filesPicker.missing', 'moved or deleted') : folderOf(e.path);
     if (e.pinned) li.append(Object.assign(document.createElement('span'), { className: 'files-picker-pin', title: tr('filesPicker.pinned', 'Pinned') }));
     li.title = e.path;
-    li.onmousemove = () => { if (selected !== i) select(i); };
-    li.onclick = () => activate(item, {});
     return li;
   }
 
@@ -129,6 +141,7 @@ const filesPicker = (() => {
 
   function render(entries, q, emptyText) {
     if (!isOpen()) return;
+    const t0 = performance.now();
     const items = entries.slice(0, 100).map(clean).filter(Boolean).map((entry) => ({ entry, group: groupOf(entry), ranges: q ? matchRanges(q, entry.name) : new Set() }));
     rows = [];
     for (const [id] of GROUPS) rows.push(...items.filter((it) => it.group === id));
@@ -147,10 +160,11 @@ const filesPicker = (() => {
       frag.append(row(item, i));
     });
     if (!rows.length) frag.append(Object.assign(document.createElement('li'), { className: 'files-picker-empty', textContent: emptyText }));
+    list.scrollTop = 0; // (before the swap: the layout is clean now, so this reads nothing stale; after it, it would force a layout in the middle of the draw)
     list.replaceChildren(frag);
     const current = document.getElementById(`files-picker-item-${selected}`);
     if (current) input.setAttribute('aria-activedescendant', current.id); else input.removeAttribute('aria-activedescendant');
-    list.scrollTop = 0;
+    window.__filesPerf?.push(['picker-draw', performance.now() - t0]); // (a test makes the array: the draw's own time per answer)
   }
 
   // Ask main (nothing typed: the pinned and recent lists, which are cheap; else its fuzzy search). Only the newest answer is drawn.
@@ -197,15 +211,17 @@ const filesPicker = (() => {
   }
 
   async function open() {
+    const t0 = performance.now();
     if (!panel) build();
     if (isOpen()) { input.select(); return; }
+    freezePage(); // app.js: the page shows as a still image so the picker can sit over it. It reads the viewport's size, so it goes before the panel is shown: the read finds the layout clean (after the panel's first show it forced a 25 ms layout)
     panel.hidden = false;
-    freezePage(); // app.js: the page shows as a still image so the picker can sit over it
     input.value = '';
     selected = 0;
     rows = [];
     list.replaceChildren();
     input.focus();
+    window.__filesPerf?.push(['picker-show', performance.now() - t0]); // (a test makes the array: what opening costs before the first frame)
     query('');
   }
 
