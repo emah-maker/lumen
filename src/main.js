@@ -18,6 +18,11 @@ if (process.argv.includes('--mcp')) {
   require('./automation/mcp').runBridge({ app });
   return;
 }
+// [hang recorder] Names what the main process was doing when "Lumen is not responding" (features/hang-recorder.js): breadcrumbs around every
+// ipcMain handler and window event (wrapped here, before any module registers one) and around layout() and sendTabs() below, watched by a
+// worker thread that writes <userData>/diagnostics/hangs.jsonl. hang.mark(label, fn, a, b) records fn(a, b).
+const hang = require('./features/hang-recorder').install({ app, ipcMain, BrowserWindow });
+if (TEST) global.__hangRecorder = hang;
 const fs = require('fs');
 // Automation on, where Chromium needs a private pipe (launcher.js): this first process only starts Lumen again
 // and leaves. Decided here, before ~100 ms of modules a process that exits at once would never use.
@@ -1875,7 +1880,8 @@ function batchTabs(fn) {
 }
 const tabStripGate = saveGates.tabsSendGate();
 // `coalesced`: a burst of a page's own events (sendTabsSoon). Nothing is sent, run or saved when the strip would show what it already does.
-function sendTabs(coalesced = false) {
+function sendTabs(coalesced = false) { return hang.mark('sendTabs', sendTabsBody, coalesced); } // [hang recorder]
+function sendTabsBody(coalesced) {
   if (tabsBatch && curRec) { tabsBatched.add(curRec); return; }
   keepPinnedFirst();
   const state = tabState();
@@ -1942,7 +1948,8 @@ function keptPageHidden(tab) {
   try { const wc = tab.view.webContents; if (!wc.isDestroyed() && unthrottled.get(tab.id) === wc) wc.setBackgroundThrottling(false); } catch { /* gone */ }
 }
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
-function layout() {
+function layout() { return hang.mark('layout', layoutBody); } // [hang recorder]
+function layoutBody() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
   // the address bar. While the UI has focus, a view shown here gives focus back for half a second.
@@ -7388,7 +7395,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (items.length) ui()?.send('agent:history', { items });
   });
   w.webContents.on('focus', () => { rec.keyboardOwner = w.webContents; }); // (see keepKeyboardFromBackgroundTab)
-  w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) followFront(); }); // [chat per tab] the sidebar shows the chat of the tab in front here
+  w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) hang.mark('focus:followFront', followFront); hang.mark('focus:a11y', () => a11yMode?.onFocus()); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
@@ -8571,6 +8578,14 @@ passkeys.attach();
 if (process.platform === 'win32') app.whenReady().then(() => setTimeout(() => passkeys.warm(), 1500));
 if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkeys.busy(), context: (id) => { const wc = require('electron').webContents.fromId(id); return wc ? passkeyContext(wc) : null; }, openBackground: (url) => openTab(url, { background: true })?.webContents?.id ?? null };
 
+// [a11y mode] Accessibility another program switched on (a password manager's desktop app, Phone Link) is cut down to Lumen's own controls unless a
+// screen reader runs: with the full set, big pages stalled the main process for seconds on every focus change (features/a11y-mode.js).
+let a11yMode = null;
+app.whenReady().then(() => {
+  a11yMode = require('./features/a11y-mode').create({ app, mode: () => readSettings().screenReaderSupport || 'auto', log: (m) => console.warn(m), ...(TEST ? { probe: () => Promise.resolve(global.__a11yScreenReader ?? false) } : {}) });
+  a11yMode.sync();
+  if (TEST) global.__a11yMode = a11yMode;
+});
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy
@@ -8606,6 +8621,7 @@ const settingsBackend = settingsPage.create({
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
   onTabSleepChange: () => tabSleepSettingChanged(),
+  onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
   onTabReadyChange: () => { for (const rec of [...winRecs]) scheduleReadySync(rec); },
@@ -8706,10 +8722,10 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
-    const shot = target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image;
+    const shot = hang.mark('freeze:resize', () => (target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image)); // [hang recorder]
     await new Promise((r) => setImmediate(r)); // (the resize and the JPEG encode are each ~5 ms of main: as two tasks, input and frames get a turn between them)
     if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // (thawed in that turn)
-    return shot.toJPEG(snapshotSizer.JPEG_QUALITY);
+    return hang.mark('freeze:encode', () => shot.toJPEG(snapshotSizer.JPEG_QUALITY));
   } catch {
     return null;
   }

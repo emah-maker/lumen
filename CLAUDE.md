@@ -8,6 +8,7 @@ Lumen is a Chromium (Electron) browser with an AI sidebar. Plain CommonJS, no bu
 - Run Electron suites with `LUMEN_TEST_BACKGROUND=1` so test windows stay invisible and never take focus from a Lumen that is in use.
 - `npm run lint` (ESLint) must pass with no errors.
 - Main moves fast: `git fetch` and branch from a fresh `origin/main`. One topic per branch and PR.
+- Land a PR with `node scripts/land.js <pr>` and cut a release with `node scripts/release.js patch`; both take `--dry-run` (docs/releasing.md).
 
 ## Docs: every change brings its documentation
 

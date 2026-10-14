@@ -154,16 +154,18 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // An entry whose chat file is gone (deleted by something else, a synced folder that lost it) is marked `missing`: the
   // History list must not show a row that opens empty (main.js leaves it out). Checked at most every few seconds per chat; the
-  // entry stays in the index, so a file that comes back (a restored backup) or is only held by a scanner shows again. A file missing at one look is looked at again after a moment
-  // (Windows can report a file being replaced by a rename as missing).
+  // entry stays in the index, so a file that comes back (a restored backup) or is only held by a scanner shows again.
+  // Never a pause here: list() runs this for every entry, on the main thread, each time the sidebar, a tab switch or a window focus asks
+  // for the list. It used to wait 25 ms and look again for each missing file (and load() below waited 120 ms more for each one's title):
+  // an index with a couple of hundred entries whose files had been moved away froze the whole app for about 30 s at every look.
+  // (Lumen's own writes replace a file with one rename, which never shows it missing; a file missing at one look is looked at again in 3 s.)
   const FILE_CHECK_MS = 3000;
   const fileChecks = new Map(); // id -> { at, ok }
   function fileExists(id) {
     const t = Date.now();
     const seen = fileChecks.get(id);
     if (seen && t - seen.at < FILE_CHECK_MS) return seen.ok;
-    let ok = fs.existsSync(chatFile(id));
-    if (!ok) { pause(25); ok = fs.existsSync(chatFile(id)); }
+    const ok = fs.existsSync(chatFile(id));
     fileChecks.set(id, { at: t, ok });
     return ok;
   }
@@ -176,7 +178,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const c of chats) {
       if (c.renamed || cleanSaved(c.title) === c.title) continue;
       let fresh = '';
-      try { fresh = autoTitle(load(c.id)); } catch { /* unreadable: the cleaned saved title below */ }
+      try { fresh = fileExists(c.id) ? autoTitle(load(c.id, { retry: false })) : ''; } catch { /* unreadable: the cleaned saved title below */ }
       c.title = fresh && fresh !== 'New chat' ? fresh : cleanSaved(c.title) || 'Screen capture';
     }
     return chats.map((c) => (fileExists(c.id) ? c : { ...c, missing: true })).sort((a, b) => b.updated - a.updated);
@@ -189,7 +191,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOENT']);
   const READ_TRIES = 4;
   const pause = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no wait: retry at once */ } };
-  function load(id) {
+  // `retry: false` (a list or a search going over every chat): one read, no waiting on the main thread for a file held for a moment.
+  // A file that is not there at all is never waited for: only a file that exists and is held (a scanner, a sync client) is tried again.
+  function load(id, { retry = true } = {}) {
     if (!has(id)) return null;
     for (let attempt = 1; ; attempt++) {
       try {
@@ -199,7 +203,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
         return snapshot;
       } catch (err) {
         if (!TRANSIENT.has(err?.code)) return null; // damaged or undecryptable: retrying will not help
-        if (attempt < READ_TRIES) { pause(20 * attempt); continue; }
+        if (err.code === 'ENOENT' && !fs.existsSync(chatFile(id))) return null; // gone, not held: nothing to wait for
+        if (retry && attempt < READ_TRIES) { pause(20 * attempt); continue; }
         // Still unreadable: say so, but keep the entry. Something outside Lumen (a scanner, a sync client) may hand the
         // file back later, and dropping the entry from the index would orphan a chat that still exists.
         return null;
@@ -438,7 +443,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       const seen = textCache.get(c.id);
       if (seen && seen.updated === c.updated) body = seen.text;
       else {
-        try { body = textOf(load(c.id)).toLowerCase(); } catch { body = ''; }
+        try { body = fileExists(c.id) ? textOf(load(c.id, { retry: false })).toLowerCase() : ''; } catch { body = ''; }
         textCache.set(c.id, { updated: c.updated, text: body });
       }
       if (!words.every((w) => title.includes(w) || body.includes(w))) continue;

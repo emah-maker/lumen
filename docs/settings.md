@@ -226,6 +226,7 @@ Programs and scripts are held until you agree to keep them, whatever these setti
 |---|---|---|---|
 | Reduce motion | `reduceMotion` | off | Turns off animations in Lumen's own UI and pages. |
 | Minimum font size | `minimumFontSize` | `0` (none) | `6` to `24` px. Applies to new tabs. |
+| Screen reader support | `screenReaderSupport` | `auto` | `auto`: accessibility another program switches on (a password manager's desktop app, Phone Link) is kept to Lumen's own controls unless a screen reader runs (Narrator, NVDA, JAWS, ZoomText, Dolphin; VoiceOver on a Mac), so big pages can't stall Lumen; `on`: always the full set; `off`: never. |
 | Show a focus ring | `focusRings` | off | Always outline the focused control in Lumen, not only when using the keyboard. |
 
 ## System

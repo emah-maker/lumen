@@ -2761,6 +2761,7 @@ function buildAccessibility(card) {
     toggle('reduceMotion', 'Reduce motion', 'Turns off animations in Lumen (tabs, sidebar, these pages).'),
     select('minimumFontSize', 'Minimum font size', 'Websites can’t make text smaller than this. Applies to new tabs.', [[0, 'None'], [6, '6'], [9, '9'], [12, '12'], [16, '16'], [20, '20'], [24, '24']], { number: true }),
     toggle('focusRings', 'Show a focus ring', 'Always outline the focused control in Lumen, not only when using the keyboard.'),
+    select('screenReaderSupport', 'Screen reader support', 'Automatic: page accessibility stays on for a screen reader (Narrator, NVDA, JAWS, VoiceOver). Other programs that read windows, like a password manager, get only Lumen’s own buttons, so big pages don’t freeze Lumen. On: always, for a screen reader Lumen doesn’t recognise.', [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']]),
   );
 }
 
