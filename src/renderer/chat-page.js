@@ -365,7 +365,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
   chatHost.identity = () => {};
   applyRail();
   startChat();
-  window.assistant.state().then(({ view: now, target, name, draft }) => {
+  window.assistant.state().then(({ view: now, target, name, draft, send }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
@@ -376,8 +376,10 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     // Opened mid-reply: the events that follow belong to it. `view.live` is the open chat's own run
     // (a chat left running elsewhere is not this one).
     resumeLive(now?.live);
-    // Text typed in the new-tab page's box before its Chat button: waits here as a draft, after any draft this chat already had (never sent).
+    // Text typed in the new-tab page's box before Ask AI: asked in a new chat (Enter there), or it waits here as a draft, after any
+    // draft this chat already had (never sent).
     if (typeof draft === 'string' && draft.trim()) setTimeout(() => { // (after the box has taken back the draft this chat had)
+      if (send === true) { askInNewChat(draft.trim()); prompt.focus(); return; } // chat-core's own: a fresh chat, the old one stays in the list
       prompt.value = [prompt.value.trimEnd(), draft.trim()].filter(Boolean).join('\n');
       prompt.dispatchEvent(new Event('input')); // chat-core's own handler: sizes the box and saves the draft
       prompt.focus();

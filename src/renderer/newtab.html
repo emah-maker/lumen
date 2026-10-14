@@ -210,6 +210,8 @@
       appearance: none; border: none; margin: 0; padding: 4px 12px; border-radius: 6px; background: transparent; color: var(--muted);
       font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 160ms ease-out, color 160ms ease-out;
     }
+    .mode button { display: inline-flex; align-items: center; gap: 6px; }
+    .mode button svg { flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
     .mode button:hover { color: var(--text); }
     .mode button[aria-checked="true"] { background: var(--accent-deep); color: var(--on-accent); }
     .mode button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
@@ -217,18 +219,6 @@
     .mode-connect { appearance: none; margin: 0 0 0 6px; min-height: 24px; padding: 2px 12px; border: 0; border-radius: 999px; background: var(--accent-deep); color: var(--on-accent); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; }
     .mode-connect[hidden] { display: none; }
     .mode-connect:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
-    /* Chat: the way into the full-page chat, in the corner where that page puts its Home button. */
-    .chat-btn {
-      appearance: none; position: fixed; top: 12px; right: 20px; z-index: 20; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 5px 12px 5px 10px;
-      border: 0; border-radius: 999px; background: var(--field); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border);
-      font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 160ms ease-out, color 160ms ease-out;
-    }
-    .chat-btn svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-    .chat-btn:hover { color: var(--text); background: var(--hover); }
-    .chat-btn:focus-visible { color: var(--text); box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
-    .chat-btn[hidden], body.w-editing .chat-btn { display: none; }
-    body.on-media .chat-btn { -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
-    body.on-media.has-effect .chat-btn { background: rgba(28, 28, 32, 0.68); -webkit-backdrop-filter: none; backdrop-filter: none; }
     .section-hint { margin: 6px 2px 0; font-size: 12px; color: var(--muted); }
     .section-hint kbd { display: inline-block; margin: 0 1px; padding: 0 4px; border-radius: 4px; font: 600 10.5px/16px system-ui, sans-serif; box-shadow: inset 0 0 0 1px var(--border); }
 
@@ -1212,16 +1202,15 @@
     </header>
     <form action="https://www.google.com/search" method="get" role="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.75"/><path d="m10.6 10.6 3.4 3.4"/></svg>
-      <input id="q" name="q" autocomplete="off" placeholder="Search Google" aria-label="Search Google" aria-keyshortcuts="/ Control+/ Alt+A" />
+      <input id="q" name="q" autocomplete="off" placeholder="Search Google" aria-label="Search Google" aria-keyshortcuts="/ Control+/ Alt+A Control+Enter" />
       <kbd aria-hidden="true">/</kbd>
       <div class="mode" id="mode" role="radiogroup" aria-label="What the field does">
         <button type="button" role="radio" id="mode-search" data-mode="search" aria-checked="true" tabindex="0">Search</button>
-        <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1">Ask AI</button>
-      </div><span class="mode-hint" id="mode-hint" role="status" aria-live="polite">Ctrl+/ to switch</span><button type="button" class="mode-connect" id="mode-connect" hidden>Connect an AI</button>
+        <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1" title="Open chat" aria-keyshortcuts="Control+Shift+L"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/></svg>Ask AI</button>
+      </div><span class="mode-hint" id="mode-hint" role="status" aria-live="polite">Ctrl+/ to switch, Ctrl+Enter to ask AI</span><button type="button" class="mode-connect" id="mode-connect" hidden>Connect an AI</button>
     </form>
     <div id="sections"></div>
   </main>
-  <button type="button" class="chat-btn" id="chat-btn" aria-label="Open full-page chat" title="Open full-page chat (Ctrl+Shift+L)" aria-keyshortcuts="Control+Shift+L"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/></svg><span>Chat</span></button>
   <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
   <script src="newtab-park.js"></script>
   <script src="favicons.js"></script>

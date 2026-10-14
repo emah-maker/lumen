@@ -70,7 +70,7 @@ async function newChatTab(profileSrc, opts) {
     const t0 = Date.now();
     await shortcut(s.app);
     out.shortcut = (await whenReady(s.app, { t0, exclude: before, messages: 1 })).ms;
-    // back to a new-tab page; its Chat button
+    // back to a new-tab page; its Ask AI button
     await s.app.evaluate(() => global.__chatPage.back());
     await sleep(1500);
     const clickChat = async (ctrl) => {
@@ -84,7 +84,7 @@ async function newChatTab(profileSrc, opts) {
       await sleep(1200);
       await s.ready();
       const t0b = Date.now();
-      await s.app.evaluate((_e, [id, c]) => global.__chatPage.contents(id).executeJavaScript(`document.getElementById('chat-btn').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ${c} }))`), [home, ctrl]);
+      await s.app.evaluate((_e, [id, c]) => global.__chatPage.contents(id).executeJavaScript(`(() => { const b = document.getElementById('mode-ask'); const click = () => b.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ${c} })); click(); if (!${c}) click(); })()`), [home, ctrl]);
       return (await whenReady(s.app, { t0: t0b, exclude: before, messages: 1 })).ms;
     };
     out.button = await clickChat(false);

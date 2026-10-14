@@ -94,7 +94,7 @@ function createRunTracker() {
 //         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab), spareContents() }
 function create(deps) {
   const runs = createRunTracker();
-  const drafts = new Map(); // chat tab id -> text carried from the new-tab page's box, handed to the page once (chatpage:state)
+  const drafts = new Map(); // chat tab id -> { text, send } carried from the new-tab page's box, handed to the page once (chatpage:state)
 
   const chatTabs = () => deps.tabs().filter((t) => t.managerPage === 'chat' && deps.alive(t) && !t.closing);
   // Chat pages in every window (deps.allTabs): a page in a window that is not the one in front is still a chat page,
@@ -200,12 +200,13 @@ function create(deps) {
     return true;
   }
 
-  // The new-tab page's Chat button (the way back from Home): this tab turns into the chat page, in place (inNewTab: a new tab
-  // instead). What was typed in the new-tab box waits in the page's composer as a draft; it is never sent.
-  function fromHome(tabId, { draft = '', inNewTab = false } = {}) {
+  // The new-tab page's Ask AI (the way back from Home): this tab turns into the chat page, in place (inNewTab: a new tab
+  // instead). What was typed in the new-tab box goes to the page: asked in a new chat when `send` is set (Enter in Ask AI),
+  // otherwise it waits in the composer as a draft and is never sent.
+  function fromHome(tabId, { draft = '', inNewTab = false, send = false } = {}) {
     const id = inNewTab ? deps.openTab(CHAT_URL, { managerPage: 'chat' }).id : deps.goChat(tabId);
     const text = String(draft || '').slice(0, 20000);
-    if (id != null && text.trim()) drafts.set(id, text);
+    if (id != null && text.trim()) drafts.set(id, { text, send: Boolean(send) });
     deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
     return id;
   }
@@ -217,9 +218,9 @@ function create(deps) {
     ipcMain.handle('chatpage:state', (event) => {
       deps.followPage?.(event);
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
-      const draft = tab ? drafts.get(tab.id) || '' : '';
+      const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });

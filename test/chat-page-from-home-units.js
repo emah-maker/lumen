@@ -1,5 +1,5 @@
-// features/chat-page.js fromHome: the new-tab page's Chat button. The tab turns into the chat page (or a new tab opens), and text
-// typed in the new-tab box is handed to that chat page once, as a draft, through its first chatpage:state call.
+// features/chat-page.js fromHome: the new-tab page's Ask AI. The tab turns into the chat page (or a new tab opens), and text
+// typed in the new-tab box is handed to that chat page once, through its first chatpage:state call: as a draft, or (send) to be asked.
 const assert = require('assert');
 const chatPage = require('../src/features/chat-page');
 
@@ -36,6 +36,17 @@ assert.strictEqual(calls[calls.length - 1][0], 'openTab');
 assert.strictEqual(calls[calls.length - 1][1], chatPage.CHAT_URL);
 assert.deepStrictEqual(calls[calls.length - 1][2], { managerPage: 'chat' });
 assert.strictEqual(stateFor(50).draft, 'second');
+
+// Enter in Ask AI: the same hand-over, flagged to be asked (once); an empty one is nothing to ask.
+assert.strictEqual(stateFor(60).send, false);
+rt.fromHome(11, { draft: 'what is 2+2', send: true });
+assert.deepStrictEqual([stateFor(60).draft, stateFor(60).send], ['what is 2+2', false], 'taken once: the second read is empty');
+rt.fromHome(11, { draft: 'again', send: true });
+const once = stateFor(60);
+assert.strictEqual(once.draft, 'again');
+assert.strictEqual(once.send, true);
+rt.fromHome(11, { draft: '  ', send: true });
+assert.strictEqual(stateFor(60).send, false);
 
 // A very long draft is cut, not refused.
 rt.fromHome(9, { draft: 'x'.repeat(30000), inNewTab: true });
