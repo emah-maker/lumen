@@ -8564,6 +8564,10 @@ app.whenReady().then(() => setTimeout(() => {
   gpuHealth = require('./features/gpu-health').install({
     app, screen, version: app.getVersion(), log: (m) => console.warn(m),
     hwOn: () => readSettings().hardwareAcceleration !== false,
+    onLoss: () => { // a slide's snapshot or frozen view must not outlive the GPU that drew it
+      for (const rec of winRecs) if (rcAlive(rec)) { clearTimeout(freezeTimers.get(rec)); freezeSeq.set(rec, ++freezeCounter); }
+      if (viewFrozen) { viewFrozen = false; layout(); }
+    },
     send: (channel, payload) => {
       sendAllUis(channel, payload);
       if (channel === 'gpu:calm') { // the new-tab pages (their own web contents) pause their animated effect
@@ -8576,9 +8580,11 @@ app.whenReady().then(() => setTimeout(() => {
   if (TEST) global.__gpuHealth = gpuHealth;
   for (const d of earlyGpuLoss.splice(0)) gpuHealth.gpuGone(d);
 }, 4000).unref());
-ipcMain.on('gpu:restart', () => {
-  if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; return; } // tests check the click, not a relaunch
-  app.relaunch(); // before-quit saves the session, as for every other restart
+ipcMain.on('gpu:restart', (_e, safe) => {
+  if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; global.__gpuRestartSafe = safe === true; return; } // tests check the click, not a relaunch
+  // safe: this run only, hardware acceleration off (--lumen-safe-gpu, settings-backend.js applyAtLaunch); the next normal start is hardware again
+  const args = process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu');
+  app.relaunch({ args: safe === true ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
   app.quit();
 });
 const settingsBackend = settingsPage.create({

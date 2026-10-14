@@ -490,7 +490,8 @@ contextBridge.exposeInMainWorld('browser', {
   onOrganizeNote: on('tabs:organize-note'),
   onGpuCalm: on('gpu:calm'), // [gpu health] true while the GPU recovers from a reset
   onGpuNote: on('gpu:software-note'), // drawing fell to software after a reset: offer a restart
-  gpuRestart: () => ipcRenderer.send('gpu:restart'),
+  onGpuLost: on('gpu:lost'), // the GPU process died: a page snapshot on screen is put away
+  gpuRestart: (safe) => ipcRenderer.send('gpu:restart', safe === true),
   undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),

@@ -8625,12 +8625,17 @@ window.browser.onOrganizing?.(showOrganizing);
 let gpuCalm = false;
 window.browser.onGpuCalm?.((on) => { gpuCalm = Boolean(on); document.documentElement.toggleAttribute('data-gpu-calm', gpuCalm); window.setBackdropCalm?.(gpuCalm); });
 // The one-time notice: a reset left Lumen drawing in software. It has a Restart button (never an automatic restart); same note as Organize's.
-window.browser.onGpuNote?.(() => {
-  if (document.querySelector('.gpu-note')) return;
+window.browser.onGpuLost?.(() => { if (snapshot) thawPage(); });
+window.browser.onGpuNote?.((info) => {
+  const unstable = info?.kind === 'unstable'; // the driver keeps failing: offer safe drawing mode (this run only) instead of a plain restart
+  const old = document.querySelector('.gpu-note');
+  if (old && (old.dataset.kind === 'unstable' || !unstable)) return;
+  old?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note gpu-note', role: 'status' });
-  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text gpu-note-text', textContent: t('gpu.softwareMode') });
-  note.title = t('gpu.softwareMode');
-  const restart = Object.assign(document.createElement('button'), { textContent: t('gpu.restart'), title: t('gpu.restart.title'), onclick: () => { restart.disabled = true; window.browser.gpuRestart(); } });
+  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text gpu-note-text', textContent: t(unstable ? 'gpu.unstable' : 'gpu.softwareMode') });
+  note.title = words.textContent;
+  note.dataset.kind = unstable ? 'unstable' : 'software';
+  const restart = Object.assign(document.createElement('button'), { textContent: t(unstable ? 'gpu.safeMode' : 'gpu.restart'), title: t(unstable ? 'gpu.safeMode.title' : 'gpu.restart.title'), onclick: () => { restart.disabled = true; window.browser.gpuRestart(unstable); } });
   const dismiss = Object.assign(document.createElement('button'), { textContent: '×', title: t('gpu.dismiss'), onclick: () => note.remove() });
   dismiss.setAttribute('aria-label', t('gpu.dismiss'));
   note.append(words, restart, dismiss);

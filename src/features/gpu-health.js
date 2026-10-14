@@ -16,6 +16,8 @@ const CALM_MS = 10000; // how long the GPU is left alone after an event
 const MIN_GAP_MS = 180000; // one calm window per 3 minutes at most
 const CHECK_AFTER_MS = [1500, 5000, 12000]; // feature-status reads after a GPU loss (the new GPU process needs a moment to say what it got)
 const MAX_LINES = 200;
+const UNSTABLE_LOSSES = 6; // this many GPU process losses...
+const UNSTABLE_WINDOW_MS = 120000; // ...within this: the driver keeps failing (offer safe drawing mode, once)
 const STATUS_KEYS = ['gpu_compositing', 'rasterization', 'webgl', 'webgl2', 'video_decode', 'canvas', 'opengl'];
 
 // Chromium's feature-status words: enabled, enabled_on, disabled_software, disabled_off, unavailable_software, unavailable_off ...
@@ -73,11 +75,20 @@ function createNotice() {
   };
 }
 
+// Counts GPU process losses in a sliding window: add(t) returns true once there are max or more within windowMs.
+function createLossCounter({ max = UNSTABLE_LOSSES, windowMs = UNSTABLE_WINDOW_MS } = {}) {
+  let times = [];
+  return {
+    add(t) { times = times.filter((x) => t - x < windowMs); times.push(t); return times.length >= max; },
+    count: () => times.length,
+  };
+}
+
 const nowMs = () => Date.now();
 
 // app, screen: Electron's. hwOn(): Settings → hardware acceleration. send(channel, payload): to every window's UI.
 // readStatus(): app.getGPUFeatureStatus (a test replaces it). dir(): where diagnostics go.
-function install({ app, screen, hwOn, send, readStatus, dir, version = '', log = () => {}, setTimeoutFn = setTimeout, now = nowMs }) {
+function install({ app, screen, hwOn, send, readStatus, dir, version = '', log = () => {}, onLoss = null, setTimeoutFn = setTimeout, now = nowMs }) {
   const fs = require('fs');
   const path = require('path');
   const calm = createCalm();
@@ -87,7 +98,9 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
   let baseline = null; // the feature status read once, a few seconds after start (before any reset): null while unknown
   let checks = [];
   let writes = 0;
-  const stats = { gpuLosses: 0, calmStarts: 0, notices: 0, lastReason: '' };
+  const losses = createLossCounter();
+  let unstableOffered = false;
+  const stats = { gpuLosses: 0, calmStarts: 0, notices: 0, unstableOffers: 0, lastReason: '' };
   const file = () => path.join(dir(), 'gpu-events.jsonl');
 
   function record(entry) { // a line per event; async, rare; never throws
@@ -127,7 +140,7 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
     if (notice.shouldShow({ status: s, hwOn: hwOn(), baselineSoft: baseline ? softwareFallback(baseline) : false })) {
       stats.notices++;
       record({ e: 'software-notice', status: statusWords(s) });
-      try { send('gpu:software-note', { restart: true }); } catch { /* no window */ }
+      try { send('gpu:software-note', { kind: 'software' }); } catch { /* no window */ }
     }
   }
   function scheduleChecks() { // only after a reset: a few reads while the new GPU process settles, none while healthy
@@ -142,6 +155,12 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
     stats.lastReason = reason;
     record({ e: 'gpu-gone', reason, code: Number.isFinite(details?.exitCode) ? details.exitCode : null, status: statusWords(status()) });
     poke('gpu');
+    try { onLoss?.(); send('gpu:lost', true); } catch { /* no window */ } // views frozen for a sidebar slide are put back: a GPU that died must not leave a still picture
+    if (losses.add(now()) && !unstableOffered) { // never an automatic restart: the notice offers it
+      unstableOffered = true; stats.unstableOffers++;
+      record({ e: 'unstable-offer' });
+      try { send('gpu:software-note', { kind: 'unstable' }); } catch { /* no window */ }
+    }
     scheduleChecks();
     log(`[lumen] GPU process gone (${reason})`);
   }
@@ -176,4 +195,4 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
   };
 }
 
-module.exports = { install, createCalm, createNotice, softwareFallback, statusWords, CALM_MS, MIN_GAP_MS, CHECK_AFTER_MS };
+module.exports = { install, createCalm, createNotice, createLossCounter, UNSTABLE_LOSSES, UNSTABLE_WINDOW_MS, softwareFallback, statusWords, CALM_MS, MIN_GAP_MS, CHECK_AFTER_MS };
