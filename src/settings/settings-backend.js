@@ -109,6 +109,7 @@ const DEFAULTS = {
   reduceMotion: false,
   minimumFontSize: 0,
   focusRings: false,
+  screenReaderSupport: 'auto', // [a11y mode] auto | on | off: how much accessibility another program may switch on (features/a11y-mode.js)
   hardwareAcceleration: true, // restart
   tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep); false = off, whatever the mode
   tabSleepMode: 'both', // [tabs] off | idle (after tabSleepMinutes) | memory (only when memory is low) | both (features/tab-sleep.js)
@@ -241,6 +242,7 @@ function validate(key, value) {
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
+    case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
@@ -760,6 +762,7 @@ function create(deps) {
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
+      case 'screenReaderSupport': deps.onScreenReaderChange?.(); break;
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
       case 'tabReadyRecent': deps.onTabReadyChange?.(); break;
@@ -929,9 +932,13 @@ function create(deps) {
     setTimeout(() => { if (!tab.wc.isDestroyed()) tab.wc.reload(); }, 300);
     return true;
   }
+  // The graphics devices never change while Lumen runs, but asking for them costs the main thread ~30 ms (Settings builds Internals as it opens):
+  // asked once, and every later Settings tab reads the answer.
+  let gpuInfo = null;
+  const gpuInfoOnce = () => (gpuInfo ||= Promise.resolve().then(() => app.getGPUInfo('basic')).catch(() => null));
   async function internals() {
     const s = ses();
-    const gpu = await app.getGPUInfo('basic').catch(() => null);
+    const gpu = await gpuInfoOnce();
     const cookieCount = await s.cookies.get({}).then((c) => c.length).catch(() => null);
     return {
       gpuFeatures: app.getGPUFeatureStatus(),
