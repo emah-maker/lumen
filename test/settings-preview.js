@@ -169,7 +169,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await contrast('after the clock, greeting and glass choices, over Nebula with bubbles');
 
     // ---------- Graphics: Light ----------
-    await save('newTabWidgetGlass', 'frosted'); await save('newTabEffect', 'none');
+    await save('newTabWidgetGlass', 'frosted'); await save('newTabEffect', 'none'); await save('graphicsMode', 'full'); // (Automatic is Light on an integrated GPU)
+    await until(async () => (await pv()).gfx === 'full');
     const blur = () => sp("getComputedStyle(document.querySelector('#bg-preview .ntp-card')).backdropFilter");
     check('Graphics: Full effects: the preview frosted cards blur what is behind them', (await blur()) !== 'none', await blur());
     await save('graphicsMode', 'light');
