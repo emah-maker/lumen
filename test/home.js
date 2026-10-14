@@ -1,4 +1,4 @@
-// New-tab page: the Search | Ask AI switch, asking the sidebar from the homepage, and new-tab focus.
+// New-tab page: the Search | Ask AI switch, asking in the full-page chat from the homepage, and new-tab focus.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
@@ -47,7 +47,7 @@ const path = require('path');
   await inTab("document.getElementById('mode').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
   check('arrow keys move between the two options', /^Search /.test(arrowed) && (await placeholder()) === 'Connect an AI to ask questions', `${arrowed} / ${await placeholder()}`);
 
-  // With a key, Ask AI hands the prompt to the agent in the sidebar; the tab stays on the homepage.
+  // With a key, Ask AI turns the tab into the full-page chat, which hands the question to the agent.
   await app.evaluate(() => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     global.__homePrompts = [];
@@ -72,9 +72,8 @@ const path = require('path');
   let prompts = [];
   for (let i = 0; i < 30 && !prompts.length; i++) { await sleep(300); prompts = await app.evaluate(() => global.__homePrompts); }
   check('Ask AI delivers the prompt to the agent', prompts.some((p) => p.includes('What is a good pasta recipe?')), JSON.stringify(prompts));
-  check('the sidebar opens', (await ui.getAttribute('#toggle-sidebar', 'aria-pressed')) === 'true', await ui.getAttribute('#toggle-sidebar', 'aria-pressed'));
-  const url = await app.evaluate(() => global.__homeTab.webContents.getURL());
-  check('the tab stays on the homepage', /newtab\.html/.test(url) && !/[?&]ask=/.test(url), url);
+  const url = await app.evaluate(() => (global.__chatPage.tabs().find((t) => t.id === global.__chatPage.activeId()) || {}).url || '');
+  check('the tab is now the full-page chat (not the sidebar), and the question is not left in the address', /chat-page.html$/.test(url) && !/[?&](ask|draft)=/.test(url), url);
   await ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 }).catch(() => {});
 
   // New-tab focus: Ctrl+T puts the cursor in the address bar (Search and Ask AI modes alike), typed

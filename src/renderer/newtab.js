@@ -305,8 +305,9 @@ render();
 window.addEventListener('hashchange', render);
 
 // The field either searches with the engine chosen in settings (the hash carries { label, url
-// with %s }) or asks the assistant. Asking reloads this page with ?ask=…; the browser cancels that
-// navigation and hands the prompt to the sidebar, so the tab stays here.
+// with %s }) or asks the assistant. Asking reloads this page with ?chat=…&send=1; the browser cancels that
+// navigation and turns this tab into the full-page chat, which asks the question in a new chat. Ask AI is the one
+// way into the chat from here: with an empty box it just opens it (the same tab, Ctrl/Cmd+click: a new tab).
 (() => {
   const form = document.querySelector('form[role=search]');
   const input = document.getElementById('q');
@@ -326,7 +327,7 @@ window.addEventListener('hashchange', render);
     const { engine, who, connected, model, modelLabel } = current();
     const askRadio = document.getElementById('mode-ask');
     askRadio.dataset.model = model; // exactly which model an ask goes to
-    askRadio.title = modelLabel ? `${modelLabel}` : '';
+    askRadio.title = `Open chat (${MAC ? 'Shift+Cmd+L' : 'Ctrl+Shift+L'})${modelLabel ? `. Answers with ${modelLabel}.` : ''}`;
     for (const r of radios) {
       const on = r.dataset.mode === mode;
       r.setAttribute('aria-checked', String(on));
@@ -348,7 +349,19 @@ window.addEventListener('hashchange', render);
   apply(mode, { save: false });
   window.addEventListener('hashchange', () => apply(mode, { save: false })); // a model or search engine was picked: the box follows at once
 
-  for (const r of radios) r.addEventListener('click', () => { apply(r.dataset.mode); input.focus(); });
+  // Search | Ask AI: a click picks the mode. Ask AI, when it is already the mode (or with Ctrl/Cmd held), is the chat button: it sends
+  // what is typed to the full-page chat, or opens that chat when the box is empty.
+  const openChat = (inNewTab) => {
+    const q = input.value.trim().slice(0, 20000);
+    if (q && !current().connected) { goConnect(); return; }
+    location.href = `${location.pathname}?chat=${inNewTab ? 'tab' : '1'}${q ? `&send=1&draft=${encodeURIComponent(q)}` : ''}${location.hash}`;
+  };
+  for (const r of radios) {
+    r.addEventListener('click', (e) => {
+      if (r.dataset.mode === 'ask' && (mode === 'ask' || e.ctrlKey || e.metaKey)) { openChat(e.ctrlKey || e.metaKey); return; }
+      apply(r.dataset.mode); input.focus();
+    });
+  }
   document.getElementById('mode').addEventListener('keydown', (e) => {
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
@@ -357,7 +370,8 @@ window.addEventListener('hashchange', render);
   });
   input.addEventListener('keydown', (e) => {
     const toggle = (e.ctrlKey && e.key === '/') || (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A'));
-    if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); }
+    if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); return; }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
   });
 
   // This box passes only words (the address of this page carries them): a picture pasted or dropped here is not
@@ -375,29 +389,12 @@ window.addEventListener('hashchange', render);
   form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
   form.addEventListener('drop', (e) => refuseImages(e, e.dataTransfer?.files || []));
 
-  // Chat: this tab becomes the full-page chat (Ctrl/Cmd+click or middle-click: a new tab). What is typed in the box goes
-  // along as a draft in the chat's composer; it is not sent. The page asks by loading itself with ?chat=, as Ask AI does.
-  const chatBtn = document.getElementById('chat-btn');
-  if (chatBtn) {
-    const mac = /mac/i.test(navigator.platform || '');
-    const keys = mac ? 'Shift+Cmd+L' : 'Ctrl+Shift+L';
-    chatBtn.title = `Open full-page chat (${keys})`;
-    chatBtn.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+L' : 'Control+Shift+L');
-    const openChat = (inNewTab) => {
-      const draft = input.value.trim().slice(0, 20000);
-      location.href = `${location.pathname}?chat=${inNewTab ? 'tab' : '1'}${draft ? `&draft=${encodeURIComponent(draft)}` : ''}${location.hash}`;
-    };
-    chatBtn.addEventListener('click', (e) => openChat(e.ctrlKey || e.metaKey));
-    chatBtn.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // (no autoscroll on a middle-click)
-    chatBtn.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); openChat(true); } });
-  }
-
   form.addEventListener('submit', (e) => {
     const q = input.value.trim();
     if (mode === 'ask') {
       e.preventDefault();
       if (!current().connected) { goConnect(); return; }
-      if (q) location.href = `${location.pathname}?ask=${encodeURIComponent(q)}${location.hash}`;
+      openChat(false); // (an empty box opens the chat itself)
       return;
     }
     const { engine } = current();

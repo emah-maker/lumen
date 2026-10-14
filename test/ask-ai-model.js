@@ -99,7 +99,7 @@ const LIMIT_MS = 200;
     new Promise((_r, reject) => setTimeout(() => { const w = global.__homeTab.webContents; reject(new Error(`new-tab page did not answer: loading=${w.isLoading()} crashed=${w.isCrashed()} destroyed=${w.isDestroyed()} url=${w.getURL().slice(0, 60)}`)); }, 5000)),
   ]), code);
   await newTab();
-  await home("document.getElementById('mode-ask').click()");
+  await home("document.getElementById('mode-ask').getAttribute('aria-checked') === 'true' || document.getElementById('mode-ask').click()");
 
   // A second window.
   await app.evaluate(() => global.__basics.openNewWindow());
@@ -160,6 +160,7 @@ const LIMIT_MS = 200;
     await page.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 4000 }).catch(() => {});
     return page.evaluate((t) => { const p = document.getElementById('prompt'); p.value = t; p.dispatchEvent(new Event('input', { bubbles: true })); p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); }, text); // (Enter, as a user sends: with a stale Stop showing it first asks main what the chat is doing, where the button would stop)
   };
+  let keepHome = null; let chatsBefore = [];
   async function nextAsk(id, how) {
     await ensureChatPage();
     // The one before has finished (nothing running or waiting): its reply must not count as this ask's.
@@ -169,12 +170,18 @@ const LIMIT_MS = 200;
     else if (how === 'window 2') await typeAndSend(ui2, `ask ${before} from window 2`);
     else if (how === 'chat page') { await chatWc(`(() => { const p = document.getElementById('prompt'); p.value = 'ask ${before} from the chat page'; p.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('send').click(); })()`); }
     else if (how === 'new tab') {
-      await home("document.getElementById('mode-ask').click()"); // the same new-tab page every time (a tab opened now would land in whichever window is in front)
+      // An ask turns its new-tab page into a chat tab, so each ask gets a throwaway new-tab page (and tab) of its own; the long-lived one stays.
+      keepHome = await app.evaluate(() => global.__homeTab.id); chatsBefore = await app.evaluate(() => global.__chatPage.tabs().filter((t) => t.chat).map((t) => t.id));
+      await app.evaluate(() => { global.__keptHome = global.__homeTab; });
+      await newTab();
+      await home("document.getElementById('mode-ask').getAttribute('aria-checked') === 'true' || document.getElementById('mode-ask').click()"); 
       await home(`(() => { const q = document.getElementById('q'); q.value = 'ask ${before} from the new tab'; q.form.requestSubmit(); })()`);
     }
     const got = await waitFor(async () => (await used()).length > before && (await used()).slice(before));
     check(`next ask (${how}) used ${id}`, Boolean(got) && got[0] === (id.includes(':') ? id : `anthropic:${id}`), JSON.stringify(got));
     await sleep(400); // let the reply end
+    if (how === 'new tab') await app.evaluate((_e, before) => { for (const t of global.__chatPage.tabs()) if (t.chat && !before.includes(t.id)) global.__agent.browser.closeTab(t.id); global.__homeTab = global.__keptHome; }, chatsBefore);
+    if (how === 'new tab') { await sleep(800); await ensureChatPage(); await waitFor(async () => (await chatWc("document.readyState === 'complete' && Boolean(document.getElementById('model')?.value)")) === true); }
   }
 
   // ---- ways to change the model -------------------------------------------------------------

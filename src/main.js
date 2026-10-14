@@ -4520,7 +4520,7 @@ function askFromHome(event, url, tabId) {
   let text;
   let params;
   try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
-  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab' }); return true; } // the Chat button: the full-page chat, here or (Ctrl/middle-click) in a new tab
+  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab', send: params.get('send') === '1' }); return true; } // Ask AI: the full-page chat, here or (Ctrl+click) in a new tab; send=1 asks the draft in a new chat
   if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
