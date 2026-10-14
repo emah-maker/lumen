@@ -9467,7 +9467,7 @@ async function showSidebar(visible, { fromTab = false, instant = false, newTab =
   settleStill?.(); // (an earlier no-slide change is finished first, so this one starts from a settled layout)
   const early = earlyFreeze; // a snapshot started on pointerdown
   earlyFreeze = null;
-  const still = instant || newTab || motionReduced() || gpuCalm; // (gpuCalm: no snapshot while the GPU recovers)
+  const still = instant || newTab || motionReduced() || gpuCalm || window.lumenSoftwareGfx === true; // (gpuCalm: no snapshot while the GPU recovers; lumenSoftwareGfx: drawing is in software, a capture is a CPU readback)
   let frozen = false;
   if (!still) {
     const pending = early || (snapshot ? null : freezePage());
@@ -9597,7 +9597,7 @@ $('toggle-sidebar').onclick = () => {
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && window.lumenSoftwareGfx !== true && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
@@ -12755,6 +12755,8 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-gfx-light', Boolean(p.lightGfx)); // Settings > System > Graphics: Light (or Automatic on an integrated GPU): no backdrop blur (settings-backend.js [igpu])
+    root.classList.toggle('pref-gfx-soft', Boolean(p.softwareGfx)); // software drawing (no GPU): Light plus no blur anywhere, short transitions, no page snapshot (settings-backend.js [igpu], prefs.css)
+    if ('softwareGfx' in p) window.lumenSoftwareGfx = Boolean(p.softwareGfx); // app.js: the sidebar moves without a snapshot
     root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs

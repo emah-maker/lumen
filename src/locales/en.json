@@ -1857,6 +1857,7 @@
   "settings.graphics.light": "Light",
   "settings.graphics.note.light": "Light is on ({why}{device}).",
   "settings.graphics.note.full": "Full effects are on ({why}{device}).",
+  "settings.graphics.note.software": "Software drawing is on (no graphics acceleration): Light, plus a still new-tab background, no blur anywhere and no page snapshot when the sidebar moves. Choose Full effects to keep every effect anyway.",
   "usage.week.title": "The weekly limit is {percent}% used.",
   "usage.pop.in": "in {time}",
   "usage.pop.updated": "Updated {time}",

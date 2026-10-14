@@ -2534,7 +2534,7 @@ async function showSidebar(visible, { fromTab = false, instant = false, newTab =
   settleStill?.(); // (an earlier no-slide change is finished first, so this one starts from a settled layout)
   const early = earlyFreeze; // a snapshot started on pointerdown
   earlyFreeze = null;
-  const still = instant || newTab || motionReduced() || gpuCalm; // (gpuCalm: no snapshot while the GPU recovers)
+  const still = instant || newTab || motionReduced() || gpuCalm || window.lumenSoftwareGfx === true; // (gpuCalm: no snapshot while the GPU recovers; lumenSoftwareGfx: drawing is in software, a capture is a CPU readback)
   let frozen = false;
   if (!still) {
     const pending = early || (snapshot ? null : freezePage());
@@ -2664,7 +2664,7 @@ $('toggle-sidebar').onclick = () => {
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && window.lumenSoftwareGfx !== true && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.

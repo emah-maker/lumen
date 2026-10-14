@@ -2792,6 +2792,7 @@ function buildSystem(card) {
     const mode = st.prefs?.graphicsMode || 'auto';
     const on = mode === 'light' || (mode === 'auto' && g?.integrated);
     const why = mode === 'auto' ? (g?.why || '') : tr('settings.graphics.chosen', 'your choice');
+    if (g?.software) { gfxNote.textContent = tr('settings.graphics.note.software', 'Software drawing is on (no graphics acceleration): Light, plus a still new-tab background, no blur anywhere and no page snapshot when the sidebar moves. Choose Full effects to keep every effect anyway.'); return; }
     gfxNote.textContent = tr(on ? 'settings.graphics.note.light' : 'settings.graphics.note.full', on ? 'Light is on ({why}{device}).' : 'Full effects are on ({why}{device}).', { why, device: g?.device ? `: ${g.device}` : '' });
   };
   showGfxNote();

@@ -414,6 +414,7 @@ if (TEST) global.__perfMode = perfMode;
 // Graphics: Automatic / Full effects / Light (settings/settings-backend.js (the [igpu] block)). Decided once from the GPU in use, never from power events.
 const graphicsMode = settingsPage.graphics.create({
   app, readSettings,
+  launchSoftware: readSettings().hardwareAcceleration === false || process.argv.includes('--lumen-safe-gpu') || app.commandLine.hasSwitch('disable-gpu'), // [software mode] no GPU drawing from the first frame: Automatic is the software level
   onChange: () => { try { settingsBackend.pushUiPrefs(); refreshNewTabs(); } catch { /* the UI isn't up yet */ } },
 });
 if (TEST) global.__graphics = graphicsMode;
@@ -6645,7 +6646,7 @@ const cardCall = (fn, ...args) => {
 // the card shows the page from its first frame instead of an empty panel that fills in a moment later.
 let prepShot = null; // { tabId, src, at }
 function snapshotFor(tab) {
-  if (!alive(tab) || gpuHealth?.calmActive()) return Promise.resolve(null); // ([gpu health] no capture while the GPU recovers)
+  if (!alive(tab) || gpuHealth?.calmActive() || graphicsMode.software()) return Promise.resolve(null); // ([gpu health] no capture while the GPU recovers; [software mode] a capture is a CPU readback)
   const scale = Math.max(1, ...screen.getAllDisplays().map((x) => x.scaleFactor || 1)); // sharp on any display it is dragged to
   return tab.view.webContents.capturePage().then((image) => {
     if (image.isEmpty()) return null;
@@ -8571,6 +8572,7 @@ app.whenReady().then(() => setTimeout(() => {
   gpuHealth = require('./features/gpu-health').install({
     app, screen, version: app.getVersion(), log: (m) => console.warn(m),
     hwOn: () => readSettings().hardwareAcceleration !== false,
+    onSoftware: () => graphicsMode.markSoftware(), // [software mode] drawing fell to software: the renderers lighten at once, not at the next start
     onLoss: () => { // a slide's snapshot or frozen view must not outlive the GPU that drew it
       for (const rec of winRecs) if (rcAlive(rec)) { clearTimeout(freezeTimers.get(rec)); freezeSeq.set(rec, ++freezeCounter); }
       if (viewFrozen) { viewFrozen = false; layout(); }
@@ -8716,7 +8718,7 @@ function armFreezeTimeout(rec, seq) {
   }, FREEZE_MAX_MS));
 }
 ipcMain.handle('view:freeze', async (_e, cssSize) => {
-  if (gpuHealth?.calmActive()) return null; // [gpu health] the GPU is recovering: no capture (the UI changes the sidebar without a snapshot)
+  if (gpuHealth?.calmActive()) return null; // [gpu health] the GPU is recovering: no capture (the UI changes the sidebar without a snapshot). [software mode] the UI does not ask for one for the sidebar (app.js lumenSoftwareGfx); the tab search popup still does, it needs the still image to sit over
   const rec = curRec;
   const wc = activeTab()?.webContents;
   if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
@@ -8742,6 +8744,7 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
 });
 // Capture once at startup so the first real snapshot doesn't pay the pipeline's warm-up cost.
 ipcMain.handle('view:warm', async () => {
+  if (graphicsMode.software()) return false; // [software mode] no capture to warm up
   const wc = activeTab()?.webContents;
   if (!wc) return false;
   try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one

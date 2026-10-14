@@ -18,6 +18,8 @@
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-gfx-light', Boolean(p.lightGfx)); // Settings > System > Graphics: Light (or Automatic on an integrated GPU): no backdrop blur (settings-backend.js [igpu])
+    root.classList.toggle('pref-gfx-soft', Boolean(p.softwareGfx)); // software drawing (no GPU): Light plus no blur anywhere, short transitions, no page snapshot (settings-backend.js [igpu], prefs.css)
+    if ('softwareGfx' in p) window.lumenSoftwareGfx = Boolean(p.softwareGfx); // app.js: the sidebar moves without a snapshot
     root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
