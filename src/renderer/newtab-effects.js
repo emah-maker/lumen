@@ -225,6 +225,7 @@
   };
 
   const INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'];
+  let calm = false; // [gpu health] the GPU is recovering from a reset: no frames are asked for until it is over (setGpuCalm)
   let run = null; // { name, key, canvas, ctx, list, raf, colors, ... } while an effect is on
 
   function stop() {
@@ -313,7 +314,7 @@
   const intervalOf = (r) => 1000 / (EFFECTS[r.name].fps || 30);
   function arm(r, wait) {
     clearTimeout(r.timer);
-    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden) r.raf = requestAnimationFrame(frame); }, Math.max(0, wait));
+    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden && !calm) r.raf = requestAnimationFrame(frame); }, Math.max(0, wait));
   }
   const next = (r, spent) => arm(r, intervalOf(r) - 10 - spent); // (the timer is set to run out a little before the next vsync: 24 ms for 33, so at 60 Hz the frame lands on the vsync at 33 ms, not the one after)
 
@@ -321,7 +322,7 @@
     const r = run;
     if (!r) return;
     r.raf = 0;
-    if (document.hidden) return; // (onVisibility starts the loop again)
+    if (document.hidden || calm) return; // (onVisibility, or the end of the calm, starts the loop again)
     const interval = intervalOf(r);
     if (r.last && t - r.last < interval * 0.82) { arm(r, interval - (t - r.last)); return; } // (a frame came well early, as on a display faster than 60 Hz: wait out the rest, so an effect never draws much above its rate)
     if (performance.now() - r.input > IDLE_PAUSE_MS) { r.last = 0; r.idle = true; return; } // (onInput starts the loop again)
@@ -381,7 +382,7 @@
       const r = run;
       if (!r) return;
       r.input = performance.now();
-      if (r.idle && !document.hidden) { r.idle = false; if (!r.raf) r.raf = requestAnimationFrame(frame); }
+      if (r.idle && !document.hidden && !calm) { r.idle = false; if (!r.raf) r.raf = requestAnimationFrame(frame); }
     };
     for (const t of INPUTS) addEventListener(t, run.onInput, { passive: true });
     document.addEventListener('visibilitychange', run.onVisibility);
@@ -395,6 +396,17 @@
     }
     if (document.hidden) run.onVisibility(); else run.raf = requestAnimationFrame(frame);
   };
+  // [gpu health] main says the GPU is recovering (a driver reset, a display change): the animation stops at once and starts again where it was.
+  window.setBackdropCalm = (on) => {
+    on = Boolean(on);
+    if (on === calm) return;
+    calm = on;
+    const r = run;
+    if (!r) return;
+    if (calm) { cancelAnimationFrame(r.raf); r.raf = 0; clearTimeout(r.timer); r.timer = 0; return; }
+    r.last = 0; r.input = performance.now(); r.idle = false;
+    if (!document.hidden && !r.raf) r.raf = requestAnimationFrame(frame);
+  };
   // What is running, for tests and a glance in DevTools.
-  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still, stats: { ...run.stats } } : null);
+  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still, calm, stats: { ...run.stats } } : null);
 })();

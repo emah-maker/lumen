@@ -260,7 +260,7 @@ const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
 const UI_ONLY_IPC = new Set([
-  'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm',
+  'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
@@ -403,10 +403,12 @@ const aiSites = createAiSites({ readSettings, writeSettings });
 // Performance mode (features/performance.js): the disk cache cap has to be set before the app is
 // ready, and the weekly Code Cache check runs before Chromium opens that folder.
 const perfMode = require('./features/performance').create({
-  app, readSettings, powerMonitor: () => require('electron').powerMonitor,
+  app, readSettings, powerMonitor: () => (TEST ? (global.__fakePower ||= new (require('events'))()) : require('electron').powerMonitor), // (a test emits speed-limit and thermal events on a fake: a real laptop sends its own)
   onChange: () => { try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ } },
 });
 perfMode.applyLaunchSwitches();
+// [gpu health] Chromium blocks WebGL for a site after a few GPU resets; with this off, maps and canvases keep working after one.
+app.disableDomainBlockingFor3DAPIs();
 try { require('./features/performance').trimCodeCache(app.getPath('userData'), perfMode.limits().codeCacheBytes); } catch (err) { console.error('[lumen] cache check failed:', err.message); }
 if (TEST) global.__perfMode = perfMode;
 
@@ -6636,7 +6638,7 @@ const cardCall = (fn, ...args) => {
 // the card shows the page from its first frame instead of an empty panel that fills in a moment later.
 let prepShot = null; // { tabId, src, at }
 function snapshotFor(tab) {
-  if (!alive(tab)) return Promise.resolve(null);
+  if (!alive(tab) || gpuHealth?.calmActive()) return Promise.resolve(null); // ([gpu health] no capture while the GPU recovers)
   const scale = Math.max(1, ...screen.getAllDisplays().map((x) => x.scaleFactor || 1)); // sharp on any display it is dragged to
   return tab.view.webContents.capturePage().then((image) => {
     if (image.isEmpty()) return null;
@@ -8551,6 +8553,30 @@ app.whenReady().then(() => {
   a11yMode.sync();
   if (TEST) global.__a11yMode = a11yMode;
 });
+// [gpu health] Survives graphics-driver resets (features/gpu-health.js): logs them, leaves the GPU alone for a few seconds after one (the new-tab
+// effects pause, the sidebar moves without a snapshot) and, if drawing fell to software, offers a Restart (the same relaunch that saves the session).
+let gpuHealth = null;
+const sendAllUis = (channel, payload) => { for (const rec of winRecs) if (rcAlive(rec) && !rec.win.webContents.isDestroyed()) rec.win.webContents.send(channel, payload); };
+app.whenReady().then(() => {
+  gpuHealth = require('./features/gpu-health').install({
+    app, screen, version: app.getVersion(), log: (m) => console.warn(m),
+    hwOn: () => readSettings().hardwareAcceleration !== false,
+    send: (channel, payload) => {
+      sendAllUis(channel, payload);
+      if (channel === 'gpu:calm') { // the new-tab pages (their own web contents) pause their animated effect
+        for (const t of allTabsEverywhere()) if (alive(t) && isNewTab(t.view.webContents.getURL())) t.view.webContents.executeJavaScript(`window.setBackdropCalm?.(${payload ? 'true' : 'false'})`).catch(() => {});
+      }
+    },
+    dir: () => path.join(app.getPath('userData'), 'diagnostics'),
+    ...(TEST ? { readStatus: () => global.__gpuStatusOverride || app.getGPUFeatureStatus() } : {}),
+  });
+  if (TEST) global.__gpuHealth = gpuHealth;
+});
+ipcMain.on('gpu:restart', () => {
+  if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; return; } // tests check the click, not a relaunch
+  app.relaunch(); // before-quit saves the session, as for every other restart
+  app.quit();
+});
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy
@@ -8672,6 +8698,7 @@ function armFreezeTimeout(rec, seq) {
   }, FREEZE_MAX_MS));
 }
 ipcMain.handle('view:freeze', async (_e, cssSize) => {
+  if (gpuHealth?.calmActive()) return null; // [gpu health] the GPU is recovering: no capture (the UI changes the sidebar without a snapshot)
   const rec = curRec;
   const wc = activeTab()?.webContents;
   if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
