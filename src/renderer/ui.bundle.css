@@ -1745,6 +1745,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 /* Performance mode (features/performance.js): no blur, lighter shadows; motion is stopped by pref-reduce-motion above. */
 .pref-lite .composer { backdrop-filter: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-lite .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+/* Graphics: Light (settings-backend.js [igpu], an integrated GPU by default): the glass is a flat, slightly more opaque tint, no blur behind it. Motion stays. */
+.pref-gfx-light .composer { backdrop-filter: none; background: color-mix(in srgb, var(--surface-raised) 96%, transparent); }
+.pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
 .pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }

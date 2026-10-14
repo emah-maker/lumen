@@ -411,6 +411,13 @@ perfMode.applyLaunchSwitches();
 app.disableDomainBlockingFor3DAPIs();
 try { require('./features/performance').trimCodeCache(app.getPath('userData'), perfMode.limits().codeCacheBytes); } catch (err) { console.error('[lumen] cache check failed:', err.message); }
 if (TEST) global.__perfMode = perfMode;
+// Graphics: Automatic / Full effects / Light (settings/settings-backend.js (the [igpu] block)). Decided once from the GPU in use, never from power events.
+const graphicsMode = settingsPage.graphics.create({
+  app, readSettings,
+  onChange: () => { try { settingsBackend.pushUiPrefs(); refreshNewTabs(); } catch { /* the UI isn't up yet */ } },
+});
+if (TEST) global.__graphics = graphicsMode;
+app.whenReady().then(() => graphicsMode.detect()); // which GPU draws: asked once, as soon as the GPU process is up
 
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
 // settings.json is rewritten fully and synchronously, which a new favicon shouldn't have to pay for.
@@ -8630,6 +8637,7 @@ const settingsBackend = settingsPage.create({
   switchTiming: { count: () => (switchTimingLoaded ? switchTiming.count() : 0), export: exportSwitchTimings, clear: () => { if (switchTimingLoaded) switchTiming.clear(); } }, // [diagnostics] Settings > Advanced > Record tab-switch timings
   onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,
+  graphics: graphicsMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });
 accentCss = require('./features/accent-css').create({ rendererDir: path.join(__dirname, 'renderer'), accent: () => settingsBackend.uiPrefs().accent, all: () => require('electron').webContents.getAllWebContents() }); // [look]
