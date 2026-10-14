@@ -76,7 +76,9 @@
       const tone = BG.toneOf(id); // 'plain', 'dark' or 'light': the same call the new-tab page makes
       const image = id === 'image' ? picture() : null;
       const mode = BG.modeOf(id, dark.matches);
-      box.className = `bg-preview ntp tone-${tone}${effect !== 'none' ? ' has-fx' : ''}`;
+      const light = Boolean(opts.state()?.graphics?.light); // Graphics: Light (Settings > Advanced): no blur behind glass, a calmer effect, as on the page
+      box.className = `bg-preview ntp tone-${tone}${effect !== 'none' ? ' has-fx' : ''}${light ? ' gfx-light' : ''}`;
+      box.dataset.gfx = light ? 'light' : 'full';
       box.dataset.tone = tone; box.dataset.bg = id; box.dataset.effect = effect;
       // background
       const item = BG.byId(id);
@@ -105,18 +107,18 @@
       const name = (liveName ?? p.newTabName ?? '').trim().slice(0, 40);
       hello.textContent = name ? `${CS.greetingFor(now)}, ${name}` : CS.greetingFor(now);
       // the animated effect, on its own small canvas
-      applyEffect(p, effect, tokens.accent);
+      applyEffect(p, effect, tokens.accent, light);
       fit();
     }
 
-    function applyEffect(p, effect, accent) {
+    function applyEffect(p, effect, accent, light) {
       canvas.hidden = effect === 'none';
       if (effect === 'none' && !fx) return;
       withEffects(() => {
         if (!window.createEffectPreview) return;
         fx ||= window.createEffectPreview(canvas, { stageW: STAGE.w, stageH: STAGE.h });
         const moving = !p.reduceMotion && !opts.state()?.performance?.active && !reduced.matches; // Reduce motion and Performance mode: one still frame, as on the page
-        fx.set({ name: effect, color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, text: getComputedStyle(box).color, accent, animate: moving });
+        fx.set({ name: effect, color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, text: getComputedStyle(box).color, accent, animate: moving, light });
       });
     }
 
@@ -141,7 +143,7 @@
       refresh: schedule, // after the state was replaced (a picture picked or removed, shuffle changed)
       hover(over) { hovered = over || null; schedule(); }, // { background } or { effect }: just that, the rest as chosen
       // For tests: what is drawn now.
-      info: () => ({ background: box.dataset.bg, tone: box.dataset.tone, effect: box.dataset.effect, glass: box.dataset.glass, clockStyle: box.dataset.clockStyle, greetingFont: box.dataset.greetingFont, accent: getComputedStyle(box).getPropertyValue('--accent').trim(), fx: fx?.info() || null }),
+      info: () => ({ background: box.dataset.bg, tone: box.dataset.tone, effect: box.dataset.effect, glass: box.dataset.glass, gfx: box.dataset.gfx, clockStyle: box.dataset.clockStyle, greetingFont: box.dataset.greetingFont, accent: getComputedStyle(box).getPropertyValue('--accent').trim(), fx: fx?.info() || null }),
     };
     window.NewTabPreview.last = api; // (the tests read what is drawn: info())
     return api;

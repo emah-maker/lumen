@@ -88,3 +88,10 @@
 .ntp[data-glass="clear"] .ntp-card, .has-fx.tone-dark[data-glass="clear"] .ntp-card, .has-fx.tone-light[data-glass="clear"] .ntp-card { background: color-mix(in srgb, var(--c) 14%, transparent); box-shadow: 0 0 0 0.5px var(--bd); backdrop-filter: none; }
 .tone-dark[data-glass="clear"] .ntp-card { background: rgba(255, 255, 255, 0.025); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.35); }
 .tone-light[data-glass="clear"] .ntp-card { background: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12); text-shadow: 0 0 12px rgba(255, 255, 255, 0.8); }
+
+/* Graphics: Light (Settings > Advanced; newtab.html body.gfx-light): no blur behind any surface, denser glass in its place, as on the page. */
+.gfx-light .ntp-clock-card, .gfx-light .ntp-search, .gfx-light .ntp-card { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.gfx-light[data-glass="frosted"] .ntp-card { background: color-mix(in srgb, var(--c) 72%, transparent); }
+.gfx-light.tone-dark[data-glass="frosted"] .ntp-card { background: rgba(255, 255, 255, 0.13); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+.gfx-light.tone-dark.has-fx[data-glass="frosted"] .ntp-card { background: rgba(28, 28, 32, 0.42); }
+.gfx-light.tone-dark[data-clock-card="glass"]:not(.has-fx) .ntp-clock-card { background: rgba(255, 255, 255, 0.18); }

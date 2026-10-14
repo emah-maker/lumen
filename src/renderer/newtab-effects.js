@@ -21,12 +21,17 @@
   const LEVEL = { few: 0.5, normal: 1, many: 1.8, slow: 0.5, fast: 1.8, small: 0.65, large: 1.6 };
   const RAINBOW = ['255, 99, 132', '255, 159, 64', '255, 214, 10', '52, 199, 89', '10, 132, 255', '191, 90, 242'];
 
+  // Graphics: Light (settings-backend.js [igpu]): a smaller canvas, half the particles, 20 fps, a rest after 20 s without input. Measured on an Intel iGPU at
+  // 2560x1600: what an effect costs is mostly per frame shown (the whole window is composited and presented each time), not per particle or canvas pixel, so
+  // the frame rate and the rest are what save: 30 fps costs 13.7% of the GPU's 3D engine, 20 fps about 6%, and a resting effect none.
+  const LIGHT = { pixels: 0.55e6, amount: 0.5, fps: 20, idleMs: 20e3 };
   const MAX_PIXELS = 1.6e6; // the canvas never holds more pixels than this (a 1920 x 1080 window is 2.1e6 CSS pixels: drawn a little smaller, shown scaled)
   const FREE_AFTER_MS = 20e3; // hidden this long: the canvas gives its pixel buffer back (redrawn from the particles when shown)
 
   const IDLE_PAUSE_MS = 90e3; // no pointer, key or wheel input this long: the animation rests (a still canvas) until the next input
 
-  let style = { size: 1 }; // the current run's multipliers (make() reads the size)
+  let style = { size: 1 };
+  const maxPixels = (r) => (r.light ? LIGHT.pixels : MAX_PIXELS); // the current run's multipliers (make() reads the size)
 
   // Circles for every particle of each color, one fill per color. rOf/xOf/keep: per-particle radius,
   // x position and whether to draw it in this pass.
@@ -225,6 +230,7 @@
   };
 
   const INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'];
+  let calm = false; // [gpu health] the GPU is recovering from a reset: no frames are asked for until it is over (setGpuCalm)
   let run = null; // { name, key, canvas, ctx, list, raf, colors, ... } while an effect is on
 
   function stop() {
@@ -267,13 +273,13 @@
     const e = EFFECTS[r.name];
     // One canvas pixel per CSS pixel (never the screen's 1.5 or 2: the shapes are soft, and a canvas of four times the pixels costs four times the
     // fill), half that for the soft effects, and fewer still in a huge window.
-    const dpr = Math.min(e.soft ? 0.5 : 1, Math.sqrt(MAX_PIXELS / Math.max(1, w * h)));
+    const dpr = Math.min(e.soft ? 0.5 : 1, Math.sqrt(maxPixels(r) / Math.max(1, w * h)));
     r.canvas.width = Math.max(1, Math.round(w * dpr)); r.canvas.height = Math.max(1, Math.round(h * dpr));
     r.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const fx = r.w ? w / r.w : 1; const fy = r.h ? h / r.h : 1;
     for (const p of r.list) { p.x *= fx; p.y *= fy; }
     r.w = w; r.h = h;
-    const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((w * h) / 10000) * e.density) * r.amount);
+    const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((w * h) / 10000) * e.density) * r.amount * (r.light ? LIGHT.amount : 1));
     while (r.list.length < want) r.list.push(Object.assign(e.make(w, h, false), { c: Math.floor(Math.random() * RAINBOW.length) }));
     r.list.length = Math.max(0, want);
     r.colors = colorsOf(r.color, r.name);
@@ -311,10 +317,10 @@
   // particles, 15 for the slow drifts, 8 for the grain), then one requestAnimationFrame draws it, so a frame is about one callback. (It used to
   // ask for every vsync and return early for most of them, three or four callbacks per frame on a fast display.)
   // It also stops after IDLE_PAUSE_MS without input (the canvas keeps the last frame) and starts again on the next input.
-  const intervalOf = (r) => 1000 / (EFFECTS[r.name].fps || 30);
+  const intervalOf = (r) => 1000 / (r.light ? Math.min(LIGHT.fps, EFFECTS[r.name].fps || 30) : (EFFECTS[r.name].fps || 30));
   function arm(r, wait) {
     clearTimeout(r.timer);
-    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden) r.raf = requestAnimationFrame(frame); }, Math.max(0, wait));
+    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden && !calm) r.raf = requestAnimationFrame(frame); }, Math.max(0, wait));
   }
   const next = (r, spent) => arm(r, intervalOf(r) - 10 - spent); // (the timer is set to run out a little before the next vsync: 24 ms for 33, so at 60 Hz the frame lands on the vsync at 33 ms, not the one after)
 
@@ -322,10 +328,10 @@
     const r = run;
     if (!r) return;
     r.raf = 0;
-    if (document.hidden) return; // (onVisibility starts the loop again)
+    if (document.hidden || calm) return; // (onVisibility, or the end of the calm, starts the loop again)
     const interval = intervalOf(r);
     if (r.last && t - r.last < interval * 0.82) { arm(r, interval - (t - r.last)); return; } // (a frame came well early, as on a display faster than 60 Hz: wait out the rest, so an effect never draws much above its rate)
-    if (performance.now() - r.input > IDLE_PAUSE_MS) { r.last = 0; r.idle = true; return; } // (onInput starts the loop again)
+    if (performance.now() - r.input > (r.light ? LIGHT.idleMs : IDLE_PAUSE_MS)) { r.last = 0; r.idle = true; return; } // (onInput starts the loop again)
     const dt = (Math.min(3, (t - (r.last || t - interval)) / 16.7)) * r.speed; // in 60 Hz frames; a long pause doesn't jump
     r.last = t;
     if (r.resized) { r.resized = false; size(); }
@@ -340,11 +346,11 @@
 
   // name: an EFFECTS key or anything else for none. still: one frame, no animation. lite: Performance
   // mode (also battery saver and thermal limits): one frame too. effectStyle: { color, amount, speed, size, interact } (settings-backend.js newTabLook).
-  window.setBackdropEffect = (name, { still = false, lite = false, effectStyle = {} } = {}) => {
+  window.setBackdropEffect = (name, { still = false, lite = false, light = false, effectStyle = {} } = {}) => {
     const motion = !still && !lite && !matchMedia('(prefers-reduced-motion: reduce)').matches; // (one still frame otherwise: no loop, no timer)
     const s = effectStyle || {};
     const opts = { color: typeof s.color === 'string' ? s.color : 'auto', amount: LEVEL[s.amount] || 1, speed: LEVEL[s.speed] || 1, size: LEVEL[s.size] || 1, interact: s.interact !== false };
-    const key = JSON.stringify([name, motion, lite, opts.amount, opts.size, opts.interact]);
+    const key = JSON.stringify([name, motion, lite, light, opts.amount, opts.size, opts.interact]);
     if (run && run.key === key) { // same particles: only the color or speed changed
       Object.assign(run, { color: opts.color, speed: opts.speed, colors: colorsOf(opts.color, name) });
       if (!motion) draw();
@@ -357,7 +363,7 @@
     canvas.id = 'effect';
     canvas.setAttribute('aria-hidden', 'true');
     document.getElementById('backdrop').after(canvas);
-    run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, timer: 0, idle: false, input: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 }, stats: { frames: 0, checks: 0, ms: 0, max: 0 } };
+    run = { name, key, lite, light, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, timer: 0, idle: false, input: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 }, stats: { frames: 0, checks: 0, ms: 0, max: 0 } };
     size();
     if (!motion) { draw(); return; }
     // Not in front (another tab, the spare page, a minimised window): no animation frame is even asked for, and after a while the canvas
@@ -382,7 +388,7 @@
       const r = run;
       if (!r) return;
       r.input = performance.now();
-      if (r.idle && !document.hidden) { r.idle = false; if (!r.raf) r.raf = requestAnimationFrame(frame); }
+      if (r.idle && !document.hidden && !calm) { r.idle = false; if (!r.raf) r.raf = requestAnimationFrame(frame); }
     };
     for (const t of INPUTS) addEventListener(t, run.onInput, { passive: true });
     document.addEventListener('visibilitychange', run.onVisibility);
@@ -421,7 +427,7 @@
       ctx.globalAlpha = 1;
       fade(Object.assign(r, { ctx }));
     };
-    const interval = () => 1000 / (EFFECTS[r.name].fps || 30);
+    const interval = () => 1000 / (r.light ? Math.min(LIGHT.fps, EFFECTS[r.name].fps || 30) : (EFFECTS[r.name].fps || 30)); // (Graphics: Light is calmer here too)
     const frame = (t) => {
       raf = 0;
       if (!r || !animate || !visible || document.hidden) return;
@@ -444,18 +450,18 @@
       observer.observe(canvas);
     }
     return {
-      set({ name, color = 'auto', amount = 'normal', speed = 'normal', size = 'normal', text = '#ffffff', accent = '#0a84ff', animate: moving = false } = {}) {
+      set({ name, color = 'auto', amount = 'normal', speed = 'normal', size = 'normal', text = '#ffffff', accent = '#0a84ff', animate: moving = false, light = false } = {}) {
         if (!EFFECTS[name]) { stopLoop(); r = null; animate = false; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
         const k = { amount: LEVEL[amount] || 1, speed: LEVEL[speed] || 1, size: LEVEL[size] || 1 };
-        const same = r && r.name === name && r.amount === k.amount && r.size === k.size;
+        const same = r && r.name === name && r.amount === k.amount && r.size === k.size && r.light === light;
         if (!same) { // new particles
           stopLoop();
           style = { size: k.size };
           const e = EFFECTS[name];
-          const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((stageW * stageH) / 10000) * e.density) * k.amount);
+          const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((stageW * stageH) / 10000) * e.density) * k.amount * (light ? LIGHT.amount : 1));
           const list = [];
           while (list.length < want) list.push(Object.assign(e.make(stageW, stageH, false), { c: Math.floor(Math.random() * RAINBOW.length) }));
-          r = { name, list, w: stageW, h: stageH, mouse: { on: false, x: 0, y: 0 }, stats: { checks: 0 }, last: 0, ...k };
+          r = { name, list, w: stageW, h: stageH, mouse: { on: false, x: 0, y: 0 }, stats: { checks: 0 }, last: 0, light, ...k };
         }
         Object.assign(r, { speed: k.speed, color, colors: colorsOf(color, name, { text, accent }) });
         animate = moving;
@@ -463,10 +469,21 @@
         paint(); // (always one frame; a loop only when it may move)
         resume();
       },
-      info: () => (r ? { name: r.name, count: r.list.length, colors: [...r.colors], animating: animate && visible && !document.hidden, frames: stats.frames, maxMs: stats.maxMs } : null),
+      info: () => (r ? { name: r.name, count: r.list.length, colors: [...r.colors], light: r.light, animating: animate && visible && !document.hidden, frames: stats.frames, maxMs: stats.maxMs } : null),
       stop() { stopLoop(); document.removeEventListener('visibilitychange', onDoc); observer?.disconnect(); r = null; },
     };
   };
+  // [gpu health] main says the GPU is recovering (a driver reset, a display change): the animation stops at once and starts again where it was.
+  window.setBackdropCalm = (on) => {
+    on = Boolean(on);
+    if (on === calm) return;
+    calm = on;
+    const r = run;
+    if (!r) return;
+    if (calm) { cancelAnimationFrame(r.raf); r.raf = 0; clearTimeout(r.timer); r.timer = 0; return; }
+    r.last = 0; r.input = performance.now(); r.idle = false;
+    if (!document.hidden && !r.raf) r.raf = requestAnimationFrame(frame);
+  };
   // What is running, for tests and a glance in DevTools.
-  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still, stats: { ...run.stats } } : null);
+  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still, calm, stats: { ...run.stats } } : null);
 })();

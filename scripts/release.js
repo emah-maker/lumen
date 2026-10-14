@@ -93,7 +93,11 @@ function runStage(wt, stage, logFile, timeoutMs) {
 const failLines = (logFile) => { try { return fs.readFileSync(logFile, 'utf8').split('\n').filter((l) => /^FAIL/.test(l)).slice(0, 5); } catch { return []; } };
 
 async function runChecks(wt, st, opts) {
-  const { stages, derived } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => fs.readdirSync(path.join(wt, 'test')).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
+  let { stages, derived } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => fs.readdirSync(path.join(wt, 'test')).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
+  // --only a,b,c: a targeted release (the suites a change touches). The pure-node stages and perf-budget always run; the choice is kept
+  // in the state file so --resume runs the same set, and the release PR names it.
+  const only = opts.only || st.only || null;
+  if (only) { st.only = only; saveState(wt, st); stages = stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)); const unknown = only.filter((n) => !derived.electron.includes(n)); if (unknown.length) say('checks', `--only names suites test-all.js does not list (skipped): ${unknown.join(', ')}`); }
   if (derived.missing.length) say('checks', `named in test-all.js but not in test/ (skipped): ${derived.missing.join(', ')}`);
   say('checks', `${stages.length} stages (${derived.electron.length} Electron suites, perf-budget last); logs in ${st.logs}`);
   fs.mkdirSync(st.logs, { recursive: true });
@@ -162,7 +166,7 @@ function releaseBody(wt, version, st) {
   const subjects = tag ? git(wt, 'log', '--no-merges', '--format=%s', `${tag}..origin/main`).stdout.split('\n').filter((s) => s && !/^Release \d/.test(s)) : [];
   const lines = [`Release ${version}: version bump, and Unreleased becomes the ${version} section.`, ''];
   if (subjects.length) lines.push(`Included since ${tag}:`, ...subjects.map((s) => `- ${s}`), '');
-  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (every Electron suite, units, acceptance, lint). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`, '', '🤖 Generated with [Claude Code](https://claude.com/claude-code)');
+  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (${st.only ? `a targeted set: units, acceptance, lint, perf-budget and ${st.only.join(', ')}` : 'every Electron suite, units, acceptance, lint'}). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`, '', '🤖 Generated with [Claude Code](https://claude.com/claude-code)');
   return lines.join('\n');
 }
 
@@ -258,7 +262,7 @@ function dryRun(main, spec, opts) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, suiteMinutes: 15, ciMinutes: 40, assets: 13 };
+  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, suiteMinutes: 15, ciMinutes: 40, assets: 13, only: null };
   let spec = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -269,10 +273,11 @@ async function main() {
     else if (a === '--suite-timeout') opts.suiteMinutes = Number(args[++i]) || 15;
     else if (a === '--ci-timeout') opts.ciMinutes = Number(args[++i]) || 40;
     else if (a === '--assets') opts.assets = Number(args[++i]) || 13;
+    else if (a === '--only') opts.only = String(args[++i] || '').split(',').map((x) => x.trim()).filter(Boolean);
     else if (!a.startsWith('-') && !spec) spec = a;
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
-  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale]'); process.exit(2); }
+  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--only suite,suite]'); process.exit(2); }
   const main = mainCheckout(process.cwd());
   if (opts.dryRun) return dryRun(main, spec || 'patch', opts);
 

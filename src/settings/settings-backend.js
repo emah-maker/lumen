@@ -135,6 +135,7 @@ const DEFAULTS = {
   tabReadyRecent: 3, // [tabs] keep this many of the latest background tabs' renderers out of the OS background state (efficiency mode), so a switch to them draws at once; the tab under the pointer always is (0: only that; features/tab-ready.js)
   tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
+  graphicsMode: 'auto', // [look] auto (Light on an integrated GPU) | full | light: no backdrop blur, cheaper effects (settings-backend.js [igpu])
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
@@ -270,6 +271,7 @@ function validate(key, value) {
     case 'tabReadyRecent': return pick(Number(value), require('../features/tab-ready').RECENT_CHOICES, null);
     case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
+    case 'graphicsMode': return pick(value, ['auto', 'full', 'light'], null);
     case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
@@ -327,10 +329,68 @@ function migrateMaxChatRuns(settings) {
 // Settings read before the app is ready: GPU and Chromium feature switches only apply at launch.
 function applyAtLaunch(app, settings) {
   const launched = { hardwareAcceleration: settings.hardwareAcceleration !== false, forceDarkWebsites: settings.forceDarkWebsites === true };
-  if (!launched.hardwareAcceleration) app.disableHardwareAcceleration();
+  // --lumen-safe-gpu (the "safe drawing mode" restart of features/gpu-health.js): software drawing for this run only; the setting is untouched.
+  if (!launched.hardwareAcceleration || process.argv.includes('--lumen-safe-gpu')) app.disableHardwareAcceleration();
+  // Chromium gives up on the GPU for the whole session after a few GPU process crashes in a short time (a driver reset, a GPU-mode switch): keep restarting it.
+  else if (!process.env.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT) app.commandLine.appendSwitch('disable-gpu-process-crash-limit'); // (the env: a test that shows what happens without it)
   if (launched.forceDarkWebsites) app.commandLine.appendSwitch('enable-features', 'WebContentsForceDark');
   return launched;
 }
+
+// ---- [igpu] Graphics: Automatic / Full effects / Light (Settings > System). "Light" is Lumen's integrated-GPU path: no backdrop blur
+// (a solid, slightly more opaque tint instead), a cheaper particle effect (fewer particles, a smaller canvas, 24 fps) and no
+// effect that repaints every frame while nothing happens. Automatic picks Light on an integrated GPU.
+//
+// Decided once, at start-up, from the GPU Chromium is really drawing with (app.getGPUInfo) and the setting. It never listens to
+// power, battery or speed-limit events (Performance mode does, features/performance.js; it is not read here), so a power source that
+// flips every few seconds cannot toggle it.
+const GFX_MODES = ['auto', 'full', 'light'];
+const GPU_INTEL = 0x8086;
+const GPU_AMD = 0x1002;
+const GPU_MICROSOFT = 0x1414; // "Microsoft Basic Render Driver": the software fallback, never a real choice
+
+// Is this device an integrated GPU? Intel (except the discrete Arc A/B cards) and GPU_AMD's APU graphics ("Radeon(TM) Graphics", "Radeon 780M",
+// "Vega 8"); not an RX, a Pro or an Instinct card.
+function isIntegratedGpu(d) {
+  const name = String(d.deviceString || d.name || '');
+  const vendor = Number(d.vendorId ?? d.vendor);
+  if (vendor === GPU_INTEL) return !/\bArc\b.*\b[AB]\d{3}\b/i.test(name) && !/\bData Center\b|\bMax\b/i.test(name);
+  if (vendor === GPU_AMD) return /Radeon(?:\(TM\))?\s+(?:Graphics|\d{3}M\b)|Vega\s*\d+\s+Graphics/i.test(name) && !/\bRX\b|\bPro\b|\bInstinct\b/i.test(name);
+  return false;
+}
+
+// devices: getGPUInfo's gpuDevice list. Returns { integrated, why, device }.
+function classifyGpu(devices) {
+  const real = (Array.isArray(devices) ? devices : []).filter((d) => Number(d.vendorId ?? d.vendor) !== GPU_MICROSOFT && (d.deviceString || d.name));
+  if (!real.length) return { integrated: false, why: 'no GPU reported', device: null };
+  const active = real.find((d) => d.active);
+  const device = active || (real.length === 1 ? real[0] : null);
+  if (!device) return { integrated: false, why: 'several GPUs, none reported as active', device: null };
+  const name = device.deviceString || device.name;
+  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name };
+  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name }; // one GPU shared with the display: the same budget
+  return { integrated: false, why: 'the active GPU is a discrete card', device: name };
+}
+
+// deps: { app, readSettings, onChange? }
+function createGraphics(deps) {
+  const { app, readSettings, onChange } = deps;
+  let detected = { integrated: false, why: 'not checked yet', device: null };
+  let last = null;
+  const mode = () => (GFX_MODES.includes(readSettings().graphicsMode) ? readSettings().graphicsMode : 'auto');
+  const light = () => mode() === 'light' || (mode() === 'auto' && detected.integrated);
+  const info = () => ({ mode: mode(), light: light(), integrated: detected.integrated, device: detected.device, why: detected.why });
+  const refresh = () => { const now = light(); if (now !== last) { last = now; onChange?.(info()); } };
+  // Once, after the GPU process has reported.
+  async function detect() {
+    try { detected = classifyGpu((await app.getGPUInfo('complete')).gpuDevice); } catch { /* keep "not checked" */ }
+    refresh();
+    return detected;
+  }
+  return { mode, light, info, refresh, detect, setDetected: (d) => { detected = d; refresh(); } };
+}
+
+const graphics = { MODES: GFX_MODES, classify: classifyGpu, isIntegrated: isIntegratedGpu, create: createGraphics };
 
 function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
@@ -390,7 +450,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -431,7 +491,7 @@ function create(deps) {
       background,
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
-      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
+      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor, wallpaperSeed(p)),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
@@ -776,6 +836,7 @@ function create(deps) {
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
+      case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
       case 'screenReaderSupport': deps.onScreenReaderChange?.(); break;
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
@@ -788,8 +849,8 @@ function create(deps) {
     }
     const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
     if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
-    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
-    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
@@ -820,6 +881,7 @@ function create(deps) {
     return {
       prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
+      graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
       accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
@@ -1181,4 +1243,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, validate, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
