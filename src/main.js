@@ -969,6 +969,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
+  session.defaultSession.registerPreloadScript({ id: 'lumen-files-newtab', type: 'frame', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }); // [files] the new-tab page's Files widget (features/files.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
   hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
@@ -8706,6 +8707,25 @@ ipcMain.on('chat:full', (_e, on) => {
   chatFullTab = on ? activeId : null;
   layout();
 });
+// ---------- [files] pinned and recent files (features/files.js; loaded on first use) ----------
+// The browser UI (files:*, gated by UI_ONLY_IPC), Settings (settings:files-*, gated by PRIVILEGED_IPC) and the new-tab page's own preload
+// (newtab-files:*, checked here: it must be a tab's top frame showing renderer/newtab.html) call the same functions.
+let filesRt = null;
+const filesApi = () => (filesRt ||= require('./features/files').stubApi());
+{
+  // (the same names as files.js OPS / channelFor, spelled here so this file need not load it at start-up)
+  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach'];
+  const CHANNELS = { ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`), newtab: (op) => `newtab-files:${op}`, settings: (op) => `settings:files-${op}` };
+  const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(tabByContents(event.sender));
+  for (const [kind, name] of Object.entries(CHANNELS)) {
+    for (const op of OPS) {
+      ipcMain.handle(name(op), (event, ...args) => {
+        if (kind === 'newtab' && !newTabSender(event) && !syntheticTestEvent(event)) return null;
+        return filesApi()[op](...args);
+      });
+    }
+  }
+}
 // Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
 ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFromOtherApps(fileUrlsFor(paths.slice(0, 20))); });
 ipcMain.on('tab:new', (_e, url) => {

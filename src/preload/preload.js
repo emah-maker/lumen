@@ -300,6 +300,23 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
+// Files (features/files.js): the pinned and recent files, the quick picker (Ctrl+Shift+F) and Settings > Privacy. Ids come from list();
+// main acts on its own record of an id, never on a path the page supplies (pin's { path } is the one exception, from the UI itself).
+// (window.browser.files is taken: it is the AI file cards.)
+contextBridge.exposeInMainWorld('lumenFiles', {
+  list: () => ipcRenderer.invoke('files:list'), // { pinned, recent, remember }
+  pin: (arg) => ipcRenderer.invoke('files:pin', arg), // { path } or { pick: 'file' | 'folder' } -> Entry | null
+  unpin: (id) => ipcRenderer.invoke('files:unpin', id),
+  remove: (id) => ipcRenderer.invoke('files:remove', id),
+  clear: () => ipcRenderer.invoke('files:clear'),
+  open: (id) => ipcRenderer.invoke('files:open-entry', id), // a file in a tab (Lumen's own viewers), a folder in Explorer
+  show: (id) => ipcRenderer.invoke('files:show', id),
+  find: (id) => ipcRenderer.invoke('files:find', id), // { candidates: [{ path, name, size, mtime }] } for a missing file
+  relocate: (id, newPath) => ipcRenderer.invoke('files:relocate', id, newPath),
+  search: (query) => ipcRenderer.invoke('files:search', query), // Entry[] (fuzzy over pinned, recent and indexed folders, top 30)
+  attach: (id) => ipcRenderer.invoke('files:attach', id), // to the sidebar chat
+  onChanged: on('files:changed'),
+});
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).
 contextBridge.exposeInMainWorld('macrosApi', {
