@@ -15,6 +15,8 @@ const { createSiteZoom } = require('../features/site-zoom');
 const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
 const permissionMode = require('../features/permission-mode'); // [bypass permissions]
+const TC = require('../features/theme-colors'); // [look] accent colours: the choices and the shades each gives in light and dark
+const BG = require('../features/backgrounds'); // [look] the new-tab backgrounds and effects, Shuffle daily
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -45,6 +47,7 @@ const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabShuffle: false, // [look] Shuffle daily: a new gradient background each day (Settings → Appearance → New tab page)
   newTabWidgetGlass: 'solid', // [look] the widget cards' background: solid | frosted (see-through, blurred) | clear (as transparent as it stays readable)
   newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
   newTabEffectColor: 'auto', // [look] auto (white, or the text color on Plain) | accent | rainbow | #rrggbb
@@ -198,16 +201,14 @@ const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const FONT_SIZES = [9, 12, 16, 20, 24];
 // Site storage cleared along with cookies (Clear browsing data).
 const SITE_STORAGES = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
-// [look] Accent colors: Apple's system colors, each with its light- and dark-mode shade.
-const ACCENTS = {
-  blue: ['#007aff', '#0a84ff'], indigo: ['#5856d6', '#5e5ce6'], purple: ['#af52de', '#bf5af2'], pink: ['#ff2d55', '#ff375f'],
-  red: ['#ff3b30', '#ff453a'], orange: ['#ff9500', '#ff9f0a'], green: ['#28a745', '#30d158'], teal: ['#30b0c7', '#40c8e0'], graphite: ['#8e8e93', '#98989d'],
-};
-const NEW_TAB_BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
-const NEW_TAB_EFFECTS = ['none', 'particles', 'stars', 'bubbles', 'snow'];
+// [look] Accent colors (features/theme-colors.js): Apple's system colors and a few more, each with its light- and dark-mode shade,
+// fitted so text, buttons and focus rings pass their contrast rules; 'wallpaper' takes the colour from the new-tab background.
+const ACCENTS = TC.ACCENTS;
+const NEW_TAB_BACKGROUNDS = BG.IDS;
+const NEW_TAB_EFFECTS = BG.EFFECT_IDS;
 const EFFECT_LEVELS = { newTabEffectAmount: ['few', 'normal', 'many'], newTabEffectSpeed: ['slow', 'normal', 'fast'], newTabEffectSize: ['small', 'normal', 'large'] };
 const HEX = /^#[0-9a-f]{6}$/i;
-const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
+const accentOf = (value, wallpaperHex) => TC.accentOf(value, wallpaperHex); // { light, dark }: the fitted colours ("wallpaper": from wallpaperHex)
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const translate = require('../features/translate');
@@ -223,7 +224,7 @@ const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 function validate(key, value) {
   switch (key) {
     case 'theme': return pick(value, ['system', 'light', 'dark'], null);
-    case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
+    case 'accentColor': return TC.isAccentValue(String(value).toLowerCase()) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
     case 'newTabWidgetGlass': return pick(value, ['solid', 'frosted', 'clear'], null);
@@ -387,7 +388,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -408,17 +409,29 @@ function create(deps) {
     imageColorsCache = { v: version, colors };
     return colors;
   }
-  function newTabLook() {
-    const p = prefs();
+  // The background shown: Shuffle daily's pick for today, else the chosen one ("Your picture" with no picture left is Plain).
+  function lookBackground(p) {
+    if (p.newTabShuffle === true) return { background: BG.dailyPick(), image: null };
     const image = p.newTabBackground === 'image' && p.newTabImage && fs.existsSync(wallpaperFile())
       ? `${pathToFileURL(wallpaperFile()).href}?v=${p.newTabImage}` : null;
+    return { background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground, image };
+  }
+  // "Match wallpaper": the picture's dominant colour, or the gradient's own.
+  function wallpaperSeed(p) {
+    if (p.accentColor !== TC.MATCH_WALLPAPER) return null;
+    const { background, image } = lookBackground(p);
+    return image ? imageColorsFor(p.newTabImage)[0] || null : BG.byId(background)?.seed || null;
+  }
+  function newTabLook() {
+    const p = prefs();
+    const { background, image } = lookBackground(p);
     return {
-      background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground,
+      background,
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
       effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
-      accent: accentOf(p.accentColor),
+      accent: accentOf(p.accentColor, wallpaperSeed(p)),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
       clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
@@ -443,12 +456,20 @@ function create(deps) {
     fs.writeFileSync(wallpaperFile(), image.toJPEG(88));
     writeSettings({ ...readSettings(), newTabImage: Date.now(), newTabBackground: 'image' });
     deps.refreshNewTabs?.();
+    wallpaperChanged();
     return state();
+  }
+  // With the accent set to Match wallpaper, a new picture is a new accent.
+  function wallpaperChanged() {
+    if (prefs().accentColor !== TC.MATCH_WALLPAPER) return;
+    deps.refreshAccent?.();
+    if (deps.broadcastUi) deps.broadcastUi('prefs:ui', uiPrefs()); else deps.ui()?.send('prefs:ui', uiPrefs());
   }
   function removeWallpaper() {
     try { fs.rmSync(wallpaperFile(), { force: true }); } catch (err) { console.error('[lumen] could not remove the background picture:', err.message); }
     writeSettings({ ...readSettings(), newTabImage: 0, newTabBackground: prefs().newTabBackground === 'image' ? 'plain' : prefs().newTabBackground });
     deps.refreshNewTabs?.();
+    wallpaperChanged();
     return state();
   }
 
@@ -747,7 +768,9 @@ function create(deps) {
       case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
+    if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
+    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
@@ -780,7 +803,7 @@ function create(deps) {
       prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
-      accent: accentOf(p.accentColor), // [look]
+      accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,

@@ -33,8 +33,8 @@ function data() {
 }
 
 // [look] The page's design from Settings → Appearance, checked field by field.
-const BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
-const EFFECTS = ['particles', 'stars', 'bubbles', 'snow']; // newtab-effects.js
+const BACKGROUNDS = window.Backgrounds.IDS; // features/backgrounds.js: the presets, their text mode and (for the newer ones) their CSS art
+const EFFECTS = window.Backgrounds.EFFECT_IDS.filter((id) => id !== 'none'); // newtab-effects.js
 const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
 function lookOf(l) {
   const look = l && typeof l === 'object' ? l : {};
@@ -71,16 +71,13 @@ let currentLook = lookOf(null);
 window.newtabLook = () => currentLook; // the editor on the clock card (newtab-setup.js) starts from what is shown
 function applyLook(look) {
   currentLook = look;
+  const tone = window.Backgrounds.toneOf(look.background); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text)
   document.body.dataset.bg = look.background;
-  document.body.classList.toggle('on-media', look.background !== 'plain');
+  document.body.classList.toggle('on-media', tone !== 'plain');
+  document.body.classList.toggle('tone-light', tone === 'light');
   document.body.style.setProperty('--wallpaper', look.image ? `url("${look.image}")` : 'none');
-  const accent = (dark.matches || look.background !== 'plain' ? look.accent.dark : look.accent.light) || null;
-  const root = document.documentElement.style;
-  if (accent) {
-    root.setProperty('--accent', accent);
-    const n = parseInt(accent.slice(1), 16);
-    root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
-  } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
+  document.getElementById('backdrop').style.background = window.Backgrounds.byId(look.background)?.art || ''; // (the newer presets; the older ones are CSS below)
+  applyAccent(look);
   document.getElementById('clock').hidden = !look.clock;
   applyClockStyle(look);
   window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
@@ -90,6 +87,19 @@ function applyLook(look) {
   document.body.classList.toggle('still', look.still); // [widgets] no sliding or other motion with Reduce motion
   applyEffect(look);
   window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
+}
+// [look] The accent's tokens (features/theme-colors.js) in the shades the page is drawn in: the system's on Plain, light on a light
+// background, dark on any other.
+const modeOf = (look) => { const tone = window.Backgrounds.toneOf(look.background); return tone === 'plain' ? (dark.matches ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const ACCENT_VARS = ['--accent', '--accent-rgb', '--accent-bright', '--accent-deep', '--accent-text', '--accent-soft', '--ring', '--on-accent'];
+function applyAccent(look) {
+  const mode = modeOf(look);
+  const hexOf = look.accent[mode];
+  const root = document.documentElement.style;
+  const vars = hexOf ? window.ThemeColors.varsOf(window.ThemeColors.tokensFor(hexOf, mode)) : null;
+  for (const name of ACCENT_VARS) {
+    if (vars) root.setProperty(name, vars[name]); else root.removeProperty(name);
+  }
 }
 // The animated effect's script is loaded the first time one is on, never otherwise.
 let effectScript = null;
@@ -104,10 +114,13 @@ function applyEffect(look) {
 }
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
-window.widgetLook = () => ({
-  accent: (dark.matches || currentLook.background !== 'plain' ? currentLook.accent.dark : currentLook.accent.light) || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
-  background: currentLook.background, dark: dark.matches, imageColors: currentLook.imageColors,
-});
+window.widgetLook = () => {
+  const light = window.Backgrounds.toneOf(currentLook.background) === 'light'; // (a light background reads like Plain in the light theme: dark text)
+  return {
+    accent: currentLook.accent[modeOf(currentLook)] || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+    background: light ? 'plain' : currentLook.background, dark: light ? false : dark.matches, imageColors: currentLook.imageColors,
+  };
+};
 // [look] The clock's style (features/clock-styles.js; the looks are CSS in newtab.html): data attributes on <body>.
 // The defaults (classic, no card, no extra shadow, classic greeting) set nothing the page didn't always have.
 function applyClockStyle(look) {

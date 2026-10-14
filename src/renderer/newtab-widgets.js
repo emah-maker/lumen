@@ -1056,7 +1056,7 @@ const WIDGET_RENDERERS = {
     const symbol = text(d.symbol, 60) || 'Chart';
     const scheme = matchMedia('(prefers-color-scheme: dark)');
     // A wallpaper or video background makes every card dark whatever the system scheme says (newtab.js does the same for the accent).
-    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || document.body.classList.contains('on-media')));
+    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || (document.body.classList.contains('on-media') && !document.body.classList.contains('tone-light'))));
     const url = tvUrl(isDark() ? d.dark : d.light);
     const list = d.view === 'watchlist';
     if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }

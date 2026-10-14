@@ -112,6 +112,31 @@
     body.on-media input { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22); }
     body.on-media input:focus { background: rgba(20, 20, 24, 0.62); }
     body.on-media .frequent a, body.on-media .privacy, body.on-media .w-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
+    /* [look] A light background (features/backgrounds.js: tone "light", pastel gradients and light solids): the page keeps its dark text
+       and the cards turn white glass, whatever the system theme. Everything above that assumes a dark picture is turned over here. */
+    body.on-media.tone-light {
+      color-scheme: light; --text: #1d1d1f; --muted: rgba(29, 29, 31, 0.72); --faint: rgba(29, 29, 31, 0.5); --card: rgba(255, 255, 255, 0.6);
+      --field: rgba(255, 255, 255, 0.6); --hover: rgba(0, 0, 0, 0.06); --border: rgba(0, 0, 0, 0.14); --bg: rgba(255, 255, 255, 0.72);
+      --mono-l: 92%; --mono-t: 32%; text-shadow: none;
+    }
+    body.on-media.tone-light input { background: rgba(255, 255, 255, 0.62); color: var(--text); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14); }
+    body.on-media.tone-light input:focus { background: rgba(255, 255, 255, 0.92); }
+    body.on-media.tone-light .frequent a, body.on-media.tone-light .privacy, body.on-media.tone-light .w-card { background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1); }
+    body.on-media.tone-light.has-effect input:not(:focus) { background: rgba(255, 255, 255, 0.84); }
+    body.on-media.tone-light.has-effect .w-card, body.on-media.tone-light.has-effect .privacy, body.on-media.tone-light.has-effect .frequent a, body.on-media.tone-light.has-effect .mode, body.on-media.tone-light.has-effect .chat-btn { background: rgba(255, 255, 255, 0.8); }
+    html body.on-media.tone-light[data-wglass="frosted"] .w-card, html body.on-media.tone-light[data-wglass="frosted"] .w-card.tinted { background: rgba(255, 255, 255, 0.38); }
+    html body.on-media.tone-light.has-effect[data-wglass="frosted"] .w-card { background: rgba(255, 255, 255, 0.6); }
+    html body.on-media.tone-light[data-wglass="clear"] .w-card, html body.on-media.tone-light[data-wglass="clear"] .w-card.tinted, html body.on-media.tone-light.has-effect[data-wglass="clear"] .w-card { background: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12); text-shadow: 0 0 12px rgba(255, 255, 255, 0.8); }
+    body.on-media.tone-light[data-clock-card="soft"] .clock-card { background: rgba(255, 255, 255, 0.5); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1); }
+    body.on-media.tone-light[data-clock-card="glass"] .clock-card, body.on-media.tone-light.has-effect:is([data-clock-card="soft"], [data-clock-card="glass"]) .clock-card { background: rgba(255, 255, 255, 0.62); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 16px 40px -18px rgba(0, 0, 0, 0.2); }
+    body.on-media.tone-light[data-clock-shadow="1"] header { text-shadow: 0 0 20px rgba(255, 255, 255, 0.7); }
+    body.on-media.tone-light .w-icon-btn { background: rgba(255, 255, 255, 0.6); color: #1d1d1f; text-shadow: none; }
+    body.on-media.tone-light .w-icon-btn:hover { background: rgba(255, 255, 255, 0.85); }
+    body.on-media.tone-light .ws-panel { background: #ffffff; --field: rgba(0, 0, 0, 0.06); }
+    body.on-media.tone-light .w-card { --cloud: #6b7684; --drop: #1f6fc2; --warn: #b3261e; }
+    body.on-media.tone-light .w-card.aistatus { --ai-ok: #1a7f37; --ai-warn: #9a5b00; --ai-bad: #b3261e; }
+    body.on-media.tone-light .w-card.stocks, body.on-media.tone-light .w-card.crypto { --up: #1a7f37; --down: #b3261e; }
+    body.on-media.tone-light .w-stack-nav { color: rgba(0, 0, 0, 0.7); }
     /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). Always full size: it never
        shrinks with the window and is never clipped or scrolled (the header is pinned in the centre column, never a card). */
     .clock { margin: 0 0 4px; font-size: var(--clock-size); white-space: nowrap; overflow: visible; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
@@ -1221,6 +1246,8 @@
   <script src="widget-summary.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="../features/theme-colors.js"></script>
+  <script src="../features/backgrounds.js"></script>
   <script src="../features/widget-card-key.js"></script>
   <script src="../features/visible-ticker.js"></script>
   <script src="../features/music-card-features.js"></script>

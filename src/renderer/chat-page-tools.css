@@ -118,7 +118,7 @@ body.cp-dragging, body.cp-dragging * { cursor: grabbing; user-select: none; }
 .chat-item.dragging, .cp-pj-chat.dragging { opacity: 0.5; }
 .cp-drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; display: flex; align-items: center; gap: var(--cp-2); max-width: 260px; padding: 6px 12px; border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text); font-size: 13px; pointer-events: none; box-shadow: 0 0 0 1px var(--accent), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
 .cp-drag-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.cp-drag-count { flex: none; min-width: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent); color: var(--paper, #fff); font-size: 12px; font-weight: 600; text-align: center; }
+.cp-drag-count { flex: none; min-width: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-deep); color: var(--paper, #fff); font-size: 12px; font-weight: 600; text-align: center; }
 .cp-pj-item.drop-ok .cp-pj { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .cp-pj-item.drop-over .cp-pj { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .cp-pj-item.drop-same .cp-pj { opacity: 0.6; }
