@@ -1,0 +1,5 @@
+# Test fixtures are compared byte for byte: keep them exactly as committed on every checkout (core.autocrlf would add CRs)
+test/fixtures/** -text
+*.pdf binary
+*.png binary
+*.eml -text
