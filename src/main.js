@@ -5165,9 +5165,9 @@ function saveChat(generation = chatGeneration) {
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
-    chats().save(chatId, snapshot);
+    chats().saveAsync(chatId, snapshot); // (written in the background: no stall of the main thread; features/chat-store.js. Quitting writes what is pending at once)
     keepPendingProject(chatId);
-    if (chats().current() !== chatId) chats().setCurrent(chatId);
+    if (chats().current() !== chatId) chats().setCurrent(chatId, { defer: true });
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
@@ -5180,8 +5180,8 @@ function saveChatSoon(generation) {
 }
 app.on('before-quit', () => {
   saveChat();
-  try { chats().flush(); } catch { /* nothing pending */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
+  try { chats().flush(); } catch { /* nothing pending */ } // (every save still waiting is written now, on this thread: the app is closing)
 });
 
 function loadChat() {
@@ -5203,10 +5203,11 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false, quiet = false } = {}) {
+// `loaded`: the chat's saved snapshot, already read (chats:open reads it without stopping the main thread).
+function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
-  const snapshot = id && !live ? chats().load(id) : null;
+  const snapshot = id && !live ? (loaded || chats().load(id)) : null;
   // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
   // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
   if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
@@ -5265,7 +5266,7 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); }
+    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); }
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
@@ -9407,9 +9408,10 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   };
 }));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
-ipcMain.handle('chats:open', (event, id) => {
+ipcMain.handle('chats:open', async (event, id) => {
   syncToSender(event);
-  const view = switchChat(String(id));
+  const loaded = chatRuns.has(String(id)) || String(id) === chatId ? null : await chats().loadAsync(String(id)); // (read in the background; the switch itself is then quick)
+  const view = switchChat(String(id), { loaded });
   if (view) {
     bindOpenChatHere(event.sender);
     chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
@@ -9418,9 +9420,10 @@ ipcMain.handle('chats:open', (event, id) => {
 });
 // "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
 // changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
-ipcMain.handle('chats:share', (event, id) => {
+ipcMain.handle('chats:share', async (event, id) => {
   syncToSender(event);
-  const view = switchChat(String(id));
+  const loaded = chatRuns.has(String(id)) || String(id) === chatId ? null : await chats().loadAsync(String(id));
+  const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
     carriedTabs.delete(forTab);
@@ -10196,7 +10199,7 @@ const updates = require('./features/updates').createUpdates({
   app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
-  beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
+  beforeInstall: () => { saveSession(); saveChat(); try { chats().flush(); } catch { /* nothing pending */ } }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
