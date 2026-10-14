@@ -62,7 +62,7 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
       check('...the UI answered after every crash (the sidebar toggled)', answered === 5, answered);
       check('...a tab still rendered after every crash', rendered === 5, rendered);
       check('...and a snapshot of the page was never blank', notBlank === 5, notBlank);
-      check(\`...and main never blocked for 200 ms through them (worst gap \${gap} ms)\`, gap <= 200, gap);
+      check(`...and main never blocked for 200 ms through them (worst gap ${gap} ms)`, gap <= 200, gap);
       // The safety net: six losses within two minutes offer safe drawing mode (a plain notice, never automatic).
       while ((await losses()) < 6) await app.evaluate(() => global.__gpuHealth.gpuGone({ reason: 'crashed', exitCode: 0 })); // (a crash that spawned only one loss: top up to six)
       check('six GPU losses in two minutes offer safe drawing mode', await waitFor(async () => (await ui.locator('.gpu-note[data-kind="unstable"]').count()) === 1, 4000), await ui.locator('.gpu-note').count());
