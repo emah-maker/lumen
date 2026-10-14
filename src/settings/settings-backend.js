@@ -329,7 +329,10 @@ function migrateMaxChatRuns(settings) {
 // Settings read before the app is ready: GPU and Chromium feature switches only apply at launch.
 function applyAtLaunch(app, settings) {
   const launched = { hardwareAcceleration: settings.hardwareAcceleration !== false, forceDarkWebsites: settings.forceDarkWebsites === true };
-  if (!launched.hardwareAcceleration) app.disableHardwareAcceleration();
+  // --lumen-safe-gpu (the "safe drawing mode" restart of features/gpu-health.js): software drawing for this run only; the setting is untouched.
+  if (!launched.hardwareAcceleration || process.argv.includes('--lumen-safe-gpu')) app.disableHardwareAcceleration();
+  // Chromium gives up on the GPU for the whole session after a few GPU process crashes in a short time (a driver reset, a GPU-mode switch): keep restarting it.
+  else if (!process.env.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT) app.commandLine.appendSwitch('disable-gpu-process-crash-limit'); // (the env: a test that shows what happens without it)
   if (launched.forceDarkWebsites) app.commandLine.appendSwitch('enable-features', 'WebContentsForceDark');
   return launched;
 }
