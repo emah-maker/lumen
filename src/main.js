@@ -1914,6 +1914,16 @@ function paintBackgrounds(rec) {
   for (const t of rec.tabs) { try { const u = t.view?.webContents.getURL(); if (t.view && (!u || isNewTab(u))) t.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
   for (const s of [spareNewTab, spareChat]) { try { s?.view.setBackgroundColor(pageBackground()); } catch { /* gone */ } }
 }
+// A page kept out of Chromium's background state (setBackgroundThrottling(false): a tab kept ready, features/tab-ready.js, or one a run works in, syncRunTabs)
+// must not be SHOWN in that state: its video layers stay on the last frame they presented (a playing video froze or went black, with the page's clock,
+// captions and controls working; test/video-frames.js). So the page goes back to the normal state just before its view is shown, and is kept out of it
+// again when the view is hidden. (A tab kept ready is boosted again by the next tab-ready sync, as it already is after any switch.)
+function releaseKeptPage(tab) {
+  try { const wc = tab.view.webContents; if (!wc.isDestroyed() && !wc.backgroundThrottling) wc.setBackgroundThrottling(true); } catch { /* gone */ }
+}
+function keptPageHidden(tab) {
+  try { const wc = tab.view.webContents; if (!wc.isDestroyed() && unthrottled.get(tab.id) === wc) wc.setBackgroundThrottling(false); } catch { /* gone */ }
+}
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
@@ -1929,7 +1939,11 @@ function layout() {
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
-    if (tab.view.getVisible() !== show) { tab.view.setVisible(show); viewVisibleCalls++; } // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
+    if (tab.view.getVisible() !== show) {
+      if (show) releaseKeptPage(tab); // (before it is shown: see keptPageHidden)
+      tab.view.setVisible(show); viewVisibleCalls++; // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
+      if (!show) keptPageHidden(tab);
+    }
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
