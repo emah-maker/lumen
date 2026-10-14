@@ -61,6 +61,29 @@ const S = 1000;
   check('notice: again after a further reset', n.shouldShow({ status: soft, hwOn: true }) === true && !n.shouldShow({ status: soft, hwOn: true }), '');
 }
 
+// ---- the safety net: six GPU losses within two minutes
+{
+  const c = gh.createLossCounter();
+  let hit = false;
+  for (let i = 0; i < 5; i++) hit = c.add(i * 10 * S);
+  check('losses: five in a row are not yet "keeps failing"', !hit && c.count() === 5, c.count());
+  check('losses: the sixth within two minutes is', c.add(60 * S) === true, c.count());
+  const d = gh.createLossCounter();
+  let any = false;
+  for (let i = 0; i < 20; i++) any = d.add(i * 30 * S) || any; // one every 30 s: never six inside 120 s
+  check('losses: one every 30 s never trips it (the window slides)', !any, d.count());
+  check('losses: the limits are 6 in 2 minutes', gh.UNSTABLE_LOSSES === 6 && gh.UNSTABLE_WINDOW_MS === 120 * S, '');
+}
+
+// ---- safe drawing mode is for one session: the flag is in the relaunch arguments only, never in settings
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
+  const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  check('safe mode: --lumen-safe-gpu turns acceleration off at launch without touching the setting', /--lumen-safe-gpu'\)\) app\.disableHardwareAcceleration\(\)/.test(src) && !/hardwareAcceleration\s*:\s*false[^\n]*safe/i.test(src), '');
+  check('safe mode: the relaunch adds the flag only when asked, and drops an old one', /filter\(\(a\) => a !== '--lumen-safe-gpu'\)/.test(main) && /safe === true \? \[\.\.\.args, '--lumen-safe-gpu'\] : args/.test(main), '');
+  check('safe mode: the crash limit switch is on only with hardware drawing', /else if \(!process\.env\.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT\) app\.commandLine\.appendSwitch\('disable-gpu-process-crash-limit'\)/.test(src), '');
+}
+
 // ---- Performance mode: a flapping power source must not flip the mode (hysteresis, fake clock)
 function rig() {
   let now = 0; const timers = [];
