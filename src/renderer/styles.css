@@ -899,7 +899,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .send {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent);
+  background: var(--accent-deep); color: var(--on-accent);
   transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out, box-shadow var(--t-base) ease-out, transform var(--t-snappy) var(--spring-bouncy);
 }
 .send svg { width: 14px; height: 14px; stroke-width: 1.75; transition: transform var(--t-snappy) var(--spring-snappy), opacity var(--t-fast) ease-out; }

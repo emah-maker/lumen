@@ -13,14 +13,15 @@ function make() {
   const timers = []; const rafs = []; const listeners = {};
   const stats = { raf: 0, frames: 0, timers: 0 };
   const grad = { addColorStop() {} };
-  const ctx2d = new Proxy({}, { get: (o, k) => (k === 'createLinearGradient' ? () => grad : typeof o[k] === 'undefined' ? () => {} : o[k]), set: (o, k, v) => { o[k] = v; return true; } });
+  const draws = { clears: 0, fills: 0 }; const canvases = [];
+  const ctx2d = new Proxy({}, { get: (o, k) => (k === 'createLinearGradient' || k === 'createRadialGradient' ? () => grad : k === 'createPattern' ? () => ({}) : k === 'createImageData' ? () => ({ data: new Uint8ClampedArray(128 * 128 * 4) }) : k === 'clearRect' ? () => { draws.clears++; } : k === 'fill' || k === 'stroke' || k === 'fillRect' ? () => { draws.fills++; } : typeof o[k] === 'undefined' ? () => {} : o[k]), set: (o, k, v) => { o[k] = v; return true; } });
   const doc = {
     hidden: false,
     listeners: {},
     addEventListener(t, f) { (doc.listeners[t] ||= []).push(f); },
     removeEventListener(t, f) { doc.listeners[t] = (doc.listeners[t] || []).filter((x) => x !== f); },
     getElementById: () => ({ after() {} }),
-    createElement: () => ({ setAttribute() {}, remove() {}, getContext: () => ctx2d, set width(v) {}, set height(v) {} }),
+    createElement: () => { const c = { setAttribute() {}, remove() {}, getContext: () => ctx2d, set width(v) { c.w = v; }, set height(v) { c.h = v; } }; canvases.push(c); return c; },
     documentElement: { addEventListener() {}, removeEventListener() {} },
   };
   const g = {
@@ -54,7 +55,7 @@ function make() {
   };
   const fire = (type) => (listeners[type] || []).slice().forEach((f) => f({ clientX: 1, clientY: 1 }));
   const setHidden = (h) => { doc.hidden = h; (doc.listeners.visibilitychange || []).slice().forEach((f) => f()); };
-  return { g, stats, advance, fire, setHidden, listeners };
+  return { g, stats, advance, fire, setHidden, listeners, draws, canvases };
 }
 
 {
@@ -67,8 +68,8 @@ function make() {
 {
   const t = make();
   t.g.setBackdropEffect('snow', { lite: true, effectStyle: {} });
-  t.advance(1000);
-  check('Performance mode: about 20 frames a second', t.stats.frames >= 17 && t.stats.frames <= 21, `frames ${t.stats.frames}`);
+  t.advance(5000);
+  check('Performance mode (and battery saver): one still frame, no loop, no timer', t.stats.raf === 0 && t.stats.timers === 0 && t.draws.clears === 1, `raf ${t.stats.raf} timers ${t.stats.timers} draws ${t.draws.clears}`);
 }
 {
   const t = make();
@@ -115,6 +116,51 @@ function make() {
   t.g.setBackdropEffect('particles', { still: true, effectStyle: {} });
   t.advance(5000);
   check('Reduce motion: one still frame, no loop', t.stats.raf === 0 && t.stats.timers === 0);
+}
+
+{
+  // The grid finds the same lines the all-pairs scan did, with far fewer comparisons.
+  const t = make();
+  t.g.setBackdropEffect('particles', { effectStyle: {} });
+  t.advance(2000);
+  const s = t.g.setBackdropEffect.info();
+  const perFrame = s.stats.checks / s.stats.frames;
+  check('particles: 80 of them at 1280 x 800, a few hundred comparisons a frame (not 3160)', s.count === 80 && perFrame > 0 && perFrame < 800, `count ${s.count} checks/frame ${perFrame}`);
+  check('particles: a frame costs well under 2 ms of script', s.stats.ms / s.stats.frames < 2, `${s.stats.ms / s.stats.frames} ms`);
+}
+{
+  // One canvas pixel per CSS pixel on a dense screen, half that for the soft ones.
+  const t = make();
+  t.g.devicePixelRatio = 2;
+  t.g.setBackdropEffect('particles', { effectStyle: {} });
+  const c = t.canvases.at(-1);
+  check('particles: the canvas is 1 pixel per CSS pixel even at a pixel ratio of 2', c.w === 1280 && c.h === 800, `${c.w} x ${c.h}`);
+  t.g.setBackdropEffect('blobs', { effectStyle: {} });
+  const b = t.canvases.at(-1);
+  check('soft effects: half the size, scaled up by the page', b.w === 640 && b.h === 400, `${b.w} x ${b.h}`);
+}
+for (const [name, fps] of [['aurora', 15], ['blobs', 15], ['grain', 8]]) {
+  const t = make();
+  t.g.setBackdropEffect(name, { effectStyle: {} });
+  t.advance(2000);
+  check(`${name}: about ${fps} frames a second`, t.stats.frames >= fps * 2 - 4 && t.stats.frames <= fps * 2 + 2, `frames ${t.stats.frames}`);
+  check(`${name}: it draws something`, t.draws.fills > 0, '');
+  t.setHidden(true);
+  const raf = t.stats.raf; const timers = t.stats.timers;
+  t.advance(30e3);
+  check(`${name}: hidden, no animation frame and no timer is asked for`, t.stats.raf === raf && t.stats.timers === timers, `raf +${t.stats.raf - raf} timers +${t.stats.timers - timers}`);
+  const still = make();
+  still.g.setBackdropEffect(name, { still: true, effectStyle: {} });
+  still.advance(5000);
+  check(`${name}: Reduce motion draws one frame and nothing else`, still.stats.raf === 0 && still.stats.timers === 0 && still.draws.clears === 1, `raf ${still.stats.raf} timers ${still.stats.timers} draws ${still.draws.clears}`);
+}
+{
+  const t = make();
+  t.g.setBackdropEffect('aurora', { effectStyle: {} });
+  t.advance(95e3);
+  const raf = t.stats.raf; const timers = t.stats.timers;
+  t.advance(60e3);
+  check('aurora: after 90 s without input it rests like the others', t.stats.raf === raf && t.stats.timers === timers, `raf +${t.stats.raf - raf}`);
 }
 
 if (failed) { console.error(`${failed} failed`); process.exit(1); }

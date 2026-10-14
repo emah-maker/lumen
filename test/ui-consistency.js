@@ -5,12 +5,15 @@
 //   2. In the running app, light and dark, at 1280 and 900 px: text contrast >= 4.5, glyph contrast >= 3, hit targets
 //      >= 24 px, and a visible ring on keyboard focus, for key controls of the browser chrome (tabs, toolbar, address
 //      bar, find bar, sidebar frame), Settings, the new-tab page and the PDF viewer.
+//   3. Every accent colour (the thirteen, Match wallpaper and three custom ones) in light and dark, applied live on those four surfaces: the accent
+//      as text >= 4.5:1, white on the accent button >= 4.5:1, the accent as a glyph or focus ring >= 3:1, and the page really wearing the colour.
 // Run alone: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/ui-consistency.js (a throwaway profile, no window shows).
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const TC = require('../src/features/theme-colors');
 
 const root = path.join(__dirname, '..');
 const R = path.join(root, 'src', 'renderer');
@@ -133,7 +136,7 @@ const HELPERS = `(() => {
     await waitFor(() => app.evaluate((_e, i) => global.__settings.contents(i)?.executeJavaScript('document.body?.dataset.ready === "1"', true).catch(() => false), settingsId));
     const pdfId = await open(`${base}/a.pdf`);
     await pageReady(pdfId, '#bar');
-    const homeId = await app.evaluate(() => { const t = global.__tabsArray(); return t.length ? t[0].id : null; });
+    const homeId = await open(); // the new-tab page (a tab with no address)
 
     for (const scheme of ['light', 'dark']) {
       await theme(scheme);
@@ -193,6 +196,43 @@ const HELPERS = `(() => {
         }
       }
     }
+    // ---------- 3. every accent, light and dark, live, on the four surfaces ----------
+    // A probe on each page: a link-coloured word, a primary button and an accent glyph, built with the page's own tokens (no inline style attribute: the
+    // pages' CSP forbids it, so the colours are set through the CSSOM).
+    const probeIn = (sel) => `(() => { let d = document.getElementById('accent-probe'); if (!d) { d = document.createElement('div'); d.id = 'accent-probe'; d.style.position = 'fixed'; d.style.left = '0'; d.style.top = '0'; d.style.zIndex = '99999'; d.style.pointerEvents = 'none';
+      const t = document.createElement('span'); t.id = 'ap-text'; t.textContent = 'Link'; t.style.color = 'var(--accent-text)';
+      const b = document.createElement('button'); b.id = 'ap-btn'; b.textContent = 'Go'; b.style.background = 'var(--accent-deep)'; b.style.color = 'var(--on-accent)'; b.style.border = '0';
+      const g = document.createElement('i'); g.id = 'ap-glyph'; g.textContent = 'o'; g.style.color = 'var(--accent)'; g.style.stroke = 'var(--accent)';
+      d.append(t, b, g); (document.querySelector(${JSON.stringify(sel)}) || document.body).append(d); }
+      return [window.__ui.text('#ap-text'), window.__ui.text('#ap-btn'), window.__ui.glyph('#ap-glyph'), getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()]; })()`;
+    const setAccent = (v) => app.evaluate((_e, x) => global.__settings.backend.set('accentColor', x).then(() => 'ok', (err) => 'ERROR ' + err.message), v);
+    const surfaces = {
+      'browser chrome': () => ui.evaluate(HELPERS).then(() => ui.evaluate(probeIn('body'))),
+      Settings: () => inTab(settingsId, `(${HELPERS}, ${probeIn('body')})`),
+      'new-tab page': () => (homeId ? inTab(homeId, `(${HELPERS}, ${probeIn('body')})`) : null),
+      // (on the toolbar: the grey stage behind the pages is darker, and holds none of the accent's marks)
+      'PDF viewer': () => inTab(pdfId, `(${HELPERS}, ${probeIn('#bar')})`),
+    };
+    const accents = [...TC.ACCENT_IDS, TC.MATCH_WALLPAPER, '#12ab34', '#ffff00', '#1a1a1a'];
+    for (const scheme of ['light', 'dark']) {
+      await theme(scheme); await size(1280, 800); await sleep(500);
+      const bad = []; let n = 0;
+      for (const accent of accents) {
+        check(`accent ${accent} is accepted`, (await setAccent(accent)) === 'ok', 'refused');
+        const want = TC.accentOf(accent === TC.MATCH_WALLPAPER ? 'blue' : accent)[scheme]; // (Plain has no colour to match: Match wallpaper is Blue there)
+        for (const [name, probe] of Object.entries(surfaces)) {
+          let v = null;
+          for (let i = 0; i < 25 && !(Array.isArray(v) && v[3] === want); i++) { await sleep(120); v = await probe().catch((e) => String(e)); } // (live: the page follows within a moment)
+          n++;
+          if (!Array.isArray(v)) { bad.push(`${accent} ${name}: ${v}`); continue; }
+          const [text, button, glyph, shade] = v;
+          if (shade !== want) bad.push(`${accent} ${name}: wears ${shade}, wanted ${want}`);
+          else if (text < 4.5 || button < 4.5 || glyph < 3) bad.push(`${accent} ${name}: text ${text}, button ${button}, glyph ${glyph}`);
+        }
+      }
+      check(`${scheme}: ${accents.length} accents on 4 surfaces (${n} pages): each page wears the colour live; text >= 4.5:1, white on the button >= 4.5:1, glyph >= 3:1`, bad.length === 0, `${bad.length}: ${bad.slice(0, 6).join(' | ')}`);
+    }
+    await setAccent('blue');
     check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   } finally {
     await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; }).catch(() => {});

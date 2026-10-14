@@ -781,8 +781,9 @@ function buildAppearance(card) {
 }
 
 // ---------- [look] accent color and the new-tab page ----------
-const ACCENT_SWATCHES = [['blue', 'Blue'], ['indigo', 'Indigo'], ['purple', 'Purple'], ['pink', 'Pink'], ['red', 'Red'], ['orange', 'Orange'], ['green', 'Green'], ['teal', 'Teal'], ['graphite', 'Graphite']];
-const BACKGROUND_CHOICES = [['plain', 'Plain'], ['aurora', 'Aurora'], ['dusk', 'Dusk'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['sunset', 'Sunset'], ['graphite', 'Graphite']];
+// The accent colours (features/theme-colors.js) and the backgrounds and effects (features/backgrounds.js) are the same lists the browser uses.
+const TC = window.ThemeColors;
+const BG = window.Backgrounds;
 // The animated effect's look: a color (automatic, the accent, rainbow, a preset or any), how many,
 // how fast, how big, and whether the pointer moves them.
 const EFFECT_SWATCHES = [['#ffffff', 'White'], ['#64d2ff', 'Cyan'], ['#bf5af2', 'Purple'], ['#ff6482', 'Pink'], ['#ffd60a', 'Gold'], ['#30d158', 'Green']];
@@ -818,32 +819,31 @@ function buildEffectOptions() {
   render();
   return box;
 }
-function applyPageAccent() {
-  const hex = st?.accent && (matchMedia('(prefers-color-scheme: dark)').matches ? st.accent.dark : st.accent.light);
-  const style = document.documentElement.style;
-  if (!hex) { style.removeProperty('--accent'); style.removeProperty('--accent-soft'); style.removeProperty('--ring'); return; }
-  const n = parseInt(hex.slice(1), 16);
-  style.setProperty('--accent', hex);
-  style.setProperty('--accent-soft', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.14)`);
-  style.setProperty('--ring', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.3)`);
-}
 function buildLook(card) {
-  // Accent: one swatch per color, plus any color.
+  // Accent: one swatch per colour (each drawn in the shade it will really have, light or dark), "Match wallpaper", and any colour.
   const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Accent color' });
   const custom = h('input', { type: 'color', class: 'swatch-custom', 'aria-label': 'Custom accent color', title: 'Any color' });
+  const scheme = matchMedia('(prefers-color-scheme: dark)');
+  const shade = (id) => { const [l, d] = TC.ACCENTS[id]; return scheme.matches ? TC.tokensFor(d, 'dark').accent : TC.tokensFor(l, 'light').accent; };
+  const paintSwatches = () => { for (const btn of swatches.querySelectorAll('button[data-shade]')) { const c = shade(btn.dataset.value); btn.style.background = c; btn.style.color = c; } };
   const renderSwatches = () => {
     const current = st.prefs.accentColor;
-    for (const b of swatches.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === current));
+    for (const btn of swatches.querySelectorAll('button')) btn.setAttribute('aria-checked', String(btn.dataset.value === current));
     custom.classList.toggle('on', /^#/.test(current));
     custom.value = /^#/.test(current) ? current : st.accent?.light || '#007aff';
   };
-  for (const [value, label] of ACCENT_SWATCHES) {
-    swatches.append(h('button', { type: 'button', role: 'radio', class: `swatch accent-${value}`, 'data-value': value, title: label, 'aria-label': label,
-      onclick: async () => { await save('accentColor', value); renderSwatches(); } }));
+  for (const id of TC.ACCENT_IDS) {
+    const label = TC.ACCENT_LABELS[id];
+    swatches.append(h('button', { type: 'button', role: 'radio', class: 'swatch', 'data-value': id, 'data-shade': '1', title: label, 'aria-label': label,
+      onclick: async () => { await save('accentColor', id); renderSwatches(); } }));
   }
+  swatches.append(h('button', { type: 'button', role: 'radio', class: 'swatch swatch-wallpaper', id: 'accent-wallpaper', 'data-value': TC.MATCH_WALLPAPER, title: 'Match wallpaper: the accent comes from the new-tab background', 'aria-label': 'Match wallpaper',
+    onclick: async () => { await save('accentColor', TC.MATCH_WALLPAPER); renderSwatches(); } }));
   custom.addEventListener('change', async () => { await save('accentColor', custom.value); renderSwatches(); });
   swatches.append(custom);
-  card.append(row('Accent color', 'Buttons, links, the selected tab and focus rings, across Lumen and its pages.', swatches));
+  scheme.addEventListener('change', paintSwatches);
+  card.append(row('Accent color', 'Buttons, links and focus rings across Lumen. Each color is fitted to stay readable in light and dark; the last swatch takes it from the new-tab background.', swatches));
+  paintSwatches();
   renderSwatches();
 }
 
@@ -913,28 +913,84 @@ function buildClockStyle() {
 async function buildHome(card) {
 
   // The new-tab page: background, clock, greeting, sections.
-  const tiles = h('div', { class: 'bg-tiles', role: 'radiogroup', 'aria-label': 'New tab background' });
+  // The picker: a live preview that follows the pointer or the keyboard over the tiles, the backgrounds in groups (Gradients, Solids, Your picture)
+  // and the animated effects. A tile's art is the same CSS the new-tab page uses (features/backgrounds.js; the older ones are classes in settings.css).
+  const sections = h('div', { class: 'bg-sections', role: 'radiogroup', 'aria-label': 'New tab background', id: 'pref-newTabBackground' });
+  const preview = h('div', { class: 'bg-preview', id: 'bg-preview', 'aria-hidden': 'true' }, h('span', { class: 'bgp-clock', text: '9:41' }), h('span', { class: 'bgp-hello', text: 'Good evening' }), h('span', { class: 'bgp-search' }));
+  const showPreview = (item, effect) => { // a background (or an effect: its own still picture)
+    const tone = effect ? 'dark' : item.tone;
+    preview.className = `bg-preview tone-${tone}${effect ? '' : ` bg-${item.id}`}`;
+    preview.style.background = item.art || '';
+  };
+  const shuffled = () => st.prefs.newTabShuffle === true;
+  const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
+  const tileOf = (item) => {
+    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
+      onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
+    if (item.art) btn.style.background = item.art;
+    const show = () => showPreview(item);
+    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);
+    btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
+    return btn;
+  };
+  const gridOf = (items) => h('div', { class: 'bg-tiles dense' }, items.map(tileOf));
+  const sectionOf = (title, id, grid) => h('div', { class: 'bg-section', 'data-group': id }, h('h4', { class: 'bg-group', text: title }), grid);
+  for (const g of BG.GROUPS.filter((x) => x.id !== 'image')) sections.append(sectionOf(g.label, g.id, gridOf(BG.BACKGROUNDS.filter((x) => x.group === g.id))));
+  const imageSection = sectionOf('Your picture', 'image', h('div', { class: 'bg-tiles dense' }, tileOf(BG.IMAGE)));
+  sections.append(imageSection);
+  const allTiles = () => [...sections.querySelectorAll('.bg-tile:not([hidden])')];
+  sections.addEventListener('keydown', (e) => { // arrow keys move through every tile
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step || !e.target.matches?.('.bg-tile')) return;
+    e.preventDefault();
+    const list = allTiles(); const at = list.indexOf(e.target);
+    const next = list[(at + step + list.length) % list.length];
+    next.focus();
+  });
+  const shuffleNote = h('p', { class: 'bg-note', id: 'bg-shuffle-note', hidden: true });
   const renderTiles = () => {
-    for (const t of tiles.querySelectorAll('button')) t.setAttribute('aria-checked', String(t.dataset.value === st.prefs.newTabBackground));
+    const current = currentId();
+    for (const t of sections.querySelectorAll('.bg-tile')) { const on = t.dataset.value === current; t.setAttribute('aria-checked', String(on)); t.tabIndex = on || (!sections.querySelector('.bg-tile[aria-checked="true"]') && t.dataset.value === 'plain') ? 0 : -1; }
     const has = Boolean(st.prefs.newTabImage);
     picture.replaceChildren(...[
       h('button', { id: 'pick-wallpaper', text: has ? 'Change picture…' : 'Use a picture…', onclick: async () => { try { st = await S.pickWallpaper(); } catch (err) { alertLine(picture, err.message); } renderTiles(); } }),
       has ? h('button', { text: 'Remove picture', onclick: async () => { st = await S.removeWallpaper(); renderTiles(); } }) : null,
     ].filter(Boolean));
-    tiles.querySelector('[data-value="image"]').hidden = !has;
-    evenRows(tiles, tiles.querySelectorAll('button:not([hidden])').length);
+    imageSection.hidden = !has;
+    sections.classList.toggle('shuffled', shuffled());
+    shuffleNote.hidden = !shuffled();
+    shuffleNote.textContent = shuffled() ? `Today: ${BG.byId(BG.dailyPick())?.label}. Pick a background to stop shuffling.` : '';
+    showPreview(BG.byId(current) || BG.byId('plain'));
+    for (const t of fxTiles.querySelectorAll('button')) { const on = t.dataset.value === st.prefs.newTabEffect; t.setAttribute('aria-checked', String(on)); t.tabIndex = on ? 0 : -1; }
   };
-  for (const [value, label] of [...BACKGROUND_CHOICES, ['image', 'Your picture']]) {
-    tiles.append(h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${value}`, 'data-value': value, 'aria-label': label, title: label,
-      onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
+  // The animated effects, one still picture each.
+  const fxTiles = h('div', { class: 'bg-tiles dense', role: 'radiogroup', 'aria-label': 'Animated effect', id: 'pref-newTabEffect' });
+  const effectOptions = buildEffectOptions();
+  for (const fx of BG.EFFECTS) {
+    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile fx-tile fx-${fx.id}`, 'data-value': fx.id, 'aria-label': fx.label, title: fx.label,
+      onclick: async () => { await save('newTabEffect', fx.id); effectOptions.hidden = fx.id === 'none'; renderTiles(); } }, h('span', { text: fx.label }));
+    if (fx.art) btn.style.background = fx.art;
+    btn.addEventListener('pointerenter', () => showPreview(fx, true)); btn.addEventListener('focus', () => showPreview(fx, true));
+    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
+    fxTiles.append(btn);
   }
-  card.group('Background').append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
+  fxTiles.addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const list = [...fxTiles.querySelectorAll('button')]; const at = list.indexOf(document.activeElement);
+    list[(at + step + list.length) % list.length].click(); list[(at + step + list.length) % list.length].focus();
+  });
+  card.group('Background').append(
+    toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
+    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview, shuffleNote, sections, picture),
+  );
   card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
-  const effectOptions = buildEffectOptions();
-  card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion. It never covers the search box or the cards.',
-    [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']], { after: (v) => { effectOptions.hidden = v === 'none'; } }), effectOptions);
+  card.append(stackRow('Animated effect', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.', fxTiles), effectOptions);
   effectOptions.hidden = st.prefs.newTabEffect === 'none';
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
@@ -2863,9 +2919,7 @@ function refreshRestartNotes() {
 }
 function applyPageClasses() {
   document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion || st.performance?.active));
-  applyPageAccent(); // [look]
 }
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (st) applyPageAccent(); });
 
 // ---------- navigation and search ----------
 

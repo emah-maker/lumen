@@ -308,8 +308,11 @@ function hardenOwnView(wc, ownUrl) {
 // nothing using the UI's preload may leave renderer/index.html.
 const uiContents = new WeakSet();
 ipcMain.on('ui-preload:loaded', (event) => { uiContents.add(event.sender); event.returnValue = true; });
+// [look] The accent colour's sheet for Lumen's own pages (made once the settings backend exists, below).
+let accentCss = null;
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
+  contents.on('dom-ready', () => accentCss?.apply(contents)); // [look] Lumen's own pages take the accent colour (features/accent-css.js)
   // The UI window is registered when it's made, and preload.js registers any other view it runs in
   // (ui-preload:loaded). Failing both, a view showing the UI's own page is treated the same.
   const usesUiPreload = () => uiContents.has(contents) || isUiUrl(contents.getURL());
@@ -8530,6 +8533,7 @@ if (process.platform === 'win32') app.whenReady().then(() => setTimeout(() => pa
 if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkeys.busy(), context: (id) => { const wc = require('electron').webContents.fromId(id); return wc ? passkeyContext(wc) : null; }, openBackground: (url) => openTab(url, { background: true })?.webContents?.id ?? null };
 
 const settingsBackend = settingsPage.create({
+  refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy
   usage, // [usage] You and AI → Usage
   cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI → AI providers: each CLI's version, path and sign-in
@@ -8572,6 +8576,8 @@ const settingsBackend = settingsPage.create({
   performance: perfMode,
   translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
 });
+accentCss = require('./features/accent-css').create({ rendererDir: path.join(__dirname, 'renderer'), accent: () => settingsBackend.uiPrefs().accent, all: () => require('electron').webContents.getAllWebContents() }); // [look]
+for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
 function openSettingsPage(section = '', { replace = null } = {}) {

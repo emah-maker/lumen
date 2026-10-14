@@ -1,12 +1,19 @@
 // [look] Animated effects over the new-tab background (Settings → Appearance → Animated effect):
 // Particles (dots joined by lines, like particles.js), Stars (a twinkling night sky), Bubbles and
-// Snow, in a color (automatic, the accent, rainbow or any), an amount, a speed and a size, and
-// optionally reacting to the pointer. newtab.js loads this file only when an effect is on, so with
-// it off it costs nothing. One small canvas that never takes a click (pointer-events: none; the
-// page's CSS also fades it behind the content column), kept light on purpose: a particle count
-// scaled to the window and capped, at most 30 frames a second, each asked for just in time (20 and half as many particles in
-// Performance mode), a capped pixel ratio and canvas size, no animation frame asked for while the
-// page is not in front (and its pixel buffer freed after a while), one still frame with Reduce motion, and a rest after 90 s without input. Each color is one batched fill, so rainbow costs a few more calls only.
+// Snow, and three soft ones: Aurora drift (slow curtains of light), Soft blobs (large glows that float)
+// and Film grain (a faint, slowly shifting noise), in a color (automatic, the accent, rainbow or any), an
+// amount, a speed and a size, and optionally reacting to the pointer. newtab.js loads this file only when
+// an effect is on, so with it off it costs nothing. One small canvas that never takes a click
+// (pointer-events: none; the page's CSS also fades it behind the content column), kept light on purpose:
+//   - a particle count scaled to the window and capped; the lines between particles found with a grid of cells, not by
+//     comparing every pair; each color's lines and dots batched into a few paths, no shadows, no per-line gradients
+//   - a canvas at one pixel per CSS pixel whatever the screen's density (the shapes are soft and the page scales it up), and half that
+//     again for the soft effects, which are blurry by nature
+//   - at most 30 frames a second for the particles, snow and the like, 15 for the slow drifts, 8 for the grain, each asked for just in
+//     time: a timer waits out most of the interval and one animation frame draws it, so there is about one callback per frame
+//   - nothing asked for while the page is not in front (another tab, the spare page, a minimised window; its pixel buffer freed after a while)
+//   - one still frame, no loop at all, with Reduce motion and with Performance mode (which also stands for battery saver and thermal limits)
+//   - a rest after 90 s without input
 
 (() => {
   const TAU = Math.PI * 2;
@@ -14,7 +21,7 @@
   const LEVEL = { few: 0.5, normal: 1, many: 1.8, slow: 0.5, fast: 1.8, small: 0.65, large: 1.6 };
   const RAINBOW = ['255, 99, 132', '255, 159, 64', '255, 214, 10', '52, 199, 89', '10, 132, 255', '191, 90, 242'];
 
-  const MAX_PIXELS = 2.6e6; // the canvas never holds more pixels than this (about 1920 x 1350)
+  const MAX_PIXELS = 1.6e6; // the canvas never holds more pixels than this (a 1920 x 1080 window is 2.1e6 CSS pixels: drawn a little smaller, shown scaled)
   const FREE_AFTER_MS = 20e3; // hidden this long: the canvas gives its pixel buffer back (redrawn from the particles when shown)
 
   const IDLE_PAUSE_MS = 90e3; // no pointer, key or wheel input this long: the animation rests (a still canvas) until the next input
@@ -48,20 +55,40 @@
         if (p.x < 0 || p.x > w) p.vx = -p.vx;
         if (p.y < 0 || p.y > h) p.vy = -p.vy;
       },
-      draw(ctx, list, colors, mouse) {
-        const LINK = 130;
+      draw(ctx, list, colors, mouse, r) {
+        const LINK = 130; const LINK2 = LINK * LINK;
         // Lines in four opacity buckets: four strokes a frame instead of one per line.
         const buckets = [[], [], [], []];
+        // A grid of LINK-sized cells: a particle is only compared with the ones in its own cell and the eight around it (a few
+        // hundred pairs in all, where comparing every pair was n(n-1)/2: 3160 for 80). Particles are chained per cell in two typed arrays.
+        const cols = Math.max(1, Math.ceil(r.w / LINK)); const rows = Math.max(1, Math.ceil(r.h / LINK));
+        const cells = cols * rows;
+        if (!r.head || r.head.length < cells) r.head = new Int16Array(cells);
+        if (!r.chain || r.chain.length < list.length) r.chain = new Int16Array(list.length);
+        const head = r.head; const chain = r.chain;
+        head.fill(-1, 0, cells);
+        const colOf = (p) => Math.min(cols - 1, Math.max(0, Math.floor(p.x / LINK)));
+        const rowOf = (p) => Math.min(rows - 1, Math.max(0, Math.floor(p.y / LINK)));
+        for (let i = 0; i < list.length; i++) { const c = rowOf(list[i]) * cols + colOf(list[i]); chain[i] = head[c]; head[c] = i; }
+        let checks = 0;
         for (let i = 0; i < list.length; i++) {
           const a = list[i];
-          for (let j = i + 1; j < list.length; j++) {
-            const b = list[j];
-            const dx = a.x - b.x; const dy = a.y - b.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < LINK * LINK) buckets[Math.min(3, Math.floor((Math.sqrt(d2) / LINK) * 4))].push(a, b);
+          const cx = colOf(a); const cy = rowOf(a);
+          for (let y = Math.max(0, cy - 1); y <= Math.min(rows - 1, cy + 1); y++) {
+            for (let x = Math.max(0, cx - 1); x <= Math.min(cols - 1, cx + 1); x++) {
+              for (let j = head[y * cols + x]; j !== -1; j = chain[j]) {
+                if (j <= i) continue; // (each pair once)
+                const b = list[j];
+                const dx = a.x - b.x; const dy = a.y - b.y;
+                const d2 = dx * dx + dy * dy;
+                checks++;
+                if (d2 < LINK2) buckets[Math.min(3, Math.floor((Math.sqrt(d2) / LINK) * 4))].push(a, b);
+              }
+            }
           }
           if (near(a, mouse, 180)) buckets[0].push(a, mouse); // the pointer grabs the dots near it
         }
+        r.stats.checks += checks;
         ctx.lineWidth = Math.max(0.6, style.size * 0.9);
         ctx.strokeStyle = `rgb(${colors.line})`;
         buckets.forEach((pairs, k) => {
@@ -130,6 +157,71 @@
       },
       draw(ctx, list, colors) { dots(ctx, list, colors, 0.8); },
     },
+    // The soft ones. `soft`: drawn on a half-size canvas the page scales up; `fps`: how often they are redrawn; `fade: false`: they are
+    // ambient light, faint everywhere, so they are not cleared from behind the content column the way the small ones are.
+    aurora: {
+      soft: true, fps: 15, fade: false, fixed: () => 4,
+      make: (w, h) => ({ x: rand(w * 0.2, w * 0.8), y: rand(h * 0.08, h * 0.5), r: rand(0.28, 0.42) * Math.max(w, h * 1.4), sx: rand(1.6, 2.4), phase: rand(0, TAU), speed: rand(0.002, 0.005), swing: rand(0.12, 0.22) }),
+      step(p, w, h, dt) { p.phase += p.speed * dt; },
+      draw(ctx, list, colors, mouse, r) {
+        // Curtains: wide, flat glows that slide sideways and breathe, one color each (the palette repeats).
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < list.length; i++) {
+          const p = list[i]; const col = colors[i % colors.length];
+          const x = p.x + Math.sin(p.phase) * r.w * p.swing; const y = p.y + Math.cos(p.phase * 0.7) * r.h * 0.06;
+          const a = 0.26 + 0.12 * Math.sin(p.phase * 1.3 + i);
+          ctx.save();
+          ctx.translate(x, y); ctx.scale(p.sx, 0.55);
+          const g = ctx.createRadialGradient(0, 0, 0, 0, 0, p.r * 0.6);
+          g.addColorStop(0, `rgba(${col}, ${a})`); g.addColorStop(1, `rgba(${col}, 0)`);
+          ctx.fillStyle = g;
+          ctx.fillRect(-p.r * 0.6, -p.r * 0.6, p.r * 1.2, p.r * 1.2);
+          ctx.restore();
+        }
+      },
+    },
+    blobs: {
+      soft: true, fps: 15, fade: false, fixed: () => 6,
+      make: (w, h) => ({ x: rand(0, w), y: rand(0, h), r: rand(0.16, 0.3) * Math.min(w, h * 1.3) * style.size, vx: rand(-0.12, 0.12), vy: rand(-0.1, 0.1), phase: rand(0, TAU) }),
+      step(p, w, h, dt) {
+        p.x += p.vx * dt; p.y += p.vy * dt; p.phase += 0.004 * dt;
+        if (p.x < -p.r * 0.3 || p.x > w + p.r * 0.3) p.vx = -p.vx;
+        if (p.y < -p.r * 0.3 || p.y > h + p.r * 0.3) p.vy = -p.vy;
+      },
+      draw(ctx, list, colors) {
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < list.length; i++) {
+          const p = list[i]; const col = colors[i % colors.length];
+          const rad = p.r * (1 + 0.06 * Math.sin(p.phase));
+          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad);
+          g.addColorStop(0, `rgba(${col}, 0.34)`); g.addColorStop(1, `rgba(${col}, 0)`);
+          ctx.fillStyle = g;
+          ctx.fillRect(p.x - rad, p.y - rad, rad * 2, rad * 2);
+        }
+      },
+    },
+    grain: {
+      soft: true, fps: 8, fade: false, fixed: () => 1,
+      make: () => ({ ox: 0, oy: 0 }),
+      step(p) { p.ox = Math.floor(Math.random() * 128); p.oy = Math.floor(Math.random() * 128); }, // a new patch of the same noise
+      draw(ctx, list, colors, mouse, r) {
+        // One 128 px tile of noise, made once; each frame lays it over the canvas from another offset.
+        if (!r.tile) {
+          const t = document.createElement('canvas'); t.width = 128; t.height = 128;
+          const tc = t.getContext('2d'); const img = tc.createImageData(128, 128);
+          for (let i = 0; i < img.data.length; i += 4) { const v = Math.random() < 0.5 ? 0 : 255; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = Math.floor(rand(10, 46)); }
+          tc.putImageData(img, 0, 0);
+          r.tile = ctx.createPattern(t, 'repeat');
+        }
+        const p = list[0];
+        ctx.save();
+        ctx.translate(-p.ox, -p.oy);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = r.tile;
+        ctx.fillRect(0, 0, r.w + 128, r.h + 128);
+        ctx.restore();
+      },
+    },
   };
 
   const INPUTS = ['pointermove', 'pointerdown', 'keydown', 'wheel'];
@@ -157,11 +249,13 @@
     const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(css);
     return m ? `${m[1]}, ${m[2]}, ${m[3]}` : '255, 255, 255';
   };
-  function colorsOf(choice) {
+  // The soft effects' own palettes for Automatic (white or the text color would only fog the page).
+  const SOFT_AUTO = { aurora: ['46, 213, 170', '94, 92, 230', '191, 90, 242', '10, 132, 255'], blobs: ['94, 92, 230', '255, 99, 132', '10, 132, 255', '255, 159, 64', '46, 213, 170', '191, 90, 242'] };
+  function colorsOf(choice, name) {
     const text = rgbOf(getComputedStyle(document.body).color);
     const colors = choice === 'rainbow' ? [...RAINBOW]
       : choice === 'accent' ? [rgbOf(getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#0a84ff')]
-        : /^#[0-9a-f]{6}$/i.test(choice || '') ? [rgbOf(choice)] : [text];
+        : /^#[0-9a-f]{6}$/i.test(choice || '') ? [rgbOf(choice)] : SOFT_AUTO[name] ? [...SOFT_AUTO[name]] : [text];
     colors.line = choice === 'rainbow' ? text : colors[0];
     return colors;
   }
@@ -169,17 +263,19 @@
   function size() {
     const r = run;
     const w = innerWidth; const h = innerHeight;
-    const dpr = Math.min(devicePixelRatio || 1, r.lite ? 1 : 1.5, Math.max(1, Math.sqrt(MAX_PIXELS / Math.max(1, w * h)))); // (a huge window: fewer pixels, not a 4K canvas)
-    r.canvas.width = Math.round(w * dpr); r.canvas.height = Math.round(h * dpr);
+    const e = EFFECTS[r.name];
+    // One canvas pixel per CSS pixel (never the screen's 1.5 or 2: the shapes are soft, and a canvas of four times the pixels costs four times the
+    // fill), half that for the soft effects, and fewer still in a huge window.
+    const dpr = Math.min(e.soft ? 0.5 : 1, Math.sqrt(MAX_PIXELS / Math.max(1, w * h)));
+    r.canvas.width = Math.max(1, Math.round(w * dpr)); r.canvas.height = Math.max(1, Math.round(h * dpr));
     r.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const fx = r.w ? w / r.w : 1; const fy = r.h ? h / r.h : 1;
     for (const p of r.list) { p.x *= fx; p.y *= fy; }
     r.w = w; r.h = h;
-    const e = EFFECTS[r.name];
-    const want = Math.round(Math.min(e.max, ((w * h) / 10000) * e.density) * r.amount * (r.lite ? 0.5 : 1));
+    const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((w * h) / 10000) * e.density) * r.amount);
     while (r.list.length < want) r.list.push(Object.assign(e.make(w, h, false), { c: Math.floor(Math.random() * RAINBOW.length) }));
     r.list.length = Math.max(0, want);
-    r.colors = colorsOf(r.color);
+    r.colors = colorsOf(r.color, r.name);
   }
 
   // The effect fades behind the content column (text and fields stay clear): 28% visible between
@@ -187,7 +283,7 @@
   // mask on a canvas that redraws every frame is re-masked every frame. Not on narrow windows (CSS
   // lowers the whole layer's opacity there).
   function fade(r) {
-    if (r.w <= 760) return;
+    if (r.w <= 760 || EFFECTS[r.name].fade === false) return;
     const at = (px) => Math.min(1, Math.max(0, px / r.w));
     const g = r.ctx.createLinearGradient(0, 0, r.w, 0);
     g.addColorStop(0, 'rgba(0, 0, 0, 0)');
@@ -198,33 +294,36 @@
     g.addColorStop(1, 'rgba(0, 0, 0, 0)');
     r.ctx.globalCompositeOperation = 'destination-out';
     r.ctx.fillStyle = g;
-    r.ctx.fillRect(0, 0, r.w, r.h);
+    r.ctx.fillRect(Math.max(0, r.w / 2 - 400), 0, Math.min(r.w, 800), r.h); // (the gradient is clear beyond 400 px either side: only the band needs filling)
     r.ctx.globalCompositeOperation = 'source-over';
   }
 
   function draw() {
     const r = run;
     r.ctx.clearRect(0, 0, r.w, r.h);
-    EFFECTS[r.name].draw(r.ctx, r.list, r.colors, r.mouse);
+    EFFECTS[r.name].draw(r.ctx, r.list, r.colors, r.mouse, r);
     r.ctx.globalAlpha = 1;
     fade(r);
   }
 
-  // The loop asks for an animation frame only when a frame is due: a timer waits out most of the interval (30 fps, 20 in
-  // Performance mode), then one requestAnimationFrame draws it. It used to ask for all 60 a second and return early for half of them.
+  // The loop asks for an animation frame only when a frame is due: a timer waits out most of the interval (the effect's own: 30 fps for the
+  // particles, 15 for the slow drifts, 8 for the grain), then one requestAnimationFrame draws it, so a frame is about one callback. (It used to
+  // ask for every vsync and return early for most of them, three or four callbacks per frame on a fast display.)
   // It also stops after IDLE_PAUSE_MS without input (the canvas keeps the last frame) and starts again on the next input.
-  function next(r, spent) {
+  const intervalOf = (r) => 1000 / (EFFECTS[r.name].fps || 30);
+  function arm(r, wait) {
     clearTimeout(r.timer);
-    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden) r.raf = requestAnimationFrame(frame); }, Math.max(0, (r.lite ? 50 : 33) - 9 - spent));
+    r.timer = setTimeout(() => { r.timer = 0; if (run === r && !r.raf && !document.hidden) r.raf = requestAnimationFrame(frame); }, Math.max(0, wait));
   }
+  const next = (r, spent) => arm(r, intervalOf(r) - 10 - spent); // (the timer is set to run out a little before the next vsync: 24 ms for 33, so at 60 Hz the frame lands on the vsync at 33 ms, not the one after)
 
   function frame(t) {
     const r = run;
     if (!r) return;
     r.raf = 0;
     if (document.hidden) return; // (onVisibility starts the loop again)
-    const interval = r.lite ? 50 : 33;
-    if (t - r.last < interval - 1) { r.raf = requestAnimationFrame(frame); return; } // (a frame came early: wait for the next)
+    const interval = intervalOf(r);
+    if (r.last && t - r.last < interval * 0.82) { arm(r, interval - (t - r.last)); return; } // (a frame came well early, as on a display faster than 60 Hz: wait out the rest, so an effect never draws much above its rate)
     if (performance.now() - r.input > IDLE_PAUSE_MS) { r.last = 0; r.idle = true; return; } // (onInput starts the loop again)
     const dt = (Math.min(3, (t - (r.last || t - interval)) / 16.7)) * r.speed; // in 60 Hz frames; a long pause doesn't jump
     r.last = t;
@@ -233,18 +332,20 @@
     const began = performance.now();
     for (const p of r.list) e.step(p, r.w, r.h, dt, r.mouse);
     draw();
-    next(r, performance.now() - began);
+    const spent = performance.now() - began;
+    r.stats.frames++; r.stats.ms += spent; if (spent > r.stats.max) r.stats.max = spent;
+    next(r, spent);
   }
 
   // name: an EFFECTS key or anything else for none. still: one frame, no animation. lite: Performance
-  // mode. effectStyle: { color, amount, speed, size, interact } (settings-backend.js newTabLook).
+  // mode (also battery saver and thermal limits): one frame too. effectStyle: { color, amount, speed, size, interact } (settings-backend.js newTabLook).
   window.setBackdropEffect = (name, { still = false, lite = false, effectStyle = {} } = {}) => {
-    const motion = !still && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motion = !still && !lite && !matchMedia('(prefers-reduced-motion: reduce)').matches; // (one still frame otherwise: no loop, no timer)
     const s = effectStyle || {};
     const opts = { color: typeof s.color === 'string' ? s.color : 'auto', amount: LEVEL[s.amount] || 1, speed: LEVEL[s.speed] || 1, size: LEVEL[s.size] || 1, interact: s.interact !== false };
     const key = JSON.stringify([name, motion, lite, opts.amount, opts.size, opts.interact]);
     if (run && run.key === key) { // same particles: only the color or speed changed
-      Object.assign(run, { color: opts.color, speed: opts.speed, colors: colorsOf(opts.color) });
+      Object.assign(run, { color: opts.color, speed: opts.speed, colors: colorsOf(opts.color, name) });
       if (!motion) draw();
       return;
     }
@@ -255,7 +356,7 @@
     canvas.id = 'effect';
     canvas.setAttribute('aria-hidden', 'true');
     document.getElementById('backdrop').after(canvas);
-    run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, timer: 0, idle: false, input: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 } };
+    run = { name, key, lite, ...opts, canvas, ctx: canvas.getContext('2d'), list: [], raf: 0, timer: 0, idle: false, input: 0, last: 0, w: 0, h: 0, mouse: { on: false, x: 0, y: 0 }, stats: { frames: 0, checks: 0, ms: 0, max: 0 } };
     size();
     if (!motion) { draw(); return; }
     // Not in front (another tab, the spare page, a minimised window): no animation frame is even asked for, and after a while the canvas
@@ -295,5 +396,5 @@
     if (document.hidden) run.onVisibility(); else run.raf = requestAnimationFrame(frame);
   };
   // What is running, for tests and a glance in DevTools.
-  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still } : null);
+  window.setBackdropEffect.info = () => (run ? { name: run.name, count: run.list.length, colors: [...run.colors], line: run.colors.line, speed: run.speed, size: style.size, interact: run.interact, still: run.still, stats: { ...run.stats } } : null);
 })();

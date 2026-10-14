@@ -252,11 +252,7 @@ body.interstitial { display: block; }
 .swatch:hover { transform: scale(1.1); }
 .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px currentColor; }
 .swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.accent-blue { background: #007aff; color: #007aff; } .accent-indigo { background: #5856d6; color: #5856d6; }
-.accent-purple { background: #af52de; color: #af52de; } .accent-pink { background: #ff2d55; color: #ff2d55; }
-.accent-red { background: #ff3b30; color: #ff3b30; } .accent-orange { background: #ff9500; color: #ff9500; }
-.accent-green { background: #28a745; color: #28a745; } .accent-teal { background: #30b0c7; color: #30b0c7; }
-.accent-graphite { background: #8e8e93; color: #8e8e93; }
+.swatch-wallpaper { background: linear-gradient(135deg, #ff7a9c 0%, #8a6cff 50%, #3ec3ff 100%); color: var(--accent); }
 .swatch-custom { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: conic-gradient(#ff3b30, var(--warning-fill), #ffcc00, #34c759, #30b0c7, #007aff, #af52de, #ff2d55, #ff3b30); cursor: pointer; }
 .swatch-custom::-webkit-color-swatch-wrapper { padding: 3px; }
 .swatch-custom::-webkit-color-swatch { border: 0; border-radius: 50%; opacity: 0; }
@@ -301,6 +297,25 @@ body.interstitial { display: block; }
 .bg-sunset { background: linear-gradient(160deg, #2a0d2e, #8a1f4b 40%, #f0584a 75%, #ffc26b); }
 .bg-graphite { background: radial-gradient(120% 90% at 50% 0%, #3a3a3c, #1c1c1e 60%, #111); }
 .bg-image { background: linear-gradient(135deg, #8e8e93, #3a3a3c); }
+.bg-sections { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.bg-sections.shuffled .bg-tile[aria-checked="false"] { opacity: 0.55; }
+.bg-section[hidden] { display: none; }
+.bg-group { margin: 0 0 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+.bg-tiles.dense { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+.bg-tile.tone-light span { color: var(--text); text-shadow: none; } /* a light tile: dark label */
+.bg-note { margin: 8px 0 0; font-size: var(--fs-sm); color: var(--muted); }
+.bg-note[hidden] { display: none; }
+/* The live preview: a small new-tab page (clock, greeting, search box) over whatever the pointer or keyboard is on. */
+.bg-preview { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 132px; border-radius: var(--r-xl); overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 0.5px var(--border); transition: background var(--t-base) ease-out; }
+.bg-preview.tone-dark { color: var(--on-accent); }
+.bg-preview.tone-light { color: var(--text); }
+.bg-preview.tone-plain { color: var(--text); }
+.bgp-clock { font-size: 34px; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.bgp-hello { font-size: var(--fs-md); font-weight: 600; opacity: 0.85; }
+.bgp-search { width: 46%; height: 18px; margin-top: 8px; border-radius: var(--r-pill); background: currentColor; opacity: 0.16; }
+.fx-tile span { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+.fx-none { background: var(--bg); } .fx-none span { color: var(--muted); text-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .bg-preview { transition: none; } }
 .note.error { color: var(--danger); }
 
 /* [widgets] Appearance → Widgets */

@@ -11,7 +11,6 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
 
 // Undocumented when this test was written (2026-10-10). Only ever remove names from this list: document one, then delete it here.
 const KNOWN_UNDOCUMENTED = new Set([
-  'accentColor', 'newTabBackground', 'newTabEffect', 'newTabEffectColor', 'newTabEffectAmount', 'newTabEffectSpeed', 'newTabEffectSize', 'newTabEffectInteract',
   'newTabImage', 'newTabClock', 'newTabClockSize', 'newTabClockStyle', 'newTabClockHours', 'newTabClockSeconds', 'newTabClockDate', 'newTabClockCard',
   'newTabClockShadow', 'newTabGreetingFont', 'newTabSearchWidth', 'newTabName', 'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy',
   'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation', 'homeWidgets', 'pdfViewer', 'tabSleepMode', 
