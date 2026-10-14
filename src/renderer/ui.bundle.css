@@ -1287,6 +1287,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .organize-note button { border: 0; background: none; color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: var(--r-sm); }
 .organize-note button:hover { background: var(--hover); }
 .organize-note button:focus-visible { outline: 2px solid var(--accent); }
+.gpu-note { max-width: min(560px, 60vw); height: auto; min-height: 26px; padding-block: 3px; } /* the driver-reset notice: a sentence and a Restart button */
+.gpu-note .gpu-note-text { white-space: normal; line-height: 1.2; font-size: 11.5px; }
 @media (prefers-reduced-motion: reduce) {
   .organize-tabs, .organize-tabs.busy svg { animation: none; }
   .group-label:active { transform: none; }
@@ -1743,6 +1745,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 /* Performance mode (features/performance.js): no blur, lighter shadows; motion is stopped by pref-reduce-motion above. */
 .pref-lite .composer { backdrop-filter: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-lite .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+/* Graphics: Light (settings-backend.js [igpu], an integrated GPU by default): the glass is a flat, slightly more opaque tint, no blur behind it. Motion stays. */
+.pref-gfx-light .composer { backdrop-filter: none; background: color-mix(in srgb, var(--surface-raised) 96%, transparent); }
+.pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
 .pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
