@@ -2,6 +2,14 @@
    into a box; the clock, greeting, search box and cards use the new-tab page's looks (renderer/newtab.html has the originals: when one changes, change it here). */
 .bg-preview { position: relative; width: 100%; max-width: 520px; aspect-ratio: 1100 / 440; border-radius: var(--r-xl); overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 0.5px var(--hairline); isolation: isolate; contain: layout paint style; --k: 0.4; }
 .ntp-bg, .ntp-scrim { position: absolute; inset: 0; }
+/* The page's older presets paint a base and a glow layer that is 140% of the page (newtab.html: #backdrop and ::before at inset -20%): here as one
+   background, the glows' sizes and places worked out for the same 140%. (The tiles use the plainer art in settings.css.) */
+.ntp-bg.bg-aurora { background: radial-gradient(56% 70% at 8% 22%, rgba(46, 213, 170, 0.55), transparent 70%), radial-gradient(63% 77% at 85% 15%, rgba(94, 92, 230, 0.55), transparent 70%), radial-gradient(70% 70% at 57% 99%, rgba(191, 90, 242, 0.4), transparent 70%), #06121f; }
+.ntp-bg.bg-dusk, .ntp-bg.bg-ocean, .ntp-bg.bg-forest, .ntp-bg.bg-sunset { --glow: radial-gradient(49% 56% at 92% 8%, rgba(255, 255, 255, 0.16), transparent 70%), radial-gradient(56% 63% at 1% 92%, rgba(255, 255, 255, 0.08), transparent 70%); }
+.ntp-bg.bg-dusk { background: var(--glow), linear-gradient(160deg, #1d1b4b 0%, #5b2a86 45%, #d9577b 80%, #f7a26a 100%); }
+.ntp-bg.bg-ocean { background: var(--glow), linear-gradient(160deg, #031b34 0%, #0a4a7a 45%, #0e8fa8 80%, #6fd6c8 100%); }
+.ntp-bg.bg-forest { background: var(--glow), linear-gradient(160deg, #07170f 0%, #164430 45%, #2f7d4f 80%, #9fcf7a 100%); }
+.ntp-bg.bg-sunset { background: var(--glow), linear-gradient(160deg, #2a0d2e 0%, #8a1f4b 40%, #f0584a 75%, #ffc26b 100%); }
 .ntp-fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .ntp-fx[hidden] { display: none; }
 .ntp-stage { position: absolute; left: 0; top: 0; width: 1100px; height: 440px; transform-origin: 0 0; transform: scale(var(--k)); box-sizing: border-box; padding: 34px 0 30px; display: flex; flex-direction: column; align-items: center; --search-w: 640px; --clock-size: 88px;

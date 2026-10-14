@@ -29,7 +29,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await app.evaluate(async () => { const t = global.__agent.browser.openTab(); await new Promise((r) => t.webContents.once('did-finish-load', r)); global.__home = t; });
     const home = (js) => app.evaluate((_e, c) => global.__home.webContents.executeJavaScript(c), js);
     // Settings, in its own tab (opened last, so it is the one in front).
-    const sid = await app.evaluate(() => global.__settings.open('appearance'));
+    const sid = await app.evaluate(() => global.__settings.open('home'));
     const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [sid, code]);
     for (let i = 0; i < 60 && !(await sp("Boolean(document.body.dataset.ready && document.getElementById('bg-preview'))").catch(() => false)); i++) await sleep(150);
     await app.evaluate(({ webContents }, id) => { for (const wc of [global.__settings.contents(id), global.__home.webContents]) { try { wc.debugger.attach('1.3'); } catch { /* attached */ } } }, sid);
