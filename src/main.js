@@ -7372,6 +7372,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.once('did-finish-load', () => {
     uiLoaded = true;
     rec.uiLoaded = true;
+    tabStripGate.forget(rec); // (tabs restored while this page was still loading were sent to nowhere: the strip must still get its first state, even if it is the one the gate last recorded)
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label }); // the badge that says whose window this is
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
     if (rec.prepared) {
