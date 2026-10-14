@@ -44,6 +44,8 @@ Stages, in order; each finished stage is recorded in `<worktree git dir>/lumen-r
 8. **tag**: annotated `vX.Y.Z` on the merge commit, pushed.
 9. **publish**: waits for `release.yml` on the tag and checks the release has 13 assets (`--assets <n>`).
 
+`--only a,b,c` runs a targeted release: the pure-node stages and perf-budget always run, plus the named Electron suites (the ones a change touches). The set is kept for `--resume` and named in the release PR. Use it for an urgent fix; a normal release runs everything.
+
 `--checks-only` stops after stage 4 (nothing pushed; `--resume` can ship it later). `--resume` continues from the last finished stage; inside the checks it skips suites that already passed and reruns the failed ones. With `patch` or no version it picks the unfinished release worktree.
 
 ## Gotchas
