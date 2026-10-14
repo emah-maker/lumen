@@ -43,7 +43,8 @@ const MEASURE_MS = 10e3;
     await home(`(() => { if (window.__fx) return; const fx = window.__fx = { n: 0, raf: 0, sum: 0, max: 0, drew: false }; const orig = window.requestAnimationFrame.bind(window);
       const clear = CanvasRenderingContext2D.prototype.clearRect; CanvasRenderingContext2D.prototype.clearRect = function (...a) { fx.drew = true; return clear.apply(this, a); };
       window.requestAnimationFrame = (cb) => { const mine = cb.name === 'frame'; /* (the effect's loop; the page's widgets ask for frames of their own now and then) */ return orig((t) => { const s = performance.now(); fx.drew = false; try { cb(t); } finally { const d = performance.now() - s; if (mine) fx.raf++; if (fx.drew) { fx.n++; fx.sum += d; if (d > fx.max) fx.max = d; } } }); }; return true; })()`);
-    const restart = (name) => home(`(() => { window.setBackdropEffect('none'); window.__fx.n = 0; window.__fx.raf = 0; window.__fx.sum = 0; window.__fx.max = 0; window.setBackdropEffect(${JSON.stringify(name)}, { ...currentLook, effect: ${JSON.stringify(name)}, still: false, lite: false }); return true; })()`);
+    // Through the real setting, as a user would (the page also re-reads its settings now and then, which would undo a direct call), then the counters start from zero.
+    const restart = async (name) => { await set('newTabEffect', name); await sleep(1500); return home('(() => { window.__fx.n = 0; window.__fx.raf = 0; window.__fx.sum = 0; window.__fx.max = 0; return true; })()'); };
     const resize = (w, h) => app.evaluate(({ BrowserWindow }, [a, b]) => BrowserWindow.getAllWindows()[0].setContentSize(a, b), [w, h]);
     const procs = () => app.evaluate(({ app: a }) => a.getAppMetrics().map((m) => ({ pid: m.pid, type: m.type, cpu: m.cpu.percentCPUUsage })));
     // CPU over `ms` of the new-tab renderer and the GPU process, as percent of one core (getAppMetrics reports since its last call).

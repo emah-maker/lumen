@@ -842,7 +842,7 @@ function buildLook(card) {
   custom.addEventListener('change', async () => { await save('accentColor', custom.value); renderSwatches(); });
   swatches.append(custom);
   scheme.addEventListener('change', paintSwatches);
-  card.append(row('Accent color', 'Buttons, links, the selected tab and focus rings, across Lumen and its pages. Every color is fitted so text on it stays readable in light and dark; Match wallpaper takes it from the new-tab background.', swatches));
+  card.append(row('Accent color', 'Buttons, links and focus rings across Lumen. Each color is fitted to stay readable in light and dark; the last swatch takes it from the new-tab background.', swatches));
   paintSwatches();
   renderSwatches();
 }
