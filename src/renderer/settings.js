@@ -2784,7 +2784,7 @@ function buildSystem(card) {
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
   // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
-  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 24 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 20 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
     [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
   const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
   const showGfxNote = () => {
