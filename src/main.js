@@ -1943,10 +1943,13 @@ function layout() {
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     if (tab.view.getVisible() !== show) {
-      if (show) releaseKeptPage(tab); // (before it is shown: see keptPageHidden)
+      // Only a tab switch touches the page's background state. The tab in front hidden for a moment (the sidebar's snapshot while it
+      // slides, a full-page chat) is left as it is: setBackgroundThrottling on a hidden view tells its page it is shown (Electron's
+      // WasShown), and the view shown again then drew nothing new: the page froze or went blank when the sidebar opened or closed.
+      if (show && tab.awayBySwitch !== false) releaseKeptPage(tab); // (before it is shown: see keptPageHidden)
       tab.view.setVisible(show); viewVisibleCalls++; // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
-      if (!show) keptPageHidden(tab);
-    }
+      if (!show) { tab.awayBySwitch = !visible; if (!visible) keptPageHidden(tab); }
+    } else if (!visible && tab.awayBySwitch === false) { tab.awayBySwitch = true; keptPageHidden(tab); } // (hidden for a moment, then switched away from)
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
