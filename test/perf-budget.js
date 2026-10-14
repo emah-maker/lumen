@@ -26,7 +26,8 @@ const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modul
 // Idle ceilings (2026-10, fresh profile, one tab): measured ~3 pages, 5 processes, ~2% CPU, ~650-1300 MB (it swings by a quarter with what Windows counts as shared); the ceilings are about twice that, so a new always-on page, a poller or a spare process shows.
 // modules 335 -> 336 (the email viewer, features/eml-viewer.js: the tab wiring every tab needs; the parser (features/eml.js) and postal-mime load when the first email is opened, not at startup).
 // modules 336 -> 340 (thirteen accents and the new backgrounds): three small modules every start needs, because the settings are checked as they are read (features/theme-colors.js, features/backgrounds.js) and the first page's accent sheet is made (features/accent-css.js); none loads a library.
-const CEILING = { requireMs: 1000, modules: 340, preloadKB: 40, uiKB: 1000, idleIntervals: 6, idleContents: 6, idleProcesses: 9, idleCpuPct: 15, idleMemMB: 2000, longTaskMs: 150, prefsMs: 40 };
+// modules 340 -> 341 (the hang recorder, features/hang-recorder.js): wraps ipcMain before any handler registers, so it must load first; the worker thread (hang-recorder-worker.js) is not a main-process module.
+const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idleIntervals: 6, idleContents: 6, idleProcesses: 9, idleCpuPct: 15, idleMemMB: 2000, longTaskMs: 150, prefsMs: 40 };
 
 (async () => {
   let failures = 0;
