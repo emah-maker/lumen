@@ -1,6 +1,6 @@
-// Graphics (features/graphics.js): which GPUs count as integrated, and that the choice is made once and never follows power events.
+// Graphics (settings-backend.js [igpu]): which GPUs count as integrated, and that the choice is made once and never follows power events.
 require('./_tmp-cleanup');
-const G = require('../src/features/graphics');
+const G = require('../src/settings/settings-backend').graphics;
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
@@ -35,7 +35,8 @@ const g = G.create({ app: { getGPUInfo: async () => ({ gpuDevice: [intel(true), 
   g.refresh();
   const before = JSON.stringify(g.info());
   // power flapping: the module never subscribes to anything and never reads Performance mode
-  const src = require('fs').readFileSync(require.resolve('../src/features/graphics.js'), 'utf8');
+  const whole = require('fs').readFileSync(require.resolve('../src/settings/settings-backend.js'), 'utf8');
+  const src = whole.slice(whole.indexOf('// ---- [igpu]'), whole.indexOf('const graphics = {'));
   check('it never listens to power, battery or speed-limit events and never reads Performance mode', !/powerMonitor|speed-limit|on-battery|thermal|performanceMode|\.on\(/.test(src.replace(/\/\/.*$/gm, '')), 'found');
   check('the answer does not change between calls', JSON.stringify(g.info()) === before, 'changed');
   const nv = G.create({ app: { getGPUInfo: async () => ({ gpuDevice: [intel(false), nvidia(true)] }) }, readSettings: () => ({}) });

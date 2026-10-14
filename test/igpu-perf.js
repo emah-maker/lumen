@@ -1,4 +1,4 @@
-// [igpu] Graphics: Light (features/graphics.js) really costs the GPU less, hidden (LUMEN_TEST_BACKGROUND), a fresh profile, Windows only.
+// [igpu] Graphics: Light (settings/settings-backend.js (the [igpu] block)) really costs the GPU less, hidden (LUMEN_TEST_BACKGROUND), a fresh profile, Windows only.
 // On the new-tab page with the user's settings (sunset gradient, many large fast white particles, frosted widget cards, a 2560x1600 panel),
 // the GPU 3D utilization of Lumen's own GPU process (Windows performance counters, `GPU Engine(pid_N_*engtype_3D)`, summed over its 3D engines)
 // is sampled for 8 s with Graphics on Full effects and on Light, alternating three times in the same run (so thermals and background load
@@ -7,13 +7,13 @@
 //   - the UI renderer misses no frame while idle: no requestAnimationFrame interval longer than 1.75 vsyncs and no long animation frame over
 //     a 6 s window, with the page animating in Light (a separate pass, with nothing else sampling)
 //   - Light still looks like itself: particles are drawn, no element has a backdrop-filter left, the frosted cards keep a visible tint
-//   - Automatic picks Light on this machine's GPU if that is an integrated one (the same rule as features/graphics.js), and never follows power
+//   - Automatic picks Light on this machine's GPU if that is an integrated one (the same rule as settings/settings-backend.js (the [igpu] block)), and never follows power
 //   - the effect rests after 20 s without input: its GPU cost falls to (almost) nothing, the canvas keeps its last frame, and input wakes it
 // Skips (prints SKIP, exits 0) where the counters are not there (not Windows, or no GPU engine counters). Never loosen the numbers: if it is noisy,
 // fix the measurement (more samples, a quieter machine: it waits for any other electron.exe to finish before it starts).
 require('./_tmp-cleanup');
 const M = require('./_igpu-measure');
-const G = require('../src/features/graphics');
+const G = require('../src/settings/settings-backend').graphics;
 const { spawnSync } = require('child_process');
 
 let failures = 0;

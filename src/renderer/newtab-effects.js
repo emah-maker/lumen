@@ -21,7 +21,7 @@
   const LEVEL = { few: 0.5, normal: 1, many: 1.8, slow: 0.5, fast: 1.8, small: 0.65, large: 1.6 };
   const RAINBOW = ['255, 99, 132', '255, 159, 64', '255, 214, 10', '52, 199, 89', '10, 132, 255', '191, 90, 242'];
 
-  // Graphics: Light (features/graphics.js): a smaller canvas, half the particles, 20 fps, a rest after 20 s without input. Measured on an Intel iGPU at
+  // Graphics: Light (settings-backend.js [igpu]): a smaller canvas, half the particles, 20 fps, a rest after 20 s without input. Measured on an Intel iGPU at
   // 2560x1600: what an effect costs is mostly per frame shown (the whole window is composited and presented each time), not per particle or canvas pixel, so
   // the frame rate and the rest are what save: 30 fps costs 13.7% of the GPU's 3D engine, 20 fps about 6%, and a resting effect none.
   const LIGHT = { pixels: 0.55e6, amount: 0.5, fps: 20, idleMs: 20e3 };

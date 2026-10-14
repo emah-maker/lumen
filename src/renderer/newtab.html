@@ -204,7 +204,7 @@
     /* Over an animated effect: no blur (it would re-sample the moving canvas every frame), a denser card instead. */
     body.on-media.has-effect[data-clock-card] .clock-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
     body.on-media.has-effect:is([data-clock-card="soft"], [data-clock-card="glass"]) .clock-card { background: rgba(28, 28, 32, 0.68); }
-    /* [igpu] Graphics: Light (features/graphics.js; on by default on an integrated GPU): no backdrop blur anywhere on this page (a blur
+    /* [igpu] Graphics: Light (settings-backend.js [igpu]; on by default on an integrated GPU): no backdrop blur anywhere on this page (a blur
        re-samples what is behind it, and on an integrated GPU that is the cost of the page), no drifting layer, and a flat tint a little
        denser than the glass it stands in for, so the cards still read as frosted. */
     body.gfx-light #backdrop::before { animation: none; }

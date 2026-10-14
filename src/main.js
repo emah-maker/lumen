@@ -409,8 +409,8 @@ const perfMode = require('./features/performance').create({
 perfMode.applyLaunchSwitches();
 try { require('./features/performance').trimCodeCache(app.getPath('userData'), perfMode.limits().codeCacheBytes); } catch (err) { console.error('[lumen] cache check failed:', err.message); }
 if (TEST) global.__perfMode = perfMode;
-// Graphics: Automatic / Full effects / Light (features/graphics.js). Decided once from the GPU in use, never from power events.
-const graphicsMode = require('./features/graphics').create({
+// Graphics: Automatic / Full effects / Light (settings/settings-backend.js (the [igpu] block)). Decided once from the GPU in use, never from power events.
+const graphicsMode = settingsPage.graphics.create({
   app, readSettings,
   onChange: () => { try { settingsBackend.pushUiPrefs(); refreshNewTabs(); } catch { /* the UI isn't up yet */ } },
 });

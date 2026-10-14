@@ -43,7 +43,7 @@ function lookOf(l) {
   const sections = look.sections && typeof look.sections === 'object' ? look.sections : {};
   return {
     background, image,
-    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true, light: look.lightGfx === true, // [igpu] Graphics: Light (features/graphics.js)
+    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true, light: look.lightGfx === true, // [igpu] Graphics: Light (settings-backend.js [igpu])
     effectStyle: effectStyleOf(look.effectStyle),
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
