@@ -1246,6 +1246,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .organize-note button { border: 0; background: none; color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: var(--r-sm); }
 .organize-note button:hover { background: var(--hover); }
 .organize-note button:focus-visible { outline: 2px solid var(--accent); }
+.gpu-note { max-width: min(560px, 60vw); height: auto; min-height: 26px; padding-block: 3px; } /* the driver-reset notice: a sentence and a Restart button */
+.gpu-note .gpu-note-text { white-space: normal; line-height: 1.2; font-size: 11.5px; }
 @media (prefers-reduced-motion: reduce) {
   .organize-tabs, .organize-tabs.busy svg { animation: none; }
   .group-label:active { transform: none; }
