@@ -135,6 +135,7 @@ const DEFAULTS = {
   tabReadyRecent: 3, // [tabs] keep this many of the latest background tabs' renderers out of the OS background state (efficiency mode), so a switch to them draws at once; the tab under the pointer always is (0: only that; features/tab-ready.js)
   tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
+  graphicsMode: 'auto', // [look] auto (Light on an integrated GPU) | full | light: no backdrop blur, cheaper effects (features/graphics.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
@@ -270,6 +271,7 @@ function validate(key, value) {
     case 'tabReadyRecent': return pick(Number(value), require('../features/tab-ready').RECENT_CHOICES, null);
     case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
+    case 'graphicsMode': return pick(value, ['auto', 'full', 'light'], null);
     case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
@@ -390,7 +392,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -431,7 +433,7 @@ function create(deps) {
       background,
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
-      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
+      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor, wallpaperSeed(p)),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
@@ -761,6 +763,7 @@ function create(deps) {
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'performanceMode': deps.performance?.refresh(); break;
+      case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
       case 'screenReaderSupport': deps.onScreenReaderChange?.(); break;
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
@@ -773,8 +776,8 @@ function create(deps) {
     }
     const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
     if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
-    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
-    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
@@ -805,6 +808,7 @@ function create(deps) {
     return {
       prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
+      graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
       accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),

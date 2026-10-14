@@ -17,6 +17,7 @@
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
+    root.classList.toggle('pref-gfx-light', Boolean(p.lightGfx)); // Settings > System > Graphics: Light (or Automatic on an integrated GPU): no backdrop blur (features/graphics.js)
     root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs

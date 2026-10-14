@@ -43,7 +43,7 @@ function lookOf(l) {
   const sections = look.sections && typeof look.sections === 'object' ? look.sections : {};
   return {
     background, image,
-    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true,
+    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true, light: look.lightGfx === true, // [igpu] Graphics: Light (features/graphics.js)
     effectStyle: effectStyleOf(look.effectStyle),
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
@@ -83,6 +83,7 @@ function applyLook(look) {
   window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
   document.body.dataset.wpack = look.packed ? '1' : '0';
   document.body.dataset.wglass = look.glass;
+  document.body.classList.toggle('gfx-light', look.light); // [igpu] no backdrop blur, no drifting layer (newtab.html), a cheaper effect (newtab-effects.js)
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no sliding with Reduce motion or Performance mode
   document.body.classList.toggle('still', look.still); // [widgets] no sliding or other motion with Reduce motion
   applyEffect(look);

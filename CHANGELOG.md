@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Lumen is lighter on an integrated GPU.** A new **Graphics** setting (Settings > System: Automatic, Full effects or Light) drops the backdrop blur behind glass surfaces (the chat box, new-tab cards and clock card, popups), stops the new-tab background drifting, and runs the new-tab effect lighter (half the particles, a smaller canvas, 20 frames a second, a rest after 20 seconds without input). Automatic picks Light on an integrated GPU (Intel, AMD APU) and is decided once at start-up, so it does not follow power changes. The look stays: cards use a flat, slightly denser tint instead of blur, and particles are still particles.
+
 ## 0.5.34 (2026-10-14)
 
 - **Lumen froze for up to 30 seconds at a time ("not responding", the window could not even be moved) when you opened the sidebar, switched or closed tabs, or clicked into the window.** The chat history index can list chats whose files are no longer there (moved to a backup folder, lost by a sync client). Each time Lumen listed your chats, which the sidebar, every tab switch and tab close and every window focus ask for, it waited 25 ms for each missing file and up to 120 ms more trying to read it for its title, on the main thread. With a couple of hundred such entries that was about 30 seconds of a frozen app, every time. Missing files are no longer waited for: on a test index of 300 entries with 296 files gone, listing took 9.5 s and now takes 9 ms, and searching chats went from 9.7 s to 3 ms. The missing chats still show as missing, and a chat whose file is there loads as before. Found by reading the frozen thread's call stack on the affected PC.
