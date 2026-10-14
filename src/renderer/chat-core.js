@@ -2557,6 +2557,7 @@ function applySync(view) {
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
+  window.chatFolders?.refresh(view?.workFolder); // [work folder] the composer's folder chip follows the chat
   chatHost.chatChanged?.();
 }
 window.assistant.onSync?.(({ view } = {}) => applySync(view));
