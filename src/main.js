@@ -8767,7 +8767,8 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
-    const shot = hang.mark('freeze:resize', () => (target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image)); // [hang recorder]
+    // [hang recorder] In two bands, a turn of the event loop between them (features/snapshot-bands.js): the whole resize is ~9 ms of main.
+    const shot = target ? await require('./features/snapshot-bands').resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick: () => new Promise((r) => setImmediate(r)), mark: hang.mark }) : image;
     await new Promise((r) => setImmediate(r)); // (the resize and the JPEG encode are each ~5 ms of main: as two tasks, input and frames get a turn between them)
     if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // (thawed in that turn)
     return hang.mark('freeze:encode', () => shot.toJPEG(snapshotSizer.JPEG_QUALITY));
