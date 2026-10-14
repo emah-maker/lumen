@@ -1748,6 +1748,17 @@ ipcMain.on('downloads:drag', (event, id) => { if (fromDownloadsPanel(event) && t
 ipcMain.on('downloads:clear', (event) => { if (fromDownloadsPanel(event)) downloads.clearFinished(); });
 ipcMain.on('downloads:folder', (event) => { if (fromDownloadsPanel(event)) { downloads.openFolder(); hideDownloadsPanel(); } });
 ipcMain.on('downloads:close', (event) => { if (fromDownloadsPanel(event)) hideDownloadsPanel(); });
+// Right-click on a row of the panel: Open, Show in folder and Pin to Files for a finished download (features/downloads.js act). [files]
+ipcMain.on('downloads:row-menu', (event, id) => {
+  const d = fromDownloadsPanel(event) && typeof id === 'number' ? downloads.list.find((x) => x.id === id) : null;
+  if (!d || d.state !== 'completed') return;
+  Menu.buildFromTemplate([
+    { label: t('dlpage.action.open'), click: () => downloads.act(id, 'open') },
+    { label: t('dlpage.action.show'), click: () => downloads.act(id, 'show') },
+    { type: 'separator' },
+    { label: t('menu.pinToFiles'), click: () => downloads.act(id, 'pin') },
+  ]).popup({ window: BrowserWindow.fromWebContents(event.sender) || win });
+});
 ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event) && Number.isFinite(height)) placeDownloadsPanel(Math.max(120, Math.min(height, 640))); });
 
 // ---------- tabs ----------
@@ -2495,6 +2506,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       return;
     }
     if (!tab.isolated) recordVisit(pdfViewer.pdfUrlOf(url) || url, wc.getTitle()); // research pages stay out of the user's History (a PDF in Lumen's viewer: its own address)
+    if (!tab.isolated) noteFileTab(tab, url); // [files] a local file opened in a tab goes on the Files list
     tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
@@ -4084,6 +4096,14 @@ function reopenClosed(index, url) {
 
 // The tab strip's right-click menu, in Chrome's order. Close Other Tabs / Close Tabs to the Right
 // leave pinned tabs alone, as Chrome does.
+// [files] "Pin to Files" on a tab that shows a local file (a PDF, deck, email or file: page): its path goes on the new-tab page's Files widget.
+function pinToFilesItem(url) {
+  const address = fileTabs.addressOf(url);
+  if (!address.startsWith('file:')) return [];
+  let file;
+  try { file = require('url').fileURLToPath(address); } catch { return []; }
+  return [{ label: t('menu.pinToFiles'), click: () => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); } }];
+}
 function tabMenuTemplate(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return null;
@@ -4124,6 +4144,7 @@ function tabMenuTemplate(id) {
     ...moveWindowItems(id),
     { type: 'separator' },
     { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
+    ...pinToFilesItem(url), // [files] a file tab: Pin to Files
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { type: 'separator' },
@@ -4658,6 +4679,8 @@ const downloads = createDownloads({
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
   onChange: () => managers?.pushDownloads(),
+  onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
+  onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
   // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
   openInstead: (item, contents) => {
@@ -7928,6 +7951,7 @@ const agent = new Agent({
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
+  findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
@@ -8719,16 +8743,73 @@ ipcMain.on('chat:full', (_e, on) => {
 // The browser UI (files:*, gated by UI_ONLY_IPC), Settings (settings:files-*, gated by PRIVILEGED_IPC) and the new-tab page's own preload
 // (newtab-files:*, checked here: it must be a tab's top frame showing renderer/newtab.html) call the same functions.
 let filesRt = null;
-const filesApi = () => (filesRt ||= require('./features/files').stubApi());
+const insidePath = (dir, p) => { const rel = path.relative(dir, p); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
+// A local file's address in a tab: a PDF, email or deck in Lumen's own viewer, anything else as the file itself (as File > Open does).
+function fileTabUrl(file) {
+  const href = pathToFileURL(file).href;
+  if (/\.pdf$/i.test(file)) return pdfViewer.viewerUrl(href);
+  if (emlViewer.shouldOpenInPlace({ url: href, filename: file })) return emlViewer.viewerUrl(href);
+  if (slidesViewer.shouldOpenInPlace({ url: href, filename: file })) return slidesViewer.viewerUrl(href);
+  return href;
+}
+const filesShell = (name, p) => (TEST && global.__filesShell ? global.__filesShell(name, p) : name === 'show' ? shell.showItemInFolder(p) : shell.openPath(p)); // tests do not start the OS's programs
+function filesBroadcast() { // the list changed: the UI, every new-tab page and Settings look again
+  for (const rec of winRecs) {
+    const live = rec === curRec ? { win, tabs } : rec;
+    if (!live.win || live.win.isDestroyed()) continue;
+    try { live.win.webContents.send('files:changed'); } catch { /* closing */ }
+    for (const t of live.tabs) {
+      const wc = t.view?.webContents;
+      if (!wc || wc.isDestroyed()) continue;
+      const url = wc.getURL();
+      if (isNewTab(url)) wc.send('newtab-files:changed');
+      else if (t.settings) wc.send('settings:files-changed');
+    }
+  }
+}
+const filesApi = () => (filesRt ||= require('./features/files').create({
+  file: path.join(app.getPath('userData'), 'files.json'),
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'), // encrypted like the chats (the OS keychain)
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+  remember: () => readSettings().filesRemember !== false, // Settings > Privacy > Remember files I open
+  ignore: (p) => insidePath(app.getPath('userData'), p) || insidePath(__dirname, p), // Lumen's own profile and pages are never "files the user opened"
+  openFile: (p) => { openTab(fileTabUrl(p)); focusWindow(); },
+  openPath: (p) => filesShell('open', p),
+  showItem: (p) => filesShell('show', p),
+  pick: async (kind) => {
+    if (TEST && global.__filesPick) return global.__filesPick(kind); // tests answer for the OS dialog
+    const owner = win && !win.isDestroyed() ? win : undefined;
+    const picked = await electronDialog.showOpenDialog(owner, { title: t(kind === 'folder' ? 'files.pickFolder' : 'files.pickFile'), properties: [kind === 'folder' ? 'openDirectory' : 'openFile'] });
+    return picked.canceled ? null : picked.filePaths[0];
+  },
+  send: (channel, payload) => { ui()?.send(channel, payload); },
+  broadcast: filesBroadcast,
+}));
+if (TEST) Object.defineProperty(global, '__files', { get: filesApi, configurable: true });
+// A file tab, viewer or download opened a local file: remembered (Settings > Privacy > Remember files I open turns this off). Loads the
+// feature only for a file: address, so ordinary browsing never touches it.
+function noteFileTab(tab, url) {
+  if (typeof url !== 'string' || !(url.startsWith('file:') || url.startsWith('lumen-pdf:'))) return;
+  const address = fileTabs.addressOf(url);
+  if (!address.startsWith('file:')) return;
+  let file;
+  try { file = require('url').fileURLToPath(address); } catch { return; }
+  filesApi().note(file, { source: manners.isAiTab(tab) ? 'ai' : 'tab' }).catch(() => {});
+}
+// Start-up: with a list on disk, the pinned folders are indexed a little after the window is up (never during start-up itself).
+setTimeout(() => { fs.promises.access(path.join(app.getPath('userData'), 'files.json')).then(() => filesApi().load()).catch(() => {}); }, 12000).unref?.();
+app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* nothing pending */ } });
 {
   // (the same names as files.js OPS / channelFor, spelled here so this file need not load it at start-up)
   const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach'];
   const CHANNELS = { ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`), newtab: (op) => `newtab-files:${op}`, settings: (op) => `settings:files-${op}` };
-  const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(tabByContents(event.sender));
+  const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender));
   for (const [kind, name] of Object.entries(CHANNELS)) {
     for (const op of OPS) {
       ipcMain.handle(name(op), (event, ...args) => {
         if (kind === 'newtab' && !newTabSender(event) && !syntheticTestEvent(event)) return null;
+        if (kind === 'newtab' && op === 'pin' && args[0]?.path) args[0] = { pick: args[0].pick }; // (the new-tab page names no path: it only opens the picker)
         return filesApi()[op](...args);
       });
     }

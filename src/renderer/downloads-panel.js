@@ -93,6 +93,7 @@
     // Handlers read row.d: the row outlives any one update of its download.
     li.addEventListener('click', () => { if (openable(row.d)) { api.act('open', row.d.id); api.close(); } });
     li.addEventListener('dragstart', (e) => { e.preventDefault(); if (openable(row.d)) api.drag(row.d.id); });
+    li.addEventListener('contextmenu', (e) => { e.preventDefault(); if (openable(row.d)) api.menu?.(row.d.id); }); // Open, Show in folder, Pin to Files
     li.addEventListener('animationend', () => { row.fresh = false; });
     return row;
   }

@@ -741,6 +741,7 @@ contextBridge.exposeInMainWorld('lumenFiles', {
   search: (query) => ipcRenderer.invoke('files:search', query), // Entry[] (fuzzy over pinned, recent and indexed folders, top 30)
   attach: (id) => ipcRenderer.invoke('files:attach', id), // to the sidebar chat
   onChanged: on('files:changed'),
+  onAttach: on('files:attach-file'), // { name, type, data (bytes) }: Alt+Enter in the picker: add it to the sidebar's composer like a dropped file
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).

@@ -161,6 +161,7 @@ const DEFAULTS = {
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Mod+Enter) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
+  filesRemember: true, // [files] Settings > Privacy > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)

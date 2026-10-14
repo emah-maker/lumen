@@ -15,7 +15,7 @@
 //   .all()                        every entry (the picker's fuzzy search)
 //   .get(id)  .byPath(path)
 //   .setMissing(id, bool)  .relocate(id, newPath)  .update(id, { size, mtime })
-//   .save()  .flush()             async and debounced; flush writes now
+//   .save()  .flush()             async and debounced; flush writes now; flushSync is for quitting
 //   .pending()                    true while a change is not on disk yet
 const crypto = require('crypto');
 const path = require('path');
@@ -27,6 +27,8 @@ const FIELDS = ['id', 'path', 'name', 'kind', 'size', 'mtime', 'openedAt', 'pinn
 // Windows paths compare without case; the key is only for finding the same file again, the stored path keeps its spelling.
 const keyOf = (p) => (process.platform === 'win32' || process.platform === 'darwin' ? String(p).toLowerCase() : String(p));
 const nameOf = (p) => path.basename(String(p).replace(/[\\/]+$/, '')) || String(p);
+// The id of a path: the same wherever it is asked, so the picker can name a file that is not in the list yet.
+const idFor = (p) => crypto.createHash('sha1').update(keyOf(p)).digest('hex').slice(0, 12);
 const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0);
 
 function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () => true, now = () => Date.now(), cap = 500, fsp = nodeFs.promises, delay = 500 } = {}) {
@@ -38,7 +40,6 @@ function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () =
   let loaded = null;
   const listeners = new Set();
 
-  const idFor = (p) => crypto.createHash('sha1').update(keyOf(p)).digest('hex').slice(0, 12);
   const clean = (e) => { const out = {}; for (const f of FIELDS) if (e[f] !== undefined) out[f] = e[f]; return out; }; // nothing outside FIELDS is ever kept or written
   const view = (e) => ({ ...clean(e), pinned: Boolean(e.pinned), missing: Boolean(e.missing) });
 
@@ -156,9 +157,22 @@ function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () =
       }).catch(() => { dirty = true; });
       return writing;
     },
+    // Quitting: the last changes go out now, before the process ends (the one place a synchronous write is right).
+    flushSync() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (!file || !dirty || !available()) return false;
+      dirty = false;
+      try {
+        nodeFs.mkdirSync(path.dirname(file), { recursive: true });
+        const tmp = `${file}.${process.pid}.tmp`;
+        nodeFs.writeFileSync(tmp, JSON.stringify({ enc: encrypt(store.serialize()) }));
+        nodeFs.renameSync(tmp, file);
+        return true;
+      } catch { dirty = true; return false; }
+    },
     pending() { return dirty || Boolean(timer); },
   };
   return store;
 }
 
-module.exports = { create, SOURCES, FIELDS, nameOf, keyOf };
+module.exports = { create, SOURCES, FIELDS, nameOf, keyOf, idFor };
