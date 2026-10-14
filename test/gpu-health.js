@@ -18,6 +18,70 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
   const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Page</title><body><h1>A web page</h1><p>' + 'text '.repeat(200) + '</p>'); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const pageUrl = `http://127.0.0.1:${server.address().port}/`;
+  const launch = (extraArgs = [], extraEnv = {}) => electron.launch({ args: [path.join(__dirname, '..'), ...extraArgs], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gpuhealth-')), ANTHROPIC_API_KEY: 'sk-ant-test', ...extraEnv } });
+  const spinProbe = (app) => app.evaluate(() => { // main's setImmediate gaps (see the probe in the first scenario)
+    const p = global.__gap = { max: 0, last: performance.now() };
+    const spin = () => { const n = performance.now(); p.max = Math.max(p.max, n - p.last); p.last = n; setImmediate(spin); };
+    setImmediate(spin);
+  });
+  const hwStatus = (app) => app.evaluate(({ app: a }) => ({ on: a.isHardwareAccelerationEnabled(), ...a.getGPUFeatureStatus() }));
+
+  // Five GPU crashes, three seconds apart (Chromium's limit is about three): drawing stays on the GPU, and after each one the UI answers, a tab
+  // renders, a snapshot of the page is not blank, and main never stops for 200 ms. KEEP_LIMIT=1 runs it without the switch (what a user had before).
+  async function crashLimitScenario(keepLimit) {
+    const label = keepLimit ? 'without the crash-limit switch' : 'with the crash-limit switch';
+    const app = await launch([], keepLimit ? { LUMEN_TEST_KEEP_GPU_CRASH_LIMIT: '1' } : {});
+    try {
+      const ui = await app.firstWindow(); await ui.waitForSelector('.tab');
+      await sleep(6000); // (gpu-health loads a few seconds after the window)
+      const tab = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => t.webContents.once('did-finish-load', r)); return t.id; }, pageUrl);
+      const spare = await app.evaluate(async () => { const t = global.__agent.browser.openTab(); await new Promise((r) => t.webContents.once('did-finish-load', r)); return t.webContents.id; });
+      await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), tab);
+      await waitFor(() => ui.evaluate((i) => document.querySelector('#tabs .tab.active')?.dataset.id === String(i), tab));
+      await spinProbe(app);
+      const losses = () => app.evaluate(() => global.__gpuHealth.stats().gpuLosses);
+      let answered = 0; let rendered = 0; let notBlank = 0;
+      for (let k = 1; k <= 5; k++) {
+        const before = await losses();
+        await app.evaluate(({ webContents }, id) => { webContents.fromId(id).loadURL('chrome://gpucrash').catch(() => {}); }, spare);
+        await waitFor(async () => (await losses()) > before, 15000, 100);
+        await sleep(3000);
+        const pressed = await ui.evaluate(() => document.getElementById('toggle-sidebar').getAttribute('aria-pressed'));
+        await ui.click('#toggle-sidebar'); await sleep(500);
+        if ((await ui.evaluate(() => document.getElementById('toggle-sidebar').getAttribute('aria-pressed'))) !== pressed) answered++;
+        if (await waitFor(() => app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript('document.body.innerText.includes("A web page")')), 4000)) rendered++;
+        const shot = await app.evaluate(async () => { const img = await global.__agent.browser.activeTab().webContents.capturePage(); const b = img.toBitmap(); let lit = 0; for (let i = 0; i < b.length; i += 4000) if (b[i] || b[i + 1] || b[i + 2]) lit++; return { empty: img.isEmpty(), lit }; });
+        if (!shot.empty && shot.lit > 0) notBlank++;
+      }
+      const gap = Math.round(await app.evaluate(() => global.__gap.max) * 10) / 10;
+      const st = await hwStatus(app);
+      const total = await losses();
+      console.log(`INFO  ${label}: ${total} GPU losses, gpu_compositing=${st.gpu_compositing}, rasterization=${st.rasterization}, acceleration=${st.on}, worst main gap ${gap} ms`);
+      if (keepLimit) return; // (only reported: what happens without the switch)
+      check('five GPU crashes: drawing stays on the GPU (compositing and rasterization hardware)', /^enabled/.test(st.gpu_compositing) && /^enabled/.test(st.rasterization) && st.on, JSON.stringify(st));
+      check('...the UI answered after every crash (the sidebar toggled)', answered === 5, answered);
+      check('...a tab still rendered after every crash', rendered === 5, rendered);
+      check('...and a snapshot of the page was never blank', notBlank === 5, notBlank);
+      check(\`...and main never blocked for 200 ms through them (worst gap \${gap} ms)\`, gap <= 200, gap);
+      // The safety net: six losses within two minutes offer safe drawing mode (a plain notice, never automatic).
+      while ((await losses()) < 6) await app.evaluate(() => global.__gpuHealth.gpuGone({ reason: 'crashed', exitCode: 0 })); // (a crash that spawned only one loss: top up to six)
+      check('six GPU losses in two minutes offer safe drawing mode', await waitFor(async () => (await ui.locator('.gpu-note[data-kind="unstable"]').count()) === 1, 4000), await ui.locator('.gpu-note').count());
+      check('...it is only an offer: nothing restarted', (await app.evaluate(() => global.__gpuRestarts || 0)) === 0, '');
+      await ui.locator('.gpu-note[data-kind="unstable"] button').first().click();
+      check('...its button asks for the safe-mode relaunch (this session only)', await waitFor(() => app.evaluate(() => global.__gpuRestarts === 1 && global.__gpuRestartSafe === true), 3000), '');
+    } finally { await app.close().catch(() => {}); }
+  }
+  // --lumen-safe-gpu: this run draws in software; a normal start is hardware again (the setting is untouched).
+  async function safeModeScenario() {
+    const safe = await launch(['--lumen-safe-gpu']);
+    let a;
+    try { await (await safe.firstWindow()).waitForSelector('.tab'); a = await hwStatus(safe); } finally { await safe.close().catch(() => {}); }
+    const normal = await launch();
+    let b;
+    try { await (await normal.firstWindow()).waitForSelector('.tab'); b = await hwStatus(normal); } finally { await normal.close().catch(() => {}); }
+    check('launched with --lumen-safe-gpu, hardware acceleration is off', a.on === false, JSON.stringify(a));
+    check('a normal launch has it on', b.on === true, JSON.stringify(b));
+  }
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gpuhealth-'));
   const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' } });
   try {
@@ -155,8 +219,11 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
     check('Restart asks main to relaunch (the same save-and-relaunch as other restarts)', await waitFor(() => app.evaluate(() => global.__gpuRestarts === 1), 3000), '');
   } finally {
     await app.close().catch(() => {});
-    server.close();
   }
+  await crashLimitScenario(false);
+  await safeModeScenario();
+  if (process.env.GPU_COMPARE) await crashLimitScenario(true);
+  server.close();
   console.log(failures ? `\n${failures} failed` : '\nAll passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

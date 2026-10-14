@@ -330,7 +330,7 @@ function applyAtLaunch(app, settings) {
   // --lumen-safe-gpu (the "safe drawing mode" restart of features/gpu-health.js): software drawing for this run only; the setting is untouched.
   if (!launched.hardwareAcceleration || process.argv.includes('--lumen-safe-gpu')) app.disableHardwareAcceleration();
   // Chromium gives up on the GPU for the whole session after a few GPU process crashes in a short time (a driver reset, a GPU-mode switch): keep restarting it.
-  else app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+  else if (!process.env.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT) app.commandLine.appendSwitch('disable-gpu-process-crash-limit'); // (the env: a test that shows what happens without it)
   if (launched.forceDarkWebsites) app.commandLine.appendSwitch('enable-features', 'WebContentsForceDark');
   return launched;
 }
