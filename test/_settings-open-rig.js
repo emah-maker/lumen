@@ -121,7 +121,7 @@ async function measure(profile, section = '') {
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
-    await sleep(3000); // let the startup work finish: the first open is "cold" for Settings, not for the browser
+    await sleep(9000); // let the browser's own startup work finish (ad-block lists, looking for the CLIs): the first open is "cold" for Settings, not for the browser
     const cold = await openOnce(app, section);
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
     await sleep(1200);

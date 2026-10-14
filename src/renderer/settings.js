@@ -192,9 +192,8 @@ const importSummary = (r) => tr('settings.import.done', 'Imported from {browser}
 });
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
-  let names;
-  try { names = new Intl.DisplayNames([navigator.language], { type: 'language' }); } catch {}
-  return (tag) => { try { return names?.of(tag) || tag; } catch { return tag; } };
+  let names; // (made on first use: loading the language data takes 6 ms the page doesn't need to open)
+  return (tag) => { try { names ||= new Intl.DisplayNames([navigator.language], { type: 'language' }); return names.of(tag) || tag; } catch { return tag; } };
 })();
 const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -243,6 +242,10 @@ const ALIASES = {
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
 const slots = new Map(); // slot or sub-page id -> Slot
+// Probes that start a process in main (is the CLI there, is it signed in, which version) wait until the page has painted and is idle.
+let paintedResolve = () => {};
+const painted = new Promise((resolve) => { paintedResolve = resolve; });
+const later = (fn) => painted.then(() => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 400 }) : setTimeout(resolve, 50)))).then(fn);
 let isBuilt = () => true; // set up by init(): is the builder (by id) done
 let neededBuilds = () => []; // ...the builders a page needs before it is shown
 let buildOne = () => Promise.resolve();
@@ -602,7 +605,7 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  S.ai.cliStatus().then(renderCli).catch(() => {});
+  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
@@ -633,7 +636,7 @@ async function buildAi(card) {
     const ccState = snip.id === 'claude' ? status() : null;
     const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      S.ai.claudeCodeStatus().then((s) => {
+      later(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
@@ -666,7 +669,7 @@ async function buildAi(card) {
       cxActions.replaceChildren(...buttons);
     }
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
-    if (cxState) refreshCodex(false);
+    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
@@ -2453,7 +2456,7 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
+  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
@@ -3218,10 +3221,10 @@ async function init() {
     }
     return started.get(sid);
   };
-  const idle = () => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 150 }) : setTimeout(resolve, 16)));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
   let allBuilt = null;
   buildAll = () => allBuilt ||= (async () => {
-    for (const [sid] of BUILDS) { if (!started.has(sid)) { await idle(); buildOne(sid); } }
+    for (const [sid] of BUILDS) { if (!started.has(sid)) { await tick(); buildOne(sid); } } // (one section per task: input is answered in between)
     await Promise.all(BUILDS.map(([sid]) => buildOne(sid)));
     allDone = true;
     document.body.dataset.ready = '1';
@@ -3254,6 +3257,7 @@ async function init() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
     window.__settingsPerf.visibleDone = true;
+    paintedResolve();
     performance.mark('settings:visible');
     buildAll();
   }));
