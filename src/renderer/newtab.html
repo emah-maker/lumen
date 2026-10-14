@@ -204,6 +204,17 @@
     /* Over an animated effect: no blur (it would re-sample the moving canvas every frame), a denser card instead. */
     body.on-media.has-effect[data-clock-card] .clock-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
     body.on-media.has-effect:is([data-clock-card="soft"], [data-clock-card="glass"]) .clock-card { background: rgba(28, 28, 32, 0.68); }
+    /* [igpu] Graphics: Light (settings-backend.js [igpu]; on by default on an integrated GPU): no backdrop blur anywhere on this page (a blur
+       re-samples what is behind it, and on an integrated GPU that is the cost of the page), no drifting layer, and a flat tint a little
+       denser than the glass it stands in for, so the cards still read as frosted. */
+    body.gfx-light #backdrop::before { animation: none; }
+    html body.gfx-light :is(input, .frequent a, .privacy, .mode, .empty, .w-card, .w-card.tinted, .clock-card, .w-stack-menu, .w-stack-panel, .w-dock-row, .w-dock-hint, .w-firstrun, .w-sz-note, .w-sz-frame::after) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+    html body.gfx-light[data-wglass="frosted"] .w-card, html body.gfx-light[data-wglass="frosted"] .w-card.tinted { background: color-mix(in srgb, var(--card) 72%, transparent); }
+    html body.gfx-light.on-media[data-wglass="frosted"] .w-card, html body.gfx-light.on-media[data-wglass="frosted"] .w-card.tinted { background: rgba(255, 255, 255, 0.13); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+    html body.gfx-light.on-media.has-effect[data-wglass="frosted"] .w-card { background: rgba(28, 28, 32, 0.42); }
+    body.gfx-light.on-media:not(.has-effect) .frequent a, body.gfx-light.on-media:not(.has-effect) .privacy { background: rgba(255, 255, 255, 0.13); }
+    body.gfx-light.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.18); }
+    body.gfx-light.on-media .w-stack-menu, body.gfx-light.on-media .w-stack-panel { background: rgba(24, 24, 28, 0.9); }
     /* A stronger shadow under the clock, date and greeting, over a background or picture only. */
     body.on-media[data-clock-shadow="1"] header { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 24px rgba(0, 0, 0, 0.38); }
     /* The greeting's face. */
