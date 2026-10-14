@@ -41,7 +41,7 @@
     html.show-scrollbar #sbar-thumb:hover, html.sb-drag #sbar-thumb { width: 8px; right: 2px; background: color-mix(in srgb, currentColor 70%, transparent); }
     html.sb-drag { user-select: none; }
     body {
-      background: var(--bg); color: var(--text);
+      background: transparent; color: var(--text); /* (the colour is on html: a body colour of its own would paint over the #backdrop, at z-index -1, as far down as the content reaches) */
       font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
     }
@@ -104,7 +104,7 @@
       --text: #ffffff; --muted: rgba(255, 255, 255, 0.72); --faint: rgba(255, 255, 255, 0.5); --card: rgba(255, 255, 255, 0.12);
       --field: rgba(255, 255, 255, 0.16); --hover: rgba(255, 255, 255, 0.14); --border: rgba(255, 255, 255, 0.22); --bg: rgba(20, 20, 24, 0.55);
       --mono-l: 30%; --mono-t: 88%;
-      background: #000; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25);
+      background: transparent; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25);
     }
     body.on-media input, body.on-media .frequent a, body.on-media .privacy, body.on-media .mode, body.on-media .empty, body.on-media .w-card {
       -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The new-tab wallpaper covers the whole page again.** Since 0.5.32 the top of the page (behind the clock, greeting and search box, about the first 500 px) was solid black with a gradient, picture or animated wallpaper, and the wallpaper only showed lower down. The page's background colour had moved to `html` (to stop the black flash while the view resizes), which left the `body`'s own colour painting over the wallpaper layer behind it, as far down as the content reaches. The `body` is now transparent, so the colour comes from `html` and the wallpaper shows over it from edge to edge, in every theme and background. Test: `test/newtab-wallpaper.js` (gradient and picture wallpapers, light and dark, also after the sidebar opens and the window is resized: the top band is the wallpaper's, not black).
+
 - **Settings > Updates: "Restart to update" is a plain button like "Check for updates" beside it,** not blue text on a blue tint.
 ## 0.5.32 (2026-10-13)
 
