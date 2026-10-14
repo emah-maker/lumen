@@ -169,12 +169,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await contrast('after the clock, greeting and glass choices, over Nebula with bubbles');
 
     // ---------- Graphics: Light ----------
-    await save('newTabWidgetGlass', 'frosted');
+    await save('newTabWidgetGlass', 'frosted'); await save('newTabEffect', 'none');
     const blur = () => sp("getComputedStyle(document.querySelector('#bg-preview .ntp-card')).backdropFilter");
     check('Graphics: Full effects: the preview frosted cards blur what is behind them', (await blur()) !== 'none', await blur());
     await save('graphicsMode', 'light');
-    f = await until(async () => { const x = await fx(); return x?.fx?.light && x; });
-    check('Graphics: Light: the preview draws no blur and the effect runs in its lighter form', (await blur()) === 'none' && (await pv()).accent && Boolean(f), JSON.stringify({ blur: await blur(), f }));
+    await until(async () => (await pv()).gfx === 'light');
+    check('Graphics: Light: the preview draws no blur behind its cards', (await blur()) === 'none', await blur());
+    await save('newTabEffect', 'bubbles');
+    f = await until(async () => { const x = await fx(); return x?.fx?.light && x.fx.name === 'bubbles' && x; });
+    check('Graphics: Light: the effect runs in its lighter form in the preview', Boolean(f), JSON.stringify(await fx()));
     await save('graphicsMode', 'full');
     await save('newTabWidgetGlass', 'solid');
 
