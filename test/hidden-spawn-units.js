@@ -104,18 +104,20 @@ const ALLOW = {
       process.defaultApp = on ? true : saved.defaultApp;
       if (on) process.env.CLAUDE_BROWSER_TEST = '1'; else if (saved.test === undefined) delete process.env.CLAUDE_BROWSER_TEST; else process.env.CLAUDE_BROWSER_TEST = saved.test;
     };
+    const realAgy = path.join(os.homedir(), 'AppData', 'Local', 'agy', 'bin', 'agy.exe');
+    const realClaude = path.join(os.homedir(), '.local', 'bin', 'claude.exe');
     try {
-      const stub = path.join(os.tmpdir(), 'lumen-stub', 'agy.exe');
-      check('outside a test Electron nothing is blocked', hs.testBlocksRealCli('C:\\Users\\x\\AppData\\Local\\agy\\bin\\agy.exe') === false);
+      const stub =path.join(os.tmpdir(), 'lumen-stub', 'agy.exe');
+      check('outside a test Electron nothing is blocked', hs.testBlocksRealCli(realAgy) === false);
       setMode(true);
       delete process.env.LUMEN_TEST_REAL_CLIS;
-      check('test Electron: the real agy / claude / codex / grok / ant paths are blocked', ['C:\\Users\\x\\AppData\\Local\\agy\\bin\\agy.exe', 'C:\\Users\\x\\.local\\bin\\claude.exe', 'codex', 'grok.cmd', 'ant.exe'].every((f) => hs.testBlocksRealCli(f)));
+      check('test Electron: the real agy / claude / codex / grok / ant paths are blocked', [realAgy, realClaude, 'codex', 'grok.cmd', 'ant.exe'].every((f) => hs.testBlocksRealCli(f)));
       check('test Electron: a stub inside the test\'s temp folder runs; non-CLI programs (where, reg, powershell) are not touched', hs.testBlocksRealCli(stub) === false && !hs.testBlocksRealCli('where') && !hs.testBlocksRealCli('reg.exe') && !hs.testBlocksRealCli('powershell.exe'));
       calls.length = 0;
-      const blocked = await hs.probe('C:\\Users\\x\\AppData\\Local\\agy\\bin\\agy.exe', ['--version'], {}, { wait: () => Promise.resolve() });
+      const blocked = await hs.probe(realAgy, ['--version'], {}, { wait: () => Promise.resolve() });
       check('test Electron: a version probe of the real agy never starts a process (no window, no self-update)', calls.length === 0 && blocked.ok === false, J({ n: calls.length }));
       process.env.LUMEN_TEST_REAL_CLIS = '1';
-      check('LUMEN_TEST_REAL_CLIS=1 lets a manual suite use the real CLI', hs.testBlocksRealCli('C:\\Users\\x\\.local\\bin\\claude.exe') === false);
+      check('LUMEN_TEST_REAL_CLIS=1 lets a manual suite use the real CLI', hs.testBlocksRealCli(realClaude) === false);
     } finally {
       setMode(false);
       if (saved.real === undefined) delete process.env.LUMEN_TEST_REAL_CLIS; else process.env.LUMEN_TEST_REAL_CLIS = saved.real;
