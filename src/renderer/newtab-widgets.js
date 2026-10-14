@@ -321,11 +321,13 @@ const filesCards = new Set(); // { el, draw }: the Files cards on this page
 const fileFinds = new Map(); // entry id -> { busy } | { list: [candidates] } | { none: true }: "Find it", kept across redraws
 let filesData = null; // { pinned, recent, remember } as last heard
 let filesAsking = null;
+let filesAskedAt = 0;
 let filesHooked = false;
 function filesLoad() {
   const bridge = globalThis.lumenFiles;
   if (!bridge) return Promise.resolve(filesData);
   if (filesAsking) return filesAsking;
+  filesAskedAt = Date.now();
   filesAsking = Promise.resolve().then(() => bridge.list()).then((d) => {
     const all = (v, max) => (Array.isArray(v) ? v : []).map(cleanFile).filter(Boolean).slice(0, max);
     filesData = d && typeof d === 'object' ? { pinned: all(d.pinned, FILES_PINNED_MAX), recent: all(d.recent, FILES_RECENT_MAX), remember: d.remember !== false } : filesData;
@@ -1672,7 +1674,10 @@ const WIDGET_RENDERERS = {
     const paint = (now) => { // the times move on (a minute at a time) without asking main again
       for (const s of card.el.querySelectorAll('.w-sub[data-t]')) s.textContent = [s.dataset.where, fileAgo(Number(s.dataset.t), now)].filter(Boolean).join(' · ');
     };
-    paint.coarse = true;
+    // The ticker's minute: the times move on, and the list is asked for again if nothing has asked lately (main then re-checks the
+    // files that were missing or may have gone since; a minute apart, only while the page is in front).
+    const tick = (now) => { paint(now); if (Date.now() - filesAskedAt > 50e3 && !document.hidden) filesRefresh(); };
+    tick.coarse = true;
     const draw = () => {
       entry.seen ||= card.el.isConnected;
       const had = document.activeElement;
@@ -1715,7 +1720,7 @@ const WIDGET_RENDERERS = {
     };
     entry.draw = draw;
     filesCards.add(entry);
-    liveTicks.set(card.el, paint);
+    liveTicks.set(card.el, tick);
     wakeLive();
     draw();
     if (!filesData) filesLoad().then(() => draw());

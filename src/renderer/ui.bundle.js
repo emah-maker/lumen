@@ -9754,6 +9754,15 @@ window.browser.onAttachImage?.(async (base64) => {
   } catch { /* an unreadable image is skipped, as with a pasted one */ }
 });
 
+// [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
+window.lumenFiles?.onAttach?.(async ({ name, type, data }) => {
+  showSidebar(true);
+  try {
+    await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);
+    prompt.focus();
+  } catch { /* an unreadable file is skipped, as with a dropped one */ }
+});
+
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
 
 window.assistant.onSearchEngine?.((engine) => { searchEngine = engine; });

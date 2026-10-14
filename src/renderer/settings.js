@@ -2175,6 +2175,17 @@ async function buildPrivacy(card) {
     withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
   );
 
+  // [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
+  const filesNote = status('files-clear-status');
+  card.group(tr('settings.files.group', 'Files')).append(
+    withKeywords(toggle('filesRemember', tr('settings.files.remember', 'Remember files I open'), tr('settings.files.rememberDesc', 'Keeps the name and place of the files you open in Lumen, for the Files card on the new-tab page and Ctrl+Shift+F. Nothing from inside a file is stored, and it stays on this computer, encrypted. Off: nothing new is added. Files you pinned stay.')), 'files recent opened history pdf documents pinned folder'),
+    withKeywords(row(tr('settings.files.clear', 'Clear file list'), tr('settings.files.clearDesc', 'Forgets the recent files and the pinned ones. The files themselves are not touched.'),
+      filesNote, armedButton(tr('settings.files.clearGo', 'Clear file list'), tr('settings.files.clearSure', 'Clear it? Click again'), async () => {
+        flash(filesNote, '');
+        try { await S.files.clear(); flash(filesNote, tr('settings.files.cleared', 'Cleared.')); } catch (err) { flash(filesNote, String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+      }, 'danger', 'files-clear')), 'files recent pinned forget clear remove list'),
+  );
+
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
   await buildPasswords(card);
   buildPasskeys(card);
