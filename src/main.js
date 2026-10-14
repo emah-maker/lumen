@@ -8557,7 +8557,10 @@ app.whenReady().then(() => {
 // effects pause, the sidebar moves without a snapshot) and, if drawing fell to software, offers a Restart (the same relaunch that saves the session).
 let gpuHealth = null;
 const sendAllUis = (channel, payload) => { for (const rec of winRecs) if (rcAlive(rec) && !rec.win.webContents.isDestroyed()) rec.win.webContents.send(channel, payload); };
-app.whenReady().then(() => {
+const earlyGpuLoss = []; // a GPU loss before the module is loaded is replayed to it
+app.on('child-process-gone', (_e, details) => { if (!gpuHealth && details?.type === 'GPU') earlyGpuLoss.push(details); });
+// Loaded a few seconds after the window is up, not at startup (the startup module budget, test/perf-budget.js).
+app.whenReady().then(() => setTimeout(() => {
   gpuHealth = require('./features/gpu-health').install({
     app, screen, version: app.getVersion(), log: (m) => console.warn(m),
     hwOn: () => readSettings().hardwareAcceleration !== false,
@@ -8571,7 +8574,8 @@ app.whenReady().then(() => {
     ...(TEST ? { readStatus: () => global.__gpuStatusOverride || app.getGPUFeatureStatus() } : {}),
   });
   if (TEST) global.__gpuHealth = gpuHealth;
-});
+  for (const d of earlyGpuLoss.splice(0)) gpuHealth.gpuGone(d);
+}, 4000).unref());
 ipcMain.on('gpu:restart', () => {
   if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; return; } // tests check the click, not a relaunch
   app.relaunch(); // before-quit saves the session, as for every other restart
