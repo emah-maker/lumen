@@ -43,7 +43,7 @@ function probeScreenReader({ platform = process.platform, execFile = require('..
     const done = (err, out) => resolve(err ? null : /yes|^1/.test(String(out).trim())); // null: could not tell
     try {
       if (platform === 'win32') execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_PROBE], { timeout: 8000, windowsHide: true }, done);
-      else if (platform === 'darwin') execFile('/usr/bin/defaults', ['read', 'com.apple.universalaccess', 'voiceOverOnOffKey'], { timeout: 4000 }, done);
+      else if (platform === 'darwin') execFile('/usr/bin/defaults', ['read', 'com.apple.universalaccess', 'voiceOverOnOffKey'], { timeout: 4000, windowsHide: true }, done);
       else resolve(null);
     } catch { resolve(null); }
   });
