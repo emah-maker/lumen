@@ -7,7 +7,7 @@
 // app.isDefaultProtocolClient reads that handler back, not the user's choice: it said "default" after one click
 // even when the user never picked Lumen. The user's real choice is the UserChoice ProgId.
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile } = require('../ai/cli-utils');
 const instance = require('./instance');
 
 const PROG_ID = 'LumenHTML';

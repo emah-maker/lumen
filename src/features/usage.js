@@ -24,7 +24,7 @@
 //    plan percentage. It shows what is real: the chat's context-window fill, Lumen's own use in
 //    rolling windows, a budget the user sets (a real progress bar toward that), and the limit-reached
 //    state with the reset time Grok's own message named.
-const { spawn } = require('child_process');
+const { spawn } = require('../ai/cli-utils');
 const { killTree } = require('../ai/cli-utils');
 const fs = require('fs');
 const os = require('os');

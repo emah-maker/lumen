@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile } = require('../ai/cli-utils');
 const helper = require('./swap-helper');
 
 // The Lumen.app that contains execPath, or ''.

@@ -8,7 +8,7 @@
 //         platform?, env?, homedir?, execFile? }
 const os = require('os');
 const path = require('path');
-const { execFile: realExecFile } = require('child_process');
+const { execFile: realExecFile } = require('../ai/cli-utils');
 const locate = require('../ai/codex-locate');
 const config = require('../ai/codex-config');
 const codexUsage = require('../ai/codex-usage');

@@ -15,7 +15,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, retryProbe } = require('./cli-utils');
 
 const INSTALL_LINKS = {
   github: 'https://github.com/openai/codex/releases/latest',
@@ -48,10 +48,11 @@ const realSeams = () => ({
   exec: (file, args, { timeout = 8000, env, windowsVerbatimArguments } = {}) => new Promise((resolve) => {
     try {
       execFile(file, args, { shell: false, windowsHide: true, timeout, env: env || process.env, maxBuffer: 1 << 20, ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) }, (err, stdout, stderr) => {
-        resolve({ ok: !err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
+        resolve({ ok: !err, err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
       });
-    } catch (err) { resolve({ ok: false, code: -1, stdout: '', stderr: err.message }); }
+    } catch (err) { resolve({ ok: false, err, code: -1, stdout: '', stderr: err.message }); }
   }),
+  wait: (ms) => new Promise((r) => setTimeout(r, ms)),
 });
 
 // ---------- PATH ----------
@@ -257,7 +258,9 @@ async function verify(spec, seams) {
   let inv;
   try { inv = buildInvocation(spec, ['--version']); } catch (err) { return { ok: false, error: err.message }; }
   const env = inv.options.envExtra ? { ...seams.env, ...inv.options.envExtra } : undefined;
-  const r = await seams.exec(inv.file, inv.args, { timeout: 8000, env, windowsVerbatimArguments: inv.options.windowsVerbatimArguments });
+  // A program being replaced (ERROR_NO_DATA, EBUSY) answers once more a moment later; a probe failure is data, never shown.
+  const got = await retryProbe(async () => { const x = await seams.exec(inv.file, inv.args, { timeout: 8000, env, windowsVerbatimArguments: inv.options.windowsVerbatimArguments }); return { ok: x.ok, err: x.err, r: x }; }, { wait: seams.wait });
+  const r = got.r || { ok: false, code: -1, stdout: '', stderr: '' };
   const text = `${r.stdout}\n${r.stderr}`;
   const m = r.ok ? VERSION_RE.exec(text) : null;
   return m ? { ok: true, version: m[1] } : { ok: false, error: (r.stderr || r.stdout || `exit ${r.code}`).trim().split('\n')[0].slice(0, 160) };

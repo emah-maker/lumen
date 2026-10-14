@@ -53,7 +53,7 @@ const SRC = path.join(__dirname, '..', 'src');
   // ---- 2. every process an engine or one-shot starts is hidden
   {
     // Calls that must pass windowsHide: true. (Not covered: a launcher that must show Lumen itself, the macOS-only helpers, a fork with no console.)
-    const OK_WITHOUT = new Set(['automation/mcp.js', 'automation/launcher.js', 'features/swap-helper.js', 'features/updates.js', 'features/translate-local.js', 'browser/importer.js']);
+    const OK_WITHOUT = new Set(['ai/cli-utils.js' /* the helper sets windowsHide itself, test/hidden-spawn-units.js proves it */, 'automation/mcp.js', 'automation/launcher.js', 'features/swap-helper.js', 'features/updates.js', 'features/translate-local.js', 'browser/importer.js']);
     const files = [];
     const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (!/vendor|renderer|assets|locales/.test(e.name)) walk(p); } else if (e.name.endsWith('.js') && !e.name.endsWith('.bundle.js')) files.push(p); } };
     walk(path.join(SRC, 'ai')); walk(path.join(SRC, 'features')); walk(path.join(SRC, 'automation')); walk(path.join(SRC, 'browser'));

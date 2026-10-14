@@ -17,7 +17,7 @@
 // stdio (one message per line) or streamable HTTP (a POST per message; the answer is JSON or an
 // event stream). Methods: initialize, notifications/initialized, tools/list, tools/call; ping from
 // the server is answered, and anything else it asks for is refused.
-const { spawn } = require('child_process');
+const { spawn } = require('../ai/cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');

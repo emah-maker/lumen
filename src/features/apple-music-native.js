@@ -23,8 +23,8 @@ const MIN_RESTART_MS = 30e3; // a helper that keeps dying is not started again f
 function createNowPlaying(deps = {}) {
   const platform = deps.platform || process.platform;
   const now = deps.now || Date.now;
-  const spawn = deps.spawn || ((...a) => require('child_process').spawn(...a));
-  const execFile = deps.execFile || ((...a) => require('child_process').execFile(...a));
+  const spawn = deps.spawn || ((...a) => require('../ai/cli-utils').spawn(...a));
+  const execFile = deps.execFile || ((...a) => require('../ai/cli-utils').execFile(...a));
   const any = deps.any === true;
   const fsp = () => require('fs').promises;
   const artPath = path.join(os.tmpdir(), `lumen-apple-music-art-${process.pid}.bin`);

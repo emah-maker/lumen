@@ -3,7 +3,7 @@
 // the Anthropic SDK picks that profile up automatically when no API key is configured.
 // If `ant` isn't on PATH, it can be installed into the app's data folder from the official GitHub
 // release, with the download checked against the release's SHA-256 checksums.
-const { execFile, spawn } = require('child_process');
+const { execFile, spawn, retryProbe } = require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -38,16 +38,19 @@ function cliEnv() {
 function run(file, args, timeout = 20000) {
   return new Promise((resolve) => {
     execFile(file, args, { env: cliEnv(), timeout, windowsHide: true }, (err, stdout, stderr) => {
-      resolve({ ok: !err, code: err?.code ?? 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
+      resolve({ ok: !err, err, code: err?.code ?? 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
   });
 }
+
+// `run`, asked once more after a moment when the program answered like one being replaced (ERROR_NO_DATA, EBUSY).
+const runProbe = (file, args, timeout) => retryProbe(() => run(file, args, timeout));
 
 // Anthropic's CLI prints "ant version 1.35.0"; Apache Ant (also "ant" on PATH) prints something else.
 async function isAnthropicCli(file) {
   const base = path.basename(file).toLowerCase();
   if (process.platform === 'win32' ? base !== 'ant.exe' : base !== 'ant') return false; // not ant.bat / ant.cmd / others
-  const v = await run(file, ['--version'], 8000);
+  const v = await runProbe(file, ['--version'], 8000);
   return v.ok && /^ant version \d+\.\d+/m.test(v.stdout);
 }
 
@@ -113,7 +116,7 @@ async function installAnt(binDir) {
     const target = path.join(binDir, exeName);
     fs.copyFileSync(found, target);
     if (process.platform !== 'win32') fs.chmodSync(target, 0o755);
-    const check = await run(target, ['--version'], 15000);
+    const check = await runProbe(target, ['--version'], 15000);
     if (!check.ok) throw new Error('The Anthropic CLI was installed but Windows would not run it.');
     return target;
   } finally {

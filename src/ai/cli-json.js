@@ -8,7 +8,7 @@
 // GROK_HOME whose config.toml names no MCP servers. Input goes in on stdin or in a file, never on a
 // shell command line, and the answer is checked against the schema's shape before it is used.
 
-const { spawn: nodeSpawn } = require('child_process');
+const { spawn: nodeSpawn } = require('./cli-utils');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

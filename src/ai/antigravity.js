@@ -80,7 +80,7 @@
 //    there: agy's own ~/.gemini config (servers, plugins, rules, skills) is not loaded, and a shell command that uses ~ sees
 //    that folder. The note agy gets (agent.js ANTIGRAVITY_FULL_NOTE) names the user's real home folder.
 // The first message of a conversation carries the system note (promptFor), so changing the setting starts a new conversation.
-const { spawn, spawnSync, execFile } =require('child_process');
+const { spawn, spawnSync, execFile } =require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');

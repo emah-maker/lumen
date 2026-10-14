@@ -2631,7 +2631,7 @@ function memoryInfo() {
   const info = { totalBytes: total, freeBytes: free, lumenBytes };
   if (process.platform !== 'darwin') return Promise.resolve(info);
   return new Promise((resolve) => {
-    require('child_process').execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 5000 }, (err, out) => {
+    require('./ai/cli-utils').execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 5000 }, (err, out) => {
       if (err) { console.error('[lumen] memory pressure check failed:', err.message); return resolve(info); }
       resolve({ ...info, pressure: Number(out) >= 2 });
     });

@@ -2,8 +2,103 @@
 // features/ai-agents.js's "Add to <agent>" buttons): finding a binary on PATH and stopping a child
 // process tree. Kept pure and CLI-agnostic — install hints, auth parsing, argv shape, etc. stay in
 // each engine, since those really do differ per CLI.
-const { spawn, execFile } = require('child_process');
 const fs = require('fs');
+
+// [hidden spawn] The one place Lumen starts an external program (claude, codex, grok, agy, ant, reg, powershell, where, taskkill, ...).
+// Why: Lumen.exe is a GUI process with no console. When it starts a console program, Windows makes a console for the
+// child, and with Windows Terminal as the default terminal app that console is handed to a visible Terminal window
+// (one popped up for `agy.exe --version`, tab title = the exe path, "error 0x800700e8"). libuv hides the console
+// (CREATE_NO_WINDOW) only when windowsHide is set AND none of the child's stdio is inherited
+// (libuv src/win/process.c: "Avoid creating console window if stdio is not inherited"), so every call here:
+//   - sets windowsHide: true (SW_HIDE + CREATE_NO_WINDOW),
+//   - never uses a shell (shell: false; a shell is one more console program),
+//   - never inherits stdio (a missing stdio is 'pipe'; 'inherit' becomes 'ignore'),
+//   - lets callers pass everything else (cwd, env, detached, timeout, windowsVerbatimArguments).
+// test/hidden-spawn-units.js fails if any other file in src/ (bar a short, justified allowlist) touches child_process.
+// child_process is required on first use: nothing here costs startup time.
+let cp = null;
+const real = () => cp || (cp = require('child_process'));
+
+// Options every spawn gets. The caller's own values win for cwd/env/etc., but not for these four.
+function hiddenOptions(options) {
+  const o = { ...(options || {}) };
+  o.windowsHide = true;
+  o.shell = false;
+  if (o.stdio === undefined) o.stdio = 'pipe';
+  else if (o.stdio === 'inherit') o.stdio = 'ignore';
+  else if (Array.isArray(o.stdio)) o.stdio = o.stdio.map((s) => (s === 'inherit' || s === process.stdin || s === process.stdout || s === process.stderr ? 'ignore' : s));
+  return o;
+}
+
+function spawn(file, args, options) { return real().spawn(file, args || [], hiddenOptions(options)); }
+function spawnSync(file, args, options) { return real().spawnSync(file, args || [], hiddenOptions(options)); }
+// A hidden test copy of Lumen (electron . with CLAUDE_BROWSER_TEST) must not run the user's real claude / codex / grok / agy / ant for its
+// status and version checks: agy self-updates when run, and a console it makes can surface on the user's screen. Only a program inside the
+// test's own temp folder (a stub) runs; LUMEN_TEST_REAL_CLIS=1 lets a manual suite that needs the real CLI through.
+const REAL_CLI = /^(claude|codex|grok|agy|ant|antigravity)$/i;
+function testBlocksRealCli(file) {
+  if (!process.versions.electron || !process.defaultApp || process.env.CLAUDE_BROWSER_TEST !== '1' || process.env.LUMEN_TEST_REAL_CLIS === '1') return false;
+  const path = require('path');
+  const name = path.basename(String(file)).replace(/.(exe|cmd|bat|ps1)$/i, '');
+  if (!REAL_CLI.test(name)) return false;
+  const tmp = path.resolve(require('os').tmpdir()).toLowerCase();
+  const inTmp = (p) => path.resolve(p).toLowerCase().startsWith(tmp + path.sep);
+  if (path.isAbsolute(String(file))) return !inTmp(file);
+  const dirs = String(process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
+  const hit = dirs.find((d) => ['', '.exe', '.cmd', '.bat'].some((ext) => { try { return fs.statSync(path.join(d, String(file) + ext)).isFile(); } catch { return false; } }));
+  return !(hit && inTmp(hit));
+}
+function execFile(file, args, options, callback) {
+  if (typeof args === 'function') { callback = args; args = []; options = {}; } else if (typeof options === 'function') { callback = options; options = {}; }
+  if (testBlocksRealCli(file)) { setImmediate(() => callback && callback(Object.assign(new Error(`spawn ${file} ENOENT (a test run does not start the real CLI)`), { code: 'ENOENT' }), '', '')); return {}; }
+  const o = hiddenOptions(options);
+  delete o.stdio; // execFile always pipes; Node rejects the option on some versions
+  return real().execFile(file, args || [], o, callback);
+}
+function execFileSync(file, args, options) {
+  return real().execFileSync(file, args || [], hiddenOptions(options));
+}
+
+// ---- probes: "is it installed, what version" ----
+// ERROR_NO_DATA (232, 0x800700E8 "the pipe is being closed") and EBUSY / EAGAIN / ETXTBSY / EPERM are what a program that is
+// being replaced (agy self-updating) answers. Those mean "ask again later", never "not installed".
+const TRANSIENT_CODES = new Set(['EBUSY', 'EAGAIN', 'ETXTBSY', 'EPIPE', 'EPERM', 'EACCES', 'UNKNOWN']);
+function isTransient(err) {
+  if (!err) return false;
+  if (TRANSIENT_CODES.has(err.code)) return true;
+  if (err.errno === 232 || err.errno === -232 || err.errno === 2147942632 || err.errno === -2147942632) return true;
+  return /0x800700e8|2147942632|ERROR_NO_DATA|pipe is being closed/i.test(String(err.message || ''));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Run `attempt()` (an async function that resolves { ok, err? } or throws), once more after `delayMs` if the failure is
+// transient or the program was not found (it may be mid-update). Returns the last result plus { transient } so the caller does
+// not cache "not installed" for a transient failure. A probe failure is never shown to the user: this only returns data.
+async function retryProbe(attempt, { retries = 1, delayMs = 750, wait = sleep } = {}) {
+  let last;
+  for (let i = 0; i <= retries; i++) {
+    try { last = await attempt(); } catch (err) { last = { ok: false, err }; }
+    if (last && last.ok) return { ...last, transient: false };
+    const err = last && last.err;
+    const again = isTransient(err) || (err && err.code === 'ENOENT');
+    if (!again || i === retries) return { ...(last || { ok: false }), transient: isTransient(err) };
+    await wait(delayMs);
+  }
+  return { ok: false, transient: false };
+}
+
+// `<bin> <args>` as a probe: { ok, stdout, stderr, err, transient }. Hidden, piped, timed, retried once.
+function probe(file, args, options = {}, retry = {}) {
+  return retryProbe(() => new Promise((resolve) => {
+    try {
+      execFile(file, args, options, (err, stdout, stderr) => resolve({ ok: !err, err, stdout: String(stdout || ''), stderr: String(stderr || '') }));
+    } catch (err) { resolve({ ok: false, err, stdout: '', stderr: '' }); }
+  }), retry);
+}
+
+
+// ---- finding and stopping CLIs ----
 
 const exists = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
 
@@ -104,4 +199,4 @@ function fullAccessRejected(text, { name, setting }) {
   return { text: `${name} didn't accept the options Lumen uses to give it full access to this computer (${String(text).trim().split('\n')[0].slice(0, 160)}). Nothing ran. Update ${name}, or turn off "${setting}" in Settings > AI.` };
 }
 
-module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
+module.exports = { testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };

@@ -9,7 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn: realSpawn } = require('child_process');
+const { spawn: realSpawn } = require('./cli-utils');
 const genImages = require('../features/gen-images');
 
 const TIMEOUT_MS = 180000;

@@ -32,7 +32,7 @@ function backstopScript({ pid, ms }) {
 // A separate process that does nothing until the deadline and then ends Lumen. It has to be a process: under load Windows can
 // spend 30 s tearing Lumen down after the 'quit' event, long after the event loop (and any timer or worker thread of ours) has
 // stopped. It leaves as soon as Lumen is gone.
-function startBackstop(ms, { pid = process.pid, spawn = require('child_process').spawn, execPath = process.execPath } = {}) {
+function startBackstop(ms, { pid = process.pid, spawn = require('../ai/cli-utils').spawn, execPath = process.execPath } = {}) {
   try {
     const child = spawn(execPath, ['-e', backstopScript({ pid, ms })], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore', windowsHide: true });
     child.on('error', () => {});
