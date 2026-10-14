@@ -24,12 +24,14 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
     const set = (key, value) => app.evaluate((_e, [k, v]) => global.__settings.backend.set(k, v).then(() => 'ok', (err) => `ERROR ${err.message}`), [key, value]);
-    // The main-process probe: a 5 ms timer; how late it fires is how long main was blocked. (Reset with probe(true).)
+    // The main-process probe: a setImmediate chain that never lets the loop rest; the gap between two callbacks is the longest task that ran
+    // in between (a timer probe reads Windows' 15.6 ms timer tick instead). probe(true) returns the worst gap since the last reset and resets.
     await app.evaluate(() => {
-      const p = global.__gap = { max: 0, last: Date.now() };
-      setInterval(() => { const n = Date.now(); p.max = Math.max(p.max, n - p.last - 5); p.last = n; }, 5).unref();
+      const p = global.__gap = { max: 0, last: performance.now(), over: [] };
+      const spin = () => { const n = performance.now(); const g = n - p.last; p.last = n; if (g > p.max) p.max = g; if (g > 20) p.over.push([Date.now(), Math.round(g)]); setImmediate(spin); };
+      setImmediate(spin);
     });
-    const probe = (reset) => app.evaluate((_e, r) => { const m = global.__gap.max; if (r) { global.__gap.max = 0; global.__gap.last = Date.now(); } return m; }, Boolean(reset));
+    const probe = (reset) => app.evaluate((_e, r) => { const m = Math.round(global.__gap.max * 10) / 10; if (r) { global.__gap.max = 0; global.__gap.over = []; global.__gap.last = performance.now(); } return m; }, Boolean(reset));
     const gh = () => app.evaluate(() => ({ ...global.__gpuHealth.stats(), calm: global.__gpuHealth.calmActive(), noticeShown: global.__gpuHealth.noticeShown() }));
 
     // A hardware-drawing status, so the real feature status can never raise the notice by itself in this run.
@@ -79,7 +81,8 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
     const liteChanges = (await ui.evaluate(() => window.__lite)) - lite0;
     check(`power flapping for 60 s: the new-tab page is re-rendered at most once (${renders}) and the UI prefs class changes at most once (${liteChanges})`, renders <= 1 && liteChanges <= 1, `${renders} ${liteChanges}`);
     check(`...main spends at most 20 ms inside any one event (worst ${emitCost.toFixed(2)} ms)`, emitCost <= 20, emitCost);
-    console.log(`INFO  main's timer lateness: ${flapGap} ms over the 60 s of flapping, ${quietGap} ms over 20 quiet seconds (Windows timers are coarse and Lumen has background work of its own: ~50 ms spikes occur with no events at all)`);
+    console.log(`INFO  main's worst setImmediate gap: ${flapGap} ms over the 60 s of flapping, ${quietGap} ms over 20 quiet seconds`);
+    check(`...and main never blocks for more than 20 ms in the 60 s (worst gap ${flapGap} ms)`, flapGap <= 20, flapGap);
     check('...and the mode did not flip', (await app.evaluate(() => global.__perfMode.active())) === false, 'on');
     const afterFlap = await gh();
     check('...and power events start no calm window', afterFlap.calmStarts === 0 && !afterFlap.calm && afterFlap.gpuLosses === 0, JSON.stringify(afterFlap));
@@ -126,7 +129,7 @@ const waitFor = async (fn, ms = 8000, step = 60) => { const end = Date.now() + m
     await sidebar();
     await sleep(8000); // the feature-status checks after a loss run at 1.5, 5 and 12 s
     const recoveryGap = await probe(true);
-    check(`the main process never blocked for 200 ms during recovery (worst ${recoveryGap} ms)`, recoveryGap <= 200, recoveryGap);
+    check(`the main process never blocked for 200 ms during recovery (worst gap ${recoveryGap} ms)`, recoveryGap <= 200, recoveryGap);
 
     // The event is logged: reasons, codes and times, nothing else.
     const logFile = path.join(profile, 'diagnostics', 'gpu-events.jsonl');
