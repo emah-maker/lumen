@@ -88,7 +88,8 @@ check('under memory pressure the tab under the pointer is still ready (one tab, 
   check('the strip\'s hover and press messages drive it (tab:hover, tab:down), 60 ms rest', /readyPointer\(event, id, on \? 'enter' : 'leave'\)/.test(main) && /readyPointer\(event, id, 'down'\)/.test(main) && TR.HOVER_MS === 60);
   check('a switch schedules one sync after it settles, not one per switch', /scheduleReadySync\(curRec\);/.test(main) && TR.SYNC_MS >= 100 && /if \(r\.timer\) return;/.test(main));
   check('the window hiding or minimising releases them (events re-sync)', /\['minimize', 'restore', 'show', 'hide'\]/.test(main));
-  check('layout() calls setVisible only when the visibility changes (two calls for a switch, not one per tab)', /if \(tab\.view\.getVisible\(\) !== show\) \{ tab\.view\.setVisible\(show\); viewVisibleCalls\+\+; \}/.test(main));
+  check('layout() calls setVisible only when the visibility changes (two calls for a switch, not one per tab)', /if \(tab\.view\.getVisible\(\) !== show\) \{[^}]*tab\.view\.setVisible\(show\); viewVisibleCalls\+\+;/.test(main));
+  check('...and a page kept out of the background state goes back to normal BEFORE its view is shown (else its video goes black), and is kept again when hidden', /if \(show\) releaseKeptPage\(tab\);[^]*?tab\.view\.setVisible\(show\);[^]*?if \(!show\) keptPageHidden\(tab\);/.test(main));
   check('a burst lays out once per frame, for the latest tab only', /if \(rapid\) frameLayout\(tab, timing\);/.test(main) && /const FRAME_MS = 16;/.test(main));
   const ui = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
   check('the strip reports hover and press on every tab but the one in front, not only sleeping ones', /el && !el\.classList\.contains\('active'\) \? Number\(el\.dataset\.id\)/.test(ui));
