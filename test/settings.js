@@ -57,11 +57,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   };
   const inTab = (id, code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return 'ERROR ' + (err?.message || err); } }, [id, code]);
   // Selecting a tab makes main re-send the tab state.
-  const tabState = (id) => ui.evaluate((i) => new Promise((resolve) => {
-    window.browser.onTabs((s) => resolve(s));
-    window.browser.switchTab(i);
-    setTimeout(() => resolve(null), 1500);
-  }), id);
+  // The strip's state with tab `id` in front. Switching to the tab already in front sends nothing (main does not resend an identical
+  // state: tabStripGate), so another tab is shown first when there is one, and the state that has `id` active is the answer.
+  const tabState = async (id) => {
+    const other = (await app.evaluate(() => global.__settings.tabs().map((t) => t.id))).find((x) => x !== id);
+    return ui.evaluate(([i, o]) => new Promise((resolve) => {
+      window.browser.onTabs((s) => { if (s.activeId === i) resolve(s); });
+      if (o != null) window.browser.switchTab(o);
+      window.browser.switchTab(i);
+      setTimeout(() => resolve(null), 2500);
+    }), [id, other]);
+  };
   const readPrefsFile = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'));
   // A normal tab on `url`; resolves with its id once loaded.
   const openWeb = async (url) => {
