@@ -245,10 +245,10 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
 
   // ---- what the toolbar shows: apps working now or paused
   const state = () => ({
-    active: records.map(pub).filter((a) => a.busy || a.paused),
+    active: [...records, ...temp].map(pub).filter((a) => a.busy || a.paused),
     prompts: pendingPrompts(),
   });
-  const connectedCount = () => records.filter((r) => (live.get(r.id)?.sessions.size || 0) > 0).length;
+  const connectedCount = () => [...records, ...temp].filter((r) => (live.get(r.id)?.sessions.size || 0) > 0).length;
   // Revoke-all (the master switch went off): every app is cut; the approvals stay.
   function disconnectAll() { for (const id of [...live.keys()]) { cut(id); runtimeDone(id); } onChange(); }
   // "Require a token for every app" went on: unverified clients are cut now.

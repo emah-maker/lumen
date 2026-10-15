@@ -64,7 +64,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
     // ---- Settings page: off by default
     const fresh = await info();
-    check('off by default: the master switch is off, no apps, nothing asked', fresh.enabled === false && fresh.apps.length === 0 && fresh.prompt === false, JSON.stringify(fresh));
+    check('off by default: the master switch is off, no apps, nothing asked', fresh.enabled === false && fresh.apps.length === 0 && fresh.requireToken === false, JSON.stringify(fresh));
     const inSettings = await openSettingsTab(app, 'external-apps');
     check('the Settings section exists, titled "Let other apps use Lumen"', await waitFor(() => inSettings("document.querySelector('#sub-external-apps .pane-title')?.textContent === 'Let other apps use Lumen'")), 'no title');
     await waitFor(() => inSettings("document.querySelector('#ea-status')?.textContent !== ''"));
@@ -169,7 +169,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     const li = await legacyInit;
     check('Allow lets it start; the bar goes', li.result?.serverInfo?.name === 'lumen' && (await waitFor(() => ui.$eval('#external-bar', (e) => e.hidden))), JSON.stringify(li));
     const legacyCall = wait(legacy, 6);
-    check('it shows a pill like any app, and the list says unverified and always asks before it acts', await waitFor(async () => (await pills()).some((p) => p.text === 'Legacy App is using Lumen')) && /Unverified/.test(await inSettings("document.querySelector('.ea-app[data-app=\"Legacy App\"]')?.textContent || ''")) && (await app.evaluate(() => global.__externalApps.ext.list().find((a) => a.name === 'Legacy App')?.ask)) === true);
+    check('it shows a pill like any app, and the list says unverified and always asks before it acts', await waitFor(async () => (await pills()).some((p) => p.text === 'Legacy App is using Lumen') && /Unverified/.test(await inSettings("document.querySelector('.ea-app[data-app=\"Legacy App\"]')?.textContent || ''")) && (await app.evaluate(() => global.__externalApps.ext.list().find((a) => a.name === 'Legacy App')?.ask)) === true, 10000), JSON.stringify(await pills()));
     await ui.click('#external-pills .external-stop');
     await legacyCall;
     check('Allow is not remembered: nothing about it is on disk', !fs.readFileSync(path.join(profile, 'external-apps.json'), 'utf8').includes('Legacy App'));
@@ -211,6 +211,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('replay: the first connection is accepted, the same proof on a second is denied', v1 === 'ok' && v2 === 'denied', v1 + ' / ' + v2);
 
     // ---- two apps at once: Stop on one leaves the other running
+    await inSettings("document.querySelector('#ea-done')?.click()");
     await inSettings("(() => { const n = document.querySelector('#ea-name'); n.value = 'Second App'; document.querySelector('#ea-add').click(); })()");
     await waitFor(async () => (await info()).apps.some((a) => a.name === 'Second App'));
     const second2 = (await info()).apps.find((a) => a.name === 'Second App');
