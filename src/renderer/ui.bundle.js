@@ -10025,15 +10025,14 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     if (!ask) { bar.hidden = true; bar.replaceChildren(); delete bar.dataset.promptId; return; }
     if (bar.dataset.promptId === ask.id) return;
     bar.dataset.promptId = ask.id;
-    const answer = (decision) => window.assistant.externalApps.ask('answer', ask.id, decision);
+    const answer = (decision) => window.assistant.externalApps.answer(ask.id, decision);
     bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
       button('primary', t('external.allow'), () => answer('allow')),
-      button('', t('external.allowAsk'), () => answer('allow-ask')),
       button('', t('external.deny'), () => answer('deny')));
     bar.hidden = false;
   }
   window.assistant.externalApps.on(render);
-  window.assistant.externalApps.ask('state').then(render).catch(() => {});
+  window.assistant.externalApps.state().then(render).catch(() => {});
 })();
 let mcpPillText = null;
 // The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)

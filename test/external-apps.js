@@ -1,9 +1,10 @@
 // Other apps using Lumen, in the real app (Settings > AI > "Let other apps use Lumen"). A fake MCP client in Node stands in for Claude
 // Desktop, Cursor and the rest (no real external app is started, and nothing outside the temp profile is touched):
 //   - off by default; the switch, the status line and the per-app setup tabs in the Settings page
-//   - Add app: a token shown once, encrypted on disk; the setup text holds it only until the note is dismissed
+//   - Add app: the token is encrypted on disk and kept in a user-only file; the setup text names that file and holds no secret
 //   - unknown / wrong token refused; the right one connects
-//   - an app without a token: asked in the window (Allow / Deny), as before when asking is off
+//   - an app without a token: refused when tokens are required (the default from this page); else asked as an unverified app, per session
+//   - the name-claim attack, a replayed proof, two apps at once, and the environment of a Lumen the bridge starts
 //   - the toolbar pill "<app> is using Lumen" with Stop and Take over; Stop cuts it off, Take over pauses it, Resume lets it on
 //   - a quiet "<app> finished in Lumen" after a run
 //   - Revoke (in Settings) closes its connection at once and refuses the token afterwards
@@ -32,6 +33,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     ui.on('pageerror', (e) => errors.push(e.message));
     await ui.waitForSelector('.tab');
     await sleep(500);
+    await app.evaluate(() => { global.__externalStrict = true; }); // (no test-only open door for token-less sessions)
     const info = () => app.evaluate(() => global.__externalApps.info());
 
     // ---- a fake MCP client, the way the bridge connects (shared token proof, then the app's own)
@@ -78,10 +80,12 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     const snippetOf = async (label) => { await inSettings(`[...document.querySelectorAll('#ea-setup [role=tab]')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`); return inSettings("document.querySelector('#ea-snippet').textContent"); };
     const cd = await snippetOf('Claude Desktop');
     let cdJson = null; try { cdJson = JSON.parse(cd); } catch {}
-    check('Claude Desktop: the text is JSON with the bridge command and a token placeholder', cdJson?.mcpServers?.lumen?.command && cdJson.mcpServers.lumen.args[0].endsWith('mcp.js') && /PASTE/.test(cdJson.mcpServers.lumen.env.LUMEN_CLIENT_TOKEN), cd);
+    check('Claude Desktop: the text is JSON with the bridge command and a token FILE placeholder (never a secret)', cdJson?.mcpServers?.lumen?.command && cdJson.mcpServers.lumen.args[0].endsWith('mcp.js') && /PATH-OF-THE-TOKEN-FILE/.test(cdJson.mcpServers.lumen.env.LUMEN_CLIENT_TOKEN_FILE), cd);
     const cu = JSON.parse(await snippetOf('Cursor'));
     const vs = JSON.parse(await snippetOf('VS Code'));
     check('Cursor and VS Code: JSON in their own shapes (mcpServers / servers)', cu.mcpServers?.lumen?.command && vs.servers?.lumen?.type === 'stdio', JSON.stringify([cu, vs]).slice(0, 200));
+    await snippetOf('Cursor');
+    check('...as a warning on the page', /Don’t commit this file/.test(await inSettings("document.querySelector('#ea-config-warning')?.textContent || ''")), await inSettings("document.querySelector('#ea-config-warning')?.textContent"));
     const cc = await snippetOf('Claude Code');
     check('Claude Code: a `claude mcp add` command', /^claude(\.cmd)? mcp add lumen --scope user /.test(cc), cc);
     check('"Open the config file" is offered where the path is standard (not for Claude Code)', (await inSettings("!document.querySelector('#ea-open')")) === true);
@@ -91,20 +95,30 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
     // ---- turn it on
     await inSettings("document.querySelector('#ea-switch').click()");
-    check('the switch turns it on (and asking about unknown apps with it)', await waitFor(async () => { const i = await info(); return i.enabled && i.prompt; }), JSON.stringify(await info()));
+    check('the switch turns it on, and requires a token for every app (a new user)', await waitFor(async () => { const i = await info(); return i.enabled && i.requireToken; }), JSON.stringify(await info()));
     check('status says On · no apps connected', await waitFor(async () => /On · no apps connected/.test(await inSettings("document.querySelector('#ea-status').textContent"))), await inSettings("document.querySelector('#ea-status').textContent"));
+
+    const bare = await connect(undefined);
+    const bareInit = await init(bare, 'Some Agent');
+    check('a token-less client is refused (a token is required), with the reason, and no prompt', /needs a token/.test(bareInit.error?.message || '') && (await app.evaluate(() => global.__externalApps.ext.state().prompts.length)) === 0, JSON.stringify(bareInit));
+    const bareSkip = await wait(await connect(undefined), 1);
+    check('...also when it skips the start', bareSkip.result?.isError === true && /needs a token/.test(textOf(bareSkip)), JSON.stringify(bareSkip));
 
     // ---- Add app
     await inSettings("(() => { const n = document.querySelector('#ea-name'); n.value = 'Fake App'; document.querySelector('#ea-add').click(); })()");
-    check('Add app shows the token note', await waitFor(() => inSettings("Boolean(document.querySelector('#ea-fresh'))")), 'no note');
+    check('Add app shows a note, not a token', await waitFor(() => inSettings("Boolean(document.querySelector('#ea-fresh'))")), 'no note');
     const shown = await inSettings("document.querySelector('#ea-snippet').textContent");
-    const token = (shown.match(/lmn_[a-f0-9]{12}_[a-f0-9]{48}/) || [])[0];
-    check('the text now holds the token, and its Copy button copies the same text', Boolean(token) && (await inSettings("document.querySelector('.ea-copy') !== null")), shown);
+    const appId = (await info()).apps[0].id;
+    const tokenFile = await app.evaluate((_e, id) => global.__externalApps.tokenFile(id), appId);
+    const token = fs.readFileSync(tokenFile, 'utf8').trim();
+    const shownJson = JSON.parse(shown);
+    check('the setup text names the token file and holds no secret', shownJson.mcpServers.lumen.env.LUMEN_CLIENT_TOKEN_FILE === tokenFile && /^lmn_[a-f0-9]{12}_[a-f0-9]{48}$/.test(token) && !shown.includes(token), shown);
     const disk = fs.readFileSync(path.join(profile, 'external-apps.json'), 'utf8');
-    check('the token is encrypted on disk (not in external-apps.json, nor in settings)', !disk.includes(token) && !disk.includes(token.split('_')[2]) && JSON.parse(disk).apps[0].secret.length > 40 && !fs.readFileSync(path.join(profile, 'settings.json'), 'utf8').includes(token), disk.slice(0, 200));
-    await inSettings("document.querySelector('#ea-done').click()");
-    const after = await inSettings("document.body.innerText + document.querySelector('#ea-snippet').textContent");
-    check('after "I\'ve copied it" the token is shown nowhere', !after.includes(token) && /PASTE/.test(after), after.slice(0, 120));
+    check('the token is encrypted in external-apps.json, and in no settings file', !disk.includes(token) && !disk.includes(token.split('_')[2]) && JSON.parse(disk).apps[0].secret.length > 40 && !fs.readFileSync(path.join(profile, 'settings.json'), 'utf8').includes(token), disk.slice(0, 200));
+    check('the token file is where Lumen keeps it, for this user only', tokenFile.startsWith(path.join(profile, 'external-app-tokens')) && (process.platform === 'win32' ? !/Everyone|BUILTIN\\Users|Authenticated Users/i.test(require('child_process').execFileSync('icacls', [tokenFile], { encoding: 'utf8' })) : (fs.statSync(tokenFile).mode & 0o077) === 0));
+    check('a new app asks before it acts by default', (await info()).apps[0].ask === true && (await inSettings("document.querySelector('.ea-app input[type=checkbox]').checked")) === true);
+    const pageText = await inSettings("document.body.innerText + document.querySelector('#ea-snippet').textContent");
+    check('the token is shown nowhere on the page', !pageText.includes(token) && !pageText.includes(token.split('_')[2]));
     check('the app is listed', (await inSettings("document.querySelector('.ea-app')?.dataset.app")) === 'Fake App');
 
     // ---- doors
@@ -125,7 +139,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     await ui.click('#external-pills .external-takeover');
     check('Take over pauses it: the pill says paused, with Resume', await waitFor(async () => { const p = await pills(); return p[0]?.text === 'Fake App is paused' && p[0].buttons.includes('Resume'); }), JSON.stringify(await pills()));
     const cut = await longCall;
-    check('the call in flight ends (stopped)', /Stopped/.test(textOf(cut)) || cut.result?.isError === true, JSON.stringify(cut));
+    check('the call in flight ends, saying it was stopped', cut.result?.isError === true && /Stopped by the user/.test(textOf(cut)), JSON.stringify(cut));
     const refused = await wait(good, 1);
     check('a call while paused is refused, with the reason', refused.result?.isError === true && /took over/.test(textOf(refused)), JSON.stringify(refused));
     check('its connection stays open while paused', !good.isClosed());
@@ -143,36 +157,87 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('it is still approved after Stop: it can connect again', back.authed === 'ok', back.authed);
     await init(back, 'claude-ai');
 
-    // ---- an app without a token: asked, or as before
-    check('the "ask" setting is on, so an unmanaged app is asked', (await info()).prompt === true);
+    // ---- an app without a token: unverified, asked one by one, per session
+    check('the page warns nothing while tokens are required', (await inSettings("document.querySelector('#ea-warning').hidden")) === true);
+    await inSettings("document.querySelector('#ea-require').click()");
+    check('turning "Require a token" off is saved, and the page warns', await waitFor(async () => (await info()).requireToken === false && (await inSettings("!document.querySelector('#ea-warning').hidden && /any program on this computer/.test(document.querySelector('#ea-warning').textContent) && !document.querySelector('#ea-require-now').hidden"))), JSON.stringify(await info()));
     const legacy = await connect(undefined);
     const legacyInit = init(legacy, 'Legacy App');
-    check('the window shows "Legacy App wants to use Lumen" with Allow, Allow ask first and Deny', await waitFor(async () => { const t = await ui.$eval('#external-bar', (e) => (e.hidden ? '' : e.innerText)).catch(() => ''); return /Legacy App wants to use Lumen/.test(t) && /Allow/.test(t) && /Deny/.test(t); }), await ui.$eval('#external-bar', (e) => e.innerText));
-    check('an OS notification names it', (await app.evaluate(() => global.__externalApps.notes)).some((n) => /Legacy App wants to use Lumen/.test(n.body)));
+    check('the window says "Unverified app “Legacy App” wants to use Lumen" with Allow this time and Deny', await waitFor(async () => { const t = await ui.$eval('#external-bar', (e) => (e.hidden ? '' : e.innerText)).catch(() => ''); return /Unverified app “Legacy App” wants to use Lumen/.test(t) && /Allow this time/.test(t) && /Deny/.test(t); }), await ui.$eval('#external-bar', (e) => e.innerText));
+    check('an OS notification names it as unverified', (await app.evaluate(() => global.__externalApps.notes)).some((n) => /Unverified app “Legacy App” wants to use Lumen/.test(n.body)));
     await ui.click('#external-bar button.primary');
     const li = await legacyInit;
     check('Allow lets it start; the bar goes', li.result?.serverInfo?.name === 'lumen' && (await waitFor(() => ui.$eval('#external-bar', (e) => e.hidden))), JSON.stringify(li));
-    const denied = await connect(undefined);
-    const deniedInit = init(denied, 'Bad App');
-    await waitFor(async () => /Bad App wants/.test(await ui.$eval('#external-bar', (e) => e.innerText).catch(() => '')));
+    const legacyCall = wait(legacy, 6);
+    check('it shows a pill like any app, and the list says unverified and always asks before it acts', await waitFor(async () => (await pills()).some((p) => p.text === 'Legacy App is using Lumen')) && /Unverified/.test(await inSettings("document.querySelector('.ea-app[data-app=\"Legacy App\"]')?.textContent || ''")) && (await app.evaluate(() => global.__externalApps.ext.list().find((a) => a.name === 'Legacy App')?.ask)) === true);
+    await ui.click('#external-pills .external-stop');
+    await legacyCall;
+    check('Allow is not remembered: nothing about it is on disk', !fs.readFileSync(path.join(profile, 'external-apps.json'), 'utf8').includes('Legacy App'));
+    // the name-claim attack: same name again, then a token app's name, then a built-in app's
+    const second = await connect(undefined);
+    const secondInit = init(second, 'Legacy App');
+    check('a second client with the same name is asked again (never let in by name)', await waitFor(async () => /Legacy App/.test(await ui.$eval('#external-bar', (e) => (e.hidden ? '' : e.innerText)).catch(() => ''))));
     await ui.click('#external-bar button:last-child');
-    const di = await deniedInit;
-    check('Deny refuses it, with the reason', /not allowed/.test(di.error?.message || ''), JSON.stringify(di));
+    const secondDone = await secondInit;
+    check('Deny refuses it, with the reason', /not allowed/.test(secondDone.error?.message || ''), JSON.stringify(secondDone));
+    const asFake = await init(await connect(undefined), 'Fake App');
+    check('name claim: a token-less client calling itself "Fake App" (a token app) is refused outright', /can’t call itself/.test(asFake.error?.message || ''), JSON.stringify(asFake));
+    const asClaude = await init(await connect(undefined), 'claude-code');
+    check('name claim: "Claude Code" (a built-in app) is refused outright too', /can’t call itself/.test(asClaude.error?.message || ''), JSON.stringify(asClaude));
+    check('...with no prompt for either', (await app.evaluate(() => global.__externalApps.ext.state().prompts.length)) === 0);
     const skipper = await connect(undefined);
     const skipped = await wait(skipper, 1);
     check('an app that skips the start gets no tools', skipped.result?.isError === true && /not been allowed/.test(textOf(skipped)), JSON.stringify(skipped));
     const eng = await connect(undefined, { engine: 'not-a-live-run' });
     const engInit = await init(eng, 'x');
-    check('Lumen\'s own sessions are not asked about (a stale tag is refused as before)', eng.authed === 'ok' && /turned off|./.test(engInit?.error?.message || 'x') && (await app.evaluate(() => global.__externalApps.ext.state().prompts.length)) === 0, JSON.stringify(engInit));
+    check('a made-up engine tag is refused (Lumen only serves a live run of its own), and asks nothing', eng.authed === 'ok' && /turned off/.test(engInit?.error?.message || '') && (await app.evaluate(() => global.__externalApps.ext.state().prompts.length)) === 0, JSON.stringify(engInit));
 
-    // ---- asking off: an unmanaged app connects as it always did
-    await inSettings("document.querySelector('#ea-prompt').click()");
-    check('turning "ask" off is saved', await waitFor(async () => (await info()).prompt === false));
-    const plain = await connect(undefined);
-    const plainInit = await init(plain, 'Older Agent');
-    const plainCall = await wait(plain, 1);
-    check('an older, unmanaged agent connects and works as before', plainInit.result?.serverInfo?.name === 'lumen' && plainCall.result?.isError === false, JSON.stringify([plainInit, plainCall]).slice(0, 300));
-    plain.end?.();
+    // ---- replay over the real channel
+    const rawChallenge = () => new Promise((resolve) => {
+      const shared = fs.readFileSync(mcp.tokenPath(profile), 'utf8').trim();
+      const sock = net.connect(mcp.channelPath(profile)); let buf = '';
+      sock.setEncoding('utf8'); sock.on('error', () => {});
+      sock.on('data', (d) => { buf += d; const i = buf.indexOf('\n'); if (i < 0) return; const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); if (m.lumenChallenge) resolve({ sock, nonce: m.lumenChallenge, shared }); else if (m.lumenAuth) sock.emit('verdict', m.lumenAuth); });
+    });
+    const c1 = await rawChallenge();
+    const hello1 = clientToken.hello(token, c1.nonce);
+    c1.sock.write(JSON.stringify({ lumenProof: mcp.proofFor(c1.shared, c1.nonce), ...hello1 }) + '\n');
+    const v1 = await new Promise((r) => { c1.sock.once('verdict', r); setTimeout(() => r('none'), 3000); });
+    c1.sock.destroy();
+    const c2 = await rawChallenge();
+    c2.sock.write(JSON.stringify({ lumenProof: mcp.proofFor(c2.shared, c2.nonce), ...hello1 }) + '\n'); // the recorded proof, on a new connection
+    const v2 = await new Promise((r) => { c2.sock.once('verdict', r); setTimeout(() => r('none'), 3000); });
+    c2.sock.destroy();
+    check('replay: the first connection is accepted, the same proof on a second is denied', v1 === 'ok' && v2 === 'denied', v1 + ' / ' + v2);
+
+    // ---- two apps at once: Stop on one leaves the other running
+    await inSettings("(() => { const n = document.querySelector('#ea-name'); n.value = 'Second App'; document.querySelector('#ea-add').click(); })()");
+    await waitFor(async () => (await info()).apps.some((a) => a.name === 'Second App'));
+    const second2 = (await info()).apps.find((a) => a.name === 'Second App');
+    const token2 = fs.readFileSync(await app.evaluate((_e, id) => global.__externalApps.tokenFile(id), second2.id), 'utf8').trim();
+    const t1 = await connect(token); const t2 = await connect(token2);
+    await init(t1, 'x'); await init(t2, 'y');
+    const w1 = wait(t1, 8); const w2 = wait(t2, 3);
+    await waitFor(async () => (await pills()).length === 2);
+    await app.evaluate((_e, id) => global.__externalApps.ext.stop(id), appId);
+    await w1;
+    const w2r = await w2;
+    check('Stop on one app closes it, while the other app\'s call runs to its end', t1.isClosed() && !t2.isClosed() && w2r.result?.isError === false && /Done waiting/.test(textOf(w2r)), JSON.stringify(w2r));
+    t2.end?.();
+
+    // ---- the environment of a Lumen the bridge has to start
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ea-launch-'));
+    const out = path.join(dir, 'env.json'); const dump = path.join(dir, 'dump.js');
+    fs.writeFileSync(dump, `require('fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(Object.keys(process.env))); process.exit(0);`);
+    const electronExe = require('electron');
+    const bridge = require('child_process').spawn(electronExe, [path.join(__dirname, '..', 'mcp.js')], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_MCP_BRIDGE: '1', CLAUDE_BROWSER_TEST: '1', LUMEN_USERDATA: dir, LUMEN_LAUNCH: JSON.stringify({ command: electronExe, args: [dump] }), LUMEN_CLIENT_TOKEN: token, LUMEN_CLIENT_TOKEN_FILE: tokenFile, LUMEN_ENGINE: 'some-tag' }, stdio: 'ignore' });
+    const keys = await waitFor(() => (fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null), 40000);
+    try { bridge.kill(); } catch {}
+    check('the Lumen a bridge starts has no LUMEN_CLIENT_TOKEN, LUMEN_CLIENT_TOKEN_FILE or LUMEN_ENGINE in its environment', Array.isArray(keys) && keys.length > 3 && !keys.some((k) => /^LUMEN_(CLIENT_TOKEN|ENGINE)/.test(k)), JSON.stringify(keys));
+
+    // ---- an older, unmanaged agent is still asked, and an empty token is refused (not treated as "no token")
+    const emptyHello = clientToken.hello('', 'n');
+    check('an empty token is invalid, not "no token"', emptyHello.lumenClient === 'invalid');
 
     // ---- Revoke
     await inSettings("document.querySelector('.ea-app[data-app=\"Fake App\"] .confirm-delete button').click()");
@@ -180,11 +245,13 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('Revoke closes its connection at once', await waitFor(() => back.isClosed(), 5000));
     const gone = await connect(token);
     check('...and its token is refused from then on', gone.authed === 'denied', gone.authed);
+    check('...and its token file is deleted', !fs.existsSync(tokenFile));
     check('...and the list no longer has it', !(await info()).apps.some((a) => a.name === 'Fake App') && !fs.readFileSync(path.join(profile, 'external-apps.json'), 'utf8').includes('"Fake App"'));
 
     // ---- off again
+    const live2 = await connect(token2); await init(live2, 'z');
     await inSettings("document.querySelector('#ea-switch').click()");
-    check('switching it off cuts every connection', await waitFor(() => legacy.isClosed(), 5000));
+    check('switching it off cuts every connection', await waitFor(() => live2.isClosed(), 5000));
     check('no page errors in Lumen\'s window', errors.length === 0, errors.join(' | '));
   } finally {
     await app.close().catch(() => {});
