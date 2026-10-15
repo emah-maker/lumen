@@ -1,0 +1,19 @@
+/* Other apps using Lumen (features/external-apps.js): one pill per app that is working or paused, in the toolbar (renderer/app.js). */
+.external-pills { display: flex; flex: none; align-items: center; gap: 6px; margin-right: 6px; }
+.external-pills[hidden] { display: none; }
+.external-pill {
+  display: flex; position: relative; flex: none; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px;
+  border-radius: var(--r-xl); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border); animation: pill-in var(--t-snappy) var(--spring-snappy);
+}
+.external-pill.paused { box-shadow: 0 0 0 1px var(--warning); }
+.external-pill.paused .agent-dot { background: var(--warning-fill); }
+.external-pill.paused .agent-dot::after { display: none; }
+.external-pill button {
+  -webkit-app-region: no-drag; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text);
+  font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color var(--t-fast) ease-out;
+}
+.external-pill button:hover { background: var(--hover); }
+.external-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-pill-text { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .external-pill { animation: none; } }

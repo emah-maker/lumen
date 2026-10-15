@@ -720,6 +720,8 @@ async function buildAi(card) {
   agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
 
+  agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
+
   buildAntigravity(agents, refreshModels);
 
   const auto = await S.ai.automationInfo();

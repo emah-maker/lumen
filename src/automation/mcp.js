@@ -67,7 +67,7 @@ const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? ANNOTATIONS : unde
 // `engine`: the tag a bridge started by Lumen's own Claude Code engine carries (claude-code.js).
 // `extraTools(session)`: tools offered to THIS session only (the connector tool, to a run Lumen itself started: its `engine` tag is a
 // random per-run value that is live only while that run is; an outside client has none, so it never sees them).
-function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, extraTools = null }) {
+function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, extraTools = null, onInitialize = null }) {
   const session = { clientName: 'An AI agent', initialized: false, controller: new AbortController(), engine };
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
@@ -82,6 +82,8 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
           if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → AI and agents → Allow AI agents to connect).');
           const info = params.clientInfo || {};
           session.clientName = clientLabel(info);
+          const veto = await onInitialize?.(session, info); // [external apps] a reason to refuse this client (features/external-apps.js admit), or nothing
+          if (veto) return fail(id, -32001, veto);
           const requested = params.protocolVersion;
           reply(id, {
             protocolVersion: SUPPORTED_VERSIONS.includes(requested) ? requested : LATEST_VERSION,
@@ -121,7 +123,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, extraTools = null, callTool, enabled, onEvent, onClose = null, onListed = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
+function startServer({ userData, tools, extraTools = null, callTool, enabled, onEvent, onClose = null, onListed = null, identify = null, onInitialize = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -155,9 +157,14 @@ function startServer({ userData, tools, extraTools = null, callTool, enabled, on
           socket.end();
           return;
         }
+        // [external apps] identify({ client, proof, nonce }) -> { client } | null (no app token: as before) | false (unknown or revoked app: refused)
+        const who = identify && typeof message.lumenEngine !== 'string' ? identify({ client: message.lumenClient, proof: message.lumenClientProof, nonce }) : null; // (an engine's own tag never goes through it)
+        if (who === false) { send({ lumenAuth: 'denied' }); socket.end(); return; }
         authed = true;
         clearTimeout(authTimer);
-        current = createSession({ tools, extraTools, callTool, enabled, onEvent, onListed, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current = createSession({ tools, extraTools, callTool, enabled, onEvent, onListed, onInitialize, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current.session.disconnect = () => socket.destroy(); // [external apps] Stop and Revoke cut this connection
+        if (who) current.session.client = who.client;
         sessions.add(current);
         send({ lumenAuth: 'ok' });
         return;
@@ -203,6 +210,13 @@ function connectOnce(userData) {
   });
 }
 
+// What the bridge hands the Lumen it starts: not its own mode flags, and never the app's token (it would live in Lumen and every process Lumen starts)
+// or an engine tag (Lumen's own engines would then present as this client).
+function launchEnv(env) {
+  for (const k of Object.keys(env)) if (/^(ELECTRON_RUN_AS_NODE|LUMEN_MCP_BRIDGE|LUMEN_CLIENT_TOKEN(_FILE)?|LUMEN_ENGINE|CLAUDE_BROWSER_TEST|LUMEN_TEST_.*)$/.test(k)) delete env[k]; // (and the test switches: a launched Lumen is never in test mode because an agent's environment said so)
+  return env;
+}
+
 async function connectOrLaunch(userData, launch, log) {
   try {
     return await connectOnce(userData);
@@ -210,8 +224,7 @@ async function connectOrLaunch(userData, launch, log) {
     log('Lumen is not running; starting it.');
     const { spawn } = require('child_process');
     const env = { ...process.env };
-    delete env.ELECTRON_RUN_AS_NODE;
-    delete env.LUMEN_MCP_BRIDGE;
+    launchEnv(env);
     const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', env, windowsHide: false });
     child.unref();
     const deadline = Date.now() + 30000;
@@ -274,7 +287,7 @@ async function relay() {
         try { msg = JSON.parse(line); } catch {}
         if (msg.lumenChallenge) {
           const lumenEngine = process.env.LUMEN_ENGINE || undefined; // set only by Lumen's Claude Code engine
-          socket.write(`${JSON.stringify({ lumenProof: proofFor(token, String(msg.lumenChallenge)), lumenEngine })}\n`);
+          socket.write(`${JSON.stringify({ lumenProof: proofFor(token, String(msg.lumenChallenge)), lumenEngine, ...(lumenEngine ? {} : require('./client-token').hello(require('./client-token').fromEnv(), String(msg.lumenChallenge))) })}\n`); // (LUMEN_CLIENT_TOKEN: an outside app's own token)
           return;
         }
         if (msg.lumenAuth !== 'ok') {
@@ -324,4 +337,4 @@ function runBridge({ app }) {
 
 if (require.main === module) relay();
 
-module.exports = { clientLabel, annotationsFor, MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
+module.exports = { launchEnv, clientLabel, annotationsFor, MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
