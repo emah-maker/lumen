@@ -6000,7 +6000,7 @@ function resolveRoute() {
 }
 // The first page is laid out with its first screen only: the lists below the fold wait for the next frame (the first layout of a page costs
 // about 1 ms a row, and nothing there can be seen yet). FOLD_ROWS: about what fits above the fold.
-const FOLD_ROWS = 9;
+const FOLD_ROWS = 6;
 let foldedGroups = [];
 let firstRouteDone = false;
 function foldBelowTheFirstScreen() {
@@ -6024,7 +6024,9 @@ function finishRoute({ id, focus, focusEl }) {
   if (query()) $('search').value = '';
   if (!firstRouteDone && !ALIASES[id] && !query()) foldedGroups = foldBelowTheFirstScreen(); // (a link to a place further down needs it laid out)
   firstRouteDone = true;
+  performance.mark('settings:route');
   show();
+  performance.mark('settings:shown');
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
