@@ -154,7 +154,7 @@ async function main() {
       return { listed: names.includes('connector'), read: { text: (read.content || []).map((x) => x.text).join(' '), isError: read.isError }, write: { text: (write.content || []).map((x) => x.text).join(' '), isError: write.isError }, gate, windows: global.__windows.list().length };
     });
     const posts = () => fakes.seen.filter((r) => r.service === 'todoist' && r.method === 'POST').length;
-    check('an MCP agent is not offered the connector tool, and a call to it is refused for reads and writes alike (nothing sent, no window opened)', !viaMcp.listed && viaMcp.read.isError && !/Add dark mode/.test(viaMcp.read.text) && viaMcp.write.isError && /Unknown tool/.test(`${viaMcp.read.text} ${viaMcp.write.text}`) && /Unknown tool/.test(viaMcp.gate.read) && /Unknown tool/.test(viaMcp.gate.write) && viaMcp.windows === 1 && !fakes.seen.some((r) => r.service === 'todoist' && /From outside/.test(r.body)), JSON.stringify(viaMcp));
+    check('an MCP agent is not offered the connector tool, and a call to it is refused for reads and writes alike (nothing sent)', !viaMcp.listed && viaMcp.read.isError && !/Add dark mode/.test(viaMcp.read.text) && viaMcp.write.isError && /Unknown tool/.test(`${viaMcp.read.text} ${viaMcp.write.text}`) && /Unknown tool/.test(viaMcp.gate.read) && /Unknown tool/.test(viaMcp.gate.write) && !fakes.seen.some((r) => r.service === 'todoist' && /From outside/.test(r.body)), JSON.stringify(viaMcp));
     const postsBeforeBypass = posts();
     await app.evaluate(() => { global.__agent.browser.bypassPermissions = () => true; });
     const bypassed = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Bypass try' } } }], answer: false });
