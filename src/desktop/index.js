@@ -22,8 +22,12 @@ const PAUSE_WAIT_MS = 10 * 60e3;
 const MAX_TYPE = 8000;
 const LIST_CACHE_MS = 600;
 
-const unwrap = (text, app) => `<untrusted_page_content source="app: ${String(app || 'app').replace(/["<>]/g, '')}">\n${text}\n</untrusted_page_content>`;
-const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
+// Everything an app told us (window titles, control names, values) goes to the AI inside this wrapper, with any literal wrapper tag in it defanged,
+// so app text can never end the block and pass as the user's or Lumen's own words.
+const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
+const unwrap = (text, app) => `<untrusted_page_content source="app: ${defang(String(app || 'app')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
+const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0 }); // what the helper re-checks before it touches a window
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (win) => `w${win.hwnd}`;
 
 // deps: client { call, stop, destroy }, settings { master(), terminals(), allowed(), allow(app, name), setMaster(on) }, banner, winapi, shortcut { register(accel, fn), unregister(accel) },
@@ -58,8 +62,8 @@ function createDesktop(deps = {}) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
   // The window the call is about: args.id ("w123"), args.name, else the window used last.
-  async function windowFor(args, { force = false } = {}) {
-    const all = await apps(force);
+  async function windowFor(args, { force = true } = {}) {
+    const all = await apps(force); // (a fresh list every time: the decision is made on the window as it is now)
     const idArg = args.id ?? args.window ?? args.app_id;
     if (idArg !== undefined && idArg !== null && String(idArg) !== '') {
       const want = String(idArg).replace(/^w/i, '');
@@ -83,18 +87,33 @@ function createDesktop(deps = {}) {
   }
 
   // ---- permission: blocked / switch off / ask
-  async function authorize(win, ctx) {
-    const d = policy.decide(win, policyOpts(ctx));
+  // `acting`: this call clicks, types, presses keys or starts an app. Once the run has read untrusted content (a web page, an email, a
+  // connector's answer, text from an app) neither Always nor Once covers an acting call: it asks every time, naming what it wants to do.
+  async function authorize(win, ctx, { acting = false, what = '' } = {}) {
+    const tainted = acting && Boolean(ctx.tainted?.());
+    const opts = policyOpts(ctx);
+    if (tainted) { opts.allowed = []; opts.once = new Set(); }
+    const d = policy.decide(win, opts);
     if (d.status === 'blocked') throw new Error(`${d.name}: ${d.reason}`);
     if (d.status === 'off') {
       await offerSwitch(ctx);
-      return authorize(win, ctx); // (the switch is on now, or offerSwitch threw)
+      return authorize(win, ctx, { acting, what }); // (the switch is on now, or offerSwitch threw)
     }
     if (d.status === 'allow') return d;
+    const where = `${d.name}\nProgram: ${win.exe || '(unknown)'}${win.company ? `\nPublisher: ${treeLib.clip(win.company, 80)}` : ''}\nWindow: "${treeLib.clip(win.title, 120)}"`;
+    if (tainted) {
+      const ok = await ctx.ask({
+        title: `The AI read content earlier in this chat. Allow it to ${what || 'act'} in ${d.name}?`,
+        detail: 'Text it read (a web page, an email, another app) could have been written to make it do this. Allow only if you asked for it. This answer covers this one action; it is asked again next time.',
+        args: where, noAlways: true, allowLabel: 'Allow this action',
+      });
+      if (!ok) throw new Error(`The user did not allow this action in ${d.name}. Ask them what to do instead.`);
+      return { ...d, status: 'allow', always: false };
+    }
     const answer = await ctx.ask({
       title: `Allow the AI to use ${d.name}?`,
-      detail: 'It can read what is in the app and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings > AI > Apps the AI can use. It never reads or fills password fields.',
-      args: `${d.name}\nWindow: "${treeLib.clip(win.title, 120)}"`,
+      detail: `It can read what is in the app (and take a picture of its window, which can show things a password mask does not hide), and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings > AI > Apps the AI can use. It never reads or fills password fields. ${d.warn || ''}`.trim(),
+      args: where,
     });
     if (!answer) throw new Error(`The user did not let the AI use ${d.name}. Ask them what to do instead.`);
     if (answer === 'always') S.allow(d.app, d.name); else ctx.once?.add(d.app);
@@ -115,8 +134,9 @@ function createDesktop(deps = {}) {
 
   // ---- the session: banner, card, thumbnail, takeover, stop
   function startSession(ctx) {
-    stats.sessions++;
     const w = getApi();
+    if (!w) throw new Error('The check that lets you stop the AI (Esc held, taking over) could not start on this computer, so the AI will not use other apps. Restart Lumen, or tell the Lumen team if it keeps happening.');
+    stats.sessions++;
     session = {
       id: ++seq, signal: ctx.signal, emit: ctx.emit, target: null, card: null, label: '', paused: false, stopped: false, busy: false, busyUntil: 0,
       lastCursor: w?.cursor?.() || null, escSince: 0, timers: [], thumbBusy: false, thumbSig: '', resume: [], once: ctx.once, lastCall: now(),
@@ -143,7 +163,7 @@ function createDesktop(deps = {}) {
     const s = session;
     s.lastCall = now();
     s.label = label;
-    s.target = { hwnd: win.hwnd, pid: win.pid, app: win.app, name: win.name, title: win.title, exe: win.exe };
+    s.target = { hwnd: win.hwnd, pid: win.pid, hpid: win.hpid || 0, start: win.start || 0, app: win.app, name: win.name, title: win.title, exe: win.exe };
     if (!s.card || s.card.app !== win.app) {
       if (s.card) cardEvent(s, 'completed');
       const id = `desk-${s.id}-${win.app}`;
@@ -160,6 +180,7 @@ function createDesktop(deps = {}) {
 
   function endSession(s, status = 'completed') {
     if (!s || session !== s) return;
+    if (status === 'stopped') { try { client?.abort?.('Stopped by the user.'); } catch { /* gone */ } }
     for (const t of s.timers) clearInterval(t);
     try { deps.shortcut?.unregister('Ctrl+Alt+Esc'); } catch { /* gone */ }
     try { deps.banner?.hide(); } catch { /* gone */ }
@@ -195,6 +216,7 @@ function createDesktop(deps = {}) {
     if (s.paused || session !== s) return;
     stats.takeovers++;
     s.paused = true;
+    if (s.busy) { try { client?.abort?.('The user took over.'); } catch { /* gone */ } } // a call in flight ends now, not after it finishes
     Promise.resolve(deps.banner?.update({ paused: true })).catch(() => {});
     if (s.card) cardEvent(s, 'paused');
     deps.hooks?.onPause?.(why);
@@ -214,9 +236,9 @@ function createDesktop(deps = {}) {
       if (s.paused || !s.target) return;
       const busy = s.busy || now() < s.busyUntil;
       const cur = w.cursor();
-      const over = w.pidUnderCursor() === s.target.pid;
+      const over = [s.target.pid, s.target.hpid].includes(w.pidUnderCursor());
       if (cur && s.lastCursor && over && (Math.abs(cur.x - s.lastCursor.x) + Math.abs(cur.y - s.lastCursor.y) >= TAKEOVER_PX || w.mouseDown())) { pause(s, 'mouse'); }
-      else if (!busy && w.foregroundPid() === s.target.pid && w.typing()) pause(s, 'keys');
+      else if (!busy && [s.target.pid, s.target.hpid].includes(w.foregroundPid()) && w.typing()) pause(s, 'keys');
       if (!over) s.lastCursor = cur || s.lastCursor; // the baseline follows the pointer until it is over the app
       else if (cur && s.lastCursor && !s.paused) s.lastCursor = cur;
     } catch { /* a failed check never stops the run */ }
@@ -227,7 +249,12 @@ function createDesktop(deps = {}) {
     if (session !== s || s.stopped || s.thumbBusy || s.busy || !s.target || !s.card) return;
     s.thumbBusy = true;
     try {
-      const r = await getClient().call('shot', { hwnd: s.target.hwnd, w: 420, q: 55 }, { timeoutMs: 6000 });
+      const fresh = (await apps(true)).find((w) => w.hwnd === s.target.hwnd);
+      const dec = fresh ? policy.decide(fresh, policyOpts({ once: s.once })) : null;
+      if (session !== s) return;
+      if (!fresh || fresh.pid !== s.target.pid || (fresh.start || 0) !== (s.target.start || 0) || !dec || dec.status === 'blocked' || dec.status === 'off') { endSession(s, 'stopped'); return; } // it changed into something else (or something blocked): no more pictures
+      s.target.title = fresh.title;
+      const r = await getClient().call('shot', { ...targetOf(fresh), w: 420, q: 55 }, { timeoutMs: 6000 });
       if (session !== s || !r.image) return;
       const sig = require('crypto').createHash('md5').update(r.image).digest('hex');
       if (sig === s.thumbSig) return;
@@ -248,7 +275,10 @@ function createDesktop(deps = {}) {
   async function act(s, fn) {
     await gate(s);
     s.busy = true;
-    try { return await fn(); } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s && !s.card?.thumb) setImmediate(() => thumb(s)); }
+    try { return await fn(); } catch (err) {
+      if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
+      throw err;
+    } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s && !s.card?.thumb) setImmediate(() => thumb(s)); }
   }
 
   // ---- the actions
@@ -264,23 +294,23 @@ function createDesktop(deps = {}) {
       const state = d.status === 'allow' ? '' : ' (asks you first; the title is shown once allowed)';
       rows.push(`${w.id}  ${w.name}${d.status === 'allow' ? ` - "${treeLib.clip(w.title, 100)}"` : ''}${w.minimized ? ' [minimized]' : ''}${state}`);
     }
-    return `Open apps (pass the id or the name to the other actions):\n${rows.join('\n') || '(none)'}${hidden ? `\n(${hidden} other window${hidden === 1 ? ' is' : 's are'} never available to the AI: security prompts, password managers, banking, terminals, Lumen itself.)` : ''}`;
+    return unwrap(`Open apps (pass the id or the name to the other actions):\n${rows.join('\n') || '(none)'}${hidden ? `\n(${hidden} other window${hidden === 1 ? ' is' : 's are'} never available to the AI: security prompts, password managers, banking, terminals, Lumen itself.)` : ''}`, 'open apps');
   }
 
   async function focusApp(args, ctx) {
     const win = await windowFor(args);
     await authorize(win, ctx);
     const s = await useWindow(win, ctx, policy.stepLabel('focus_app', { name: win.name }));
-    const r = await act(s, () => getClient().call('focus', { hwnd: win.hwnd, raise: true }));
+    const r = await act(s, () => getClient().call('focus', { ...targetOf(win), raise: true }));
     list.at = 0;
-    return `Switched to ${win.name} ("${treeLib.clip(win.title, 100)}")${r.foreground ? '' : '. It could not take the keyboard (another window kept it): reading and clicking still work, typing keys may not.'}`;
+    return unwrap(`Switched to ${win.name} ("${treeLib.clip(win.title, 100)}")${r.foreground ? '' : '. It could not take the keyboard (another window kept it): reading and clicking still work, typing keys may not.'}`, win.name);
   }
 
   async function readApp(args, ctx) {
     const win = await windowFor(args);
     await authorize(win, ctx);
     const s = await useWindow(win, ctx, policy.stepLabel('read_app', {}, win.name));
-    const r = await act(s, () => getClient().call('tree', { hwnd: win.hwnd, max: 700 }, { timeoutMs: 20000 }));
+    const r = await act(s, () => getClient().call('tree', { ...targetOf(win), max: 700 }, { timeoutMs: 20000 }));
     s.readHwnd = win.hwnd;
     s.ids = new Set(treeLib.prune(r.tree).ids);
     const text = treeLib.render({ title: win.title, proc: win.proc, name: win.name }, r.tree);
@@ -292,9 +322,10 @@ function createDesktop(deps = {}) {
     if (!/^e\d+$/.test(el)) throw new Error('Pass element: an id like e3 from read_app.');
     if (!session?.target || session.readHwnd !== session.target.hwnd) throw new Error('Read the app first (read_app): ids come from the latest read.');
     const win = await windowFor({ id: idOf(session.target) });
-    await authorize(win, ctx);
+    if (win.app !== session.target.app) throw new Error('That window now belongs to a different program. Call list_apps and read the app again.');
+    await authorize(win, ctx, { acting: true, what: `${action} ${el}` });
     const s = await useWindow(win, ctx, policy.stepLabel(action, { element: el }, win.name));
-    return act(s, () => getClient().call(cmd, { el, ...extra }, { timeoutMs: 20000 }));
+    return act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra }, { timeoutMs: 20000 }));
   }
 
   async function click(args, ctx) {
@@ -313,9 +344,9 @@ function createDesktop(deps = {}) {
     let parsed;
     try { parsed = keysLib.parseKeys(args.keys); } catch (err) { throw new Error(err.message); }
     const win = await windowFor(args.name || args.id ? args : {});
-    await authorize(win, ctx);
+    await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
-    await act(s, () => getClient().call('keys', { hwnd: win.hwnd, seq: parsed.seq }, { timeoutMs: 15000 }));
+    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords }, { timeoutMs: 15000 }));
     return `Pressed ${parsed.shown} in ${win.name}.`;
   }
 
@@ -323,11 +354,11 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args);
     await authorize(win, ctx);
     const s = await useWindow(win, ctx, policy.stepLabel('screenshot_app', {}, win.name));
-    const r = await act(s, () => getClient().call('shot', { hwnd: win.hwnd, w: 1000, q: 70 }, { timeoutMs: 20000 }));
+    const r = await act(s, () => getClient().call('shot', { ...targetOf(win), w: 1000, q: 70 }, { timeoutMs: 20000 }));
     if (!r.image) throw new Error(`${win.name} could not be captured (it may be minimized). Use focus_app first.`);
     return [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r.image } },
-      { type: 'text', text: `Picture of ${win.name} ("${treeLib.clip(win.title, 80)}"). Use read_app for text and ids.` },
+      { type: 'text', text: unwrap(`Picture of ${win.name} ("${treeLib.clip(win.title, 80)}"). Use read_app for text and ids.`, win.name) },
     ];
   }
 
@@ -338,28 +369,28 @@ function createDesktop(deps = {}) {
     const r = await getClient().call('resolve', { name });
     const found = (r.found || []).slice().sort((a, b) => Number(b.exact) - Number(a.exact) || a.name.length - b.name.length)[0];
     if (!found) throw new Error(`No app called "${name}" was found in the Start menu. Tell the user, or ask for the exact name.`);
-    const exeBase = String(found.exe || found.name).split(/[\\/]/).pop();
-    const probe = { proc: exeBase, title: found.name, exe: found.exe, description: found.name };
+    const target = policy.exeKey(found.exe);
+    if (!target.endsWith('.exe')) throw new Error(`${found.name} is a Windows (Store) app, whose program cannot be checked before it starts, so the AI does not start it. The user can open it, and the AI can then use it.`);
+    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name };
     const before = new Set((await apps(true)).map((w) => w.hwnd));
-    await authorize(probe, ctx); // blocked apps are refused before anything starts; others ask like any app
-    const startedFor = policy.friendlyName(exeBase, found.name);
+    await authorize(probe, ctx, { acting: true, what: `open ${found.name}` }); // blocked programs are refused before anything starts; the rest ask
     await getClient().call('launch', { key: found.key }, { timeoutMs: 15000 });
     const stamp = now();
-    while (now() - stamp < 9000) {
-      await sleep(400);
+    const waitMs = deps.openWaitMs ?? 9000;
+    while (now() - stamp < waitMs) {
+      await sleep(Math.min(400, Math.max(10, waitMs / 4)));
       list.at = 0;
-      const fresh = (await apps(true)).filter((w) => !before.has(w.hwnd) && (w.app === policy.procKey(exeBase) || norm(w.name).includes(norm(startedFor)) || norm(w.title).includes(norm(name))));
-      if (fresh.length) {
-        const w = fresh[0];
-        const dec = policy.decide(w, policyOpts(ctx));
-        if (dec.status === 'blocked') throw new Error(`${dec.name}: ${dec.reason}`);
-        if (dec.status === 'ask') ctx.once?.add(w.app); // (allowed above under another name: the same app now)
-        const s = await useWindow(w, ctx, policy.stepLabel('open_app', { name: startedFor }));
+      // The window that actually appeared, by its program's path (never by a title or a name the AI chose): it is approved on its own merits.
+      const w = (await apps(true)).find((x) => !before.has(x.hwnd) && policy.appKey(x) === target);
+      if (w) {
+        if (policy.appKey(w) !== policy.appKey(probe)) await authorize(w, ctx, { acting: true, what: `use ${w.name}` });
+        else if (policy.decide(w, policyOpts(ctx)).status === 'blocked') throw new Error(`${w.name}: ${policy.decide(w, policyOpts(ctx)).reason}`);
+        const s = await useWindow(w, ctx, policy.stepLabel('open_app', { name: w.name }));
         s.lastCall = now();
-        return `Opened ${w.name} (id ${w.id}, "${treeLib.clip(w.title, 100)}"). Use read_app to see it.`;
+        return unwrap(`Opened ${w.name} (id ${w.id}, "${treeLib.clip(w.title, 100)}"). Use read_app to see it.`, w.name);
       }
     }
-    return `Started ${startedFor}, but no window appeared yet. Call list_apps in a moment.`;
+    return unwrap(`Started ${found.name}, but no window of that program appeared yet. Call list_apps in a moment.`, found.name);
   }
 
   // The tool. input: { action, args }. ctx: { ask({ title, detail, args, noAlways, allowLabel }) -> true | 'always' | false, emit, signal, once: Set }
@@ -398,7 +429,7 @@ function createDesktop(deps = {}) {
     session: () => (session ? { app: session.target?.name || '', paused: session.paused, card: session.card?.id || null } : null),
     stats: () => ({ ...stats, helperMs: client?.startMs?.() || 0 }),
     client: getClient,
-    destroy() { if (session) endSession(session, 'stopped'); try { client?.destroy?.(); } catch { /* gone */ } },
+    destroy() { if (session) endSession(session, 'stopped'); try { client?.destroy?.(); } catch { /* gone */ } try { deps.banner?.destroy?.(); } catch { /* gone */ } },
     // tests
     _poll: () => session && poll(session),
     _thumb: () => (session ? thumb(session) : null),

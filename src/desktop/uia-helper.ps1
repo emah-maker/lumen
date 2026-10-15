@@ -21,6 +21,9 @@ $script:launchable = @{}
 # A field that says it is a password (or a PIN, secret, card code) is treated as one even when the app does not report IsPassword.
 $PWRE = '(?i)pass(word|code|phrase)|\bpin\b|secret|\bcvv\b|\bcvc\b|security code'
 $PWTYPES = @('Edit', 'Pane', 'ComboBox', 'Document', 'Custom', 'Spinner')
+# Test seam (src/desktop tests only; the client sets this variable only in a development test run, never in a packaged Lumen):
+# a request may carry test = { states: [...], sink: true, delay: ms } to script what the keyboard guard sees and to collect keys instead of sending them.
+$TEST = ($env:LUMEN_DESKTOP_TEST -eq '1')
 $SHELL = @('Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland', 'XamlExplorerHostIslandWindow', 'Windows.UI.Core.CoreWindow', 'MSCTFIME UI', 'IME', 'tooltips_class32')
 
 # A second runspace, opened in the background, for Invoke (which can wait on a dialog): ready by the first click.
@@ -44,6 +47,8 @@ public static class LumenNative {
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static long ForegroundPid() { uint p; IntPtr h = GetForegroundWindow(); if (h == IntPtr.Zero) return 0; GetWindowThreadProcessId(h, out p); return p; }
   public static void Init() { try { SetProcessDPIAware(); } catch { } }
   public static long Foreground() { return GetForegroundWindow().ToInt64(); }
   public static bool Raise(long hwnd) { IntPtr h = new IntPtr(hwnd); if (IsIconic(h)) ShowWindow(h, 9); return SetForegroundWindow(h); }
@@ -69,17 +74,37 @@ public static class LumenNative {
   $script:native = $true
 }
 
+# Who a process really is: its image path, the name inside the file, its start time. Cached by pid AND start time, so a reused pid is never taken for the old program.
 function Proc-Info($procId) {
-  if ($script:procs.ContainsKey($procId)) { return $script:procs[$procId] }
-  $info = @{ proc = ''; exe = ''; description = '' }
+  $info = @{ proc = ''; exe = ''; description = ''; original = ''; company = ''; start = 0 }
   try {
     $p = [System.Diagnostics.Process]::GetProcessById([int]$procId)
+    $info.start = [int64]$p.StartTime.Ticks
+    $key = "$procId-$($info.start)"
+    if ($script:procs.ContainsKey($key)) { return $script:procs[$key] }
     $info.proc = $p.ProcessName
     try { $info.exe = $p.MainModule.FileName } catch { }
-    if ($info.exe) { try { $info.description = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($info.exe).FileDescription } catch { } }
+    if ($info.exe) { try { $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($info.exe); $info.description = [string]$vi.FileDescription; $info.original = [string]$vi.OriginalFilename; $info.company = [string]$vi.CompanyName } catch { } }
+    $script:procs[$key] = $info
   } catch { }
-  $script:procs[$procId] = $info
   return $info
+}
+
+# A top-level window's program. A packaged (UWP) app's window belongs to ApplicationFrameHost; the program is the one that owns the
+# Windows.UI.Core.CoreWindow inside it. If that cannot be found the window stays "ApplicationFrameHost", which the policy refuses.
+function Resolve-Window($w) {
+  $c = $w.Current
+  $out = @{ pid = [int]$c.ProcessId; hpid = 0; frame = $false }
+  $ident = [int]$c.ProcessId
+  if ($c.ClassName -eq 'ApplicationFrameWindow') {
+    $out.frame = $true
+    try {
+      $core = $w.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty, 'Windows.UI.Core.CoreWindow')))
+      if ($core -ne $null -and [int]$core.Current.ProcessId -ne $ident) { $out.hpid = [int]$core.Current.ProcessId; $ident = $out.hpid }
+    } catch { }
+  }
+  $out.info = Proc-Info $ident
+  return $out
 }
 
 function Win-Element($hwnd) { return $A::FromHandle([IntPtr][int64]$hwnd) }
@@ -94,17 +119,33 @@ function Cmd-Apps($req) {
       if ($h -eq 0) { continue }
       if ($SHELL -contains $c.ClassName) { continue }
       if (-not $c.Name) { continue }
-      $pi = Proc-Info $c.ProcessId
+      $rw = Resolve-Window $w
+      $pi = $rw.info
       $min = $false
       try { $wp = $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern); $min = ($wp.Current.WindowVisualState -eq 'Minimized') } catch { }
-      [void]$list.Add(@{ hwnd = $h; pid = [int]$c.ProcessId; proc = $pi.proc; exe = $pi.exe; description = $pi.description; title = $c.Name; minimized = $min })
+      [void]$list.Add(@{ hwnd = $h; pid = $rw.pid; hpid = $rw.hpid; frame = $rw.frame; start = $pi.start; proc = $pi.proc; exe = $pi.exe; original = $pi.original; company = $pi.company; description = $pi.description; title = $c.Name; minimized = $min })
     } catch { }
   }
   return @{ apps = $list.ToArray() }
 }
 
-function Cmd-Focus($req) {
+# Every call that acts on, reads or captures a window names the program it was approved for (pid, hosted pid, start time); if the window now
+# belongs to anything else (the handle was reused, the pid was), nothing is done. Returns the window element and the pids that may hold the keyboard.
+function Get-Target($req) {
   $e = Win-Element $req['hwnd']
+  if ($req['pid'] -ne $null -and [int]$req['pid'] -ne [int]$e.Current.ProcessId) { throw 'That window now belongs to a different program. Call list_apps again.' }
+  if ($req['start']) {
+    $rw = Resolve-Window $e
+    if ([int]$rw.hpid -ne [int]$req['hpid'] -or [int64]$rw.info.start -ne [int64]$req['start']) { throw 'That window now belongs to a different program. Call list_apps again.' }
+  }
+  $pids = @([int]$e.Current.ProcessId)
+  if ($req['hpid']) { $pids += [int]$req['hpid'] }
+  return @{ el = $e; pids = $pids }
+}
+
+function Cmd-Focus($req) {
+  $t = Get-Target $req
+  $e = $t.el
   try { $wp = $e.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern); if ($wp.Current.WindowVisualState -eq 'Minimized') { $wp.SetWindowVisualState('Normal') } } catch { }
   try { $e.SetFocus() } catch { }
   if ($req['raise']) { Ensure-Native; [void][LumenNative]::Raise([int64]$req['hwnd']) }
@@ -119,6 +160,25 @@ $script:deadline = [DateTime]::MinValue
 $script:truncated = $false
 $script:rootOff = $false
 
+# A field is a password when the app says so (IsPassword) or when it calls itself one: its own name or automation id, or its label.
+function Test-PwText([string]$ct, [string]$name, [string]$aid, [string]$label) {
+  if ($PWTYPES -notcontains $ct) { return $false }
+  return (($name -match $PWRE) -or ($aid -match $PWRE) -or ($label -match $PWRE))
+}
+function Label-Of($el) {
+  try { $lb = $el.Current.LabeledBy; if ($lb -ne $null) { return [string]$lb.Current.Name } } catch { }
+  return ''
+}
+function Test-PwElement($el) {
+  try {
+    $ec = $el.Current
+    if ($ec.IsPassword) { return $true }
+    $ct = ($ec.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+    if ($PWTYPES -notcontains $ct) { return $false }
+    return (Test-PwText $ct ([string]$ec.Name) ([string]$ec.AutomationId) (Label-Of $el))
+  } catch { return $true }
+}
+
 function Pat($el, $pattern) {
   try { return $el.GetCurrentPattern($pattern) } catch { return $null }
 }
@@ -129,6 +189,7 @@ function Walk-Node($el, $depth, $walker) {
   if ($c.IsPassword) { return @{ pw = $true } }   # nothing else about a password field is read
   $script:nodeBudget--
   $ct = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+  if ($PWTYPES -contains $ct) { if (Test-PwText $ct ([string]$c.Name) ([string]$c.AutomationId) (Label-Of $el)) { return @{ pw = $true } } } # reads follow the same rule as acts
   $node = @{ t = $ct }
   $name = $c.Name
   if ($name) { $node['n'] = $name.Substring(0, [Math]::Min($name.Length, 200)) }
@@ -182,6 +243,7 @@ function Walk-Node($el, $depth, $walker) {
 }
 
 function Cmd-Tree($req) {
+  $null = Get-Target $req
   $script:els = @{}
   $script:seq = 0
   $script:nodeBudget = [int]$req['max']; if ($script:nodeBudget -le 0) { $script:nodeBudget = 700 }
@@ -203,11 +265,67 @@ function Cmd-Tree($req) {
 function Get-El($id) {
   $e = $script:els[[string]$id]
   if ($e -eq $null) { throw "No item $id. Read the app again (read_app) and use an id from that." }
-  try { $ec = $e.Current; $ect = ($ec.ControlType.ProgrammaticName -replace '^ControlType\.', ''); if ($ec.IsPassword -or (($PWTYPES -contains $ect) -and (([string]$ec.Name -match $PWRE) -or ([string]$ec.AutomationId -match $PWRE)))) { throw 'That is a password field. The AI never uses these.' } } catch [System.Windows.Automation.ElementNotAvailableException] { throw "Item $id is gone. Read the app again." }
+  try { if (Test-PwElement $e) { throw 'That is a password field. The AI never uses these.' } } catch [System.Windows.Automation.ElementNotAvailableException] { throw "Item $id is gone. Read the app again." }
   return $e
 }
 
+# What the keyboard guard sees right before keys are sent: which program has the foreground, which element has the focus, whether it is a password.
+function Get-InputState($req) {
+  if ($TEST -and $req['test'] -and $req['test']['states']) {
+    $q = $script:testStates
+    if ($q -eq $null -or $script:testStatesFor -ne $req['id']) { $script:testStates = [System.Collections.ArrayList]@($req['test']['states']); $script:testStatesFor = $req['id']; $q = $script:testStates }
+    $st = $q[0]; if ($q.Count -gt 1) { $q.RemoveAt(0) }
+    $fpid = 0; try { $fpid = [int](Win-Element $st['hwnd']).Current.ProcessId } catch { }
+    return @{ fgPid = $fpid; focusPid = $fpid; password = [bool]$st['password'] }
+  }
+  Ensure-Native
+  $f = $A::FocusedElement
+  $fp = 0; $pw = $false
+  if ($f -ne $null) { $fp = [int]$f.Current.ProcessId; $pw = (Test-PwElement $f) }
+  return @{ fgPid = [int][LumenNative]::ForegroundPid(); focusPid = $fp; password = $pw }
+}
+
+function Escape-Keys([string]$s) { $s = $s -replace "`r`n|`r", "`n"; return [regex]::Replace($s, '[+^%~(){}\[\]\n]', { param($m) if ($m.Value -eq "`n") { '{ENTER}' } else { '{' + $m.Value + '}' } }) }
+
+# Text in pieces of at most 16 characters (never splitting a surrogate pair), each already escaped for SendKeys.
+function Split-Text([string]$text) {
+  $out = New-Object System.Collections.ArrayList
+  $i = 0
+  while ($i -lt $text.Length) {
+    $n = [Math]::Min(16, $text.Length - $i)
+    if ($n -lt $text.Length - $i -and [char]::IsHighSurrogate($text[$i + $n - 1])) { $n-- }
+    $piece = $text.Substring($i, $n)
+    [void]$out.Add(@{ keys = (Escape-Keys $piece); n = $n })
+    $i += $n
+  }
+  return $out
+}
+
+# Sends the pieces one at a time. Before EACH piece: the foreground window must belong to the approved program, the keyboard focus must be in it,
+# and the focused element must not be a password field. The first piece that fails stops everything; what was typed so far is reported.
+function Send-Guarded($pieces, $pids, $req) {
+  $sent = 0; $total = 0; foreach ($p in $pieces) { $total += $p.n }
+  $why = ''
+  $sink = New-Object System.Collections.ArrayList
+  foreach ($p in $pieces) {
+    $st = Get-InputState $req
+    if ($pids -notcontains [int]$st.fgPid) { $why = 'focus'; break }
+    if ($pids -notcontains [int]$st.focusPid) { $why = 'focus'; break }
+    if ($st.password) { $why = 'password'; break }
+    if ($TEST -and $req['test'] -and $req['test']['sink']) { [void]$sink.Add($p.keys) } else { [System.Windows.Forms.SendKeys]::SendWait($p.keys) }
+    $sent += $p.n
+    if ($TEST -and $req['test'] -and $req['test']['delay']) { Start-Sleep -Milliseconds ([int]$req['test']['delay']) }
+  }
+  return @{ sent = $sent; total = $total; stopped = $why; sink = $sink.ToArray() }
+}
+function Refuse-Partial($r) {
+  if ($TEST -and $r.sink.Count) { $script:testSunk = ($r.sink -join '') }
+  if ($r.stopped -eq 'password') { throw "Stopped: the keyboard focus moved to a password field, which the AI never types into. $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed." }
+  if ($r.stopped) { throw "Stopped: the keyboard focus left the app (the user or another window took it). $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed. Use focus_app and check the app before trying again.$(if ($TEST) { ' [sink: ' + $script:testSunk + ']' })" }
+}
+
 function Cmd-Invoke($req) {
+  $t = Get-Target $req
   $e = Get-El $req['el']
   if (-not $e.Current.IsEnabled) { throw 'That item is disabled.' }
   # Invoke can wait for a dialog it opens to close: run it on its own thread and answer after a moment either way.
@@ -227,51 +345,53 @@ function Cmd-Invoke($req) {
   $method = [string]($ps.EndInvoke($async) | Select-Object -Last 1)
   $ps.Dispose()
   if ($method -ne 'none') { return @{ method = $method } }
-  # No pattern: focus it and press Enter (what a keyboard user would do).
+  # No pattern: focus it and press Enter (what a keyboard user would do), guarded like any other keys.
   $e.SetFocus(); Start-Sleep -Milliseconds 80
-  Check-Focus ($e.Current.ProcessId)
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  $r = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
+  Refuse-Partial $r
   return @{ method = 'keys' }
 }
 
-function Check-Focus($procId) {
-  $f = $A::FocusedElement
-  if ($f -eq $null -or $f.Current.ProcessId -ne $procId) { throw 'The keyboard focus is not in that app (the user may have switched away), so nothing was typed. Use focus_app and try again.' }
-}
-
-function Escape-Keys([string]$s) { return [regex]::Replace($s, '[+^%~(){}\[\]]', '{$0}') }
-
 function Cmd-SetText($req) {
+  $t = Get-Target $req
   $e = Get-El $req['el']
   $text = [string]$req['text']
   $vp = $null
-  if ($e.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp) -and -not $vp.Current.IsReadOnly) {
+  $forceKeys = ($TEST -and $req['forceKeys'])
+  if (-not $forceKeys -and $e.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp) -and -not $vp.Current.IsReadOnly) {
     if ($req['append']) { $text = [string]$vp.Current.Value + $text }
     $vp.SetValue($text)
     $method = 'value'
+    $res = @{ method = $method }
   } else {
+    if ($text.Length -gt 500) { throw 'This field has no way to be set directly, and typing key by key is limited to 500 characters. Type it in smaller parts.' }
     $e.SetFocus(); Start-Sleep -Milliseconds 100
-    Check-Focus ($e.Current.ProcessId)
-    [System.Windows.Forms.SendKeys]::SendWait((Escape-Keys $text))
+    $r = Send-Guarded (Split-Text $text) $t.pids $req
+    Refuse-Partial $r
     $method = 'keys'
+    $res = @{ method = $method; sink = $r.sink }
   }
   if ($req['submit']) {
-    if ($method -eq 'value') { $e.SetFocus(); Start-Sleep -Milliseconds 60; Check-Focus ($e.Current.ProcessId) }
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    $e.SetFocus(); Start-Sleep -Milliseconds 60
+    $r2 = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
+    Refuse-Partial $r2
   }
-  return @{ method = $method }
+  return $res
 }
 
 function Cmd-Keys($req) {
-  $w = Win-Element $req['hwnd']
-  try { $w.SetFocus() } catch { }
+  $t = Get-Target $req
+  try { $t.el.SetFocus() } catch { }
   Start-Sleep -Milliseconds 120
-  Check-Focus ($w.Current.ProcessId)
-  [System.Windows.Forms.SendKeys]::SendWait([string]$req['seq'])
-  return @{ sent = $true }
+  $pieces = New-Object System.Collections.ArrayList
+  foreach ($k in $req['chords']) { [void]$pieces.Add(@{ keys = [string]$k; n = 1 }) }
+  $r = Send-Guarded $pieces $t.pids $req
+  Refuse-Partial $r
+  return @{ sent = $r.sent; sink = $r.sink }
 }
 
 function Cmd-Shot($req) {
+  $null = Get-Target $req
   Ensure-Native
   $b64 = [LumenNative]::Capture([int64]$req['hwnd'], [int]$req['w'], [int64]$req['q'])
   if (-not $b64) { return @{ image = $null } }
@@ -289,7 +409,7 @@ function Cmd-Resolve($req) {
     if (-not $d -or -not (Test-Path $d)) { continue }
     foreach ($f in (Get-ChildItem -Path $d -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue)) {
       $base = $f.BaseName.ToLowerInvariant()
-      if ($base -eq $want -or $base.StartsWith($want) -or $base.Contains($want)) {
+      if ($base -eq $want -or $base.StartsWith($want)) {
         $target = ''
         try { $target = $sh.CreateShortcut($f.FullName).TargetPath } catch { }
         $key = [Guid]::NewGuid().ToString('N')

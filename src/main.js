@@ -7914,6 +7914,7 @@ ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
 ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false));
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
+app.on('before-quit', () => { try { desktopWired?.controller.destroy(); } catch { /* nothing started */ } }); // [desktop apps] the helper and the banner end with Lumen
 if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSettings };
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
 signedInSites.register(ipcMain);

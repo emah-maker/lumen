@@ -18,6 +18,7 @@ const SECURITY = new Set([
 ]);
 const SYSTEM = new Set([ // settings that change the computer itself
   'systemsettings', 'regedit', 'mmc', 'gpedit', 'secpol', 'control', 'taskschd', 'compmgmt', 'lusrmgr', 'msconfig', 'dism',
+  'taskmgr', 'mstsc', 'wscript', 'cscript', 'mshta', 'rundll32', 'regsvr32', 'msiexec', 'netplwiz', 'wf', 'cleanmgr', 'diskmgmt', 'eventvwr', // task manager (Run new task), scripting hosts and installers: code execution
 ]);
 const PASSWORD_MANAGERS = new Set([
   '1password', '1passwordcli', 'bitwarden', 'keepass', 'keepassxc', 'keepass2', 'dashlane', 'lastpass', 'nordpass', 'enpass',
@@ -39,8 +40,14 @@ const TERMINALS = new Set([
 ]);
 
 const procKey = (proc) => String(proc || '').trim().toLowerCase().replace(/\.exe$/, '');
+// An app is its full image path, lower case with backslashes: "winword.exe" in another folder is another app.
+const exeKey = (p) => String(p || '').trim().toLowerCase().replace(/\//g, '\\');
+const baseOf = (p) => procKey(exeKey(p).split('\\').pop());
+// Every name this window's program goes by: the file name, the process name and the name the file says it was built as (OriginalFilename).
+const identities = (win) => [...new Set([baseOf(win?.exe), procKey(win?.proc), procKey(win?.original)].filter(Boolean))];
 
 // A friendly name for the approval card and the settings list. Falls back to the program's own description, then its process name.
+// (Names that look like markup are cleaned: they come from the program and are shown to the AI.)
 const FRIENDLY = {
   winword: 'Microsoft Word', excel: 'Microsoft Excel', powerpnt: 'Microsoft PowerPoint', outlook: 'Microsoft Outlook', onenote: 'Microsoft OneNote',
   msaccess: 'Microsoft Access', mspub: 'Microsoft Publisher', visio: 'Microsoft Visio', winproj: 'Microsoft Project', teams: 'Microsoft Teams', ms_teams: 'Microsoft Teams',
@@ -52,46 +59,53 @@ const FRIENDLY = {
 function friendlyName(proc, description = '') {
   const key = procKey(proc);
   if (FRIENDLY[key]) return FRIENDLY[key];
-  const d = String(description || '').trim();
+  const d = String(description || '').replace(/[<>"`]/g, '').trim();
   if (d && d.length <= 60 && !/^[a-z0-9_.-]+$/.test(d)) return d;
-  const base = String(proc || '').replace(/\.exe$/i, '');
+  const base = String(proc || '').replace(/\.exe$/i, '').replace(/[<>"`]/g, '');
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'this app';
 }
 
 // win: { proc, title, pid, exe } as the helper reports a top-level window. opts: { lumenPid, lumenExe, terminals }.
 // Returns '' when nothing blocks it, else the sentence the AI is told (and the user may see).
 function blockedReason(win, opts = {}) {
-  const proc = procKey(win?.proc);
+  const ids = identities(win);
+  const hit = (set) => ids.some((id) => set.has(id));
   const title = String(win?.title || '');
-  const exe = String(win?.exe || '').toLowerCase();
-  if (!proc && !title) return 'That window could not be identified, so the AI does not use it.';
-  const lumenExe = String(opts.lumenExe || '').toLowerCase();
-  if ((opts.lumenPid && Number(win?.pid) === Number(opts.lumenPid)) || proc === 'lumen' || (lumenExe && exe && exe === lumenExe)) {
+  const exe = exeKey(win?.exe);
+  if (!ids.length && !title) return 'That window could not be identified, so the AI does not use it.';
+  const lumenExe = opts.lumenExe || '';
+  if (ids.includes('applicationframehost')) return 'That is a Windows app window whose program could not be identified (it is hosted by ApplicationFrameHost), so the AI does not use it. Windows Settings, Windows Security and others live in such windows.';
+  if ((opts.lumenPid && (Number(win?.pid) === Number(opts.lumenPid) || Number(win?.hpid) === Number(opts.lumenPid))) || ids.includes('lumen') || (lumenExe && exe && exe === exeKey(lumenExe))) {
     return 'That is Lumen itself. The AI does not operate its own window; use the browser tools instead.';
   }
-  if (SECURITY.has(proc) || SECURITY_TITLE.test(title)) return 'That is a Windows security, sign-in or permission prompt (UAC, Windows Security, the lock screen). The AI never uses these; the user has to answer them.';
-  if (SYSTEM.has(proc)) return 'That changes Windows settings, which the AI does not touch. The user can do it themselves.';
-  if (PASSWORD_MANAGERS.has(proc) || PASSWORD_TITLE.test(title)) return 'That is a password manager. The AI never uses password managers.';
-  if (FINANCE.has(proc) || FINANCE_TITLE.test(title)) return 'That is a banking or finance app. The AI does not use these; the user can do it themselves.';
-  if (TERMINALS.has(proc) && opts.terminals !== true) return 'That is a terminal. The AI does not use terminals unless the user allows it in Settings > AI (a terminal can run anything on this computer).';
+  if (hit(SECURITY) || SECURITY_TITLE.test(title)) return 'That is a Windows security, sign-in or permission prompt (UAC, Windows Security, the lock screen). The AI never uses these; the user has to answer them.';
+  if (hit(SYSTEM)) return 'That changes Windows settings, which the AI does not touch. The user can do it themselves.';
+  if (hit(PASSWORD_MANAGERS) || PASSWORD_TITLE.test(title)) return 'That is a password manager. The AI never uses password managers.';
+  if (hit(FINANCE) || FINANCE_TITLE.test(title)) return 'That is a banking or finance app. The AI does not use these; the user can do it themselves.';
+  if (hit(TERMINALS) && opts.terminals !== true) return 'That is a terminal. The AI does not use terminals unless the user allows it in Settings > AI (a terminal can run anything on this computer).';
   return '';
 }
 
-const appKey = (win) => procKey(win?.proc);
+const appKey = (win) => exeKey(win?.exe);
+// Programs that are not terminals but can start one (or run anything) from inside: the card says so.
+const SHELL_CAPABLE = new Set(['explorer', 'code', 'devenv', 'cursor', 'windsurf', 'idea64', 'pycharm64', 'rider64', 'sublime_text', 'notepad++']);
+const WARN_SHELL = 'Note: this program can also start a terminal or run commands (its address bar, "Open in terminal", a built-in terminal), so allowing it can let the AI run things.';
 
 // The decision for one window.
 //   opts: { master, terminals, allowed: Iterable<{app}|string>, once: Set<string>, lumenPid, lumenExe }
 //   returns { status: 'blocked' | 'off' | 'allow' | 'ask', reason, app, name, always }
 function decide(win, opts = {}) {
   const app = appKey(win);
-  const name = friendlyName(win?.proc, win?.description);
+  const name = friendlyName(win?.proc || baseOf(win?.exe), win?.description);
   const reason = blockedReason(win, opts);
   if (reason) return { status: 'blocked', reason, app, name };
   if (opts.master !== true) return { status: 'off', reason: OFF_TEXT, app, name };
-  const always = new Set([...(opts.allowed || [])].map((a) => procKey(typeof a === 'string' ? a : a?.app)));
-  if (always.has(app)) return { status: 'allow', app, name, always: true };
-  if (opts.once && opts.once.has(app)) return { status: 'allow', app, name, always: false };
-  return { status: 'ask', app, name };
+  if (!app) return { status: 'blocked', reason: 'Which program this window belongs to could not be verified (its file could not be read), so the AI does not use it.', app, name };
+  const warn = identities(win).some((id) => SHELL_CAPABLE.has(id)) ? WARN_SHELL : '';
+  const always = new Set([...(opts.allowed || [])].map((a) => exeKey(typeof a === 'string' ? a : a?.app)));
+  if (always.has(app)) return { status: 'allow', app, name, always: true, warn };
+  if (opts.once && opts.once.has(app)) return { status: 'allow', app, name, always: false, warn };
+  return { status: 'ask', app, name, warn };
 }
 
 const OFF_TEXT = 'Using other apps on this computer is off. The user can turn on Settings > AI > "Let the AI use other apps on this computer".';
@@ -106,11 +120,11 @@ function clean(value) {
   for (const item of value) {
     const raw = typeof item === 'string' ? { app: item } : item && typeof item === 'object' ? item : null;
     if (!raw) continue;
-    const app = procKey(raw.app);
-    if (!/^[a-z0-9][a-z0-9 ._-]{0,63}$/.test(app) || seen.has(app)) continue;
-    if (blockedReason({ proc: app, title: 'x' }, { terminals: true, lumenPid: 0 })) continue; // a never-app is never listed (terminals are a separate switch)
+    const app = exeKey(raw.app);
+    if (!/^[a-z]:\\[^<>"|?*\0]{1,250}\.exe$/.test(app) || seen.has(app)) continue; // a full image path: a bare name is not an app
+    if (blockedReason({ proc: baseOf(app), exe: app, title: 'x' }, { terminals: true, lumenPid: 0 })) continue; // a never-app is never listed (terminals are a separate switch)
     seen.add(app);
-    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : friendlyName(app);
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : friendlyName(baseOf(app));
     const added = Number.isFinite(Number(raw.added)) && Number(raw.added) > 0 ? Math.round(Number(raw.added)) : 0;
     out.push({ app, name, added });
   }
@@ -134,6 +148,6 @@ function stepLabel(action, args = {}, name = '') {
 }
 
 module.exports = {
-  blockedReason, decide, clean, friendlyName, stepLabel, procKey, appKey, OFF_TEXT, NOT_WINDOWS, MAX_APPS,
+  blockedReason, decide, clean, friendlyName, stepLabel, procKey, exeKey, baseOf, identities, appKey, WARN_SHELL, OFF_TEXT, NOT_WINDOWS, MAX_APPS,
   TERMINALS, SECURITY, PASSWORD_MANAGERS, FINANCE,
 };

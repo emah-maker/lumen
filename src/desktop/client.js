@@ -20,7 +20,10 @@ function scriptFile({ read = (p) => fs.readFileSync(p), write = fs.writeFileSync
   const hash = require('crypto').createHash('sha1').update(body).digest('hex').slice(0, 10);
   const dir = path.join(tmp, 'lumen-desktop');
   const file = path.join(dir, `uia-${hash}.ps1`);
-  if (!exists(file)) { mkdir(dir, { recursive: true }); write(file, body); }
+  // An existing file is reused only when its content is exactly the script (a planted or damaged file is written over, never run).
+  let same = false;
+  if (exists(file)) { try { same = Buffer.compare(Buffer.from(read(file)), Buffer.from(body)) === 0; } catch { same = false; } }
+  if (!same) { mkdir(dir, { recursive: true }); write(file, body); }
   return file;
 }
 const helperArgs = (file) => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file];
@@ -56,6 +59,18 @@ function createClient(deps = {}) {
     fail(new Error('The app helper stopped.'));
   }
 
+  // Stop now: the helper is killed this instant (whatever it was typing or clicking ends with it), every waiting call is rejected, and a
+  // fresh one is started on the next call.
+  function abort(why = 'The app helper was stopped.') {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+    const c = child;
+    child = null;
+    ready = null;
+    if (c) { try { c.kill(); } catch { /* already gone */ } }
+    fail(Object.assign(new Error(why), { aborted: true }));
+  }
+
   function start() {
     if (platform !== 'win32') return Promise.reject(Object.assign(new Error('Not available on this platform.'), { unavailable: true }));
     if (destroyed) return Promise.reject(new Error('The app helper is shut down.'));
@@ -64,7 +79,9 @@ function createClient(deps = {}) {
     let file;
     try { file = (deps.scriptFile || scriptFile)(); } catch (err) { return Promise.reject(new Error(`The app helper could not be prepared: ${err.message}`)); }
     let c;
-    try { c = spawn('powershell.exe', helperArgs(file), { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }); } catch (err) { return Promise.reject(new Error(`The app helper could not start: ${err.message}`)); }
+    // (A development test run tells the helper so, which turns on its test seam; a packaged Lumen never does.)
+    const testRun = deps.testRun ?? (() => { try { return require('../test-mode').isTest(); } catch { return false; } })()
+    try { c = spawn('powershell.exe', helperArgs(file), { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], ...(testRun ? { env: { ...process.env, LUMEN_DESKTOP_TEST: '1' } } : {}) }); } catch (err) { return Promise.reject(new Error(`The app helper could not start: ${err.message}`)); }
     child = c;
     let buf = '';
     let helloSeen = null;
@@ -124,7 +141,7 @@ function createClient(deps = {}) {
   }
 
   return {
-    call, stop, start,
+    call, stop, start, abort,
     alive: () => Boolean(child),
     startMs: () => lastStartMs,
     pid: () => child?.pid || 0,

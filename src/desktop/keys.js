@@ -49,7 +49,8 @@ function parseKeys(input) {
   if (!text) throw new KeysError('No keys given. Examples: "ctrl+s", "Enter", "ctrl+a ctrl+c".');
   const chords = text.split(/\s+/);
   if (chords.length > MAX_KEYS) throw new KeysError(`At most ${MAX_KEYS} keys at once.`);
-  return { seq: chords.map(chord).join(''), shown: chords.join(' ') };
+  const parts = chords.map(chord); // one entry per chord: the helper sends them one at a time, checking the focus before each
+  return { seq: parts.join(''), chords: parts, shown: chords.join(' ') };
 }
 
 module.exports = { parseKeys, escapeText, KeysError, MAX_KEYS };

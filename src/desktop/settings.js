@@ -14,11 +14,11 @@ function createDesktopSettings({ readSettings, writeSettings, now = () => Date.n
     setMaster: (on) => { writeSettings({ ...readSettings(), aiDesktopControl: on === true }); },
     allowed: () => list(),
     allow(app, name) {
-      const key = policy.procKey(app);
-      if (policy.blockedReason({ proc: key, title: 'x' }, { terminals: api.terminals() })) return list(); // never listed
-      return save([...list().filter((a) => a.app !== key), { app: key, name: name || policy.friendlyName(key), added: now() }]);
+      const key = policy.exeKey(app);
+      if (policy.blockedReason({ proc: policy.baseOf(key), exe: key, title: 'x' }, { terminals: api.terminals() })) return list(); // never listed
+      return save([...list().filter((a) => a.app !== key), { app: key, name: name || policy.friendlyName(policy.baseOf(key)), added: now() }]);
     },
-    remove: (app) => save(list().filter((a) => a.app !== policy.procKey(app))),
+    remove: (app) => save(list().filter((a) => a.app !== policy.exeKey(app))),
     clear: () => save([]),
     register(ipcMain) {
       ipcMain.handle('settings:desktop-apps', () => list());

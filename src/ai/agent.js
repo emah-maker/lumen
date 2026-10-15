@@ -542,6 +542,8 @@ const DESKTOP_TOOL = {
   eager_input_streaming: true,
 };
 const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'open_app']); // (list_apps, read_app and screenshot_app only read)
+// What an app shows (titles, text, a picture) is untrusted content: after these actions the run is tainted, and src/desktop then asks a card for every click, type, key press and app start.
+const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app']);
 // A conversation that asks for another app (not just the word "word") is offered the tool even while the switch is off, so the AI can ask to turn it on.
 const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [research] research_board is the sidebar chat's own source list (settings.research), so, like delegate, it is not listed to MCP clients or the CLI engines.
@@ -966,7 +968,7 @@ const ACTING_TOOLS = new Set(['click', 'click_at', 'drag', 'type_text', 'fill_fo
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
 // (delegate is not here: it marks the chat tainted itself once a helper has read a page, delegate(), so the helpers' own first reads are judged like the chat's)
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'list_files', 'clipboard', 'desktop']); // [device access] file names and clipboard text count as read content too; [desktop apps] what another app shows is untrusted content too
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'list_files', 'clipboard']); // [device access] file names and clipboard text count as read content too
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -4088,7 +4090,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
-    if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
+    if (READING_TOOLS.has(name) || (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -5170,6 +5172,7 @@ ${out.text}${note}
     const hosts = gate.hosts;
     const ctx = {
       emit: gate.emit, signal: gate.signal,
+      tainted: () => Boolean(taintHolder(gate.run)?.tainted), // read a page, an email, a connector's answer or app text earlier: acting calls ask a card every time
       once: { has: (app) => hosts.has(`app:${app}`), add: (app) => hosts.add(`app:${app}`) }, // Once: for this chat (the chat's approved set; never saved)
       ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways === true, upload: { detail: card.detail, allowLabel: card.allowLabel } }),
     };
