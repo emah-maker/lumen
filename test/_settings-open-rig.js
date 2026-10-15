@@ -34,13 +34,15 @@ async function seedProfile(profile) {
 // Runs in the Settings page from dom-ready: records when the visible category first has rows and no placeholder, and long tasks.
 const PAGE_PROBE = `(() => {
   if (window.__rig) return;
-  const rig = window.__rig = { origin: performance.timeOrigin, paint: 0, filled: 0, ready: 0, input: 0, sent: 0, longtasks: [], loafs: [] };
+  const rig = window.__rig = { origin: performance.timeOrigin, paint: 0, filled: 0, ready: 0, input: 0, sent: 0, vis: 0, raf1: 0, vis0: document.visibilityState, longtasks: [], loafs: [] };
   const now = () => performance.timeOrigin + performance.now();
   for (const [type, list] of [['longtask', rig.longtasks], ['long-animation-frame', rig.loafs]]) {
     try { new PerformanceObserver((l) => { for (const e of l.getEntries()) list.push({ start: Math.round(performance.timeOrigin + e.startTime), dur: Math.round(e.duration), block: Math.round(e.blockingDuration || 0) }); }).observe({ type, buffered: true }); } catch {}
   }
   const visible = () => [...document.querySelectorAll('.pane')].find((p) => !p.hidden && p.offsetParent !== null);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !rig.vis) rig.vis = now(); });
   const tick = () => {
+    if (!rig.raf1) rig.raf1 = now();
     const p = visible();
     if (p && p.querySelector('.row')) {
       if (!rig.paint) rig.paint = now();
@@ -119,7 +121,7 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
     longtasks: after(rig.longtasks).map((e) => ({ at: e.start - t0, dur: e.dur })),
     loafs: after(rig.loafs).map((e) => ({ at: e.start - t0, dur: e.dur, block: e.block })),
     placeholders: Boolean(placeholders),
-    origin: rel(rig.origin), marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
+    origin: rel(rig.origin), vis: rel(rig.vis), vis0: rig.vis0, raf1: rel(rig.raf1), opened: opened.at - t0, marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
   };
 }
 
