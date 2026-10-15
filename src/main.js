@@ -5148,7 +5148,9 @@ function keepPendingProject(id) {
 // A project can have a real folder; its chats are mirrored there as Markdown files (plain text, NOT encrypted: the project's settings say
 // so), and a folder can be where the AI works (a chat's own pick, else its project's). All file work is async and never on the saving path:
 // a change schedules a write ~2 s after the last one, and the writes run one after another with the main thread free between them.
-const projectFolders = require('./features/project-folders');
+// Loaded on first use (a project's folder, a chat's work folder, a mirror write), not at startup (test/perf-budget.js counts startup modules).
+let projectFoldersMod = null;
+const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('./features/project-folders'))[key] });
 let documentsOverride = null; // TEST only (global.__projectFolders.setDocuments): the Documents folder of a test is never the user's own
 const documentsDir = () => documentsOverride || (TEST ? path.join(app.getPath('userData'), 'test-documents') : app.getPath('documents'));
 const projectsParent = () => { const d = String(readSettings().projectsDir || ''); return d && path.isAbsolute(d) ? d : path.join(documentsDir(), 'Lumen Projects'); };
@@ -5165,7 +5167,8 @@ const mirror = () => (chatMirror ||= projectFolders.createMirror({
   folderOf: mirrorFolderOf,
   onError: (err) => console.error('Project folder:', err?.message || err),
 }));
-const mirrorDebounce = projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000);
+let mirrorDebounceObj = null; // (made on first use, with the module above)
+const mirrorDebounce = new Proxy({}, { get: (_t, key) => { const d = (mirrorDebounceObj ||= projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000)); const v = d[key]; return typeof v === 'function' ? v.bind(d) : v; } });
 function mirrorChatSoon(id) { try { if (id && mirrorFolderOf(id)) mirrorDebounce.schedule(id); } catch { /* the chat is saved either way */ } }
 // Chats moved between projects ([[chat id, the project it was in]], read before the move): the file leaves the old folder (to Chats/Removed)
 // and is written in the new one.
@@ -5253,7 +5256,7 @@ function saveChatSoon(generation) {
 // Everything not on disk yet is written now, on this thread: the app is closing, or Windows is logging off or shutting down (no time for more).
 function flushChatsNow() {
   saveChat();
-  try { mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now */ }
+  try { if (mirrorDebounceObj) mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now (none if nothing was ever mirrored) */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
   try { chats().flush(); } catch { /* nothing pending */ }
 }
