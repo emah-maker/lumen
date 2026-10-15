@@ -39,6 +39,8 @@ These protections are on by default and run on your computer. None of them sends
 
 ## AI agents over MCP
 
+Settings → AI → **Let other apps use Lumen** gives Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) a token each. The tokens are kept encrypted with your system keychain in `external-apps.json` in the profile folder, shown once when made, and deleted by Revoke; the list also keeps each app's name and when it was last used. Nothing is sent anywhere by this: the apps connect to Lumen on your computer only, they can't reach Lumen's settings, saved passwords or chat history, and what they read goes to their own provider under that app's policy. Lumen shows a pill while an app works and a quiet notification when it finishes. ([Details](docs/external-apps.md).)
+
 If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Antigravity or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default. Whatever those apps read is then sent to their own AI provider, under that app's privacy policy.
 
 Settings → Usage can show your Codex plan limits and token totals. To do that Lumen reads the numbers (token counts, the used percentage and reset time of each limit window, the plan name) from the newest lines of Codex's own session logs in `~/.codex/sessions` on your computer, never your prompts, replies, file names or sign-in details, and keeps only those numbers in its `usage.json` like its other usage figures. "Add to Codex CLI" asks the `codex` program whether you are signed in and only adds one `[mcp_servers.lumen]` entry to `~/.codex/config.toml` (after copying the file); Lumen does not read `auth.json`.
