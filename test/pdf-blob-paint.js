@@ -3,7 +3,9 @@
 // measure is what the user sees: webContents.capturePage() of the tab, counting pure-black pixels right of the thumbnail column (the
 // PDF's black bar; the viewer's dark grey is not pure black). Hidden Electron run: LUMEN_TEST_BACKGROUND=1.
 // Scenarios: blank window sent to a blob in the foreground, the same behind the front tab and then switched to, the blob address navigated to
-// directly, with the sidebar open and closed again, and a tab switched away from, the window resized, and switched back to.
+// directly, with the sidebar open and closed again, and a tab switched away from, the window resized, and switched back to. A PDF tab
+// is asked to draw again (webContents.invalidate) when it is shown and when its view is resized; and window.open('blob:…') opens a tab
+// for a blob the opening page made, and not for another site's blob or blob:null.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
@@ -46,10 +48,12 @@ function makePdf(n) {
       window.goThere = () => { location.href = window.makeUrl(); };
     </script>`);
   });
+  const other = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Other</title><script>window.makeUrl = () => URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));</script>'); });
+  await new Promise((r) => other.listen(0, '127.0.0.1', r));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, TEMP: work, TMP: work, ANTHROPIC_API_KEY: 'sk-ant-test' };
-  let app = null; let ui = null;
+  let app = null; let ui;
   for (let attempt = 1; ; attempt++) {
     try {
       app = await electron.launch({ args: [path.join(__dirname, '..')], env, timeout: 60000 });
@@ -137,6 +141,60 @@ function makePdf(n) {
       await expectPaint('after the sidebar closes', t && t.contentsId, { settle: 300 });
       await closeTabs();
     }
+    // ---- 6: a PDF tab is asked to draw again when shown and when its view is resized (a spy on webContents.invalidate)
+    {
+      const maker = await openMaker();
+      await inView(maker.contentsId, 'window.openInTab()');
+      const t = await waitFor(blobTab, 15000);
+      await expectPaint('before the invalidate checks', t && t.contentsId);
+      const count = (id) => app.evaluate(({ webContents }, i) => webContents.fromId(i).__inv || 0, id);
+      await app.evaluate(({ webContents }, i) => { const wc = webContents.fromId(i); const real = wc.invalidate.bind(wc); wc.__inv = 0; wc.invalidate = () => { wc.__inv++; return real(); }; }, t.contentsId);
+      const front = (await win0()).tabs.find((x) => x.contentsId === maker.contentsId);
+      await switchTo(front.id);
+      await sleep(500);
+      const awayCount = await count(t.contentsId);
+      await switchTo(t.id);
+      await sleep(600);
+      const shown = await count(t.contentsId);
+      check('a PDF tab shown again is invalidated (twice: next frame, then again)', shown - awayCount >= 2, JSON.stringify({ awayCount, shown }));
+      await resizeWindow(-160, -120);
+      await sleep(800);
+      const resized = await count(t.contentsId);
+      check('a PDF tab whose view is resized is invalidated', resized - shown >= 2, JSON.stringify({ shown, resized }));
+      await resizeWindow(160, 120);
+      await sleep(500);
+      // a page that is not a PDF is left alone
+      const plainBefore = await app.evaluate(({ webContents }, i) => { const wc = webContents.fromId(i); const real = wc.invalidate.bind(wc); wc.__inv = 0; wc.invalidate = () => { wc.__inv++; return real(); }; return 0; }, maker.contentsId);
+      await switchTo(front.id);
+      await switchTo(t.id);
+      await switchTo(front.id);
+      await sleep(600);
+      check('a page that is not a PDF is never invalidated', plainBefore === 0 && (await count(maker.contentsId)) === 0, String(await count(maker.contentsId)));
+      await closeTabs();
+    }
+    // ---- 7: window.open('blob:…'): a blob the page made is a tab; another site's blob and blob:null are not
+    {
+      const maker = await openMaker();
+      const tabsNow = async () => (await win0()).tabs.length;
+      const before = await tabsNow();
+      await inView(maker.contentsId, "window.open(window.makeUrl(), '_blank'); 1");
+      const opened = await waitFor(blobTab, 15000);
+      check("window.open of the page's own blob opens a tab", Boolean(opened) && (await tabsNow()) === before + 1, JSON.stringify(opened && opened.url));
+      await closeTabs();
+      const foreign = await app.evaluate(async (_e, [id, u]) => global.__windows.open(id, u), [(await win0()).windowId, `http://127.0.0.1:${other.address().port}/`]);
+      await sleep(1500);
+      const foreignBlob = await inView(foreign.contentsId, 'window.makeUrl()');
+      const mk = await app.evaluate(async (_e, [id, u]) => global.__windows.open(id, u), [(await win0()).windowId, `${base}/maker`]);
+      await sleep(1500);
+      const n0 = await tabsNow();
+      await inView(mk.contentsId, `window.open(${JSON.stringify(foreignBlob)}, '_blank'); 1`);
+      await sleep(1500);
+      check("window.open of another site's blob opens nothing", (await tabsNow()) === n0 && !(await blobTab()), String(foreignBlob));
+      await inView(mk.contentsId, "window.open('blob:null/00000000-0000-4000-8000-000000000000', '_blank'); 1");
+      await sleep(1500);
+      check('window.open of blob:null opens nothing', (await tabsNow()) === n0 && !(await blobTab()));
+      await closeTabs();
+    }
     // ---- 5: switched away, the window resized while it was away, switched back
     {
       const maker = await openMaker();
@@ -156,6 +214,7 @@ function makePdf(n) {
   } finally {
     await app.close().catch(() => {});
     server.close();
+    other.close();
   }
   console.log(failures ? `\n${failures} FAILED` : '\nall passed');
   process.exit(failures ? 1 : 0);

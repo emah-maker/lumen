@@ -1947,6 +1947,11 @@ function releaseKeptPage(tab) {
 function keptPageHidden(tab) {
   try { const wc = tab.view.webContents; if (!wc.isDestroyed() && unthrottled.get(tab.id) === wc) wc.setBackgroundThrottling(false); } catch { /* gone */ }
 }
+// Chromium's PDF viewer frame can miss a redraw when its tab is shown or resized (features/pdf-repaint.js): PDF tabs only.
+let pdfRepainter = null;
+function pokePdf(tab) {
+  try { const wc = tab?.view?.webContents; if (!wc || !pdfZoom.viewerFrame(wc)) return; /* (not a PDF: the module is not even loaded) */ if (!pdfRepainter) pdfRepainter = require('./features/pdf-repaint').createRepainter({ isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)) }); pdfRepainter.poke(tab?.view?.webContents); } catch { /* the tab is going away */ }
+}
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() { return hang.mark('layout', layoutBody); } // [hang recorder]
 function layoutBody() {
@@ -1969,6 +1974,7 @@ function layoutBody() {
       // WasShown), and the view shown again then drew nothing new: the page froze or went blank when the sidebar opened or closed.
       if (show && tab.awayBySwitch !== false) releaseKeptPage(tab); // (before it is shown: see keptPageHidden)
       tab.view.setVisible(show); viewVisibleCalls++; // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
+      if (show) pokePdf(tab); // (a PDF tab coming to the front: Chromium's PDF frame may not have drawn)
       if (!show) { tab.awayBySwitch = !visible; if (!visible) keptPageHidden(tab); }
     } else if (!visible && tab.awayBySwitch === false) { tab.awayBySwitch = true; keptPageHidden(tab); } // (hidden for a moment, then switched away from)
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -1987,6 +1993,8 @@ function layoutBody() {
       } else {
         tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
       }
+      const boundsKey = `${contentBounds.x},${contentBounds.y},${contentBounds.width},${contentBounds.height},${tab.fullscreen ? 1 : 0}`;
+      if (tab.pdfBoundsKey !== boundsKey) { if (tab.pdfBoundsKey !== undefined) pokePdf(tab); tab.pdfBoundsKey = boundsKey; } // (resized while a PDF is open: draw again)
     }
     if (!overlay) setOverlay(tab, null);
   }
@@ -2372,7 +2380,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!popupLimit.allow()) return { action: 'deny' };
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (agentContents.has(wc) && disposition === 'new-window') return { action: 'deny' }; // [agent window] a popup window would come up in front of the user
-    if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
+    const ownBlob = target.startsWith('blob:') && require('./features/pdf-repaint').isSameOriginBlob(target, wc.getURL()); // a blob the page itself made (a PDF it builds and opens), never another site's or blob:null
+    if (!(isWebUrl(target) || ownBlob || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
     // extension page it liked (and whatever that page does with its privileges).
     if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
@@ -2395,7 +2404,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
     // tab is opened the usual way, loading the address, and its page is what Electron gets back.
     // (about:blank too: a page may open a blank window and set its address after an async step, as payments do.)
-    if (WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
+    if (WebContentsView && (isWebUrl(target) || ownBlob || target === 'about:blank')) {
       return {
         action: 'allow',
         outlivesOpener: true,
@@ -7422,6 +7431,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
+  for (const ev of ['restore', 'show']) w.on(ev, () => withWindow(rec, () => pokePdf(tabs.find((t) => t.id === activeId)))); // (a restored window: the PDF in front draws again)
   w.on('close', () => {
     if (quitting) return;
     const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
