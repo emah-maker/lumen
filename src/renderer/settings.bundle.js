@@ -6026,6 +6026,10 @@ function foldBelowTheFirstScreen() {
   }
   return later;
 }
+const navIcons = [];
+function fillNavIcons() {
+  for (const [icon, id] of navIcons.splice(0)) icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[id]}</svg>`; // constant markup
+}
 function revealFolded() {
   if (!foldedGroups.length) return;
   for (const g of foldedGroups) { g.classList.remove('later'); g.classList.add('lazy'); } // (lazy: laid out when it nears the screen, not all at once)
@@ -6074,7 +6078,7 @@ async function init() {
   for (const def of CATEGORIES) {
     def.title = tr(`settings.section.${def.id}`, def.title);
     const icon = h('span', { class: `ic ic-${def.id}`, 'aria-hidden': 'true' });
-    icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[def.id]}</svg>`; // constant markup
+    navIcons.push([icon, def.id]); // (their drawings are put in after the first paint: the coloured squares are there from the start)
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
     if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
@@ -6208,6 +6212,7 @@ async function init() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
     revealFolded();
+    fillNavIcons();
     paintedResolve();
     performance.mark('settings:visible');
     buildAll();
