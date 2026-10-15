@@ -135,6 +135,13 @@ async function measure(profile, section = '', { intent = false } = {}) {
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
+    // the page probe goes into every Settings page from dom-ready, including one loading in a view that was made before this open (the pooled process)
+    await app.evaluate(({ app: electronApp, webContents }, code) => {
+      global.__rigCode = code; global.__rigHook = true;
+      const hook = (wc) => wc.on('dom-ready', () => { if (/settings\.html/.test(wc.getURL())) wc.executeJavaScript(global.__rigCode, true).catch(() => {}); });
+      for (const wc of webContents.getAllWebContents()) hook(wc);
+      electronApp.on('web-contents-created', (_e, wc) => hook(wc));
+    }, PAGE_PROBE);
     await sleep(9000); // let the browser's own startup work finish (ad-block lists, looking for the CLIs): the first open is "cold" for Settings, not for the browser
     const cold = await openOnce(app, section, { ui: intent ? ui : null });
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
