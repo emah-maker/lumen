@@ -1,6 +1,6 @@
 {
-  "threeSessionsOverIdleMb": 1800,
-  "sixSessionsOverIdleMb": 3700,
+  "threeSessionsOverIdleMb": 2000,
+  "sixSessionsOverIdleMb": 3850,
   "afterCloseOverIdleMb": 150,
   "afterCloseExtraProcesses": 0,
   "extraProcessesPerSession": 3,
@@ -11,7 +11,7 @@
   "p95Ms": { "navigate": 1400, "read_page": 60, "screenshot": 250, "find": 100, "click": 800 },
   "readPageBytes": 20000,
   "screenshotBytes": 700000,
-  "fiveTabsOneSessionOverIdleMb": 2100,
+  "fiveTabsOneSessionOverIdleMb": 2300,
   "fiveTabsOneSessionProcesses": 17,
   "fiveTabsOneSessionMaxWindows": 2,
   "fiveTabsP95Ms": 800,

@@ -29,7 +29,7 @@ const BOUNDS = require('./mcp-perf-bounds.json');
 // A heavy page: ~6000 elements, 400 links and buttons, a long text. Nothing external.
 function heavyPage(n) {
   const rows = [];
-  for (let i = 0; i < 400; i++) rows.push(`<li><a href="/item/${i}?p=${n}">Item ${i} of page ${n}</a> <button onclick="window.__clicked=${i}">Open ${i}</button> <span>${'lorem ipsum dolor sit amet '.repeat(6)}</span></li>`);
+  for (let i = 0; i < 400; i++) rows.push(`<li><a href="/item/${i}?p=${n}">Item ${i} of page ${n}</a> <button onclick="window.__clicked=${i};document.body.dataset.clicked=${i}">Open ${i}</button> <span>${'lorem ipsum dolor sit amet '.repeat(6)}</span></li>`);
   const paras = [];
   for (let i = 0; i < 600; i++) paras.push(`<p>Paragraph ${i}: ${'The quick brown fox jumps over the lazy dog. '.repeat(8)}</p>`);
   return `<!doctype html><title>Heavy ${n}</title><body><h1>Heavy page ${n}</h1><nav><ul>${rows.join('')}</ul></nav><main>${paras.join('')}</main><div style="height:3000px;background:linear-gradient(#fff,#9cf)">tall</div></body>`;
@@ -283,7 +283,7 @@ function startAgent({ env, clientName }) {
         // The click lands on the tab it names (a counter in each page), all five at once, and on no other.
         const clicked = await Promise.all(ids.map((tab, s) => solo.callText('click', { tab_id: tab, text: `Open ${s + 11}` })));
         check('five clicks at once, one per tab, all succeed', clicked.every((c) => !c.isError), clicked.map((c) => c.text.slice(0, 80)).join(' | '));
-        const counters = await Promise.all(ids.map((tab) => solo.callText('run_script', { tab_id: tab, code: 'String(window.__clicked)' })));
+        const counters = await Promise.all(ids.map((tab) => solo.callText('run_script', { tab_id: tab, code: 'return String(document.body.dataset.clicked)' })));
         check('each tab got exactly its own click (page-side counter)', counters.every((c, s) => c.text.includes(String(s + 11)) && !c.isError), counters.map((c) => c.text.slice(0, 60)).join(' | '));
         const named = await solo.callText('read_page', { tab_id: ids[0] });
         check('read_page with tab_id reads that tab (not the front one)', /Heavy 900/.test(named.text) && !named.isError, named.text.slice(0, 200));
@@ -348,7 +348,7 @@ function startAgent({ env, clientName }) {
       const aTab = await opened(A, 700);
       const bTab = await opened(B, 701);
       const userTab = await app.evaluate(() => global.__windows.list()[0].tabs[0]);
-      const userUrl = () => app.evaluate(({ webContents }) => webContents.fromId(global.__windows.list()[0].tabs[0].contentsId).getURL());
+      const userUrl = () => app.evaluate(({ webContents }) => webContents.fromId(global.__windows.list()[0].tabs[0].contentsId).getURL().split('#')[0]); // (the new-tab page keeps its settings in the #hash)
       const userUrlBefore = await userUrl();
       const inSettings = await openSettingsTab(app);
       const targets = [['one of the user\'s tabs', userTab.id], ['another session\'s tab', bTab], ['the Settings tab', inSettings.id]];
@@ -361,7 +361,7 @@ function startAgent({ env, clientName }) {
       check('refused calls changed nothing: the user\'s tab keeps its page', (await userUrl()) === userUrlBefore, await userUrl());
       const b = await B.callText('read_page', { tab_id: bTab });
       check('...the other session\'s tab still shows its page', /Heavy 701/.test(b.text), b.text.slice(0, 120));
-      const bClicked = await B.callText('run_script', { code: 'String(window.__clicked)' });
+      const bClicked = await B.callText('run_script', { code: 'return String(document.body.dataset.clicked)' });
       check('...and was not clicked or scripted', /undefined/.test(bClicked.text), bClicked.text.slice(0, 120));
       const own = await A.callText('read_page', { tab_id: aTab });
       check('an agent can still name its own tab', /Heavy 700/.test(own.text) && !own.isError, own.text.slice(0, 120));
