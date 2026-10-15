@@ -6239,6 +6239,7 @@ async function init() {
     fillNavIcons();
     paintedResolve();
     performance.mark('settings:visible');
+    for (const sid of neededBuilds(view)) buildOne(sid); // (the rest of this page: now, in the next frame)
     setTimeout(buildAll, 250); // (the other pages are built a moment later, not in the first frames' way: the page answers a click or a key at once)
   }));
 }
