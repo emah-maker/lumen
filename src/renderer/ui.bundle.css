@@ -1751,8 +1751,8 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 /* Software drawing (no GPU: hardware acceleration off, safe drawing mode, or Chromium fell back; settings-backend.js [igpu] softwareGfx, on top of Light). Every pixel is
    drawn and composited on the CPU, so: no backdrop blur anywhere, no blurred shadows (a hairline instead), no animation that repaints a large area or runs forever,
    and short transitions. The sidebar moves without a page snapshot (app.js lumenSoftwareGfx). Video is untouched. */
-:root.pref-gfx-soft { --t-base: 90ms; --t-smooth: 90ms; --t-snappy: 90ms; --t-drag: 90ms; }
-:root.pref-gfx-soft *, :root.pref-gfx-soft *::before, :root.pref-gfx-soft *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+/* (the transition tokens are left alone: shortening --t-smooth and friends made the tab strip drop 3x the frames on a tab switch, measured) */
+:root.pref-gfx-soft :is(.composer, .attachment-remove, .task-create, .pane-title) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } /* (every backdrop-filter in the UI's sheets; a universal selector made each class change on the tab strip re-match every element) */
 .pref-gfx-soft .composer { transition: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-gfx-soft .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
 .pref-gfx-soft .approval:not(.resolved):hover { transform: none; box-shadow: 0 0 0 1px var(--hairline); }
