@@ -565,3 +565,11 @@ details.disclosure > summary:focus-visible, details.adv-rows > summary:focus-vis
 details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px solid var(--hairline); }
 .card > details.adv-rows { border-top: 1px solid var(--hairline); }
 .card > details.adv-rows:first-child { border-top: none; }
+
+/* The weights the page uses, laid out while the page is still loading: the first use of each weight of a variable font takes ~7 ms, and the first screen would pay it all at once (removed after the first paint, settings.js). */
+.warm { position: absolute; visibility: hidden; pointer-events: none; width: 0; height: 0; overflow: hidden; }
+.warm .w4 { font-weight: 400; }
+.warm .w45 { font-weight: 450; }
+.warm .w5 { font-weight: 500; }
+.warm .w6 { font-weight: 600; }
+.warm .w7 { font-weight: 700; }

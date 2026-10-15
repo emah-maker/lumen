@@ -3336,6 +3336,7 @@ async function init() {
     document.body.dataset.shown = '1';
     revealFolded();
     fillNavIcons();
+    document.getElementById('warm')?.remove();
     paintedResolve();
     performance.mark('settings:visible');
     buildAll();
