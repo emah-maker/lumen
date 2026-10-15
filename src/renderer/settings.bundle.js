@@ -5,6 +5,7 @@
 // same API with those first calls answered from here. An answer is only reused in the first moment (and never after the first click or key),
 // so a setting changed on the page is always read afresh.
 (() => {
+  if (/^Win/.test(navigator.platform)) document.documentElement.classList.add('win'); // (for the font stack in settings.css)
   const start = performance.now();
   const TTL = 1500;
   let live = true;

@@ -94,8 +94,9 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
   while (Date.now() < end) {
     const r = await inPage('window.__rig ? [window.__rig.paint, window.__rig.input] : null');
     if (r && r[0] && !sentAt) {
-      await inPage(`(() => { const t = [...document.querySelectorAll('.pane:not([hidden]) input[type=checkbox]')].find((i) => i.offsetParent !== null || i.closest('label,.switch')?.offsetParent); if (t) t.focus(); return !!t; })()`);
-      sentAt = await app.evaluate((_e, i) => {
+      // (the first toggle on screen: the lists below the first screen come a frame after the first paint, so look again until one is there)
+      const found = await inPage(`(() => { const t = [...document.querySelectorAll('.pane:not([hidden]) input[type=checkbox]')].find((i) => i.offsetParent !== null || i.closest('label,.switch')?.offsetParent); if (t) t.focus(); return !!t; })()`);
+      if (found) sentAt = await app.evaluate((_e, i) => {
         const wc = global.__settings.contents(i);
         const at = Date.now();
         wc.focus();

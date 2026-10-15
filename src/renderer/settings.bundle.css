@@ -55,6 +55,8 @@
   font: 13px/1.45 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.003em;
 }
+
+:root.win { font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1c1c1e;
