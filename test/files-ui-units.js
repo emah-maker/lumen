@@ -50,9 +50,34 @@ module.exports = async function filesUiUnits(check) {
   const help = read('src', 'features', 'shortcuts-help.js');
   check('files picker: the shortcuts sheet lists it', help.includes("['shortcuts.findFiles', ['mod+shift+f']]") && en['shortcuts.findFiles'] && en['menu.findFiles'], '');
 
-  // ---- Settings > Privacy ----
+  // ---- the words ----
+  const cardKeys = [...new Set([...page.matchAll(/\bft\('(files\.card\.[A-Za-z]+)'/g)].map((m) => m[1]))];
+  check('files card: every string it shows goes through ft() and has a locale key (files.card.*)', cardKeys.length >= 30 && cardKeys.every((k) => en[k]), cardKeys.filter((k) => !en[k]).join());
+  const cardWords = page.slice(page.indexOf('the Files card (features/files.js)'), page.indexOf('const WIDGET_RENDERERS'));
+  check('files card: the old labels are gone from the card code, and the times are not hand-made', !/'Remove from list'/.test(cardWords) && !/min ago`/.test(cardWords) && /Intl\.RelativeTimeFormat/.test(page), '');
+  check('files card: the words are Remove from Files, Unpin and Clear Files list', en['files.card.remove'] === 'Remove from Files' && en['files.card.unpin'] === 'Unpin' && en['settings.files.clear'] === 'Clear Files list', '');
+  check('files card: a missing row is Find it from a click anywhere on it, and the first match takes the focus', /fl-find, \.fl-more/.test(page) && /fileFocusAfter/.test(page) && /data-role="cand"/.test(page), '');
+  check('files card: Unpin and Remove from Files offer Undo through lumenFiles.restore, and Remember-off offers Turn on', /lumenFiles\.restore\(id\)/.test(page) && /files\.card\.undo/.test(page) && /lumenFiles\.remember\(\)/.test(page) && /files\.card\.turnOn/.test(page), '');
+  check('the new wording: "Open a recent file" in the menus, the sheet and the picker', en['menu.findFiles'] === 'Open a recent file…' && en['shortcuts.findFiles'] === 'Open a recent or pinned file' && en['filesPicker.label'] === 'Open a recent file' && /Open a recent file/.test(picker), '');
+  check('files picker: no match offers "Search Documents, Desktop and Downloads" (scan), with Searching… and a "Found on this computer" group', /files\.scan\(q\)/.test(picker) && /action: 'scan'/.test(picker) && ['filesPicker.scan', 'filesPicker.searching', 'filesPicker.found', 'filesPicker.scanNone'].every((k) => en[k]) && /Search Documents, Desktop and Downloads/.test(en['filesPicker.scan']), '');
+
+  // ---- the ops: scan and restore on every bridge, in main's list and the UI-only gate ----
+  const files = require('../src/features/files');
+  const ops = ['scan', 'restore'];
+  check('files: scan and restore are ops of files.js and have a channel on all three bridges', ops.every((o) => files.OPS.includes(o) && files.channelFor.ui(o) === `files:${o}` && files.channelFor.newtab(o) === `newtab-files:${o}` && files.channelFor.settings(o) === `settings:files-${o}`), '');
+  check('files: main lists the same ops and gates files:scan and files:restore to the UI', ops.every((o) => main.includes(`'files:${o}'`)) && /const OPS = \['list'[^\]]*'scan', 'restore'\]/.test(main), '');
+  const bridges = [['preload.js', /scan: \(query\) => ipcRenderer\.invoke\('files:scan'/, /restore: \(id\) => ipcRenderer\.invoke\('files:restore'/], ['files-newtab-preload.js', /scan: call\('newtab-files:scan'\)/, /restore: call\('newtab-files:restore'\)/], ['settings-preload.js', /scan: call\('settings:files-scan'\)/, /restore: call\('settings:files-restore'\)/]];
+  check('files: the three preload bridges carry scan and restore', bridges.every(([f, a, b]) => a.test(read('src', 'preload', f)) && b.test(read('src', 'preload', f))), '');
+  check('files: a new profile (and only a new one) gets the Files card on its new-tab page', /seedFirstRunWidgets/.test(main) && /settingsFileExisted !== false/.test(main) && /!TEST\) seedFirstRunWidgets/.test(main), '');
+
+  // ---- Settings > General > Files ----
   const settings = read('src', 'renderer', 'settings.js');
-  check('settings: Privacy has "Remember files I open" (filesRemember) and a confirmed "Clear file list"', /toggle\('filesRemember'/.test(settings) && /Clear file list/.test(settings) && /S\.files\.clear\(\)/.test(settings) && /armedButton\(tr\('settings\.files\.clearGo'/.test(settings), '');
+  const buildFiles = settings.slice(settings.indexOf('async function buildFiles'), settings.indexOf('async function buildDownloads'));
+  const buildPrivacy = settings.slice(settings.indexOf('async function buildPrivacy'), settings.indexOf('async function buildPasswords') > 0 ? settings.indexOf('async function buildPasswords') : undefined);
+  check('settings: General > Files has "Remember files I open" (filesRemember) and a confirmed "Clear Files list" (files-clear)', /toggle\('filesRemember'/.test(buildFiles) && /S\.files\.clear\(\)/.test(buildFiles) && /armedButton\(tr\('settings\.files\.clearGo'/.test(buildFiles) && /'files-clear'/.test(buildFiles) && /\['files', 'Files'\]/.test(settings) && /\['files', buildFiles\]/.test(settings), '');
+  check('settings: Privacy keeps only a pointer row (Recent files: General > Files) and "files" is a settings link', !/toggle\('filesRemember'/.test(buildPrivacy) && /settings\.files\.privacyRef/.test(buildPrivacy) && /files: \{ cat: 'general', focus: 'files' \}/.test(settings) && require('../src/settings/settings-backend').SECTION_LINKS.includes('files'), '');
+  check('settings: the short Files description and the widget description are locale strings', en['settings.files.rememberDesc'] === 'Lumen remembers names and places of files you open, on this computer only. Never their contents.' && /widgets\.files\.desc/.test(settings) && Boolean(en['widgets.files.desc']), '');
+  check('docs/settings.md: the Files rows are under General, not Privacy', (() => { const d = read('docs', 'settings.md'); const gen = d.indexOf('## General'); const next = d.indexOf('\n## ', gen + 5); const row = d.indexOf('| Remember files I open |'); return row > gen && row < next && d.includes('| Clear Files list |') && !d.includes('| Clear file list |'); })(), '');
 };
 
 if (require.main === module) {

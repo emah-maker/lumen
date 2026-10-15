@@ -281,7 +281,7 @@ const UI_ONLY_IPC = new Set([
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
-  'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
+  'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
@@ -7506,6 +7506,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow && !TEST) seedFirstRunWidgets(); // a new profile's new-tab page starts with the Files card (an existing profile's page is left as it is)
     if (firstWindow && crashRecovery.pending()) setTimeout(() => { offerCrashRestore().catch((err) => console.error('[lumen] crash recovery:', err.message)); }, 600); // the last run crashed and the startup setting wouldn't bring its tabs back
     if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
   }
@@ -8405,6 +8406,15 @@ const widgets = createWidgets({
 aiStatusSoon = widgets.aiStatusSoon;
 scheduler.every('ai-status', 15e3, () => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, { whenHidden: 60e3 }); // (runs at once when a window is back) // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
+// A profile that had no settings file when Lumen started (a fresh install) and has no cards yet gets the Files card: the new-tab page is not empty
+// the first time, and Files has a place to start from. Only the first launch (the settings file exists from then on); tests do not call it
+// unless they ask (global.__seedFirstRunWidgets), so the default layout they assume stays empty.
+function seedFirstRunWidgets({ force = false } = {}) {
+  if (!force && settingsFileExisted !== false) return Promise.resolve(false);
+  if ((readSettings().homeWidgets || []).length) return Promise.resolve(false);
+  return widgets.save({ type: 'files', title: t('newtab.edit.type.files') }).then(() => true).catch(() => false);
+}
+if (TEST) global.__seedFirstRunWidgets = seedFirstRunWidgets;
 
 // [widgets] Gmail through the Google sign-in in Lumen (features/gmail-atom.js): one GET of an account's inbox Atom feed,
 // read with the normal session's cookies. Only https://mail.google.com/mail/u/N/feed/atom (checked again here), no
@@ -8838,7 +8848,7 @@ const filesApi = () => (filesRt ||= require('./features/files').create({
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'), // encrypted like the chats (the OS keychain)
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
-  remember: () => readSettings().filesRemember !== false, // Settings > Privacy > Remember files I open
+  remember: () => readSettings().filesRemember !== false, // Settings > General > Files > Remember files I open
   ignore: (p) => insidePath(app.getPath('userData'), p) || insidePath(__dirname, p), // Lumen's own profile and pages are never "files the user opened"
   openFile: (p) => { openTab(fileTabUrl(p)); focusWindow(); },
   openPath: (p) => filesShell('open', p),
@@ -8851,9 +8861,22 @@ const filesApi = () => (filesRt ||= require('./features/files').create({
   },
   send: (channel, payload) => { ui()?.send(channel, payload); },
   broadcast: filesBroadcast,
+  // The picker's "Search Documents, Desktop and Downloads" (a click by the user, so no AI-access setting): these folders when they exist,
+  // minus what the AI's file access keeps out of reach too (credentials folders, Lumen's own profile).
+  scanRoots: () => {
+    const home = TEST && global.__homeDir ? global.__homeDir : null; // (tests give a throwaway home, as for the AI's folder lookups)
+    const opts = { profile: app.getPath('userData'), ...(home ? { home } : {}) };
+    const deviceAccessMod = require('./features/device-access');
+    const roots = [];
+    for (const name of ['documents', 'desktop', 'downloads']) {
+      if (home) { roots.push(path.join(home, name[0].toUpperCase() + name.slice(1))); continue; }
+      try { roots.push(app.getPath(name)); } catch { /* this system has no such folder */ }
+    }
+    return { roots, blocked: (p) => Boolean(deviceAccessMod.blockedReason(p, opts)) };
+  },
 }));
 if (TEST) Object.defineProperty(global, '__files', { get: filesApi, configurable: true });
-// A file tab, viewer or download opened a local file: remembered (Settings > Privacy > Remember files I open turns this off). Loads the
+// A file tab, viewer or download opened a local file: remembered (Settings > General > Files > Remember files I open turns this off). Loads the
 // feature only for a file: address, so ordinary browsing never touches it.
 function noteFileTab(tab, url) {
   if (typeof url !== 'string' || !(url.startsWith('file:') || url.startsWith('lumen-pdf:'))) return;
@@ -8868,7 +8891,7 @@ setTimeout(() => { fs.promises.access(path.join(app.getPath('userData'), 'files.
 app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* nothing pending */ } });
 {
   // (the same names as files.js OPS / channelFor, spelled here so this file need not load it at start-up)
-  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach'];
+  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'];
   const CHANNELS = { ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`), newtab: (op) => `newtab-files:${op}`, settings: (op) => `settings:files-${op}` };
   const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender));
   for (const [kind, name] of Object.entries(CHANNELS)) {
@@ -8880,6 +8903,18 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
       });
     }
   }
+  // The Files card's own strings (locales/en.json files.card.*, widgets.files.*), for the new-tab page, which has no string table of its own.
+  ipcMain.on('newtab-files:strings', (event) => {
+    const mine = (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender))) || syntheticTestEvent(event);
+    const all = i18n().strings;
+    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.')).map((k) => [k, all[k]])) : {};
+  });
+  // The card's "Turn on" (when Remember files I open is off): this one setting, and nothing else, can be switched on from the new-tab page.
+  ipcMain.handle('newtab-files:remember', (event) => {
+    if (!newTabSender(event) && !syntheticTestEvent(event)) return false;
+    if (readSettings().filesRemember === false) { writeSettings({ ...readSettings(), filesRemember: true }); filesBroadcast(); }
+    return true;
+  });
 }
 // Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
 ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFromOtherApps(fileUrlsFor(paths.slice(0, 20))); });

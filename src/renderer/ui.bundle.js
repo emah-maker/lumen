@@ -13003,11 +13003,13 @@ const tabSearch = (() => {
 })();
 ;
 // ---- files-picker.js
-// The quick file picker (Ctrl+Shift+F, or File > Find files): fuzzy search over the files and folders Lumen knows (pinned, recently opened,
+// The quick file picker (Ctrl+Shift+F, or File > Open a recent file): fuzzy search over the files and folders Lumen knows (pinned, recently opened,
 // and what is inside pinned folders). Enter opens, Ctrl+Enter shows it in its folder, Alt+Enter attaches it to the sidebar chat, Esc closes.
 // It sits in the middle of the window over the page (shown as a still picture while it is open, like tab search), never waits on the disk:
 // the search runs in main (features/files.js) and is asked 60 ms after the last key; an answer that arrives after a newer question is
 // dropped, and at most 30 rows are drawn. With nothing typed it lists the pinned and recent files. Names are only set with textContent.
+// A typed query with no match offers one row, "Search Documents, Desktop and Downloads" (Enter or a click): main's bounded scan of those folders
+// (files.js scan, in the index worker), shown as "Searching…" and then under "Found on this computer".
 // Main side: features/files.js; the keys: main.js openFilesPicker, features/page-first-keys.js.
 
 const filesPicker = (() => {
@@ -13018,7 +13020,7 @@ const filesPicker = (() => {
   let panel = null;
   let input = null;
   let list = null;
-  let rows = []; // [{ entry, group, ranges }] in the order drawn
+  let rows = []; // [{ entry, group, ranges }] in the order drawn (or one { action: 'scan' } row: the offer to search the disk)
   let selected = 0;
   let asked = 0; // the newest question's number
   let timer = 0;
@@ -13051,7 +13053,7 @@ const filesPicker = (() => {
     : null);
   // Pinned first, then what was opened lately, then what is only inside a pinned folder; the order inside a group is the ranking.
   const groupOf = (e) => (e.pinned ? 'pinned' : e.openedAt > 0 ? 'recent' : 'indexed');
-  const GROUPS = [['pinned', 'Pinned', 'filesPicker.pinned'], ['recent', 'Recent', 'filesPicker.recent'], ['indexed', 'In pinned folders', 'filesPicker.indexed']];
+  const GROUPS = [['pinned', 'Pinned', 'filesPicker.pinned'], ['recent', 'Recent', 'filesPicker.recent'], ['indexed', 'In pinned folders', 'filesPicker.indexed'], ['found', 'Found on this computer', 'filesPicker.found']];
 
   function build() {
     panel = Object.assign(document.createElement('div'), { id: 'files-picker', className: 'files-picker', hidden: true });
@@ -13059,12 +13061,12 @@ const filesPicker = (() => {
     scrim.addEventListener('pointerdown', (e) => { e.preventDefault(); close(); });
     const box = Object.assign(document.createElement('div'), { className: 'files-picker-box' });
     box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-label', tr('filesPicker.label', 'Find files'));
+    box.setAttribute('aria-label', tr('filesPicker.label', 'Open a recent file'));
     input = Object.assign(document.createElement('input'), { id: 'files-picker-input', type: 'search', placeholder: tr('filesPicker.placeholder', 'Find a pinned or recent file'), autocomplete: 'off', spellcheck: false });
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-expanded', 'true');
     input.setAttribute('aria-controls', 'files-picker-results');
-    input.setAttribute('aria-label', tr('filesPicker.label', 'Find files'));
+    input.setAttribute('aria-label', tr('filesPicker.label', 'Open a recent file'));
     list = Object.assign(document.createElement('ul'), { id: 'files-picker-results', className: 'files-picker-results' });
     list.setAttribute('role', 'listbox');
     const mod = MAC ? '⌘' : 'Ctrl';
@@ -13111,7 +13113,15 @@ const filesPicker = (() => {
   // making and wiring seven elements by hand, 30 times an answer. The hover and the click are one listener on the list (build).
   const FOLDER_ICON = '<svg viewBox="0 0 16 16"><path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/></svg>';
   let template = null;
+  function actionRow(item, i) {
+    const li = Object.assign(document.createElement('li'), { className: `files-picker-item files-picker-action${i === selected ? ' selected' : ''}`, id: `files-picker-item-${i}`, textContent: item.text });
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', String(i === selected));
+    li.dataset.i = String(i);
+    return li;
+  }
   function row(item, i) {
+    if (item.action) return actionRow(item, i);
     if (!template) {
       template = document.createElement('li');
       template.setAttribute('role', 'option');
@@ -13144,13 +13154,16 @@ const filesPicker = (() => {
     if (now) { input.setAttribute('aria-activedescendant', now.id); now.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
   }
 
-  function render(entries, q, emptyText) {
+  // opts: { found: the entries came from the disk scan, offer: show the "Search Documents…" row when nothing matched, status: a line under the rows }
+  function render(entries, q, emptyText, opts = {}) {
     if (!isOpen()) return;
     const t0 = performance.now();
-    const items = entries.slice(0, 100).map(clean).filter(Boolean).map((entry) => ({ entry, group: groupOf(entry), ranges: q ? matchRanges(q, entry.name) : new Set() }));
+    const items = entries.slice(0, 100).map(clean).filter(Boolean).map((entry) => ({ entry, group: opts.found ? 'found' : groupOf(entry), ranges: q ? matchRanges(q, entry.name) : new Set() }));
     rows = [];
     for (const [id] of GROUPS) rows.push(...items.filter((it) => it.group === id));
     rows = rows.slice(0, MAX_ROWS);
+    const offer = !rows.length && opts.offer;
+    if (offer) rows = [{ action: 'scan', text: emptyText }];
     selected = Math.min(selected, Math.max(0, rows.length - 1));
     const frag = document.createDocumentFragment();
     let section = null;
@@ -13164,7 +13177,7 @@ const filesPicker = (() => {
       }
       frag.append(row(item, i));
     });
-    if (!rows.length) frag.append(Object.assign(document.createElement('li'), { className: 'files-picker-empty', textContent: emptyText }));
+    if (!rows.length || opts.status) frag.append(Object.assign(document.createElement('li'), { className: 'files-picker-empty', textContent: opts.status || emptyText }));
     list.scrollTop = 0; // (before the swap: the layout is clean now, so this reads nothing stale; after it, it would force a layout in the middle of the draw)
     list.replaceChildren(frag);
     const current = document.getElementById(`files-picker-item-${selected}`);
@@ -13185,11 +13198,27 @@ const filesPicker = (() => {
       } else {
         const found = await files.search(q);
         if (mine !== asked) return;
-        render(Array.isArray(found) ? found : [], q, tr('filesPicker.empty', 'No matching files'));
+        const list = Array.isArray(found) ? found : [];
+        if (list.length || typeof files.scan !== 'function') render(list, q, tr('filesPicker.empty', 'No matching files'));
+        else render([], q, tr('filesPicker.scan', 'No match in your pinned and recent files. Search Documents, Desktop and Downloads'), { offer: true });
       }
     } catch {
       if (mine === asked) render([], q, tr('filesPicker.empty', 'No matching files'));
     }
+  }
+
+  // "Search Documents, Desktop and Downloads": one bounded walk in main's index worker; a newer question or a close drops the answer.
+  async function scan() {
+    const q = input.value.trim();
+    const files = bridge();
+    if (!q || typeof files?.scan !== 'function') return;
+    const mine = ++asked;
+    render([], q, '', { status: tr('filesPicker.searching', 'Searching Documents, Desktop and Downloads…') });
+    let found = [];
+    try { found = await files.scan(q); } catch { /* shown as nothing found */ }
+    if (mine !== asked) return;
+    selected = 0;
+    render(Array.isArray(found) ? found : [], q, tr('filesPicker.scanNone', 'Nothing found in Documents, Desktop or Downloads'), { found: true });
   }
 
   function onKey(e) {
@@ -13206,6 +13235,7 @@ const filesPicker = (() => {
   }
 
   function activate(item, how) {
+    if (item.action === 'scan') { scan(); return; }
     const id = item.entry.id;
     close();
     const files = bridge();

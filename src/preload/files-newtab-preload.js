@@ -18,6 +18,10 @@ if (location.protocol === 'file:' && /\/renderer\/newtab\.html$/.test(location.p
     relocate: call('newtab-files:relocate'),
     search: call('newtab-files:search'),
     attach: call('newtab-files:attach'),
+    scan: call('newtab-files:scan'),
+    remember: call('newtab-files:remember'), // "Turn on" in the empty card: Settings > General > Files > Remember files I open
+    restore: call('newtab-files:restore'),
+    strings: ipcRenderer.sendSync('newtab-files:strings') || {}, // the card's words (locales/en.json files.card.*)
     onChanged: (cb) => { if (typeof cb === 'function') ipcRenderer.on('newtab-files:changed', () => cb()); },
   });
 }

@@ -291,17 +291,27 @@ function fileIcon(e) {
   wrap.innerHTML = `<svg viewBox="0 0 16 16">${FILE_ICONS[kind]}</svg>`;
   return wrap;
 }
-// "just now", "5 min ago", "3 h ago", "Yesterday", "4 d ago", then the date.
+// The card's words: the main process hands over the files.card.* strings of the language (preload/files-newtab-preload.js, locales/en.json); the
+// English written here is what shows without them. {name}-style holes are filled from `vars`.
+function ft(key, english, vars) {
+  const own = globalThis.lumenFiles?.strings?.[key];
+  const raw = typeof own === 'string' ? own : english;
+  return vars ? raw.replace(/{(w+)}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : raw;
+}
+// "just now", "5 min. ago", "3 hr. ago", "yesterday", "4 days ago" (Intl.RelativeTimeFormat, in the page's language), then the date.
+let fileRtf = null;
 function fileAgo(ms, now = Date.now()) {
   if (!Number.isFinite(ms) || ms <= 0) return '';
   const sec = Math.max(0, (now - ms) / 1000);
-  if (sec < 45) return 'just now';
-  if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min ago`;
-  if (sec < 86400) return `${Math.round(sec / 3600)} h ago`;
-  const startToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
-  const days = Math.ceil((startToday - ms) / 86400e3);
-  if (days <= 1) return 'Yesterday';
-  if (days < 7) return `${days} d ago`;
+  if (sec < 45) return ft('files.card.justNow', 'just now');
+  try { fileRtf ||= new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto', style: 'short' }); } catch { fileRtf = null; }
+  if (fileRtf) {
+    if (sec < 3600) return fileRtf.format(-Math.max(1, Math.round(sec / 60)), 'minute');
+    if (sec < 86400) return fileRtf.format(-Math.round(sec / 3600), 'hour');
+    const startToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
+    const days = Math.ceil((startToday - ms) / 86400e3);
+    if (days < 7) return fileRtf.format(-Math.max(1, days), 'day');
+  }
   return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', ...(new Date(ms).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
 }
 // The folder a file is in, as the last two folders of its path ("Documents › Chapter 4"); a folder shows the one above it.
@@ -398,21 +408,42 @@ function openFileMenu(opener, x, y, entries) { // entries: [[label, run]]
 const filesDo = (call) => Promise.resolve().then(call).catch((err) => console.error('files', err)).finally(() => { filesRefresh(); });
 const fileOpen = (e) => filesDo(() => globalThis.lumenFiles.open(e.id));
 const fileShow = (e) => filesDo(() => globalThis.lumenFiles.show(e.id));
-const fileTogglePin = (e) => filesDo(() => (e.pinned ? globalThis.lumenFiles.unpin(e.id) : globalThis.lumenFiles.pin({ id: e.id })));
-const fileRemove = (e) => filesDo(() => globalThis.lumenFiles.remove(e.id));
 const filePick = (kind) => filesDo(() => globalThis.lumenFiles.pin({ pick: kind }));
+// Unpin and Remove from Files can be undone for a few seconds: a line at the foot of the card ("Removed lab3.pdf. Undo"); main keeps the entry
+// for 30 s (files.js restore).
+const FILE_UNDO_MS = 6000;
+let fileUndo = null; // { id, message, timer }
+function fileUndoClear() { if (fileUndo) { clearTimeout(fileUndo.timer); fileUndo = null; } }
+function fileUndoOffer(e, how) {
+  fileUndoClear();
+  const timer = setTimeout(() => { fileUndo = null; filesRefresh(); }, FILE_UNDO_MS);
+  fileUndo = { id: e.id, message: how === 'unpin' ? ft('files.card.unpinned', 'Unpinned {name}.', { name: e.name }) : ft('files.card.removed', 'Removed {name}.', { name: e.name }), timer };
+}
+const fileTakeOut = (e, how) => filesDo(() => Promise.resolve(globalThis.lumenFiles[how](e.id)).then((ok) => { (window.__fdbg ||= []).push(['ok', how, ok]); if (ok !== false) fileUndoOffer(e, how); }));
+const fileTogglePin = (e) => (e.pinned ? fileTakeOut(e, 'unpin') : filesDo(() => globalThis.lumenFiles.pin({ id: e.id })));
+const fileRemove = (e) => fileTakeOut(e, 'remove');
+function fileUndoRun() {
+  const id = fileUndo?.id;
+  fileUndoClear();
+  if (id) filesDo(() => globalThis.lumenFiles.restore(id));
+  else filesRefresh();
+}
+let fileFocusAfter = null; // the entry whose Find it just answered: the next draw puts the focus on its first candidate
 function fileFind(e) {
+  if (fileFinds.get(e.id)?.busy) return;
   fileFinds.set(e.id, { busy: true });
   filesRefresh();
   Promise.resolve().then(() => globalThis.lumenFiles.find(e.id)).then((r) => {
     const list = (Array.isArray(r?.candidates) ? r.candidates : []).filter((c) => c && typeof c.path === 'string' && typeof c.name === 'string').slice(0, 6)
       .map((c) => ({ path: text(c.path, 1000), name: text(c.name, 260), size: Number.isFinite(c.size) ? c.size : null, mtime: Number.isFinite(c.mtime) ? c.mtime : 0 }));
     fileFinds.set(e.id, list.length ? { list } : { none: true });
-  }).catch(() => fileFinds.set(e.id, { none: true })).finally(() => filesRefresh());
+  }).catch(() => fileFinds.set(e.id, { none: true })).finally(() => { fileFocusAfter = e.id; filesRefresh(); });
 }
+// Pinned: Unpin (it stays in Recent if it was opened). Not pinned: Pin, or Remove from Files.
 function fileMenuFor(e) {
-  const items = [e.missing ? ['Find it', () => fileFind(e)] : [e.kind === 'folder' ? 'Open folder' : 'Open', () => fileOpen(e)], ['Show in folder', () => fileShow(e)]];
-  items.push([e.pinned ? 'Unpin' : 'Pin', () => fileTogglePin(e)], ['Remove from list', () => fileRemove(e)]);
+  const items = [e.missing ? [ft('files.card.findIt', 'Find it'), () => fileFind(e)] : [e.kind === 'folder' ? ft('files.card.openFolder', 'Open folder') : ft('files.card.open', 'Open'), () => fileOpen(e)], [ft('files.card.show', 'Show in folder'), () => fileShow(e)]];
+  if (e.pinned) items.push([ft('files.card.unpin', 'Unpin'), () => fileTogglePin(e)]);
+  else items.push([ft('files.card.pin', 'Pin'), () => fileTogglePin(e)], [ft('files.card.remove', 'Remove from Files'), () => fileRemove(e)]);
   return items;
 }
 const ICON_MORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6h.01M6 6h.01M9.6 6h.01"/></svg>';
@@ -430,9 +461,9 @@ function fileRow(e, now) {
   words.append(el('span', 'w-title', e.name));
   const sub = el('span', 'w-sub');
   if (e.missing) {
-    sub.textContent = 'moved or deleted';
+    sub.textContent = ft('files.card.missing', 'moved or deleted');
     sub.classList.add('late');
-    main.setAttribute('aria-label', `${e.name}, moved or deleted`);
+    main.setAttribute('aria-label', ft('files.card.missingAria', '{name}, moved or deleted', { name: e.name }));
   } else {
     const when = e.pinned ? '' : fileAgo(e.openedAt, now);
     const where = fileWhere(e);
@@ -441,8 +472,9 @@ function fileRow(e, now) {
   }
   words.append(sub);
   main.append(fileIcon(e), words);
-  if (e.missing) main.setAttribute('aria-disabled', 'true'); // (a click does nothing: Find it is the way on)
-  main.addEventListener('click', () => { if (e.missing) row.querySelector('.fl-find')?.focus(); else fileOpen(e); });
+  // A missing file does not open: a click anywhere on its row (but its own buttons) is Find it, and the focus goes to the first match when there is one.
+  if (e.missing) row.addEventListener('click', (ev) => { if (!ev.target.closest?.('.fl-find, .fl-more')) fileFind(e); });
+  else main.addEventListener('click', () => fileOpen(e));
   row.addEventListener('contextmenu', (ev) => {
     if (!globalThis.lumenFiles) return;
     ev.preventDefault();
@@ -453,17 +485,18 @@ function fileRow(e, now) {
   });
   row.append(main);
   if (e.missing) {
-    const find = el('button', 'w-btn fl-find', 'Find it');
+    const find = el('button', 'w-btn fl-find', ft('files.card.findIt', 'Find it'));
     find.type = 'button';
     find.dataset.fid = e.id;
     find.dataset.role = 'find';
-    find.setAttribute('aria-label', `Find ${e.name}`);
+    find.title = ft('files.card.findItTitle', 'Look near the old place');
+    find.setAttribute('aria-label', ft('files.card.findAria', 'Find {name}', { name: e.name }));
     const st = fileFinds.get(e.id);
-    if (st?.busy) { find.disabled = true; find.textContent = 'Looking…'; }
+    if (st?.busy) { find.disabled = true; find.textContent = ft('files.card.looking', 'Looking…'); }
     find.addEventListener('click', () => fileFind(e));
     row.append(find);
   }
-  const more = iconButton(ICON_MORE, `More for ${e.name}`, () => { const r = more.getBoundingClientRect(); openFileMenu(more, r.left, r.bottom + 4, fileMenuFor(e)); });
+  const more = iconButton(ICON_MORE, ft('files.card.moreAria', 'More for {name}', { name: e.name }), () => { const r = more.getBoundingClientRect(); openFileMenu(more, r.left, r.bottom + 4, fileMenuFor(e)); });
   more.classList.add('fl-more');
   more.dataset.fid = e.id;
   more.dataset.role = 'more';
@@ -477,11 +510,13 @@ function fileCandidates(e) {
   if (!st || st.busy) return null;
   const box = el('div', 'fl-cands');
   box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', `Possible matches for ${e.name}`);
+  box.setAttribute('aria-label', ft('files.card.candidates', 'Possible matches for {name}', { name: e.name }));
   if (st.none) {
-    box.append(el('p', 'fl-none', 'Nothing like it nearby.'));
-    const gone = el('button', 'w-btn', 'Remove from list');
+    box.append(el('p', 'fl-none', ft('files.card.none', 'Nothing like it nearby.')));
+    const gone = el('button', 'w-btn', ft('files.card.remove', 'Remove from Files'));
     gone.type = 'button';
+    gone.dataset.fid = e.id;
+    gone.dataset.role = 'cand';
     gone.addEventListener('click', () => fileRemove(e));
     box.append(gone);
     return box;
@@ -489,10 +524,12 @@ function fileCandidates(e) {
   for (const c of st.list) {
     const b = el('button', 'fl-cand');
     b.type = 'button';
+    b.dataset.fid = e.id;
+    b.dataset.role = 'cand';
     b.title = c.path;
     const where = fileWhere({ path: c.path });
     b.append(el('span', 'w-title', c.name), el('span', 'w-sub', [where, fileSize(c.size), c.mtime ? fileAgo(c.mtime) : ''].filter(Boolean).join(' · ')));
-    b.setAttribute('aria-label', `Use ${c.name}${where ? ` in ${where}` : ''}`);
+    b.setAttribute('aria-label', where ? ft('files.card.useIn', 'Use {name} in {where}', { name: c.name, where }) : ft('files.card.use', 'Use {name}', { name: c.name }));
     b.addEventListener('click', () => { fileFinds.delete(e.id); filesDo(() => globalThis.lumenFiles.relocate(e.id, c.path)); });
     box.append(b);
   }
@@ -1645,9 +1682,9 @@ const WIDGET_RENDERERS = {
   files(w, card) {
     card.el.classList.add('files');
     filesHook();
-    const add = iconButton(ICON_PLUS, 'Pin a file or folder', () => {
+    const add = iconButton(ICON_PLUS, ft('files.card.pinAria', 'Pin a file or folder'), () => {
       const r = add.getBoundingClientRect();
-      openFileMenu(add, r.left, r.bottom + 4, [['Pin a file…', () => filePick('file')], ['Pin a folder…', () => filePick('folder')]]);
+      openFileMenu(add, r.left, r.bottom + 4, [[ft('files.card.pinFile', 'Pin a file…'), () => filePick('file')], [ft('files.card.pinFolder', 'Pin a folder…'), () => filePick('folder')]]);
     });
     add.setAttribute('aria-haspopup', 'menu');
     add.classList.add('fl-add');
@@ -1686,35 +1723,56 @@ const WIDGET_RENDERERS = {
       const now = Date.now();
       wrap.replaceChildren();
       const data = filesData;
-      if (!globalThis.lumenFiles) wrap.append(el('p', 'w-note', 'Files can’t be shown on this page.'));
+      if (!globalThis.lumenFiles) wrap.append(el('p', 'w-note', ft('files.card.unavailable', 'Files can’t be shown on this page.')));
       else if (!data) {
         const skel = el('div', 'w-skel');
-        skel.setAttribute('aria-label', 'Loading files');
+        skel.setAttribute('aria-label', ft('files.card.loading', 'Loading files'));
         skel.setAttribute('role', 'status');
         skel.append(el('i'), el('i'), el('i'));
         wrap.append(skel);
       } else if (!data.pinned.length && !data.recent.length) {
         const empty = el('div', 'fl-first');
-        empty.append(el('p', 'w-note', data.remember ? 'Pin a folder or open a file to see it here' : 'Pin a folder or a file to see it here. Lumen isn’t remembering the files you open (Settings → Privacy and security).'));
+        empty.append(el('p', 'w-note', data.remember ? ft('files.card.emptyOn', 'Pin a folder or open a file to see it here') : ft('files.card.emptyOff', 'Pin a folder or a file to see it here. Lumen isn’t remembering the files you open.')));
         const acts = el('div', 'w-actions');
-        for (const [label, kind] of [['Pin a file…', 'file'], ['Pin a folder…', 'folder']]) {
+        for (const [label, kind] of [[ft('files.card.pinFile', 'Pin a file…'), 'file'], [ft('files.card.pinFolder', 'Pin a folder…'), 'folder']]) {
           const b = el('button', 'w-btn', label);
           b.type = 'button';
           b.addEventListener('click', () => filePick(kind));
           acts.append(b);
         }
+        if (!data.remember) { // Remember files I open is off: one click turns it on (Settings > General > Files has it too)
+          const on = el('button', 'w-btn fl-turn-on', ft('files.card.turnOn', 'Turn on'));
+          on.type = 'button';
+          on.addEventListener('click', () => filesDo(() => globalThis.lumenFiles.remember()));
+          acts.append(on);
+        }
         empty.append(acts);
         wrap.append(empty);
       } else {
         wrap.append(
-          section('Pinned', data.pinned, 'Nothing pinned yet. Use + to pin a file or a folder.', now),
-          section('Recent', data.recent, data.remember ? 'Files you open show up here.' : 'Not remembering files you open (Settings → Privacy and security).', now),
+          section(ft('files.card.pinned', 'Pinned'), data.pinned, ft('files.card.pinnedEmpty', 'Nothing pinned yet. Use + to pin a file or a folder.'), now),
+          section(ft('files.card.recent', 'Recent'), data.recent, data.remember ? ft('files.card.recentEmpty', 'Files you open show up here.') : ft('files.card.recentEmptyOff', 'Not remembering files you open.'), now),
         );
       }
+      if (fileUndo && data) {
+        const strip = el('div', 'fl-undo');
+        strip.setAttribute('role', 'status');
+        strip.append(el('span', null, fileUndo.message));
+        const undo = el('button', 'w-btn', ft('files.card.undo', 'Undo'));
+        undo.type = 'button';
+        undo.addEventListener('click', fileUndoRun);
+        strip.append(undo);
+        wrap.append(strip);
+      }
+      (window.__fdbg ||= []).push(['draw', Boolean(fileUndo), Boolean(data), wrap.querySelector('.fl-undo') !== null, wrap.isConnected, Date.now() % 100000]);
       if (key) {
         const [role, fid] = key.split('|');
         const again = [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid && n.dataset.role === role) || [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid);
         again?.focus({ preventScroll: true });
+      }
+      if (fileFocusAfter) { // Find it answered: the first match (or, with none, the way to remove the entry) takes the focus
+        const first = wrap.querySelector(`[data-role="cand"][data-fid="${CSS.escape(fileFocusAfter)}"]`);
+        if (first) { first.focus({ preventScroll: true }); fileFocusAfter = null; }
       }
       paint(now);
       requestAnimationFrame(() => { if (card.el.isConnected) window.settleWidgetCard?.(card.el); });
@@ -1726,7 +1784,7 @@ const WIDGET_RENDERERS = {
     wakeLive();
     draw();
     if (!filesData) filesLoad().then(() => draw());
-    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'Files'}`);
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || ft('files.card.defaultTitle', 'Files')}`);
   },
 
   embed(w, card) {

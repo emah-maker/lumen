@@ -44,6 +44,18 @@ const docs = path.join(dir, 'Documents');
   check('touch: an unknown source becomes "tab", a bad path is refused', s.touch(path.join(docs, 'c.txt'), { source: 'hax' }).source === 'tab' && s.touch('', {}) === null && s.touch(null) === null, '');
   check('unpin: a pinned file that was opened stays in Recent', s.unpin(slides.id) && s.list().recent.some((e) => e.path === slides.path), JSON.stringify(s.list()));
   check('remove and clear', s.remove(s.byPath(b).id) && !s.byPath(b) && s.clear() && s.all().length === 0 && s.list().recent.length === 0, '');
+  // ---- restore (Undo of unpin and remove): a store with no file of its own
+  const rs = create({ now });
+  const rp = rs.pin(path.join(docs, 'undo.pdf'), 'file');
+  const before = rs.get(rp.id);
+  rs.unpin(rp.id);
+  check('restore: an unpinned pin that was never opened comes back pinned, in its place', !rs.get(rp.id) && rs.restore(before)?.pinned === true && rs.list().pinned.some((e) => e.id === rp.id), JSON.stringify(rs.all()));
+  rs.touch(path.join(docs, 'undo.pdf'), { source: 'tab' });
+  const opened = rs.get(rp.id);
+  rs.remove(rp.id);
+  const restored = rs.restore(opened);
+  check('restore: a removed entry returns with its pin and its time in Recent', restored?.id === rp.id && restored.pinned === true && restored.openedAt === opened.openedAt && rs.restore(null) === null && rs.restore({ path: '' }) === null, JSON.stringify(restored));
+  rs.clear();
 
   // ---- the cap
   const capped = create({ file: null, now, cap: 500 });

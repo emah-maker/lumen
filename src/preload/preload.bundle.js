@@ -744,6 +744,8 @@ contextBridge.exposeInMainWorld('lumenFiles', {
   relocate: (id, newPath) => ipcRenderer.invoke('files:relocate', id, newPath),
   search: (query) => ipcRenderer.invoke('files:search', query), // Entry[] (fuzzy over pinned, recent and indexed folders, top 30)
   attach: (id) => ipcRenderer.invoke('files:attach', id), // to the sidebar chat
+  scan: (query) => ipcRenderer.invoke('files:scan', query), // Entry[]: the picker's "Search Documents, Desktop and Downloads" (a bounded walk, in the index worker)
+  restore: (id) => ipcRenderer.invoke('files:restore', id), // Undo of unpin / remove (kept 30 s)
   onChanged: on('files:changed'),
   onAttach: on('files:attach-file'), // { name, type, data (bytes) }: Alt+Enter in the picker: add it to the sidebar's composer like a dropped file
 });

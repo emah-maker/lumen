@@ -150,6 +150,29 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
   }, web);
   check('a web page has no Files bridge', onWeb === 'undefined,undefined', onWeb);
 
+  // ---- the picker's scan (files:scan): the same bounded walk, for the user's own click, so "Let the AI use files" is not needed
+  await app.evaluate(() => global.__patchSettings({ aiDeviceAccess: false }));
+  put(path.join(home, 'Downloads', 'Invoice March.pdf'));
+  const scansBefore = await scans();
+  const scanned = await ui.evaluate(() => window.lumenFiles.scan('invoice march'));
+  const scansAfter = await scans();
+  check('scan: finds a file in Downloads with AI file access off, as an entry the picker can open', scanned.length === 1 && scanned[0].name === 'Invoice March.pdf' && scanned[0].kind === 'file' && typeof scanned[0].id === 'string' && scanned[0].pinned === false, JSON.stringify(scanned));
+  check('scan: it was one bounded walk in the index worker', scansAfter.worker === scansBefore.worker + 1, JSON.stringify([scansBefore, scansAfter]));
+  check('scan: the hit is remembered, and the id opens it', (await files('return f.store.byPath(arg)?.source;', scanned[0]?.path)) === 'found' && (await ui.evaluate((id) => window.lumenFiles.open(id), scanned[0]?.id)) === true, '');
+  check('scan: a miss and an empty query get nothing', (await ui.evaluate(() => window.lumenFiles.scan('no such file anywhere'))).length === 0 && (await ui.evaluate(() => window.lumenFiles.scan(''))).length === 0, '');
+  await app.evaluate(() => global.__patchSettings({ aiDeviceAccess: true }));
+
+  // ---- restore (Undo of remove and unpin): the entry comes back as it was, for 30 s
+  const keep = await files('return f.pin({ path: arg });', put(path.join(root, 'Elsewhere', 'undo-me.pdf')));
+  await ui.evaluate((id) => window.lumenFiles.unpin(id), keep.id);
+  check('restore: an unpinned file that was never opened is gone, and Undo pins it again', (await files('return f.store.get(arg);', keep.id)) === null && (await ui.evaluate((id) => window.lumenFiles.restore(id), keep.id))?.pinned === true && (await files('return f.store.get(arg)?.pinned;', keep.id)) === true, '');
+  await files('return f.note(arg, { source: "tab" });', keep.path);
+  await ui.evaluate((id) => window.lumenFiles.remove(id), keep.id);
+  const restored = await ui.evaluate((id) => window.lumenFiles.restore(id), keep.id);
+  check('restore: a removed entry returns with its pin and its time', restored?.id === keep.id && restored.pinned === true && restored.openedAt > 0, JSON.stringify(restored));
+  check('restore: only once, and never for an id main did not remove', (await ui.evaluate((id) => window.lumenFiles.restore(id), keep.id)) === null && (await ui.evaluate(() => window.lumenFiles.restore('nope'))) === null, '');
+  check('restore: after Clear the removed entries are forgotten', await (async () => { await ui.evaluate((id) => window.lumenFiles.remove(id), keep.id); await ui.evaluate(() => window.lumenFiles.clear()); return (await ui.evaluate((id) => window.lumenFiles.restore(id), keep.id)) === null; })(), '');
+
   // ---- remember off
   await app.evaluate(() => global.__patchSettings({ filesRemember: false }));
   const note = put(path.join(root, 'Elsewhere', 'private.pdf'));

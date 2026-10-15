@@ -200,7 +200,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -235,7 +235,7 @@ const ALIASES = {
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -1806,7 +1806,7 @@ async function buildWidgets(card) {
         syncMode();
         fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox);
       } else if (type === 'files') {
-        fields.replaceChildren(section('Files', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.' }))]));
+        fields.replaceChildren(section(tr('settings.files.group', 'Files'), [h('div', { class: 'row' }, h('span', { class: 'note', text: tr('widgets.files.desc', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.') }))]));
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
@@ -2175,15 +2175,10 @@ async function buildPrivacy(card) {
     withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
   );
 
-  // [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
-  const filesNote = status('files-clear-status');
+  // [files] The remembered files live in General > Files (buildFiles); a pointer here, for people who look for them under Privacy.
   card.group(tr('settings.files.group', 'Files')).append(
-    withKeywords(toggle('filesRemember', tr('settings.files.remember', 'Remember files I open'), tr('settings.files.rememberDesc', 'Keeps the name and place of the files you open in Lumen, for the Files card on the new-tab page and Ctrl+Shift+F. Nothing from inside a file is stored, and it stays on this computer, encrypted. Off: nothing new is added. Files you pinned stay.')), 'files recent opened history pdf documents pinned folder'),
-    withKeywords(row(tr('settings.files.clear', 'Clear file list'), tr('settings.files.clearDesc', 'Forgets the recent files and the pinned ones. The files themselves are not touched.'),
-      filesNote, armedButton(tr('settings.files.clearGo', 'Clear file list'), tr('settings.files.clearSure', 'Clear it? Click again'), async () => {
-        flash(filesNote, '');
-        try { await S.files.clear(); flash(filesNote, tr('settings.files.cleared', 'Cleared.')); } catch (err) { flash(filesNote, String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
-      }, 'danger', 'files-clear')), 'files recent pinned forget clear remove list'),
+    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Remember and clear them in General > Files.'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
@@ -2460,6 +2455,19 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+// [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
+async function buildFiles(card) {
+  const filesNote = status('files-clear-status');
+  card.append(
+    withKeywords(toggle('filesRemember', tr('settings.files.remember', 'Remember files I open'), tr('settings.files.rememberDesc', 'Lumen remembers names and places of files you open, on this computer only. Never their contents.')), 'files recent opened history pdf documents pinned folder'),
+    withKeywords(row(tr('settings.files.clear', 'Clear Files list'), tr('settings.files.clearDesc', 'Forgets the recent files and the pinned ones. The files themselves are not touched.'),
+      filesNote, armedButton(tr('settings.files.clearGo', 'Clear Files list'), tr('settings.files.clearSure', 'Clear it? Click again'), async () => {
+        flash(filesNote, '');
+        try { await S.files.clear(); flash(filesNote, tr('settings.files.cleared', 'Cleared.')); } catch (err) { flash(filesNote, String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+      }, 'danger', 'files-clear')), 'files recent pinned forget clear remove list'),
+  );
 }
 
 async function buildDownloads(card) {
@@ -3145,7 +3153,7 @@ async function init() {
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
     ['ai-model', buildAi], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
-    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
+    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];

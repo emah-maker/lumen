@@ -10,6 +10,7 @@
 //   .load()                       async: reads the file once (a missing or unreadable file is an empty list)
 //   .pin(path, kind)              -> Entry (kind 'file' | 'folder'; pinning an entry already in the list pins it)
 //   .unpin(id)  .remove(id)  .clear()
+//   .restore(entry)               puts back an entry as get() gave it before unpin/remove (its pin and openedAt included) -> Entry
 //   .touch(path, { source, size, mtime, kind })   a file was opened: it moves to the top of Recent (and is added if new)
 //   .list({ recentLimit })        -> { pinned, recent }  (pinned in the order pinned; recent newest first, without the pinned ones)
 //   .all()                        every entry (the picker's fuzzy search)
@@ -76,6 +77,13 @@ function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () =
     },
     unpin(id) { const e = byId.get(id); if (!e || !e.pinned) return false; e.pinned = false; e.pinnedAt = 0; if (!e.openedAt) drop(e); changed(); return true; },
     remove(id) { const e = byId.get(id); if (!e) return false; drop(e); changed(); return true; },
+    restore(snap) {
+      if (!snap || typeof snap.path !== 'string' || !snap.path) return null;
+      const e = byKey.get(keyOf(snap.path)) || add(snap.path, snap.kind);
+      Object.assign(e, { size: num(snap.size), mtime: num(snap.mtime), openedAt: num(snap.openedAt), pinnedAt: num(snap.pinnedAt), pinned: Boolean(snap.pinned), source: SOURCES.has(snap.source) ? snap.source : 'tab' });
+      trim(); changed();
+      return view(e);
+    },
     clear() { const had = byId.size > 0; byId.clear(); byKey.clear(); if (had) changed(); return had; },
     touch(p, { source = 'tab', size, mtime, kind } = {}) {
       if (typeof p !== 'string' || !p) return null;

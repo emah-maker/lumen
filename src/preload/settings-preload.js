@@ -62,6 +62,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       relocate: call('settings:files-relocate'),
       search: call('settings:files-search'),
       attach: call('settings:files-attach'),
+      scan: call('settings:files-scan'),
+      restore: call('settings:files-restore'),
       onChanged: (cb) => ipcRenderer.on('settings:files-changed', () => cb()),
     },
     // [passwords] Privacy and security → Passwords (features/passwords.js). No password comes out

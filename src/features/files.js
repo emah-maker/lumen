@@ -1,12 +1,12 @@
 // Files: the pinned and recently opened files and folders, for the new-tab page's Files widget, the quick picker (Ctrl+Shift+F),
-// Settings > Privacy and the AI's file lookup (list_files find:). This module wires the pure parts (files-store.js, files-fuzzy.js,
+// Settings > General > Files and the AI's file lookup (list_files find:). This module wires the pure parts (files-store.js, files-fuzzy.js,
 // files-index.js and its worker) to Electron through `deps`, so test/files-ai.js can drive it with the real thing and units with fakes.
 //
 // The calls come from three pages, each with its own channel prefix and its own sender check (main.js):
 //   the browser UI        files:<op>           (window.lumenFiles, preload.js)   [files:open is taken by dropped files: files:open-entry]
 //   the new-tab page      newtab-files:<op>    (window.lumenFiles, files-newtab-preload.js)
 //   Settings              settings:files-<op>  (lumenSettings.files, settings-preload.js)
-// Ops: list pin unpin remove clear open show find relocate search attach. The change event goes to all three:
+// Ops: list pin unpin remove clear open show find relocate search attach scan restore. The change event goes to all three:
 // files:changed (UI), newtab-files:changed (every new-tab page), settings:files-changed (Settings). A file chosen with Alt+Enter goes to the
 // sidebar's composer as files:attach-file { name, type, data (the bytes) } (window.lumenFiles.onAttach).
 //
@@ -20,7 +20,7 @@ const path = require('path');
 const store = require('./files-store');
 const fuzzy = require('./files-fuzzy');
 
-const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach'];
+const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'];
 const channelFor = {
   ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`),
   newtab: (op) => `newtab-files:${op}`,
@@ -30,6 +30,7 @@ const channelFor = {
 const RECHECK_MS = 5000; // a missing file is looked for again no sooner than this
 const SEARCH_LIMIT = 30;
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024; // the composer's own limit for a file it reads
+const RESTORE_MS = 30000; // an entry removed or unpinned from a list can be put back (Undo) for this long
 const LIST_WAIT_MS = 150; // list() waits this long for the existence checks, then answers with what it knows
 
 // What opens in a tab (Lumen's own viewers, or Chromium's): the same set as File > Open and the AI's file cards.
@@ -42,7 +43,7 @@ const isAbs = (p) => typeof p === 'string' && p.length < 4096 && path.isAbsolute
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
 
 // deps: { file, encrypt, decrypt, available, remember(), ignore(path), openFile(path), openPath(path), showItem(path), pick(kind), send(channel, payload),
-//         broadcast(), now, indexer }
+//         broadcast(), scanRoots() -> { roots, blocked(path) }, now, indexer }
 function create(deps) {
   const now = deps.now || (() => Date.now());
   const list0 = store.create({ file: deps.file, encrypt: deps.encrypt, decrypt: deps.decrypt, available: deps.available, now });
@@ -53,6 +54,7 @@ function create(deps) {
   const lastNote = new Map(); // path -> when it was last recorded (a viewer and a tab both report one open)
   const transient = new Map(); // id -> an indexed file the picker showed (it is not in the list until opened)
   const candidates = new Map(); // id -> the paths find() offered (relocate takes only those)
+  const undo = new Map(); // id -> { entry, at }: what remove() and unpin() took out (restore() puts it back)
   const stats = { notes: 0, scans: 0, known: 0 };
   let ready = null;
   let timer = null;
@@ -63,6 +65,13 @@ function create(deps) {
 
   function syncRoots() {
     try { ix().setRoots(list0.all().filter((e) => e.pinned && e.kind === 'folder' && !e.missing).map((e) => e.path)); } catch { /* no worker here: the list works without the folders' index */ }
+  }
+  function keep(id) { // (before a removal: its entry as it was, for restore())
+    const e = list0.get(id);
+    if (!e) return;
+    undo.set(id, { entry: e, at: now() });
+    for (const [k, v] of undo) if (now() - v.at > RESTORE_MS) undo.delete(k);
+    if (undo.size > 20) undo.delete(undo.keys().next().value);
   }
   const resolve = (id) => list0.get(String(id)) || transient.get(String(id)) || null;
 
@@ -108,9 +117,19 @@ function create(deps) {
       if (st.isDirectory()) syncRoots();
       return list0.get(entry.id);
     },
-    async unpin(id) { await load(); const ok = list0.unpin(String(id)); if (ok) syncRoots(); return ok; },
-    async remove(id) { await load(); const ok = list0.remove(String(id)); if (ok) syncRoots(); return ok; },
-    async clear() { await load(); list0.clear(); transient.clear(); candidates.clear(); lastCheck.clear(); syncRoots(); await list0.flush(); return true; },
+    async unpin(id) { await load(); keep(String(id)); const ok = list0.unpin(String(id)); if (ok) syncRoots(); return ok; },
+    async remove(id) { await load(); keep(String(id)); const ok = list0.remove(String(id)); if (ok) syncRoots(); return ok; },
+    async clear() { await load(); list0.clear(); transient.clear(); candidates.clear(); lastCheck.clear(); undo.clear(); syncRoots(); await list0.flush(); return true; },
+    // Undo of the Files card's Unpin and Remove: the entry comes back as it was (pin, place in Recent), for 30 s after it went. -> Entry | null
+    async restore(id) {
+      await load();
+      const kept = undo.get(String(id));
+      if (!kept || now() - kept.at > RESTORE_MS) { undo.delete(String(id)); return null; }
+      undo.delete(String(id));
+      const back = list0.restore(kept.entry);
+      if (back?.kind === 'folder') syncRoots();
+      return back;
+    },
 
     // A file in a tab (Lumen's own viewers), the system's program for other safe kinds, a folder in Explorer. -> boolean
     async open(id) {
@@ -219,6 +238,28 @@ function create(deps) {
     },
     // "Pin to Files" on a file tab or a download.
     pinPath(p) { return api.pin({ path: p }); },
+
+    // The picker's "Search Documents, Desktop and Downloads": the AI's lookup below with the walk allowed, for roots the user did not have to grant
+    // (they clicked). Async, in the index worker, bounded in depth and time. -> Entry[] (not in the list until opened; the best hit is noted)
+    async scan(query) {
+      await load();
+      const q = String(query || '').slice(0, 200).trim();
+      if (!q) return [];
+      let cfg = null;
+      try { cfg = await deps.scanRoots?.(); } catch { /* no roots */ }
+      const roots = [];
+      for (const r of Array.isArray(cfg?.roots) ? cfg.roots : []) { try { if (isAbs(r) && (await fsp.stat(r)).isDirectory()) roots.push(r); } catch { /* not there */ } }
+      if (!roots.length) return [];
+      const { hits } = await api.findFile(q, { scan: true, roots, blocked: cfg?.blocked || (() => false) });
+      const out = hits.map((h) => {
+        const m = fuzzy.matchText(q, h.name, { where: h.path });
+        const known = list0.byPath(h.path);
+        const e = known ? { ...known } : { id: store.idFor(h.path), path: h.path, name: h.name, kind: 'file', size: h.size, mtime: h.mtime, openedAt: 0, pinned: false, missing: false, source: 'found' };
+        if (!known) transient.set(e.id, e);
+        return { ...e, positions: m?.positions || [] };
+      });
+      return out.slice(0, SEARCH_LIMIT);
+    },
 
     // The AI's lookup (list_files find:). Pinned and recent files first, then the pinned folders' index, and only then a bounded fresh
     // walk of `roots` (when the AI may use files). The hit the slow way is remembered, so the next lookup is the first kind.

@@ -23,6 +23,13 @@ const { start, sleep, waitFor, makeChecker } = require('./_files-rig');
     check('the Files card is on the page', await on("Boolean(document.querySelector('.w-card.files'))"), '');
     check('empty: it says what to do', await on("/Pin a folder or open a file to see it here/.test(document.querySelector('.w-card.files .fl-first')?.textContent || '')"), await inTab("document.querySelector('.w-card.files')?.textContent"));
     check('empty: it offers Pin a file and Pin a folder', await inTab("[...document.querySelectorAll('.w-card.files .fl-first button')].map((b) => b.textContent).join()") === 'Pin a file…,Pin a folder…', '');
+    check('empty: with Remember files off there is no "Turn on" (it is on)', await inTab("!document.querySelector('.w-card.files .fl-turn-on')"), '');
+    // Remember files I open off: the empty card says so and offers Turn on, which turns the setting on again.
+    await app.evaluate(() => global.__patchSettings({ filesRemember: false }));
+    await app.evaluate(() => global.__homeTab.webContents.send('newtab-files:changed'));
+    check('remember off: the empty card says Lumen is not remembering, with a Turn on button', await on("/isn’t remembering the files you open/.test(document.querySelector('.w-card.files .fl-first')?.textContent || '') && [...document.querySelectorAll('.w-card.files .fl-first button')].map((b) => b.textContent).join() === 'Pin a file…,Pin a folder…,Turn on'"), await inTab("document.querySelector('.w-card.files')?.textContent"));
+    await inTab("document.querySelector('.w-card.files .fl-turn-on').click()");
+    check('Turn on switches Remember files I open on, and the card goes back to the plain empty state', await waitFor(async () => (await rig.files('list')).remember === true) && await on("!document.querySelector('.w-card.files .fl-turn-on') && /Pin a folder or open a file to see it here/.test(document.querySelector('.w-card.files .fl-first')?.textContent || '')"), await inTab("document.querySelector('.w-card.files')?.textContent"));
 
     // ---- pinned and recent ----
     for (const p of [pinnedFolder, loose, gone]) await rig.files('pin', { path: p });
@@ -49,7 +56,7 @@ const { start, sleep, waitFor, makeChecker } = require('./_files-rig');
     // ---- the right-click menu ----
     const menuItems = () => inTab("[...document.querySelectorAll('.fl-menu [role=menuitem]')].map((b) => b.textContent)");
     await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-a.txt'); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); })()");
-    check('right-click: Open, Show in folder, Pin, Remove from list', await waitFor(async () => (await menuItems()).join() === 'Open,Show in folder,Pin,Remove from list'), JSON.stringify(await menuItems()));
+    check('right-click: Open, Show in folder, Pin, Remove from Files', await waitFor(async () => (await menuItems()).join() === 'Open,Show in folder,Pin,Remove from Files'), JSON.stringify(await menuItems()));
     check('the menu has the keyboard (first item focused), and the page’s own card menu stayed shut', await inTab("document.activeElement?.getAttribute('role') === 'menuitem' && !document.querySelector('.w-stack-menu:not(.fl-menu)')"), '');
     await inTab("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))");
     check('ArrowDown moves down the menu', await inTab("document.activeElement?.textContent === 'Show in folder'"), '');
@@ -57,13 +64,23 @@ const { start, sleep, waitFor, makeChecker } = require('./_files-rig');
     check('Pin from the menu pins a recent file', await waitFor(async () => (await rows('Pinned')).includes('recent-a.txt')), JSON.stringify(await rows('Pinned')));
     check('the menu closes after a choice', await inTab("!document.querySelector('.fl-menu')"), '');
     await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-a.txt' && x.classList.contains('pinned')); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); })()");
-    check('a pinned file’s menu says Unpin', await waitFor(async () => (await menuItems()).includes('Unpin')), JSON.stringify(await menuItems()));
+    check('a pinned file’s menu says Unpin (and has no Remove from Files)', await waitFor(async () => { const m = await menuItems(); return m.includes('Unpin') && !m.includes('Remove from Files'); }), JSON.stringify(await menuItems()));
     await inTab("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
     check('Esc closes the menu', await inTab("!document.querySelector('.fl-menu')"), '');
     await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-a.txt' && x.classList.contains('pinned')); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); [...document.querySelectorAll('.fl-menu [role=menuitem]')].find((b) => b.textContent === 'Unpin').click(); })()");
     check('Unpin takes it off the pinned list again', await waitFor(async () => !(await rows('Pinned')).includes('recent-a.txt')), JSON.stringify(await rows('Pinned')));
-    await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-b.txt'); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); [...document.querySelectorAll('.fl-menu [role=menuitem]')].find((b) => b.textContent === 'Remove from list').click(); })()");
-    check('Remove from list forgets a recent file', await waitFor(async () => !(await rows('Recent')).includes('recent-b.txt')), JSON.stringify(await rows('Recent')));
+    const undoLine = () => inTab("document.querySelector('.w-card.files .fl-undo')?.textContent || ''");
+    check('Unpin offers "Unpinned recent-a.txt. Undo"', await waitFor(async () => /Unpinned recent-a\.txt\.\s*Undo/.test(await undoLine())), await inTab("'|dbg=' + JSON.stringify(window.__fdbg.slice(-8)) + '|undo=' + JSON.stringify(typeof fileUndo === 'undefined' ? 'undef' : fileUndo && fileUndo.message)"));
+    await inTab("document.querySelector('.w-card.files .fl-undo button').click()");
+    check('Undo puts the pin back', await waitFor(async () => (await rows('Pinned')).includes('recent-a.txt') && !(await undoLine())), JSON.stringify(await rows('Pinned')));
+    await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-b.txt'); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); [...document.querySelectorAll('.fl-menu [role=menuitem]')].find((b) => b.textContent === 'Remove from Files').click(); })()");
+    check('Remove from Files forgets a recent file', await waitFor(async () => !(await rows('Recent')).includes('recent-b.txt')), JSON.stringify(await rows('Recent')));
+    check('Remove from Files offers "Removed recent-b.txt. Undo"', await waitFor(async () => /Removed recent-b\.txt\.\s*Undo/.test(await undoLine())), await undoLine());
+    await inTab("document.querySelector('.w-card.files .fl-undo button').click()");
+    check('Undo brings it back to Recent', await waitFor(async () => (await rows('Recent')).includes('recent-b.txt')), JSON.stringify(await rows('Recent')));
+    await inTab("(() => { const r = [...document.querySelectorAll('.fl-row')].find((x) => x.querySelector('.w-title').textContent === 'recent-b.txt'); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 })); [...document.querySelectorAll('.fl-menu [role=menuitem]')].find((b) => b.textContent === 'Remove from Files').click(); })()");
+    check('…and removing it again leaves it removed', await waitFor(async () => !(await rows('Recent')).includes('recent-b.txt')), JSON.stringify(await rows('Recent')));
+    check('an Undo no longer than 30 s old is all main keeps: restore of an unknown id is refused', (await rig.files('restore', 'nope')) === null, '');
     check('…and the file itself is untouched', fs.existsSync(recentB), '');
 
     // ---- a missing file ----
@@ -73,9 +90,11 @@ const { start, sleep, waitFor, makeChecker } = require('./_files-rig');
       await rig.files('list');
       return inTab("(() => { const r = document.querySelector('.fl-row.missing'); return Boolean(r) && /moved or deleted/.test(r.textContent) && r.querySelector('.w-title').textContent === 'Budget.txt'; })()");
     }, 12000), await inTab("document.querySelector('.w-card.files')?.textContent"));
-    check('it has a Find it button, and clicking the row does not try to open it', await inTab("(() => { const r = document.querySelector('.fl-row.missing'); const t = r.querySelector('.fl-main').getAttribute('aria-disabled') === 'true'; return t && r.querySelector('.fl-find')?.textContent === 'Find it'; })()"), '');
-    await inTab("document.querySelector('.fl-row.missing .fl-find').click()");
-    check('Find it lists what it found near the old place', await waitFor(() => inTab("(() => { const c = document.querySelector('.fl-cands'); return Boolean(c) && c.querySelectorAll('.fl-cand').length >= 1 && /Budget\\.txt/.test(c.textContent); })()")), await inTab("document.querySelector('.w-card.files')?.textContent"));
+    check('it has a Find it button (with a hint)', await inTab("(() => { const r = document.querySelector('.fl-row.missing'); const b = r.querySelector('.fl-find'); return b?.textContent === 'Find it' && Boolean(b.title); })()"), '');
+    const tabsBefore = (await rig.tabs()).length;
+    await inTab("document.querySelector('.fl-row.missing .fl-main').click()"); // (the row itself, not the button)
+    check('clicking the row runs Find it: it lists what it found near the old place', await waitFor(() => inTab("(() => { const c = document.querySelector('.fl-cands'); return Boolean(c) && c.querySelectorAll('.fl-cand').length >= 1 && /Budget\\.txt/.test(c.textContent); })()")), await inTab("document.querySelector('.w-card.files')?.textContent"));
+    check('…the focus is on the first match, and nothing was opened', await inTab("document.activeElement === document.querySelector('.fl-cands .fl-cand')") && (await rig.tabs()).length === tabsBefore, await inTab("document.activeElement?.outerHTML?.slice(0, 80)"));
     await inTab("document.querySelector('.fl-cands .fl-cand').click()");
     check('picking a match points the entry at it again', await waitFor(async () => {
       const l = await rig.files('list');
