@@ -251,6 +251,24 @@
     .mode button:hover { color: var(--text); }
     .mode button[aria-checked="true"] { background: var(--accent-deep); color: var(--on-accent); }
     .mode button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    /* [newtab-images] Pictures in the Ask AI box: an attach button at the right, thumbnail chips under the field, a drop state. */
+    .ni-attach { position: absolute; right: 8px; top: 23px; transform: translateY(-50%); display: none; appearance: none; margin: 0; padding: 0; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: default; outline: none; place-items: center; }
+    .ni-attach svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .ni-attach:hover { background: var(--hover); color: var(--text); }
+    .ni-attach:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    form.ni-ask .ni-attach { display: grid; }
+    form.ni-ask input { padding-right: 84px; }
+    form.ni-ask > kbd { right: 46px; }
+    .ni-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .ni-strip[hidden] { display: none; }
+    .ni-chip { position: relative; width: 40px; height: 40px; border-radius: 8px; background: var(--card); box-shadow: 0 0 0 1px var(--border); }
+    .ni-chip img { display: block; width: 40px; height: 40px; border-radius: 8px; object-fit: cover; }
+    .ni-chip button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; appearance: none; background: var(--text); color: var(--bg); font: 600 12px/18px system-ui, sans-serif; cursor: default; outline: none; }
+    .ni-chip button:focus-visible, .ni-chip button:hover { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .ni-dropnote { position: absolute; left: 40px; right: 84px; top: 23px; transform: translateY(-50%); color: var(--accent); font-size: 14px; font-weight: 500; pointer-events: none; }
+    .ni-dropnote[hidden] { display: none; }
+    form.ni-drop input { background: var(--bg); box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px var(--ring); }
+    form.ni-drop input::placeholder { color: transparent; }
     .mode-hint { margin-left: 8px; font-size: 12px; color: var(--muted); }
     .mode-connect { appearance: none; margin: 0 0 0 6px; min-height: 24px; padding: 2px 12px; border: 0; border-radius: 999px; background: var(--accent-deep); color: var(--on-accent); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; }
     .mode-connect[hidden] { display: none; }
@@ -1240,6 +1258,9 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.75"/><path d="m10.6 10.6 3.4 3.4"/></svg>
       <input id="q" name="q" autocomplete="off" placeholder="Search Google" aria-label="Search Google" aria-keyshortcuts="/ Control+/ Alt+A Control+Enter" />
       <kbd aria-hidden="true">/</kbd>
+      <button type="button" class="ni-attach" id="ni-attach" aria-label="Attach images" title="Attach images"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 7.4 8 12.6a3 3 0 0 1-4.2-4.2l5.4-5.4a2 2 0 0 1 2.8 2.8L6.6 11.2a1 1 0 0 1-1.4-1.4l4.8-4.8"/></svg></button>
+      <span class="ni-dropnote" id="ni-dropnote" aria-hidden="true" hidden>Drop images to add them</span>
+      <div class="ni-strip" id="ni-strip" role="group" aria-label="Attached images" hidden></div>
       <div class="mode" id="mode" role="radiogroup" aria-label="What the field does">
         <button type="button" role="radio" id="mode-search" data-mode="search" aria-checked="true" tabindex="0">Search</button>
         <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1" title="Open chat" aria-keyshortcuts="Control+Shift+L"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/></svg>Ask AI</button>
@@ -1274,6 +1295,8 @@
   <script src="newtab-web-slot.js"></script>
   <script src="newtab-stacks.js"></script>
   <script src="newtab-edit.js"></script>
+  <script src="../features/newtab-images.js"></script>
+  <script src="newtab-images.js"></script>
   <script src="newtab.js"></script>
   <script src="newtab-drift.js"></script>
   <script src="newtab-scrollbar.js"></script>

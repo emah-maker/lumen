@@ -52,4 +52,15 @@ assert.strictEqual(stateFor(60).send, false);
 rt.fromHome(9, { draft: 'x'.repeat(30000), inNewTab: true });
 assert.strictEqual(stateFor(50).draft.length, 20000);
 
+// Pictures from the box (already checked by main) ride with the draft, once, and an Ask with only pictures still carries them.
+const img = (n) => ({ type: 'image/png', name: n, data: Buffer.from([1, 2, 3]) });
+rt.fromHome(12, { draft: 'look', images: [img('a.png'), img('b.png')], send: true });
+const withPics = stateFor(60);
+assert.deepStrictEqual([withPics.draft, withPics.send, withPics.images.map((i) => i.name)], ['look', true, ['a.png', 'b.png']]);
+assert.deepStrictEqual(stateFor(60).images, [], 'taken once');
+rt.fromHome(12, { draft: '', images: [img('c.png')], send: true });
+assert.strictEqual(stateFor(60).images.length, 1, 'pictures alone are something to ask');
+rt.fromHome(12, { draft: '' });
+assert.deepStrictEqual(stateFor(60).images, []);
+
 console.log('PASS  chat-page-from-home-units');
