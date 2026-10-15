@@ -1252,9 +1252,9 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
-  el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
+  el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
@@ -1539,10 +1539,10 @@ function fillHoverCard(el) {
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
-  if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
+  if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
-  hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff && !tab.sleeping;
+  hostEl.hidden = !host && !tab.aiOpened && !tab.openedByApp && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
 
@@ -3017,6 +3017,46 @@ startChat();
 // External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
+// "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
+const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
+
+// ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
+// A pill per app that is working (or paused), with Stop and Take over; and a bar under the toolbar when an app that has not been allowed
+// yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
+(() => {
+  const pills = $('external-pills');
+  const bar = $('external-bar');
+  if (!pills || !bar || !window.assistant.onExternalState) return;
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
+  const button = (cls, label, onclick) => Object.assign(el('button', cls, label), { type: 'button', onclick });
+  function render(state) {
+    const active = state?.active || [];
+    pills.replaceChildren(...active.map((a) => {
+      const pill = el('div', 'external-pill' + (a.paused ? ' paused' : ''));
+      pill.setAttribute('role', 'status');
+      pill.dataset.appId = a.id;
+      const text = el('span', 'external-pill-text', t(a.paused ? 'external.paused' : 'external.using', { client: a.name }));
+      pill.title = text.textContent;
+      pill.append(el('span', 'agent-dot'), text,
+        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalResume(a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalTakeOver(a.id)),
+        button('external-stop', t('external.stop'), () => window.assistant.externalStop(a.id)));
+      return pill;
+    }));
+    pills.hidden = !active.length;
+    const ask = (state?.prompts || [])[0];
+    if (!ask) { bar.hidden = true; bar.replaceChildren(); delete bar.dataset.promptId; return; }
+    if (bar.dataset.promptId === ask.id) return;
+    bar.dataset.promptId = ask.id;
+    const answer = (decision) => window.assistant.externalAnswer(ask.id, decision);
+    bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
+      button('primary', t('external.allow'), () => answer('allow')),
+      button('', t('external.allowAsk'), () => answer('allow-ask')),
+      button('', t('external.deny'), () => answer('deny')));
+    bar.hidden = false;
+  }
+  window.assistant.onExternalState(render);
+  window.assistant.externalState?.().then(render).catch(() => {});
+})();
 let mcpPillText = null;
 // The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)
 // is attached. A connected-but-idle MCP agent (Claude Code keeps its session open all day) and Lumen's own

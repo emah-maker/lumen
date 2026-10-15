@@ -1814,6 +1814,7 @@ function tabState() {
           sleeping: true,
           chat: tabChatMark(t.id),
           aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
+          openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...tabTools.state(t, false),
         };
@@ -1846,6 +1847,7 @@ function tabState() {
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
+        openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };

@@ -184,6 +184,16 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       mcpInfo: call('mcp:info'),
       setMcpEnabled: call('mcp:set-enabled'),
       addToAgent: call('mcp:add-to-agent'),
+      // Let other apps use Lumen (features/external-apps.js): their tokens, the switch and the setup text
+      externalApps: {
+        info: call('mcp:external-info'),
+        enable: call('mcp:external-enable'),
+        setPrompt: call('mcp:external-prompt-setting'),
+        add: call('mcp:external-add'),
+        revoke: call('mcp:external-revoke'),
+        setAsk: call('mcp:external-ask'),
+        openConfig: call('mcp:external-open-config'),
+      },
       automationInfo: call('automation:info'),
       // Tools from MCP servers the user adds (features/mcp-client.js)
       mcpServers: {
