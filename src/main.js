@@ -8829,7 +8829,9 @@ function prepareSettings() {
   // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
   // shown at the place a tab has, but under every other view (so nothing of it is seen), until it becomes the tab. There it is drawn (rasterized)
   // before the tab takes it: moved in from the side it was another 20 ms to its first frame.
-  try { view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height }); win.contentView.addChildView(view, 0); view.setVisible(true); } catch { /* it loads without */ }
+  // (placing the view and starting the load are two tasks, not one long one: each holds the main process for about 10 ms)
+  const rec = curRec;
+  setImmediate(() => { if (spareSettings !== s || view.webContents.isDestroyed()) return; try { withWindow(rec, () => { view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height }); win.contentView.addChildView(view, 0); view.setVisible(true); }); } catch { /* it loads without */ } });
   s.timer.unref?.();
   view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
   spareSettings = s;
