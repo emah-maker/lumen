@@ -8,7 +8,6 @@
 require('./_tmp-cleanup');
 // DEADLINE: a step that waits for something that never happens fails the suite with a message instead of holding the e2e lock.
 const DEADLINE = setTimeout(() => { console.log('FAIL  the suite did not finish in 280 s (a step is stuck: see the last PASS above)'); process.exit(1); }, 280000);
-DEADLINE.unref?.();
 const { _electron: electron } = require('playwright-core');
 const { SECTION_LINKS } = require('../src/settings/settings-backend');
 const { tmpProfile, env, root, sleep } = require('./_settings-open-rig');
