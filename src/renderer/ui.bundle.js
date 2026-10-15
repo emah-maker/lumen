@@ -3083,7 +3083,6 @@ explain describe list find give compare difference summarize summary write rewri
   }
 
   // ---- cards
-  const SURF = { browser: { key: 'browser', icon: 'browser', title: 'card.browser' }, shell: { key: 'shell' } };
   let observer = null;
   const seen = new Set();
   let visTimer = 0;

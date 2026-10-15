@@ -218,12 +218,10 @@ process.stdin.on('data', async (d) => {
   await ui.focus(row);
   await ui.press(row, 'Enter');
   await sleep(200);
-  void 0;
   console.log('      after Enter:', J(await ui.evaluate((r) => { const n = document.querySelector(r); return { exp: n.getAttribute('aria-expanded'), focus: document.activeElement === n, active: document.activeElement?.className, more: Boolean(n.querySelector('.step-more')) }; }, row)));
   check('Enter opens it: the input of the call', await ui.evaluate((r) => { const n = document.querySelector(r); return n.getAttribute('aria-expanded') === 'true' && /"url": "http:\/\/127\.0\.0\.1:\d+\/a"/.test(n.querySelector('.step-more')?.textContent || ''); }, row), await ui.evaluate((r) => document.querySelector(r).textContent, row));
 
   // ---- history: the final frame is there after a reload
-  const chatId = await app.evaluate(() => global.__tabChats.chatId());
   await sleep(1200);
   await ui.reload();
   await ui.waitForSelector('.tab');

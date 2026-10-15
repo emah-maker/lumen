@@ -115,7 +115,6 @@
   }
 
   // ---- cards
-  const SURF = { browser: { key: 'browser', icon: 'browser', title: 'card.browser' }, shell: { key: 'shell' } };
   let observer = null;
   const seen = new Set();
   let visTimer = 0;
