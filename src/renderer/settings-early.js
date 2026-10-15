@@ -35,8 +35,6 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
-    prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
-    prefetch('ai.automationInfo', () => S.ai.automationInfo());
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();
