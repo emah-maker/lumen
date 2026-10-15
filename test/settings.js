@@ -128,7 +128,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await inTab(sid, "document.querySelector('#nav a[data-section=ai]').click()");
   await waitFor(() => inTab(sid, "Boolean(document.getElementById('pref-aiHandsOff'))"));
   const lbl = (key) => inTab(sid, `document.getElementById('pref-${key}')?.getAttribute('aria-label')`);
-  check('AI switches are phrased as positives', (await lbl('aiHandsOff')) === 'Let the AI act on my pages' && (await lbl('aiStayOnMyTab')) === 'Let the AI bring its tabs to the front' && (await lbl('agentsNoAsk')) === 'Ask before agents act in their own window', `${await lbl('aiHandsOff')} | ${await lbl('aiStayOnMyTab')} | ${await lbl('agentsNoAsk')}`);
+  check('AI switches are phrased as positives', (await lbl('aiHandsOff')) === 'Let the AI act on my pages' && (await lbl('aiStayOnMyTab')) === 'Bring tabs the AI opened to the front' && (await lbl('agentsNoAsk')) === 'Ask before agents act in their own window', `${await lbl('aiHandsOff')} | ${await lbl('aiStayOnMyTab')} | ${await lbl('agentsNoAsk')}`);
   const hands = () => inTab(sid, 'window.lumenSettings.get().then((s) => s.prefs.aiHandsOff)');
   check('aiHandsOff: the default (false) shows the switch on', (await inTab(sid, "document.getElementById('pref-aiHandsOff').checked")) === true && !(await hands()));
   await inTab(sid, "document.getElementById('pref-aiHandsOff').click()");
