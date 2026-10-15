@@ -2927,6 +2927,7 @@ function fitDescs() {
   const todo = [];
   for (const d of document.querySelectorAll('.desc.clamp')) { // (reads first: a write in between would make the next read lay the page out again)
     if (!d.offsetParent || d.classList.contains('open')) continue; // on another page, filtered out, or already opened
+    if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue; // (in a list below the screen that is not laid out yet: asking its size would lay it out; it is looked at when it nears the screen)
     const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
     todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
   }
@@ -3126,7 +3127,13 @@ const slots = new Map(); // slot or sub-page id -> Slot
 // Probes that start a process in main (is the CLI there, is it signed in, which version) wait until the page has painted and is idle.
 let paintedResolve = () => {};
 const painted = new Promise((resolve) => { paintedResolve = resolve; });
-const later = (fn) => painted.then(() => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 400 }) : setTimeout(resolve, 50)))).then(fn);
+// (one at a time, 40 ms apart: each starts a program, and two together hold the main process for over 20 ms)
+let laterChain = painted;
+const later = (fn) => {
+  const turn = laterChain.then(() => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 400 }) : setTimeout(resolve, 50))));
+  laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
+  return turn.then(fn);
+};
 let isBuilt = () => true; // set up by init(): is the builder (by id) done
 let neededBuilds = () => []; // ...the builders a page needs before it is shown
 let buildOne = () => Promise.resolve();
