@@ -168,6 +168,13 @@ function startAgent({ env, clientName }) {
     };
     await settle();
     result.idle = samples();
+    // Calibration: the main process's timer chain with nothing going on. Another program using the CPU (a second test run outside the lock)
+    // shows up here as stalls, and then the stall numbers below say nothing about Lumen: the run reports that instead of failing on them.
+    await gap(true);
+    await sleep(5000);
+    result.quietGap = await gap('read');
+    await gap(false);
+    console.log(`quiet machine check: idle main gap max ${result.quietGap.max} ms`);
     console.log(`idle:${result.idle.count} processes, ${result.idle.wsMb.toFixed(0)} MB`);
 
     const byTool = {};
@@ -403,6 +410,7 @@ function startAgent({ env, clientName }) {
       check(`one bridge stays under ${BOUNDS.bridgeMb} MB (${result.bridge.wsMb.toFixed(0)})`, result.bridge.wsMb <= BOUNDS.bridgeMb, result.bridge.wsMb);
       // The main process must never stall for more than 20 ms (the standing rule), in every phase. The count of stalls over 20 ms is ratcheted too,
       // so that growth is caught whatever the maximum does.
+      check(`the machine was quiet during the run (idle main-process gap ${result.quietGap.max} ms, at most ${BOUNDS.quietIdleGapMs}): otherwise stall numbers are not Lumen's, run again`, result.quietGap.max <= BOUNDS.quietIdleGapMs, result.quietGap.max);
       const phases = [...[1, 3, 6].map((n) => [`${n} session${n > 1 ? 's' : ''}`, result.sessions[n].gapMax, result.sessions[n].gapOver, BOUNDS.gapOver[`s${n}`]]), ['five sessions', result.multiTab.five_sessions.gapMax, result.multiTab.five_sessions.gapOver, BOUNDS.gapOver.five], ['one session, five tabs', result.multiTab.one_session_five_tabs.gapMax, result.multiTab.one_session_five_tabs.gapOver, BOUNDS.gapOver.tabs]];
       for (const [label, max, over, ratchet] of phases) {
         check(`main-process gap at most ${BOUNDS.maxGapMs} ms during the calls, ${label} (max ${max})`, max <= BOUNDS.maxGapMs, max);

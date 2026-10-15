@@ -7,8 +7,20 @@
   "bridgeProcesses": 1,
   "bridgeMb": 130,
   "maxGapMs": 20,
-  "gapOver": { "s1": 10, "s3": 25, "s6": 60, "five": 40, "tabs": 30 },
-  "p95Ms": { "navigate": 1400, "read_page": 60, "screenshot": 250, "find": 100, "click": 800 },
+  "gapOver": {
+    "s1": 10,
+    "s3": 25,
+    "s6": 60,
+    "five": 40,
+    "tabs": 30
+  },
+  "p95Ms": {
+    "navigate": 1400,
+    "read_page": 60,
+    "screenshot": 250,
+    "find": 100,
+    "click": 800
+  },
   "readPageBytes": 20000,
   "screenshotBytes": 700000,
   "fiveTabsOneSessionOverIdleMb": 2300,
@@ -19,5 +31,6 @@
   "fiveTabsSavingMb": 500,
   "unloadedTabs": 4,
   "unloadFreedProcesses": 3,
-  "unloadFreedMb": 300
+  "unloadFreedMb": 300,
+  "quietIdleGapMs": 12
 }
