@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <!-- A deck's content is drawn from plain JSON with DOM calls (slides.js): no scripts but this page's own, no pictures but data: ones, nothing fetched. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data: blob:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="referrer" content="no-referrer" />
   <title>Presentation</title>
   <link rel="stylesheet" href="tokens.css" />
@@ -41,7 +41,13 @@
     .text.nowrap p { white-space: pre; }
     .bullet { display: inline-block; }
     .pic { overflow: hidden; }
-    .pic img { position: absolute; display: block; user-select: none; -webkit-user-drag: none; }
+    a.pic { display: block; cursor: pointer; }
+    .imglayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+    .imgfit { position: absolute; }
+    .imglayer img { position: absolute; display: block; max-width: none; user-select: none; -webkit-user-drag: none; }
+    .shape .bg { overflow: hidden; }
+    .tbl td { position: relative; isolation: isolate; }
+    .tbl td > .imglayer { z-index: -1; }
     .missing, .ph { display: flex; align-items: center; justify-content: center; text-align: center; font: 12px/1.3 "Segoe UI", system-ui, sans-serif; color: #6e6e73; background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.03) 0 8px, rgba(0, 0, 0, 0.06) 8px 16px); border: 1px dashed rgba(0, 0, 0, 0.25); }
     .tbl table { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; }
     .tbl td { border: 1px solid #bfbfbf; padding: 3.6pt 7.2pt; vertical-align: top; overflow: hidden; font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; line-height: 1.2; overflow-wrap: break-word; }
