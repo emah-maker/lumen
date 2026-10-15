@@ -75,18 +75,20 @@ process.stdin.on('data', async (d) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const profile = path.join(root, 'profile'); fs.mkdirSync(profile);
   const fake = path.join(root, 'fake-claude.js'); fs.writeFileSync(fake, FAKE_CLI);
+  const spawnModule = path.join(root, 'cli-spawn.js'); // what the engines call in place of child_process.spawn (features/ai-agents.js cliSpawn)
+  fs.writeFileSync(spawnModule, `const cp = require('child_process'); exports.spawn = (bin, argv, opts) => cp.spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1' } });`);
 
   const syntax = require('child_process').spawnSync(process.execPath, ['--check', path.join(__dirname, '..', 'src', 'main.js')]);
   if (syntax.status !== 0) { console.error(String(syntax.stderr)); process.exit(1); }
   const app = await electron.launch({
     args: [path.join(__dirname, '..')],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_CLAUDE_BIN: fake, LUMEN_TEST_CLI_SPAWN: spawnModule },
   });
   const ui = await app.firstWindow({ timeout: 90000 });
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  await app.evaluate(() => { global.__settings.backend.set('sidebarNewChat', false); global.__settings.backend.set('graphicsMode', 'full'); }); // (Light, which an integrated GPU picks on its own, refreshes only on navigation: covered below)
 
   // ---- the fake Claude API client: scripted steps per request, narration first, a pause in the 'wait' tool
   await app.evaluate(() => {
@@ -209,11 +211,14 @@ process.stdin.on('data', async (d) => {
 
   // ---- steps open on demand (the browser card's rows), keyboard too
   await ui.evaluate((s) => { document.querySelector(`${s} .act-steps > summary`).click(); }, card());
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); // (the reopened tab has its own sidebar)
+  await sleep(500);
   const row = `${card()} .act-list .step[data-more]`;
   check('a step is collapsed by default and reachable by keyboard', await ui.evaluate((r) => { const n = document.querySelector(r); return n.getAttribute('aria-expanded') === 'false' && n.tabIndex === 0 && !n.querySelector('.step-more'); }, row), 'state');
   await ui.focus(row);
   await ui.press(row, 'Enter');
   await sleep(200);
+  void 0;
   console.log('      after Enter:', J(await ui.evaluate((r) => { const n = document.querySelector(r); return { exp: n.getAttribute('aria-expanded'), focus: document.activeElement === n, active: document.activeElement?.className, more: Boolean(n.querySelector('.step-more')) }; }, row)));
   check('Enter opens it: the input of the call', await ui.evaluate((r) => { const n = document.querySelector(r); return n.getAttribute('aria-expanded') === 'true' && /"url": "http:\/\/127\.0\.0\.1:\d+\/a"/.test(n.querySelector('.step-more')?.textContent || ''); }, row), await ui.evaluate((r) => document.querySelector(r).textContent, row));
 
@@ -238,13 +243,26 @@ process.stdin.on('data', async (d) => {
   const twoCards = await ui.evaluate(() => [...document.querySelectorAll('#messages .act-card')].map((c) => [c.querySelector('.act-sub').textContent, c.querySelector('.act-steps > summary').textContent, c.previousElementSibling?.textContent.trim().slice(0, 20)]));
   check('a line of narration ends the card; the next steps start a new one', twoCards.length === 2 && twoCards.every((c) => /^Done · /.test(c[0]) && c[1] === '1 step') && /^Now the second/.test(twoCards[1][2]), J(twoCards));
 
+  // ---- Graphics on Light: the thumbnail refreshes on navigation only (a frame when the work starts, one per page change), never on the clock
+  await app.evaluate(() => global.__settings.backend.set('graphicsMode', 'light'));
+  await ui.click('#new-chat');
+  await sleep(400);
+  await watchUi();
+  await ui.fill('#prompt', 'Can you find the lab TA on that site?');
+  await ui.press('#prompt', 'Enter');
+  await waitFor(() => ui.evaluate(() => document.querySelectorAll('#messages .act-card').length >= 1), 10000);
+  await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop')), 40000);
+  const lightFrames = await ui.evaluate(() => window.__thumbs.map((t) => new URL(t.url).pathname));
+  check('Light graphics: frames only for the first step and each page change (not every 1.5 s)', lightFrames.length >= 2 && lightFrames.length <= 3 && lightFrames.includes('/a') && lightFrames.includes('/b'), J(lightFrames));
+  await app.evaluate(() => global.__settings.backend.set('graphicsMode', 'full'));
+
   // ---- the full-page chat: the same cards, live and from history
   await ui.evaluate(() => document.getElementById('open-chat-page').click());
   const chat = await waitFor(() => app.evaluate(() => global.__chatPage.tabs().find((t) => t.chat && /chat-page\.html$/.test(t.url)) || null), 20000);
   const inPage = (code) => app.evaluate(async (_e, c) => { const t = global.__chatPage.tabs().find((x) => x.chat); if (!t) return 'NO CHAT TAB'; try { return await global.__chatPage.contents(t.id).executeJavaScript(c, true); } catch (err) { return `ERROR ${err?.message || err}`; } }, code);
   check('the full page opens', Boolean(chat), 'no chat tab');
-  const pageHistory = await waitFor(async () => { const r = await inPage(`document.querySelectorAll('#messages .act-card[data-surface="browser"]').length`); return r === 2 && r; }, 15000);
-  check('the full-page chat shows the saved cards', pageHistory === 2, J(await inPage(`[...document.querySelectorAll('#messages .act-card')].map((c) => c.querySelector('.act-sub').textContent)`)));
+  const pageHistory = await waitFor(async () => { const r = await inPage(`document.querySelectorAll('#messages .act-card[data-surface="browser"]').length`); return r >= 1 && r; }, 15000);
+  check('the full-page chat shows the saved card (a reply keeps one card for its steps)', pageHistory >= 1 && /^Done · /.test(String(await inPage(`document.querySelector('#messages .act-card .act-sub').textContent`))), J(await inPage(`[...document.querySelectorAll('#messages .act-card')].map((c) => c.querySelector('.act-sub').textContent)`)));
   await inPage(`(() => { window.__long = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__long.push(Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); } catch (e) {} const p = document.getElementById('prompt'); p.value = 'Ask from the page please'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
   const livePage = await waitFor(async () => inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); return c && /^Working · /.test(c.querySelector('.act-sub').textContent) && c.querySelectorAll('.act-list .step').length >= 1 ? c.querySelector('.act-sub').textContent : null; })()`), 20000);
   check('a run from the full page draws a live Browser card too', Boolean(livePage), String(livePage));
@@ -259,13 +277,7 @@ process.stdin.on('data', async (d) => {
   // back from the full page to the sidebar (the chat tab closes; the sidebar is per tab, so it opens again)
   await app.evaluate((_e, id) => global.__closeTabInteractive(id), chat.id);
   await sleep(800);
-  await app.evaluate((_e, { fakePath }) => {
-    const { spawn } = process.mainModule.require('child_process');
-    const cc = global.__agent.engines.claudecode;
-    cc.bin = fakePath;
-    cc.spawn = (bin, argv, opts) => spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1' } });
-    global.__settings.backend.set('claudeCodeFullAccess', true);
-  }, { fakePath: fake });
+  await app.evaluate(() => { global.__settings.backend.set('claudeCodeFullAccess', true); });
   await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
   await ui.click('#new-chat');
   await sleep(400);
@@ -296,12 +308,12 @@ process.stdin.on('data', async (d) => {
   check('only the icon and the short reason are red, not the line', await ui.evaluate((s) => { const r = document.querySelector(`${s} .step.failed`); const why = r.querySelector('.step-why'); return Boolean(why) && getComputedStyle(r).color !== getComputedStyle(why).color; }, shell), 'colours');
   // details: the exact command and the output, copyable
   const writeRow = await ui.evaluate((s) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)].findIndex((n) => n.firstChild.textContent === 'Writing fmt.ps1'), shell);
-  await ui.evaluate((s, i) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].click(), shell, writeRow);
-  const more = await ui.evaluate((s, i) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].querySelector('.step-more')?.textContent || '', shell, writeRow);
+  await ui.evaluate(([s, i]) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].click(), [shell, writeRow]);
+  const more = await ui.evaluate(([s, i]) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].querySelector('.step-more')?.textContent || '', [shell, writeRow]);
   check('clicking a step shows the exact command, in a copyable box', /cat > "C:\/Users\/emah\/AppData\/Local\/Temp\/fmt\.ps1" <<'EOF'/.test(more) && /Copy/.test(more), more);
   const secretRow = await ui.evaluate((s) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)].findIndex((n) => /deploy\.sh/.test(n.firstChild.textContent)), shell);
-  await ui.evaluate((s, i) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].click(), shell, secretRow);
-  const secret = await ui.evaluate((s, i) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].querySelector('.step-more')?.textContent || '', shell, secretRow);
+  await ui.evaluate(([s, i]) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].click(), [shell, secretRow]);
+  const secret = await ui.evaluate(([s, i]) => [...document.querySelectorAll(`${s} .act-list .step[data-more]`)][i].querySelector('.step-more')?.textContent || '', [shell, secretRow]);
   check('a password or token in a command is masked where it is shown', /deploy\.sh/.test(secret) && !/hunter2|abcd1234efgh5678/.test(secret) && /••••/.test(secret), secret);
   const bash0 = await ui.evaluate((s) => { const r = [...document.querySelectorAll(`${s} .act-list .step[data-more]`)].find((n) => /Render the PDF/.test(n.firstChild.textContent)); r.click(); return r.querySelector('.step-more')?.textContent || ''; }, shell);
   check('…and its output is there', /rendered 4 pages/.test(bash0) && /powershell -NoProfile -File pdf2png\.ps1/.test(bash0), bash0);

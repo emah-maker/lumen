@@ -119,9 +119,11 @@
   let observer = null;
   const seen = new Set();
   let visTimer = 0;
-  function reportVisible() {
+  function reportVisible(now = false) {
     clearTimeout(visTimer);
-    visTimer = setTimeout(() => { try { window.assistant?.thumbsVisible?.(!document.hidden && seen.size > 0); } catch { /* old preload */ } }, 150);
+    const send = () => { try { window.assistant?.thumbsVisible?.(!document.hidden && seen.size > 0); } catch { /* old preload */ } };
+    if (now) send(); // (a card appearing is seen at once; one leaving is reported a moment later)
+    else visTimer = setTimeout(send, 150);
   }
   function watch(card) {
     if (typeof IntersectionObserver !== 'function') return;
@@ -130,6 +132,8 @@
       document.addEventListener('visibilitychange', reportVisible);
     }
     observer.observe(card);
+    seen.add(card); // (a new card is on screen until the observer says otherwise)
+    reportVisible(true);
   }
   function unwatch(card) { if (observer) { observer.unobserve(card); seen.delete(card); reportVisible(); } }
 
