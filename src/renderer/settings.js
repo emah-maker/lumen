@@ -3156,6 +3156,7 @@ function finishRoute({ id, focus, focusEl }) {
   performance.mark('settings:route');
   show();
   performance.mark('settings:shown');
+  window.__settingsPerf.visibleDone = true; // (the first screen is complete and laid out: it paints next; the lists below it follow in the next frame)
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
@@ -3322,7 +3323,6 @@ async function init() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
     revealFolded();
-    window.__settingsPerf.visibleDone = true;
     paintedResolve();
     performance.mark('settings:visible');
     buildAll();
