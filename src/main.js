@@ -256,7 +256,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros|connectors):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -7869,6 +7869,59 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
+// [connectors] Gmail reuses the widget's Google paths: its own sign-in for the API, the Google sign-in in Lumen for the unread feed.
+// (A test stands in for Google with global.__connectorsGoogle, looked up at each call.)
+const connectorsOpen = (url) => { if (String(url).startsWith('https://')) openTab(url); };
+const connectorsGoogleReal = {
+  status: async () => {
+    const GA = require('./features/gmail-atom');
+    const auth = widgets.gmailAuthState();
+    let signedIn = false;
+    let email = auth.email;
+    if (!auth.oauth) {
+      try {
+        const res = await googleMailFeed(GA.feedUrl(0));
+        const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+        signedIn = Boolean(parsed?.ok);
+        email = parsed?.email || '';
+      } catch { /* not reachable: not signed in */ }
+    }
+    return { oauth: auth.oauth, oneClick: auth.oneClick, session: signedIn, email };
+  },
+  api: (p) => widgets.gmailApi(p),
+  feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
+  connect: () => widgets.gmailConnect({}),
+  disconnect: () => widgets.gmailDisconnect(),
+};
+const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
+// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Loaded when first
+// used: nothing here runs at startup beyond reading the small list of what is connected. A request goes only to that service, and
+// tests point each at 127.0.0.1 (global.__connectorEndpoints) with plain http allowed for that address in test mode only.
+const connectorsService = require('./features/connectors/service').create({
+  userData: app.getPath('userData'),
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+  },
+  fetch: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }), // a token goes in the header; no cookies
+  sessionFetch: (url, options) => session.defaultSession.fetch(url, { ...options, credentials: 'include' }), // the user's signed-in Lumen session (Canvas)
+  endpoints: () => (TEST && global.__connectorEndpoints) || {},
+  testLoopback: TEST,
+  // Hosts that may be a school's Canvas: the Canvas session cookie's own domain first, then history and the sites the AI may read as the user.
+  detectHosts: async () => {
+    const hosts = new Set();
+    try { for (const c of await session.defaultSession.cookies.get({ name: 'canvas_session' })) hosts.add(String(c.domain || '').replace(/^\./, '')); } catch { /* none */ }
+    for (const h of signedInSites.hosts()) hosts.add(h);
+    for (const e of history.values()) { try { hosts.add(new URL(e.url).hostname); } catch { /* not an address */ } }
+    return [...hosts].filter(Boolean);
+  },
+  // Gmail reuses the widget's Google paths (its own sign-in for the API, the Google sign-in in Lumen for the unread feed).
+  google: connectorsGoogle,
+  mcp: mcpClient,
+  openSignIn: connectorsOpen,
+});
+require('./features/connectors/service').registerIpc(ipcMain, connectorsService, { openSignIn: connectorsOpen });
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -8022,6 +8075,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
+  connectors: connectorsService, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
@@ -8183,6 +8237,7 @@ if (TEST) {
   global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
+  global.__connectors = connectorsService;
 }
 
 // ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
@@ -10469,7 +10524,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
-  tools: EXTERNAL_TOOLS,
+  tools: { map: (f) => [...EXTERNAL_TOOLS, ...connectorsService.defs()].map(f), some: (f) => [...EXTERNAL_TOOLS, ...connectorsService.defs()].some(f) }, // [connectors] outside agents (Claude Code and the like) see the connector tool while a service is connected
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
