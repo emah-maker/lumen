@@ -3135,7 +3135,7 @@ const later = (fn) => {
   return turn.then(fn);
 };
 let isBuilt = () => true; // set up by init(): is the builder (by id) done
-let neededBuilds = () => []; // ...the builders a page needs before it is shown
+let neededBuilds = () => []; // ...the builders a page needs before it is shown (the second argument: for the very first paint)
 let buildOne = () => Promise.resolve();
 let buildAll = () => Promise.resolve();
 let allDone = false;
@@ -5994,7 +5994,7 @@ let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
   const r = resolveRoute();
-  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  const need = neededBuilds(view, !firstRouteDone).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -6123,7 +6123,11 @@ async function init() {
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-  neededBuilds = (v) => {
+  // The very first paint of the General page (opened with no link) needs only the lists on its first screen; the others are built right after.
+  const FIRST_SCREEN = { general: ['import', 'startup', 'search'] };
+  const SLOT_OWNER = { 'default-browser': 'import', import: 'import', startup: 'startup', search: 'search', languages: 'languages', downloads: 'downloads' }; // (a list is tidied once its own builder is done)
+  neededBuilds = (v, first = false) => {
+    if (first && !v.sub && FIRST_SCREEN[v.cat] && (!location.hash.slice(1) || location.hash.slice(1) === v.cat)) return FIRST_SCREEN[v.cat];
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
     return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
@@ -6150,7 +6154,7 @@ async function init() {
     for (const [sid, slot] of slots) {
       if (slot.tidied) continue;
       const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
-      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      const done = owner ? finished.has(owner) || !buildFn.has(owner) : SLOT_OWNER[sid] ? finished.has(SLOT_OWNER[sid]) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
       if (done) { slot.tidied = true; tidy(slot); }
     }
   };
@@ -6184,7 +6188,7 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, true).map(buildOne));
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
