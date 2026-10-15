@@ -41,7 +41,7 @@ const nameOf = (deckUrl) => { try { return path.basename(fileURLToPath(deckUrl))
 // The last decks read, for Reload and Back (and read_pdf right after): keyed by path, size and time.
 const CACHE = new Map();
 const CACHE_MAX = 3;
-// { name, width, height, slides, media, warnings } or { name, error }. Errors never carry the path.
+// { name, width, height, slides, media, mediaInfo, mediaAlias, warnings } or { name, error }. Errors never carry the path.
 async function loadDeck(deckUrl) {
   const name = nameOf(deckUrl);
   let file;
@@ -55,7 +55,7 @@ async function loadDeck(deckUrl) {
   let result;
   try {
     const deck = await pptx.parsePptx(await fs.promises.readFile(file));
-    result = { name, width: deck.width, height: deck.height, slides: deck.slides, media: deck.media, warnings: deck.warnings, slideCount: deck.slideCount };
+    result = { name, width: deck.width, height: deck.height, slides: deck.slides, media: deck.media, mediaInfo: deck.mediaInfo, mediaAlias: deck.mediaAlias, warnings: deck.warnings, slideCount: deck.slideCount };
   } catch (err) {
     return { name, error: err instanceof pptx.PptxError ? err.message : 'The presentation could not be read.' };
   }
