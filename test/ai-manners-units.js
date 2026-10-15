@@ -315,13 +315,21 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: app.js sums the toggle from the strip\'s own rule', Boolean(sumFn) && /aiHiddenTab\(x, state\)/.test(sumFn));
     const sctx = { window: { lumenHideAiTabs: true }, drag: null };
     vm.createContext(sctx);
-    vm.runInContext(`${fn}; ${sumFn}; this.sum = hideAiSummary;`, sctx);
-    const sum = (...t) => JSON.stringify(sctx.sum({ activeId: 5, tabs: t }));
+    const needsFn = /function aiTabNeedsYou(tab) {[^
+]*}/.exec(app)?.[0];
+    vm.runInContext(`${fn}; ${sumFn}; ${needsFn}; this.sum = hideAiSummary;`, sctx);
+    const sumFull = (...t) => sctx.sum({ activeId: 5, tabs: t });
+    const sum = (...t) => { const { needs: _needs, ...rest } = sumFull(...t); return JSON.stringify(rest); }; // (the counts; "needs you" is checked below)
     check('hide toggle: summary: AI tabs behind the user\'s are all hidden, none shown', sum({ id: 1 }, { id: 2, aiOpened: true }, { id: 3, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 2, shown: 0 }));
     check('hide toggle: summary: the AI tab in front is shown, not counted as hidden', sum({ id: 1 }, { id: 5, aiOpened: true }, { id: 3, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 1, shown: 1 }), sum({ id: 1 }, { id: 5, aiOpened: true }, { id: 3, aiOpened: true }));
     check('hide toggle: summary: only the tab in front: nothing hidden, one shown (the button must not say "hidden")', sum({ id: 5, aiOpened: true }) === JSON.stringify({ on: true, total: 1, hidden: 0, shown: 1 }));
     check('hide toggle: summary: a tab playing sound is shown, not hidden', sum({ id: 1, aiOpened: true, audible: true }, { id: 2, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 1, shown: 1 }));
     check('hide toggle: summary: hidden + shown always equals the AI tabs while on', (() => { const o = JSON.parse(sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }, { id: 7, aiOpened: true, audible: true })); return o.hidden + o.shown === o.total; })());
+    // [ai tabs] a hidden AI tab that needs the user (an approval, a waiting dialog, an error page) is listed, so the chip can say so and a click can show it
+    check('hide toggle: needs you: a hidden tab with an approval, a dialog or an error is listed, in strip order', JSON.stringify(sumFull({ id: 1, aiOpened: true, chat: 'approval' }, { id: 2, aiOpened: true }, { id: 3, aiOpened: true, alert: true }, { id: 4, aiOpened: true, error: true }).needs) === '[1,3,4]');
+    check('hide toggle: needs you: a tab that is merely running or done does not need you', sumFull({ id: 1, aiOpened: true, chat: 'running' }, { id: 2, aiOpened: true, chat: 'done' }).needs.length === 0);
+    check('hide toggle: needs you: the tab in front is shown, so it is not "hidden and needs you"', sumFull({ id: 5, aiOpened: true, chat: 'approval' }).needs.length === 0);
+    check('hide toggle: needs you: a tab that is not the AI's never is', sumFull({ id: 1, chat: 'approval' }).needs.length === 0);
     sctx.window.lumenHideAiTabs = false;
     check('hide toggle: summary: off: nothing hidden or shown by the toggle, the total is what it would hide', sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }) === JSON.stringify({ on: false, total: 2, hidden: 0, shown: 0 }));
     const sync = /function syncHideAiToggle\(state\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';

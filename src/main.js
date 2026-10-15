@@ -5888,16 +5888,16 @@ function hideAiMenuTemplate() {
     { label: count ? t('sidebar.hideAiTabs.menu.close', { count }) : t('sidebar.hideAiTabs.menu.closeNone'), enabled: count > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } },
   ];
 }
-let hideAiMenuPops = 0;
+const hideAiMenuPops = []; // (tests: where each request to open the menu came from; the test build opens no native menu)
 ipcMain.on('tabs:hide-ai-menu', (event, at) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || owner.isDestroyed()) return;
-  hideAiMenuPops++;
   // From the keyboard (Menu key, Shift+F10) the strip says where: under the button
   const pos = Number.isFinite(at?.x) && Number.isFinite(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {};
+  if (TEST) { hideAiMenuPops.push(pos); return; }
   Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner, ...pos });
 });
-if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops;
+if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops.slice();
 if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));

@@ -195,7 +195,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   // Right-click on the sidebar's Hide AI tabs toggle: the switch, and Close with the count.
   const menu = () => app.evaluate(() => global.__hideAiMenu().map(({ label, type, enabled, checked }) => ({ label, type, enabled, checked })));
   const m1 = await menu();
-  check('right-click menu on Hide AI tabs: a Hide switch and "Close tabs the AI opened (N)"', m1[0]?.type === 'checkbox' && /Hide tabs the AI opened/.test(m1[0].label) && m1[2]?.enabled && m1[2].label.includes(`(${wantUrls.length})`), JSON.stringify(m1));
+  check('right-click menu on Hide AI tabs: a Hide switch and "Close tabs the AI opened, in all windows (N)"', m1[0]?.type === 'checkbox' && m1[0].label === 'Hide AI tabs' && m1[2]?.enabled && m1[2].label.includes(`(${wantUrls.length})`), JSON.stringify(m1));
   await app.evaluate(() => global.__hideAiMenu()[0].run());
   const hiddenOn = await waitFor(() => app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs === true));
   check('...its Hide switch turns hiding on', Boolean(hiddenOn), await app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs));
