@@ -20,9 +20,143 @@
 
   let deck = null;
   let media = {};
+  let mediaInfo = {};
+  let alias = {};
+  let expected = new Set(); // pictures that are, or are on their way (the main process sends them after the structure, slice by slice)
+  const complete = new Set(); // ...and the ones whole
+  const arrivals = new Map(); // picture part -> { promise, resolve }
+  const arrival = (key) => { if (!arrivals.has(key)) { let resolve; const promise = new Promise((r) => { resolve = r; }); arrivals.set(key, { promise, resolve }); } return arrivals.get(key); };
   let frames = [];
   let current = 0;
-  const imageUrl = (key) => { const v = typeof key === 'string' ? media[key] : null; return typeof v === 'string' && v.startsWith('data:image/') ? v : null; };
+  const canon = (key) => (typeof key === 'string' && typeof alias[key] === 'string' ? alias[key] : key);
+  const imageUrl = (key) => { const k = canon(key); return typeof k === 'string' && expected.has(k) ? k : null; }; // (truthy when that picture is there or coming)
+  const dataOf = (key) => { const v = media[canon(key)]; return typeof v === 'string' && v.startsWith('data:image/') ? v : null; };
+
+  // ---- pictures
+  // Each distinct picture becomes one blob: URL (made when first needed; a very large one is shrunk first), shared by every use of it.
+  // A picture is an <img> (loading=lazy, decoding=async) in a layer that holds the crop, the stretch, the effects or a tile.
+  const SHRINK_SIDE = 3600; // a picture longer than this, or with more than SHRINK_PIXELS, is shrunk to FIT_SIDE on its long side
+  const SHRINK_PIXELS = 12e6;
+  const FIT_SIDE = 2560;
+  const SVG = 'http://www.w3.org/2000/svg';
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  async function blobOf(dataUrl) {
+    const type = dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/png';
+    const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    const STEP = 1 << 20; // (a multiple of 4: each slice is whole base64 groups)
+    const parts = [];
+    for (let i = 0, n = 0; i < b64.length; i += STEP, n++) {
+      const slice = b64.slice(i, i + STEP);
+      if (typeof Uint8Array.fromBase64 === 'function') parts.push(Uint8Array.fromBase64(slice));
+      else { const bin = atob(slice); const u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k); parts.push(u); }
+      if (n % 3 === 2) await tick(); // (a big picture never holds the page for long)
+    }
+    return new Blob(parts, { type });
+  }
+  const shown = new Map(); // picture part -> Promise<blob: URL | null>
+  const shrunk = new Set();
+  function displayUrl(key) {
+    const k = canon(key);
+    if (shown.has(k)) return shown.get(k);
+    const job = (async () => {
+      if (!imageUrl(k)) return null;
+      if (!complete.has(k)) await arrival(k).promise;
+      const data = dataOf(k);
+      if (!data) return null;
+      let blob = await blobOf(data);
+      const info = mediaInfo[k];
+      if (info && info.w && info.h && blob.type !== 'image/svg+xml' && blob.type !== 'image/gif' && (Math.max(info.w, info.h) > SHRINK_SIDE || info.w * info.h > SHRINK_PIXELS)) {
+        try {
+          const scale = FIT_SIDE / Math.max(info.w, info.h);
+          const bitmap = await createImageBitmap(blob, { resizeWidth: Math.max(1, Math.round(info.w * scale)), resizeHeight: Math.max(1, Math.round(info.h * scale)), resizeQuality: 'high' });
+          const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+          canvas.getContext('2d').drawImage(bitmap, 0, 0);
+          bitmap.close();
+          blob = await canvas.convertToBlob(blob.type === 'image/jpeg' ? { type: 'image/jpeg', quality: 0.92 } : { type: 'image/png' });
+          shrunk.add(k);
+        } catch { /* shown at full size */ }
+      }
+      return URL.createObjectURL(blob);
+    })().catch(() => null);
+    shown.set(k, job);
+    return job;
+  }
+  // The SVG twin when there is one (sharp at any size), the picture itself if the SVG will not draw.
+  function loadInto(img, key, svgKey) {
+    const first = svgKey && imageUrl(svgKey) ? svgKey : key;
+    img.addEventListener('error', () => { if (first !== key && imageUrl(key)) displayUrl(key).then((u) => { if (u) img.src = u; }); }, { once: true });
+    displayUrl(first).then((u) => { if (u) img.src = u; });
+  }
+  let filterHost = null;
+  let filterCount = 0;
+  // a:duotone: the picture's gray level mapped between two colors (an SVG filter per use)
+  function duotoneFilter(colors) {
+    const id = `duo${++filterCount}`;
+    if (!filterHost) { filterHost = document.createElementNS(SVG, 'svg'); filterHost.setAttribute('width', '0'); filterHost.setAttribute('height', '0'); filterHost.style.position = 'absolute'; document.body.append(filterHost); }
+    const f = document.createElementNS(SVG, 'filter');
+    f.setAttribute('id', id);
+    f.setAttribute('color-interpolation-filters', 'sRGB');
+    const gray = document.createElementNS(SVG, 'feColorMatrix');
+    gray.setAttribute('type', 'saturate'); gray.setAttribute('values', '0');
+    const table = document.createElementNS(SVG, 'feComponentTransfer');
+    const [a, b] = colors.map((c) => [1, 3, 5].map((i) => (parseInt(c.slice(i, i + 2), 16) / 255).toFixed(4)));
+    ['R', 'G', 'B'].forEach((ch, i) => { const fn = document.createElementNS(SVG, `feFunc${ch}`); fn.setAttribute('type', 'table'); fn.setAttribute('tableValues', `${a[i]} ${b[i]}`); table.append(fn); });
+    f.append(gray, table);
+    filterHost.append(f);
+    return id;
+  }
+  function effectsOf(fx) {
+    const out = {};
+    if (!fx) return out;
+    if (typeof fx.alpha === 'number' && fx.alpha < 1) out.opacity = String(Math.max(0, fx.alpha));
+    const f = [];
+    if (Array.isArray(fx.duotone) && fx.duotone.every((c) => HEX.test(c))) f.push(`url(#${duotoneFilter(fx.duotone)})`);
+    else if (fx.bw) f.push('grayscale(1) contrast(1000%)');
+    else if (fx.gray) f.push('grayscale(1)');
+    if (fx.bright) f.push(`brightness(${Math.max(0, 1 + Number(fx.bright))})`);
+    if (fx.contrast) f.push(`contrast(${Math.max(0, 1 + Number(fx.contrast))})`);
+    if (f.length) out.filter = f.join(' ');
+    return out;
+  }
+  const PX_PER_PT = 0.75; // a tiled picture's own size: its pixels at 96 dpi, in points (the stage's unit)
+  // A picture (a pic, or a fill: { image, svg, crop, fillRect, tile, fx }) filling its box: cropped, stretched into the fill rectangle, or tiled.
+  function imageLayer(f, { alt = '', flip = '' } = {}) {
+    const layer = el('div', 'imglayer');
+    Object.assign(layer.style, effectsOf(f.fx));
+    if (f.tile) {
+      const info = mediaInfo[canon(f.image)] || {};
+      layer.classList.add('tiled');
+      layer.style.backgroundRepeat = 'repeat';
+      if (info.w && info.h) layer.style.backgroundSize = `${info.w * PX_PER_PT * f.tile.sx}px ${info.h * PX_PER_PT * f.tile.sy}px`;
+      layer.style.backgroundPosition = `${pt(f.tile.tx)}px ${pt(f.tile.ty)}px`;
+      displayUrl(f.image).then((u) => { if (u) layer.style.backgroundImage = `url("${u}")`; });
+      return layer;
+    }
+    const fit = el('div', 'imgfit'); // the stretch target; the flip is here, so a crop mirrors with the picture
+    const [fl, ft, fr, fb] = Array.isArray(f.fillRect) ? f.fillRect.map((v) => Number(v) || 0) : [0, 0, 0, 0];
+    fit.style.left = `${fl * 100}%`;
+    fit.style.top = `${ft * 100}%`;
+    fit.style.width = `${(1 - fl - fr) * 100}%`;
+    fit.style.height = `${(1 - ft - fb) * 100}%`;
+    if (flip) fit.style.transform = flip;
+    const img = el('img');
+    img.alt = String(alt);
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.draggable = false;
+    const [cl, ct, cr, cb] = Array.isArray(f.crop) ? f.crop.map((v) => Number(v) || 0) : [0, 0, 0, 0];
+    const wFrac = Math.max(0.01, 1 - cl - cr);
+    const hFrac = Math.max(0.01, 1 - ct - cb);
+    img.style.width = `${100 / wFrac}%`;
+    img.style.height = `${100 / hFrac}%`;
+    img.style.left = `${(-cl / wFrac) * 100}%`;
+    img.style.top = `${(-ct / hFrac) * 100}%`;
+    fit.append(img);
+    layer.append(fit);
+    loadInto(img, f.image, f.svg);
+    return layer;
+  }
+  const hasPicture = (f) => Boolean(f && (imageUrl(f.image) || imageUrl(f.svg)));
 
   function fillCss(fill) {
     if (!fill) return null;
@@ -31,10 +165,13 @@
       const stops = fill.stops.map((s) => `${rgba(s.color, s.alpha) || 'transparent'} ${Math.max(0, Math.min(100, Number(s.pos) || 0))}%`).join(', ');
       return { backgroundImage: fill.radial ? `radial-gradient(circle, ${stops})` : `linear-gradient(${(Number(fill.angle) || 0) + 90}deg, ${stops})` };
     }
-    if (fill.type === 'image') { const src = imageUrl(fill.image); return src ? { backgroundImage: `url("${src}")`, backgroundSize: 'cover', backgroundPosition: 'center' } : null; }
-    return null;
+    return null; // (a picture fill is a layer: imageLayer)
   }
-  const applyFill = (node, fill) => { const css = fillCss(fill); if (css) Object.assign(node.style, css); };
+  function applyFill(node, fill) {
+    if (fill && fill.type === 'image') { if (hasPicture(fill)) node.prepend(imageLayer(fill)); return; }
+    const css = fillCss(fill);
+    if (css) Object.assign(node.style, css);
+  }
 
   function placeBox(node, s) {
     node.style.left = `${pt(s.x)}px`;
@@ -108,6 +245,11 @@
   }
 
   // ---- shapes
+  function shapeGeometry(node, s) {
+    if (s.geom === 'ellipse') node.style.borderRadius = '50%';
+    else if (s.geom === 'roundRect') node.style.borderRadius = `${Math.min(pt(s.w), pt(s.h)) * Math.max(0, Math.min(0.5, Number(s.radius) || 0.1667))}px`;
+    else if (s.geom === 'polygon' && /^[\d.% ,]+$/.test(s.points || '')) node.style.clipPath = `polygon(${s.points})`;
+  }
   function drawShape(s) {
     const box = el('div', 'shape');
     placeBox(box, s);
@@ -116,9 +258,7 @@
     if (s.line && HEX.test(s.line.color || '')) {
       bg.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px ${s.line.dash ? 'dashed' : 'solid'} ${rgba(s.line.color, s.line.alpha ?? 1)}`;
     }
-    if (s.geom === 'ellipse') bg.style.borderRadius = '50%';
-    else if (s.geom === 'roundRect') bg.style.borderRadius = `${Math.min(pt(s.w), pt(s.h)) * Math.max(0, Math.min(0.5, Number(s.radius) || 0.1667))}px`;
-    else if (s.geom === 'polygon' && /^[\d.% ,]+$/.test(s.points || '')) bg.style.clipPath = `polygon(${s.points})`;
+    shapeGeometry(bg, s);
     const flip = flipOf(s);
     if (flip) bg.style.transform = flip;
     box.append(bg);
@@ -126,33 +266,22 @@
     return box;
   }
   function drawPicture(s) {
-    const box = el('div', 'pic');
+    const link = typeof s.link === 'string' && /^(https?:|mailto:)/i.test(s.link) ? s.link : null;
+    const box = el(link ? 'a' : 'div', 'pic');
+    if (link) { box.href = link; box.target = '_blank'; box.rel = 'noopener noreferrer'; box.title = link; }
     placeBox(box, s);
-    const src = imageUrl(s.image);
-    if (!src) {
+    shapeGeometry(box, s);
+    if (!hasPicture(s)) {
+      const info = mediaInfo[canon(s.image)] || {};
       box.classList.add('missing');
-      box.textContent = s.alt ? `Picture not shown: ${s.alt}` : 'Picture not shown';
+      const why = s.format === 'linked' ? 'linked picture' : info.missing ? `${String(info.missing).replace(/[^a-z0-9]/gi, '').slice(0, 5).toUpperCase()} picture` : '';
+      box.textContent = `Picture not shown${why ? ` (${why})` : ''}${s.alt ? `: ${s.alt}` : ''}`;
       return box;
     }
-    const img = el('img');
-    img.alt = String(s.alt || '');
-    img.decoding = 'async';
-    img.draggable = false;
-    const [cl, ct, cr, cb] = Array.isArray(s.crop) ? s.crop.map((v) => Number(v) || 0) : [0, 0, 0, 0];
-    const wFrac = Math.max(0.01, 1 - cl - cr);
-    const hFrac = Math.max(0.01, 1 - ct - cb);
-    img.style.width = `${100 / wFrac}%`;
-    img.style.height = `${100 / hFrac}%`;
-    img.style.left = `${(-cl / wFrac) * 100}%`;
-    img.style.top = `${(-ct / hFrac) * 100}%`;
-    const flip = flipOf(s);
-    if (flip) img.style.transform = flip;
-    img.src = src;
-    box.append(img);
+    box.append(imageLayer(s, { alt: s.alt, flip: flipOf(s) }));
     if (s.line && HEX.test(s.line.color || '')) box.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px solid ${rgba(s.line.color, s.line.alpha ?? 1)}`;
     return box;
   }
-  const SVG = 'http://www.w3.org/2000/svg';
   function drawLine(s) {
     const w = pt(s.w); const h = pt(s.h);
     const svg = document.createElementNS(SVG, 'svg');
@@ -341,6 +470,16 @@
   window.addEventListener('resize', () => { if (presenting) showPresented(); });
   $('present').addEventListener('click', (e) => setCurrent(current + (e.clientX < window.innerWidth / 4 ? -1 : 1)));
   window.lumenPresent = present;
+  // A slice of a picture's data: URL (see slides-viewer.js): the picture is complete when its last slice arrives.
+  window.lumenSlidesMedia = (key, at, total, part) => {
+    if (typeof key !== 'string' || !expected.has(key) || typeof part !== 'string' || !(total > 0)) return;
+    const so_far = typeof media[key] === 'string' && at > 0 ? media[key] : '';
+    if (so_far.length !== at) return;
+    media[key] = so_far + part;
+    if (media[key].length >= total) { complete.add(key); arrival(key).resolve(); }
+  };
+  // For tests: what the pictures are doing.
+  window.lumenSlidesInfo = () => ({ blobs: shown.size, shrunk: [...shrunk], images: document.querySelectorAll('.stage img').length });
 
   // ---- keys
   document.addEventListener('keydown', (e) => {
@@ -377,6 +516,13 @@
     if (data.error) { showMessage('This presentation can’t be shown', String(data.error)); document.body.dataset.ready = 'error'; return; }
     deck = { width: Number(data.width) || 12192000, height: Number(data.height) || 6858000, slides: Array.isArray(data.slides) ? data.slides : [] };
     media = data.media && typeof data.media === 'object' ? data.media : {};
+    expected = new Set(Array.isArray(data.mediaKeys) ? data.mediaKeys.map(String) : Object.keys(media).filter((k) => typeof media[k] === 'string'));
+    arrivals.clear();
+    complete.clear();
+    if (!Array.isArray(data.mediaKeys)) for (const k of expected) complete.add(k);
+    mediaInfo = data.mediaInfo && typeof data.mediaInfo === 'object' ? data.mediaInfo : {};
+    alias = data.mediaAlias && typeof data.mediaAlias === 'object' ? data.mediaAlias : {};
+    shown.clear(); shrunk.clear();
     $('notes').textContent = (Array.isArray(data.warnings) ? data.warnings : []).map(String).join(' ');
     if (!deck.slides.length) { showMessage('This presentation has no slides', ''); document.body.dataset.ready = 'true'; return; }
     const main = $('slides');
