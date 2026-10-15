@@ -4711,15 +4711,17 @@ ${prompt}` : prompt), historyImages: [] };
   // ---- [connectors] the `connector` tool: services the user connected in Settings → Connectors (features/connectors/).
   // A read goes straight through (the user connected the service for this), and its answer is untrusted content like a page,
   // so the chat counts as having read page content from then on. A write (add a task, send, post) always asks, with what it
-  // would do on the card; "Always allow", Auto-allow and background tasks don't cover it. Bypass permissions does, like any card.
-  async allowConnector(input, { emit, signal, who, run, noAsk }) {
+  // would do on the card, and needs a real click: "Always allow", Auto-allow, Bypass permissions, "agents don't ask", hands-off mode and
+  // background tasks never answer it. Outside agents (MCP clients) don't get the tool at all: the user's accounts are theirs to open up.
+  async allowConnector(input, { emit, signal, who, run, noAsk, external }) {
     const svc = this.browser.connectors;
-    if (!svc?.hasAny()) throw new Error('Unknown tool: connector');
+    if (external || !svc?.hasAny()) throw new Error('Unknown tool: connector');
     const holder = taintHolder(run);
     if (svc.isWrite(input)) {
-      if (noAsk && !this.bypassOn()) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
+      if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
+      if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
       const { title, detail } = svc.describeWrite(input);
-      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, note: 'connector' });
+      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector' });
       if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
     }
     if (holder) { holder.tainted = true; holder.onlyFrom = null; }
@@ -4914,10 +4916,10 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
-    if (action !== 'upload-pick' && this.bypassOn()) {
+    if (action !== 'upload-pick' && !noBypass && this.bypassOn()) {
       const id = `auto-allow-${++this.approvalSeq}`;
       try {
         emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });

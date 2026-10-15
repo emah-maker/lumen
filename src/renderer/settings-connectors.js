@@ -22,6 +22,7 @@ function buildConnectors() {
     if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
     if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
     lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
     if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
     return lines;
   }
@@ -64,12 +65,13 @@ function buildConnectors() {
 
   function cardFor(c, render) {
     const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token';
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && c.id === 'gmail'); // (Gmail's Google sign-in ended: connect it again)
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
     if (c.status === 'soon') {
       buttons.push(h('button', { disabled: true, text: 'Coming soon', 'aria-label': `${c.name}: coming soon` }));
-    } else if (!connected || c.status === 'bad-token') {
-      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: c.status === 'bad-token' ? 'Connect again' : 'Connect', 'aria-label': `${c.status === 'bad-token' ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
+    } else if (!connected || again) {
+      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
     }
     if (c.status === 'needs-signin') {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));

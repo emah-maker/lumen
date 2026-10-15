@@ -7948,9 +7948,7 @@ ipcMain.handle('connectors:sign-in', (_e, id) => {
   if (url) connectorsOpen(url);
   return Boolean(url);
 });
-// The tools outside agents (Claude Code and the like, over MCP) are offered: Lumen's own, and the one connector tool while a service is connected.
-// Read at each tools/list and tools/call (mcp.js only maps and searches it), so connecting or disconnecting shows at once.
-const aiAgentsToolList = { map: (f) => [...EXTERNAL_TOOLS, ...connectorsFacade.defs()].map(f), some: (f) => [...EXTERNAL_TOOLS, ...connectorsFacade.defs()].some(f) };
+// The connector tool is never in the MCP tool list: outside agents (Claude Code and the like) don't get the user's connected accounts.
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -8267,7 +8265,7 @@ if (TEST) {
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
   global.__connectors = connectorsFacade;
-  global.__mcpTools = aiAgentsToolList;
+  global.__mcpTools = EXTERNAL_TOOLS;
 }
 
 // ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
@@ -10662,7 +10660,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
-  tools: aiAgentsToolList,
+  tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)

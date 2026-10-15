@@ -4,7 +4,7 @@
 //  - the token on disk is encrypted, and the page never gets it back;
 //  - connected, the AI has ONE `connector` tool listing just those apps; a read returns the data with a readable step label and no card;
 //  - a write (add a task) always asks, with the details and no "Always allow", even with auto-allow on; deny sends nothing;
-//  - an outside MCP agent sees the same tool; disconnecting removes the token, the tool and the AI's way in.
+//  - an outside MCP agent is offered no connector tool and is refused if it asks; Bypass permissions, agents that don't ask and hands-off mode never answer a write; disconnecting removes the token, the tool and the AI's way in.
 // Run it through the machine-wide lock: node scripts/e2e-lock.js run -- node test/connectors.js
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
@@ -141,14 +141,34 @@ async function main() {
     });
     check('the card in the chat: names the change, says it happens in your account, has no Always button', !cardDom.always && /your account/.test(cardDom.detail) && cardDom.buttons.includes('Allow once'), JSON.stringify(cardDom));
 
-    console.log('--- outside agents (MCP)');
+    console.log('--- nobody else gets in: outside agents, bypass, agents that do not ask, hands-off');
     const viaMcp = await app.evaluate(async () => {
       const sess = { approvedHosts: new Set(), clientName: 'ConnectorsCheck', controller: new AbortController() };
       const names = global.__mcpTools.map((t) => t.name);
-      const r = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, sess);
-      return { listed: names.includes('connector'), text: (r.content || []).map((b) => b.text).join(' '), isError: r.isError, windows: global.__windows.list().length };
+      const read = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, sess);
+      const write = await global.__mcpCallTool('connector', { app: 'todoist', action: 'add_task', args: { content: 'From outside' } }, sess);
+      const gate = {};
+      for (const [k, input] of [['read', { app: 'github', action: 'prs' }], ['write', { app: 'todoist', action: 'add_task', args: { content: 'x' } }]]) {
+        try { await global.__agent.ensureAllowed('connector', () => {}, new AbortController().signal, { external: true, noAsk: true, who: 'Codex', input }); gate[k] = 'passed'; } catch (e) { gate[k] = e.message; }
+      }
+      return { listed: names.includes('connector'), read: { text: (read.content || []).map((x) => x.text).join(' '), isError: read.isError }, write: { text: (write.content || []).map((x) => x.text).join(' '), isError: write.isError }, gate, windows: global.__windows.list().length };
     });
-    check('an MCP agent is offered the connector tool and can read through it, without Lumen opening a window for it', viaMcp.listed && !viaMcp.isError && /Add dark mode/.test(viaMcp.text) && viaMcp.windows === 1, JSON.stringify(viaMcp));
+    const posts = () => fakes.seen.filter((r) => r.service === 'todoist' && r.method === 'POST').length;
+    check('an MCP agent is not offered the connector tool, and a call to it is refused for reads and writes alike (nothing sent, no window opened)', !viaMcp.listed && viaMcp.read.isError && !/Add dark mode/.test(viaMcp.read.text) && viaMcp.write.isError && /Unknown tool/.test(`${viaMcp.read.text} ${viaMcp.write.text}`) && /Unknown tool/.test(viaMcp.gate.read) && /Unknown tool/.test(viaMcp.gate.write) && viaMcp.windows === 1 && !fakes.seen.some((r) => r.service === 'todoist' && /From outside/.test(r.body)), JSON.stringify(viaMcp));
+    const postsBeforeBypass = posts();
+    await app.evaluate(() => { global.__agent.browser.bypassPermissions = () => true; });
+    const bypassed = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Bypass try' } } }], answer: false });
+    check('Bypass permissions does not answer a connector write: the card still comes, and denying it sends nothing', bypassed.events.some((e) => e.type === 'approval' && e.action === 'tool' && /Bypass try/.test(e.args)) && posts() === postsBeforeBypass && bypassed.results[0]?.error, JSON.stringify(bypassed));
+    await app.evaluate(() => { global.__agent.browser.bypassPermissions = () => false; });
+    const noAsk = await app.evaluate(async () => {
+      const input = { app: 'todoist', action: 'add_task', args: { content: 'Quiet agent' } };
+      try { await global.__agent.ensureAllowed('connector', () => {}, new AbortController().signal, { noAsk: true, who: 'Claude', input }); return 'passed'; } catch (e) { return e.message; }
+    });
+    check('an agent set not to ask (a background task, an agent’s own window) cannot add a task: it has to be told to ask the user', /needs the user to say yes/.test(noAsk) && posts() === postsBeforeBypass, noAsk);
+    await app.evaluate(() => { global.__agent.browser.handsOff = () => true; });
+    const hands = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Hands off try' } } }, { input: { app: 'todoist', action: 'tasks' } }], answer: true });
+    check('hands-off mode blocks the write (no card, nothing sent) but not the read', !hands.events.some((e) => e.type === 'approval') && posts() === postsBeforeBypass && hands.results[0]?.error && /hands-off/.test(hands.results[0].text) && !hands.results[1]?.error, JSON.stringify(hands));
+    await app.evaluate(() => { global.__agent.browser.handsOff = () => false; });
 
     console.log('--- disconnect');
     await inSettings("window.confirm = () => true; document.getElementById('conn-github-disconnect').click(); true");
@@ -158,12 +178,6 @@ async function main() {
     check('its token is gone from the file (the others stay)', !/github/.test(disk2) && /todoist/.test(disk2) && /canvas/.test(disk2), disk2);
     const afterOne = await run({ toolUses: [{ input: { app: 'github', action: 'prs' } }] });
     check('the model’s tool no longer lists GitHub, and a call to it fails without reaching GitHub', afterOne.requests[0]?.[0] && !/github:/.test(afterOne.requests[0][0].description) && !afterOne.requests[0][0].enum.includes('github') && afterOne.results[0]?.error && /Unknown app/.test(afterOne.results[0].text), JSON.stringify(afterOne));
-    const mcpAfter = await app.evaluate(async () => {
-      const sess = { approvedHosts: new Set(), clientName: 'ConnectorsCheck', controller: new AbortController() };
-      const r = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, sess);
-      return { text: (r.content || []).map((b) => b.text).join(' '), isError: r.isError };
-    });
-    check('an MCP agent can’t read GitHub any more either', mcpAfter.isError && /Unknown app/.test(mcpAfter.text), JSON.stringify(mcpAfter));
     for (const id of ['todoist', 'canvas']) {
       await inSettings(`document.getElementById('conn-${id}-disconnect').click(); true`);
       await waitFor(async () => (await inSettings(`document.querySelector('[data-connector=${id}]')?.dataset.status`)) === 'off');

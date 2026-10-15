@@ -13,7 +13,8 @@ const line = (m) => `${m.id}  ${when(m.at ? new Date(m.at).toISOString() : '')} 
 
 async function api(ctx, path) {
   try { return await ctx.google.api(path); } catch (err) {
-    throw new ConnectorError(String(err?.message || err), err?.reconnect ? 'auth' : 'other');
+    if (err?.reconnect) throw ctx.authError();
+    throw new ConnectorError(String(err?.message || err), 'other');
   }
 }
 
@@ -55,9 +56,8 @@ const actions = {
       return list.length ? list.map(line).join('\n') : 'No unread mail.';
     }
     const res = await ctx.google.feed();
-    if (res.status !== 200) throw new ConnectorError('Google isn’t signed in in Lumen. Sign in to Google in a Lumen tab.', 'auth');
-    const parsed = GA.parseFeed(res.body);
-    if (!parsed.ok) throw new ConnectorError('Google isn’t signed in in Lumen. Sign in to Google in a Lumen tab.', 'auth');
+    const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+    if (!parsed?.ok) throw ctx.authError();
     const list = parsed.messages.slice(0, max);
     return list.length ? `${parsed.unread} unread in all.\n${list.map(line).join('\n')}` : 'No unread mail.';
   },

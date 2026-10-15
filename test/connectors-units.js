@@ -19,7 +19,7 @@ async function main() {
   const ids = registry.CONNECTORS.map((c) => c.id);
   check('ids are unique and every connector has a name, icon, summary, category and kind', new Set(ids).size === ids.length && registry.CONNECTORS.every((c) => c.name && c.icon?.text && c.icon?.color && c.summary && registry.CATEGORIES.some((k) => k.id === c.category) && ['session', 'token', 'oauth', 'mcp', 'soon'].includes(c.kind)), ids.join());
   check('the asked-for categories exist', ['Mail and calendar', 'School', 'Files and docs', 'Work', 'Tasks', 'Music'].every((l) => registry.CATEGORIES.some((k) => k.label === l)), JSON.stringify(registry.CATEGORIES));
-  check('the starting set is there: Canvas, Gmail, Calendar, GitHub, Todoist, Notion, Slack (an MCP preset)', ['canvas', 'gmail', 'gcal', 'github', 'todoist', 'notion', 'slack'].every((id) => registry.get(id)) && registry.get('slack').kind === 'mcp' && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token', ids.join());
+  check('the starting set is there: Canvas, Gmail, Calendar, GitHub, Todoist, Notion; Slack is shown as coming soon (its MCP package is deprecated)', ['canvas', 'gmail', 'gcal', 'github', 'todoist', 'notion', 'slack'].every((id) => registry.get(id)) && registry.get('slack').kind === 'soon' && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token', ids.join());
   check('a connector not ready yet is shown as soon and offers no action', registry.CONNECTORS.filter((c) => c.kind === 'soon').every((c) => !Object.keys(c.actions).length) && registry.get('drive').kind === 'soon', '');
   check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.filter((c) => c.kind !== 'soon').every((c) => c.reads.length) && registry.get('todoist').does.length === 1 && Object.values(registry.get('todoist').actions).filter((a) => a.write).length === 1, '');
   check('write actions are marked, and only add_task is one', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'todoist.add_task', '');
@@ -47,7 +47,12 @@ async function main() {
   check('an enum and a pattern are enforced', /one of: author, review, assigned/.test(ok({ app: 'github', action: 'prs', args: { role: 'admin' } })) && /expected form/.test(ok({ app: 'github', action: 'pr', args: { repo: '../../etc', number: 1 } })), '');
   check('args that are not an object, and input that is not an object, are refused', /must be an object/.test(ok({ app: 'canvas', action: 'courses', args: [] })) && /must be an object/.test(ok('x')) && /must be an object/.test(ok(null)), '');
   check('the step line reads "Using Canvas · Upcoming assignments"', registry.stepLabel({ app: 'canvas', action: 'upcoming' }) === 'Using Canvas · Upcoming assignments' && registry.stepLabel({ app: 'todoist', action: 'add_task' }) === 'Using Todoist · Add a task' && registry.stepLabel({ app: 'github', action: 'pr' }) === 'Using GitHub · Read a pull request', registry.stepLabel({ app: 'canvas', action: 'upcoming' }));
-  check('field checks: tokens by shape, calendar addresses by https', registry.checkField(registry.get('github').fields[0], 'nope').error && !registry.checkField(registry.get('github').fields[0], TOKENS.github).error && registry.checkField(registry.get('gcal').fields[0], 'http://example.com/x.ics').error && registry.checkField(registry.get('gcal').fields[0], 'webcal://example.com/x.ics').value === 'https://example.com/x.ics', '');
+  check('field checks: tokens by shape; a calendar address must be https on calendar.google.com (webcal:// is read as https)', registry.checkField(registry.get('github').fields[0], 'nope').error && !registry.checkField(registry.get('github').fields[0], TOKENS.github).error && registry.checkField(registry.get('gcal').fields[0], 'http://calendar.google.com/x.ics').error && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://evil.example/x.ics').error) && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://calendar.google.com.evil.example/x.ics').error) && registry.checkField(registry.get('gcal').fields[0], 'webcal://calendar.google.com/calendar/ical/x/basic.ics').value === 'https://calendar.google.com/calendar/ical/x/basic.ics', '');
+  const bs = String.fromCharCode(92);
+  const badRepos = ['../x', 'a/..', './x', 'a/.', 'a/b/c', 'a/b?x=1', 'a/b#f', `a${bs}b/c`, `a/b${bs}c`, '/a/b', 'a/', '..', 'a%2f..%2fb/c'];
+  const repoProblem = (r) => registry.validate({ app: 'github', action: 'pr', args: { repo: r, number: 1 } });
+  check('GitHub repo names: no . or .. segment, no extra /, no ? # or backslash, nothing odd (a path cannot climb out)', badRepos.every((r) => /expected form/.test(repoProblem(r) || '')) && ['ada/lumen-notes', 'a.b/c_d-e', 'x/.github', 'x/a..b'].every((r) => repoProblem(r) === null), badRepos.map(repoProblem).join('|'));
+  check('Todoist project ids are plain words, never a path or query', /expected form/.test(registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '1/../x' } }) || '') && /expected form/.test(registry.validate({ app: 'todoist', action: 'add_task', args: { content: 'a', project_id: 'x&y=1' } }) || '') && registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '2203306141' } }) === null, '');
   check('Canvas addresses: with or without https, a page address works, junk does not', registry.cleanDomain('https://northeastern.instructure.com/courses/1') === 'northeastern.instructure.com' && registry.cleanDomain('School.Instructure.com') === 'school.instructure.com' && registry.cleanDomain('not a domain') === '' && registry.cleanDomain('javascript:alert(1)') === '', '');
 
   console.log('--- the service, against stand-in services');
@@ -167,11 +172,12 @@ async function main() {
   check('Gmail: the Google sign-in the widget made is left alone on disconnect (it is the widget’s)', googleFake.disconnected !== true, '');
 
   // MCP preset
-  check('Slack (MCP preset): both fields are required and checked', /bot token/i.test(await fails(() => svc.connect('slack', { SLACK_BOT_TOKEN: '', SLACK_TEAM_ID: 'T0123456789' }))) && /workspace id/i.test(await fails(() => svc.connect('slack', { SLACK_BOT_TOKEN: 'xoxb-1234567890-abcdef', SLACK_TEAM_ID: 'x' }))), '');
-  await svc.connect('slack', { SLACK_BOT_TOKEN: 'xoxb-1234567890-abcdef', SLACK_TEAM_ID: 'T0123456789' });
-  check('Slack: adds an MCP server (Tools from MCP servers) with the token as its variable, and offers the AI no connector tool of its own', mcpFake.saved?.command === 'npx' && mcpFake.saved.env.some((e) => e.name === 'SLACK_BOT_TOKEN' && e.value === 'xoxb-1234567890-abcdef') && svc.list().connectors.find((c) => c.id === 'slack').status === 'connected' && !/slack:/.test(svc.defs()[0].description) && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('xoxb-'), JSON.stringify(mcpFake.saved));
+  registry._testRegister({ id: 'fakemcp', name: 'Fake MCP', category: 'work', kind: 'mcp', icon: { text: 'F', color: '#000000' }, summary: 'x', mcp: { name: 'fakemcp', command: 'npx', args: ['-y', 'pinned-pkg@1.2.3'] }, fields: [{ id: 'FAKE_TOKEN', label: 'Token', secret: true }], reads: ['x'], does: [], actions: {} });
+  check('an MCP preset: the field is required', /token/i.test(await fails(() => svc.connect('fakemcp', { FAKE_TOKEN: '' }))), '');
+  await svc.connect('fakemcp', { FAKE_TOKEN: 'mcp-secret-value' });
+  check('an MCP preset: adds an MCP server (Tools from MCP servers) with the secret as its variable, keeps it out of connectors.json, and gives the AI no connector tool of its own', mcpFake.saved?.command === 'npx' && mcpFake.saved.env.some((e) => e.name === 'FAKE_TOKEN' && e.value === 'mcp-secret-value') && svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'connected' && !/fakemcp:/.test(svc.defs()[0].description) && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('mcp-secret-value'), JSON.stringify(mcpFake.saved));
   mcpFake.servers = [];
-  check('Slack: removed in Tools from MCP servers, the card goes back to Not connected', svc.list().connectors.find((c) => c.id === 'slack').status === 'off', '');
+  check('an MCP preset: removed in Tools from MCP servers, the card goes back to Not connected', svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'off', '');
 
   // Loads again, and what the network saw
   svc = make();
@@ -188,6 +194,13 @@ async function main() {
   await huge.connect('canvas', { domain: 'school.instructure.com' });
   const wrapped = await huge.call({ app: 'canvas', action: 'announcements', args: { course_id: '1' } });
   check('a closing tag inside the data can’t end the untrusted wrapper early', (wrapped.match(/<\/untrusted_page_content>/g) || []).length === 1, wrapped);
+  const big = service.create({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-big-')), secrets: fakeSecrets, testLoopback: true, endpoints: () => ({ canvas: 'http://127.0.0.1:9' }),
+    sessionFetch: async (url) => (String(url).includes('/users/self') ? new Response(JSON.stringify({ name: 'X' }), { status: 200 }) : new Response('x'.repeat(3.1e6), { status: 200 })), fetch: async () => { throw new Error('unexpected'); } });
+  await big.connect('canvas', { domain: 'school.instructure.com' });
+  check('an answer bigger than the cap (3 MB) is refused, not read', /more than Lumen reads/.test(await fails(() => big.call({ app: 'canvas', action: 'courses' }))), '');
+  const gx = service.create({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-gx-')), secrets: fakeSecrets, testLoopback: true, google: { ...google, status: async () => ({ oauth: true, oneClick: false, session: false, email: 'ada@example.com' }), api: async () => { throw Object.assign(new Error('Google signed Lumen out.'), { reconnect: true }); } } });
+  await gx.connect('gmail');
+  check('Gmail: when Google ends the sign-in, a call says to sign in and the card turns to Needs sign-in', /isn.t signed in/.test(await fails(() => gx.call({ app: 'gmail', action: 'search', args: { query: 'x' } }))) && gx.list().connectors.find((cc) => cc.id === 'gmail').status === 'needs-signin', JSON.stringify(gx.list().connectors.find((cc) => cc.id === 'gmail')));
 
   // Disconnect
   const tokenKept = fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');

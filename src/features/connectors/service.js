@@ -75,13 +75,14 @@ function create({
     const secret = open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
-      state(def.kind === 'session' ? 'needs-signin' : 'bad-token');
-      return new ConnectorError(def.kind === 'session'
+      const signIn = def.kind === 'session' || def.id === 'gmail';
+      state(signIn ? 'needs-signin' : 'bad-token');
+      return new ConnectorError(signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
-      id: def.id, config: entry.config || {}, secret, signal, now,
+      id: def.id, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
       google: def.id === 'gmail' ? google : null,
       async http(target, { method = 'GET', query, json, headers = {}, accept = 'application/json', max = MAX_BODY, allowAuth = false } = {}) {
         let url;

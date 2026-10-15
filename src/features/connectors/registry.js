@@ -23,6 +23,9 @@ const CATEGORIES = [
   { id: 'music', label: 'Music' },
 ];
 
+// owner/name: each part letters, digits, _ . - only, and never "." or ".." (a segment that climbs out of the path), no / \ ? #.
+const REPO = /^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
+const WORD = /^[A-Za-z0-9_-]{1,40}$/; // an id used in a query: no separators or dots at all
 const int = (doc, min, max) => ({ type: 'integer', min, max, doc });
 const str = (doc, extra = {}) => ({ type: 'string', max: 200, doc, ...extra });
 
@@ -77,7 +80,7 @@ const CONNECTORS = [
     actions: {
       prs: { label: 'Your pull requests', args: { role: str('author | review | assigned, default author', { enum: ['author', 'review', 'assigned'] }), state: str('open | closed | all, default open', { enum: ['open', 'closed', 'all'] }) }, doc: 'Pull requests you wrote, are asked to review or are assigned to.' },
       issues: { label: 'Your issues', args: { role: str('author | assigned, default assigned', { enum: ['author', 'assigned'] }), state: str('open | closed | all, default open', { enum: ['open', 'closed', 'all'] }) }, doc: 'Issues assigned to you or opened by you.' },
-      pr: { label: 'Read a pull request', args: { repo: str('owner/name', { required: true, pattern: /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/ }), number: { ...int('pull request number', 1, 999999999), required: true } }, doc: 'A pull request’s description, status and changed files.' },
+      pr: { label: 'Read a pull request', args: { repo: str('owner/name', { required: true, pattern: REPO }), number: { ...int('pull request number', 1, 999999999), required: true } }, doc: 'A pull request’s description, status and changed files.' },
     },
   },
   {
@@ -91,17 +94,8 @@ const CONNECTORS = [
       page: { label: 'Read a page', args: { id: str('page id or address', { required: true, max: 200 }) }, doc: 'The text of one page.' },
     },
   },
-  {
-    id: 'slack', name: 'Slack', category: 'work', kind: 'mcp', icon: { text: 'S', color: '#611f69' },
-    summary: 'Read channels and post, through Slack’s MCP server.',
-    sessionNote: 'Adds Slack’s MCP server to Tools from MCP servers. It runs on this computer (it needs Node.js) and asks before every call.',
-    mcp: { name: 'slack', command: 'npx', args: ['-y', '@modelcontextprotocol/server-slack'] },
-    fields: [
-      { id: 'SLACK_BOT_TOKEN', label: 'Bot token', placeholder: 'xoxb-…', secret: true, help: 'From your Slack app’s OAuth page.', pattern: 'slack' },
-      { id: 'SLACK_TEAM_ID', label: 'Workspace id', placeholder: 'T0123456789', secret: false, help: 'Starts with T.', pattern: 'slackteam' },
-    ],
-    reads: ['Channels and messages the bot can see'], does: ['Post messages and replies as the bot (asks first)'], actions: {},
-  },
+  // Slack: its MCP server on npm (@modelcontextprotocol/server-slack) is deprecated and unmaintained, so there is no preset to point at yet.
+  { id: 'slack', name: 'Slack', category: 'work', kind: 'soon', icon: { text: 'S', color: '#611f69' }, summary: 'Read channels and post.', fields: [], reads: [], does: [], actions: {} },
   {
     id: 'todoist', name: 'Todoist', category: 'tasks', kind: 'token', icon: { text: 'T', color: '#db4035' },
     summary: 'See your tasks and add new ones.',
@@ -109,9 +103,9 @@ const CONNECTORS = [
     reads: ['Your tasks and projects'],
     does: ['Add a task (asks you first)'],
     actions: {
-      tasks: { label: 'Your tasks', args: { filter: str('Todoist filter, default “today | overdue”', { max: 200 }), project_id: str('only this project', { max: 40 }) }, doc: 'Tasks matching a Todoist filter, or one project’s tasks.' },
+      tasks: { label: 'Your tasks', args: { filter: str('Todoist filter, default “today | overdue”', { max: 200 }), project_id: str('only this project', { max: 40, pattern: WORD }) }, doc: 'Tasks matching a Todoist filter, or one project’s tasks.' },
       projects: { label: 'Your projects', args: {}, doc: 'Your projects with their ids.' },
-      add_task: { label: 'Add a task', write: true, args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40 }) }, doc: 'Adds a task. The user confirms first.' },
+      add_task: { label: 'Add a task', write: true, args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
     },
   },
   {
@@ -128,15 +122,11 @@ const PATTERNS = {
   github: /^(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255})$/,
   notion: /^(?:ntn_|secret_)[A-Za-z0-9]{20,100}$/,
   todoist: /^[A-Za-z0-9_-]{20,100}$/,
-  slack: /^xox[abprs]-[A-Za-z0-9-]{10,200}$/,
-  slackteam: /^T[A-Z0-9]{6,20}$/,
 };
 const PATTERN_MESSAGES = {
   github: 'That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.',
   notion: 'That doesn’t look like a Notion integration secret (it starts with ntn_).',
   todoist: 'That doesn’t look like a Todoist API token.',
-  slack: 'That doesn’t look like a Slack bot token (it starts with xoxb-).',
-  slackteam: 'A Slack workspace id starts with T.',
   url: 'Paste the calendar’s https:// address.',
 };
 function checkField(field, value) {
@@ -146,7 +136,9 @@ function checkField(field, value) {
   if (field.pattern === 'url') {
     let u;
     try { u = new URL(v.replace(/^webcals?:\/\//i, 'https://')); } catch { return { error: PATTERN_MESSAGES.url }; }
-    return u.protocol === 'https:' && !u.username && !u.password && !/[\s"'<>\\]/.test(v) ? { value: u.href } : { error: PATTERN_MESSAGES.url };
+    if (u.protocol !== 'https:' || u.username || u.password || /[\s"'<>\\]/.test(v)) return { error: PATTERN_MESSAGES.url };
+    if (u.hostname !== 'calendar.google.com') return { error: 'Only Google Calendar addresses work here (calendar.google.com). Copy the secret iCal address from Google Calendar’s settings.' };
+    return { value: u.href };
   }
   if (field.pattern && PATTERNS[field.pattern] && !PATTERNS[field.pattern].test(v)) return { error: PATTERN_MESSAGES[field.pattern] };
   return { value: v };
@@ -246,4 +238,7 @@ function stepLabel(input) {
   return `Using ${c.name} · ${a ? a.label : String(input.action || '').slice(0, 40)}`;
 }
 
-module.exports = { CATEGORIES, CONNECTORS, get, checkField, cleanDomain, looksLikeCanvas, setConnected, connectedIds, toolDef, validate, help, stepLabel, signature };
+// Tests add a connector of their own (an MCP preset needs a real package name, which no shipped connector has today).
+function _testRegister(def) { CONNECTORS.push(def); byId.set(def.id, def); }
+
+module.exports = { _testRegister, CATEGORIES, CONNECTORS, get, checkField, cleanDomain, looksLikeCanvas, setConnected, connectedIds, toolDef, validate, help, stepLabel, signature };
