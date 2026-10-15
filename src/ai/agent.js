@@ -542,7 +542,7 @@ const DESKTOP_TOOL = {
   eager_input_streaming: true,
 };
 const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'open_app']); // (list_apps, read_app and screenshot_app only read)
-// What an app shows (titles, text, a picture) is untrusted content: after these actions the run is tainted, and src/desktop then asks a card for every click, type, key press and app start.
+// What an app shows (titles, text, a picture) is untrusted content: after these actions web actions ask (the run is tainted, app-only), and src/desktop asks a card before acting in any OTHER app than the one that was read.
 const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app']);
 // A conversation that asks for another app (not just the word "word") is offered the tool even while the switch is off, so the AI can ask to turn it on.
 const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
@@ -3951,7 +3951,7 @@ ${prompt}` : prompt), historyImages: [] };
       }
       const run = () => this.execute(name, args);
       const value = await (scope ? taskScope.run({ ...scope, helper: true, ...(hostGate ? { gate: hostGate } : {}) }, run) : run());
-      if (name === 'read_urls') { state.run.tainted = true; read = true; }
+      if (name === 'read_urls') { state.run.tainted = true; state.run.appOnly = false; read = true; }
       return value;
     };
     // [agents out of sight] The chat that called delegate gets the delegate call's own row and the final answers, not a row per helper
@@ -4090,7 +4090,8 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
-    if (READING_TOOLS.has(name) || (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
+    if (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // app text taints web actions, but not the desktop tool's own acting calls on the same app (src/desktop tracks its sources)
+    if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -4718,6 +4719,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (holder) {
       holder.onlyFrom = holder.tainted ? (holder.onlyFrom === found.server ? found.server : null) : found.server;
       holder.tainted = true;
+      holder.appOnly = false;
     }
     this.externalGrant = name; // execute() runs an outside tool only right after this
   }
@@ -4893,10 +4895,12 @@ ${out.text}${note}
   }
 
   // A chat (via its task scope) or an MCP session has seen page content; see ensureAllowed.
-  markTainted(run = taskScope.getStore()) {
+  markTainted(run = taskScope.getStore(), { app = false } = {}) {
     const holder = taintHolder(run);
     if (!holder) return;
+    if (app) { if (!holder.tainted) { holder.tainted = true; holder.appOnly = true; } return; } // [desktop apps] text from an app: web actions ask, but it is not web, email or connector content
     holder.tainted = true;
+    holder.appOnly = false;
     holder.onlyFrom = null; // [mcp client] not only one server's output any more (see allowExternal)
   }
 
@@ -5172,7 +5176,7 @@ ${out.text}${note}
     const hosts = gate.hosts;
     const ctx = {
       emit: gate.emit, signal: gate.signal,
-      tainted: () => Boolean(taintHolder(gate.run)?.tainted), // read a page, an email, a connector's answer or app text earlier: acting calls ask a card every time
+      tainted: () => { const h = taintHolder(gate.run); return Boolean(h?.tainted && !h.appOnly); }, // read a page, an email or a connector's answer earlier: acting calls ask a card every time (text from apps is tracked per app, in src/desktop)
       once: { has: (app) => hosts.has(`app:${app}`), add: (app) => hosts.add(`app:${app}`) }, // Once: for this chat (the chat's approved set; never saved)
       ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways === true, upload: { detail: card.detail, allowLabel: card.allowLabel } }),
     };

@@ -290,6 +290,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('a tainted run: blocked apps stay blocked (the card is never offered for them)', /terminal/.test(await rejects(() => blockedToo.d.run({ action: 'press_keys', args: { id: 'w103', keys: 'enter' } }, blockedToo.ctx))) && blockedToo.asked.length === 0);
   }
   {
+    // Taint is tracked per source: app text taints acting in OTHER apps only; web, email and connector content taints the whole run
+    const EXCEL = 'C:\\Office\\EXCEL.EXE';
+    const excel = mk(107, 16, 'EXCEL', 'Book1 - Excel', EXCEL, { description: 'Microsoft Excel' });
+    const both = [{ app: key(WORDX), name: 'Microsoft Word' }, { app: key(EXCEL), name: 'Microsoft Excel' }];
+    const rigA = makeRig({ apps: [word, excel], allowed: both });
+    await rigA.d.run({ action: 'read_app', args: { name: 'word' } }, rigA.ctx);
+    await rigA.d.run({ action: 'click', args: { element: 'e2' } }, rigA.ctx);
+    await rigA.d.run({ action: 'type', args: { element: 'e2', text: 'x' } }, rigA.ctx);
+    await rigA.d.run({ action: 'press_keys', args: { name: 'word', keys: 'ctrl+s' } }, rigA.ctx);
+    check('read A, then act in A (click, type, press_keys): the user\'s Always / Once answer stands, no new card', rigA.asked.length === 0 && rigA.calls.filter(([c]) => c === 'invoke' || c === 'settext' || c === 'keys').length === 3, J(rigA.asked.map((a) => a.title)));
+    rigA.setAnswer(false);
+    const toB = await rejects(() => rigA.d.run({ action: 'press_keys', args: { name: 'excel', keys: 'ctrl+s' } }, rigA.ctx));
+    check('read A, then act in B: a card asks (naming the action), and No means nothing is sent to B', /did not allow this action in Microsoft Excel/.test(toB) && rigA.asked.length === 1 && /read content earlier/.test(rigA.asked[0].title) && /Microsoft Excel/.test(rigA.asked[0].title) && !rigA.calls.some(([c, a]) => c === 'keys' && a.hwnd === 107), J([toB, rigA.asked.map((a) => a.title)]));
+    await rigA.d.run({ action: 'press_keys', args: { name: 'word', keys: 'ctrl+z' } }, rigA.ctx);
+    check('...and acting in A again still needs no card (B\'s text was never read)', rigA.asked.length === 1);
+    rigA.setAnswer(true);
+    await rigA.d.run({ action: 'read_app', args: { name: 'excel' } }, rigA.ctx);
+    await rigA.d.run({ action: 'press_keys', args: { name: 'word', keys: 'ctrl+z' } }, rigA.ctx);
+    check('read A and B, then act in A: it asks (B\'s text is "other" to A)', rigA.asked.length === 2 && /Microsoft Word/.test(rigA.asked[1].title), J(rigA.asked.map((a) => a.title)));
+    const rigW = makeRig({ apps: [word], allowed: allowWord, tainted: false });
+    await rigW.d.run({ action: 'read_app', args: { name: 'word' } }, rigW.ctx);
+    rigW.store.tainted = true; // the run read a web page, an email or a connector's answer
+    rigW.setAnswer(false);
+    const afterWeb = await rejects(() => rigW.d.run({ action: 'click', args: { element: 'e2' } }, rigW.ctx));
+    check('read a web page (or email, or connector), then act in A (which was read, and is allowed): it asks', /did not allow this action/.test(afterWeb) && rigW.asked.length === 1 && /read content earlier/.test(rigW.asked[0].title), J(rigW.asked.map((a) => a.title)));
+    const listed = makeRig({ apps: [word, excel], allowed: both });
+    await listed.d.run({ action: 'list_apps' }, listed.ctx);
+    listed.setAnswer(true);
+    await listed.d.run({ action: 'read_app', args: { name: 'word' } }, listed.ctx);
+    await listed.d.run({ action: 'click', args: { element: 'e2' } }, listed.ctx);
+    check('list_apps shows the titles of allowed apps, so those titles count as read: acting in one of them after listing both asks', listed.asked.length === 1, J(listed.asked.map((a) => a.title)));
+    const ctxB = { ...rigA.ctx, signal: new AbortController().signal, once: new Set() };
+    rigA.setAnswer(false);
+    await rigA.d.run({ action: 'press_keys', args: { name: 'excel', keys: 'ctrl+s' } }, ctxB);
+    check('what was read is per run: another run starts clean', rigA.asked.length === 2);
+    const ag = read('src/ai/agent.js');
+    check('agent: app text taints web actions but not as web content (appOnly); read_urls, connector and other taints clear it, and the controller sees only web / email / connector taint', /markTainted\(run, \{ app: true \}\)/.test(ag) && /holder\.appOnly = true/.test(ag) && /holder\.appOnly = false/.test(ag) && /return Boolean\(h\?\.tainted && !h\.appOnly\)/.test(ag));
+  }
+  {
     // open_app never grants silently: the window that appears is approved on its own merits
     const apps = [word];
     const NOTEPAD = 'C:\\Windows\\notepad.exe';
@@ -501,7 +540,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('helper: typing key by key is capped at 500 characters; larger text needs the Value pattern', /\$text\.Length -gt 500/.test(helperSrc));
     check('helper: every call checks the window still belongs to the approved program (pid, hosted pid, start time)', /function Get-Target/.test(helperSrc) && (helperSrc.match(/\$t = Get-Target \$req|\$null = Get-Target \$req/g) || []).length >= 6);
     check('helper: the test seam (scripted foreground, key sink, forced keys) is reachable only behind $TEST, which the client sets only in a development test run', /\$TEST = \(\$env:LUMEN_DESKTOP_TEST -eq '1'\)/.test(helperSrc) && /if \(\$TEST -and \$req\['test'\] -and \$req\['test'\]\['states'\]\)/.test(helperSrc) && /if \(\$TEST -and \$req\['test'\] -and \$req\['test'\]\['sink'\]\)/.test(helperSrc) && /\$forceKeys = \(\$TEST -and \$req\['forceKeys'\]\)/.test(helperSrc) && !/\$req\['test'\]\['delay'\]\) \{ Start/.test(helperSrc.replace(/\$TEST -and \$req\['test'\] -and \$req\['test'\]\['delay'\]/, '')));
-    check('agent: the desktop tool hands the controller a live "has this run read untrusted content" test', /tainted: \(\) => Boolean\(taintHolder\(gate\.run\)\?\.tainted\)/.test(read('src/ai/agent.js')));
+    check('agent: the desktop tool hands the controller a live "has this run read web, email or connector content" test', /tainted: \(\) => \{ const h = taintHolder\(gate\.run\); return Boolean\(h\?\.tainted && !h\.appOnly\); \}/.test(read('src/ai/agent.js')));
     c.destroy(); slow.destroy();
   }
 

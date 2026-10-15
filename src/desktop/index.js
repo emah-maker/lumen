@@ -26,6 +26,7 @@ const LIST_CACHE_MS = 600;
 // so app text can never end the block and pass as the user's or Lumen's own words.
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const unwrap = (text, app) => `<untrusted_page_content source="app: ${defang(String(app || 'app')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
+const sourceKey = (w) => `${w.app}|${w.pid}|${w.start || 0}|${w.hpid || 0}`; // one running program: its path, pid and start time
 const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0 }); // what the helper re-checks before it touches a window
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (win) => `w${win.hwnd}`;
@@ -46,6 +47,7 @@ function createDesktop(deps = {}) {
   let session = null; // { id, signal, emit, target, cardId, ... }
   let seq = 0;
   const cards = new Map(); // card id -> { hwnd, app, name } (what "Open" may bring forward; only windows the AI used)
+  const sources = new WeakMap(); // run (its signal / context) -> the programs whose text the run has read
   const stats = { calls: 0, sessions: 0, takeovers: 0, stops: 0 };
 
   const policyOpts = (ctx) => ({ master: S.master(), terminals: S.terminals(), allowed: S.allowed(), once: ctx?.once, lumenPid: lumen.pid, lumenExe: lumen.exe });
@@ -89,8 +91,12 @@ function createDesktop(deps = {}) {
   // ---- permission: blocked / switch off / ask
   // `acting`: this call clicks, types, presses keys or starts an app. Once the run has read untrusted content (a web page, an email, a
   // connector's answer, text from an app) neither Always nor Once covers an acting call: it asks every time, naming what it wants to do.
+  // Taint has two sources. Web, email or connector content (ctx.tainted) covers the whole run. Text read from an app covers only acting in
+  // OTHER apps: reading Word and acting in Word needs no new card, reading Word and acting in Excel does.
+  const noteRead = (ctx, win) => { const k = ctx.signal || ctx; if (!sources.has(k)) sources.set(k, new Set()); sources.get(k).add(sourceKey(win)); };
+  const readElsewhere = (ctx, win) => { const set = sources.get(ctx.signal || ctx); return Boolean(set) && [...set].some((k) => k !== sourceKey(win)); };
   async function authorize(win, ctx, { acting = false, what = '' } = {}) {
-    const tainted = acting && Boolean(ctx.tainted?.());
+    const tainted = acting && (Boolean(ctx.tainted?.()) || readElsewhere(ctx, win));
     const opts = policyOpts(ctx);
     if (tainted) { opts.allowed = []; opts.once = new Set(); }
     const d = policy.decide(win, opts);
@@ -104,7 +110,7 @@ function createDesktop(deps = {}) {
     if (tainted) {
       const ok = await ctx.ask({
         title: `The AI read content earlier in this chat. Allow it to ${what || 'act'} in ${d.name}?`,
-        detail: 'Text it read (a web page, an email, another app) could have been written to make it do this. Allow only if you asked for it. This answer covers this one action; it is asked again next time.',
+        detail: 'Text it read (a web page, an email, a connector, or another app) could have been written to make it do this. Allow only if you asked for it. This answer covers this one action; it is asked again next time.',
         args: where, noAlways: true, allowLabel: 'Allow this action',
       });
       if (!ok) throw new Error(`The user did not allow this action in ${d.name}. Ask them what to do instead.`);
@@ -291,6 +297,7 @@ function createDesktop(deps = {}) {
     for (const w of all) {
       const d = policy.decide(w, opts);
       if (d.status === 'blocked') { hidden++; continue; }
+      if (d.status === 'allow') noteRead(ctx, w); // (its title is app text now in the chat)
       const state = d.status === 'allow' ? '' : ' (asks you first; the title is shown once allowed)';
       rows.push(`${w.id}  ${w.name}${d.status === 'allow' ? ` - "${treeLib.clip(w.title, 100)}"` : ''}${w.minimized ? ' [minimized]' : ''}${state}`);
     }
@@ -300,6 +307,7 @@ function createDesktop(deps = {}) {
   async function focusApp(args, ctx) {
     const win = await windowFor(args);
     await authorize(win, ctx);
+    noteRead(ctx, win);
     const s = await useWindow(win, ctx, policy.stepLabel('focus_app', { name: win.name }));
     const r = await act(s, () => getClient().call('focus', { ...targetOf(win), raise: true }));
     list.at = 0;
@@ -309,6 +317,7 @@ function createDesktop(deps = {}) {
   async function readApp(args, ctx) {
     const win = await windowFor(args);
     await authorize(win, ctx);
+    noteRead(ctx, win);
     const s = await useWindow(win, ctx, policy.stepLabel('read_app', {}, win.name));
     const r = await act(s, () => getClient().call('tree', { ...targetOf(win), max: 700 }, { timeoutMs: 20000 }));
     s.readHwnd = win.hwnd;
@@ -353,6 +362,7 @@ function createDesktop(deps = {}) {
   async function screenshot(args, ctx) {
     const win = await windowFor(args);
     await authorize(win, ctx);
+    noteRead(ctx, win);
     const s = await useWindow(win, ctx, policy.stepLabel('screenshot_app', {}, win.name));
     const r = await act(s, () => getClient().call('shot', { ...targetOf(win), w: 1000, q: 70 }, { timeoutMs: 20000 }));
     if (!r.image) throw new Error(`${win.name} could not be captured (it may be minimized). Use focus_app first.`);
@@ -385,6 +395,7 @@ function createDesktop(deps = {}) {
       if (w) {
         if (policy.appKey(w) !== policy.appKey(probe)) await authorize(w, ctx, { acting: true, what: `use ${w.name}` });
         else if (policy.decide(w, policyOpts(ctx)).status === 'blocked') throw new Error(`${w.name}: ${policy.decide(w, policyOpts(ctx)).reason}`);
+        noteRead(ctx, w);
         const s = await useWindow(w, ctx, policy.stepLabel('open_app', { name: w.name }));
         s.lastCall = now();
         return unwrap(`Opened ${w.name} (id ${w.id}, "${treeLib.clip(w.title, 100)}"). Use read_app to see it.`, w.name);
