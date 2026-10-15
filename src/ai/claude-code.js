@@ -243,14 +243,18 @@ let settingsNoticeShown = false; // the suggestion is shown once per Lumen run
 // (claimStep, features/ai-agents.js mcpCallTool). A call that arrives sooner gets its usual row.
 const EARLY_STEP_MS = 300;
 const EARLY_LABELS = { navigate: 'Opening a page', open_tab: 'Opening a tab', click: 'Clicking', click_at: 'Clicking', type_text: 'Typing', press_key: 'Pressing a key', fill_form: 'Filling in a form', batch: 'Running steps', run_macro: 'Running a macro', read_page: 'Reading the page', find: 'Searching the page', web_search: 'Searching the web', find_sources: 'Searching scholarly sources', read_urls: 'Reading pages', screenshot: 'Taking a screenshot', video_overview: 'Looking over the video', video_frames: 'Looking at video frames', run_script: 'Running a script on the page', verify_changes: 'Checking the edits', get_console: 'Reading the console', get_network: 'Reading requests', handle_dialog: 'Answering a dialog', wait_for: 'Waiting', analyze_posts: 'Comparing posts', annotate: 'Drawing on the page' };
-const earlyLabel = (name) => EARLY_LABELS[name] || `Using ${String(name).replace(/_/g, ' ')}`;
+const earlyLabel = (name) => EARLY_LABELS[name] || 'Using a tool'; // (never the raw tool name)
 
 // [full access] A step row for one of the CLI's own tools (Bash, file edits, another MCP server's tool).
 // They run inside the CLI, not through Lumen's MCP server, so their rows come from the stream instead.
 const clip = (v, n = 80) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const fileName = (p) => clip(path.basename(String(p || '')) || p, 60);
+// [step labels] The line comes from renderer/step-labels.js (the tool's own description, else a humanized label); the UI draws it again from name + input in the user's language.
+const stepLabels = new Proxy({}, { get: (_t, k) => require('../renderer/step-labels')[k] }); // (loaded when the first step needs it)
 function builtinLabel(name, input = {}) {
   const n = String(name);
+  const readable = stepLabels.defaults.label(n, input);
+  if (readable) return readable;
   if (n === 'Bash') return input.description ? clip(input.description) : `Running ${clip(input.command)}`;
   if (n === 'Read') return `Reading ${fileName(input.file_path)}`;
   if (n === 'Edit' || n === 'MultiEdit' || n === 'NotebookEdit') return `Editing ${fileName(input.file_path || input.notebook_path)}`;
@@ -262,7 +266,7 @@ function builtinLabel(name, input = {}) {
   if (n === 'Skill') return `Using the ${clip(input.skill || input.command, 40)} skill`;
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
   if (mcp) return `Using ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}`;
-  return `Using ${n}`;
+  return stepLabels.en('step.tool'); // (never the raw tool name)
 }
 const isLumenTool = (name) => /^mcp__lumen__/.test(String(name || ''));
 // [full access] The message as typed when it is a slash command ("/goal ship it", "/context"), else null.
@@ -853,8 +857,10 @@ class ClaudeCodeEngine {
           if (b.type !== 'tool_result' || !active.builtin.delete(b.tool_use_id)) continue;
           active.inflight = Math.max(0, active.inflight - 1);
           for (const p of toolImagePaths(b.content, { home: os.homedir() })) if (this.runImagePaths.length < 20 && !this.runImagePaths.includes(p)) this.runImagePaths.push(p);
-          const err = b.is_error ? clip(Array.isArray(b.content) ? b.content.map((c) => c.text || '').join(' ') : b.content, 200) : '';
-          emit({ type: 'tool_done', id: `cc-${String(b.tool_use_id).replace(/[^\w-]/g, '').slice(0, 60)}`, ok: !b.is_error, ...(err ? { error: err } : {}) });
+          const raw = Array.isArray(b.content) ? b.content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : typeof b.content === 'string' ? b.content : '';
+          const err = b.is_error ? raw.replace(/\s+/g, ' ').trim().slice(0, 600) : '';
+          const output = !b.is_error && raw ? raw.slice(0, 4000) : ''; // [step labels] shown when the step is opened
+          emit({ type: 'tool_done', id: `cc-${String(b.tool_use_id).replace(/[^\w-]/g, '').slice(0, 60)}`, ok: !b.is_error, ...(err ? { error: err } : {}), ...(output ? { output } : {}) });
         }
         active.arm();
       } else if (msg.type === 'result') { // the end of this message's turn; a kept process then waits for the next line

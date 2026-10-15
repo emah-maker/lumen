@@ -365,7 +365,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
   chatHost.identity = () => {};
   applyRail();
   startChat();
-  window.assistant.state().then(({ view: now, target, name, draft, send }) => {
+  window.assistant.state().then(({ view: now, target, name, draft, send, images }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
@@ -378,8 +378,13 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     resumeLive(now?.live);
     // Text typed in the new-tab page's box before Ask AI: asked in a new chat (Enter there), or it waits here as a draft, after any
     // draft this chat already had (never sent).
-    if (typeof draft === 'string' && draft.trim()) setTimeout(() => { // (after the box has taken back the draft this chat had)
-      if (send === true) { askInNewChat(draft.trim()); prompt.focus(); return; } // chat-core's own: a fresh chat, the old one stays in the list
+    // Pictures from that box (newtab-ai:ask) join the same message, through the composer's own attach path.
+    const ext = (type) => type.split('/')[1].split('+')[0].replace('jpeg', 'jpg');
+    const pictures = (Array.isArray(images) ? images : []).filter((p) => p && typeof p.type === 'string' && p.data).map((p, n) => new File([p.data], p.name || `image-${n + 1}.${ext(p.type)}`, { type: p.type }));
+    const words = typeof draft === 'string' ? draft.trim() : '';
+    if (words || pictures.length) setTimeout(() => { // (after the box has taken back the draft this chat had)
+      if (send === true) { askInNewChat(words, pictures); prompt.focus(); return; } // chat-core's own: a fresh chat, the old one stays in the list
+      if (pictures.length) addFiles(pictures);
       prompt.value = [prompt.value.trimEnd(), draft.trim()].filter(Boolean).join('\n');
       prompt.dispatchEvent(new Event('input')); // chat-core's own handler: sizes the box and saves the draft
       prompt.focus();
