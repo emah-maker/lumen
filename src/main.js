@@ -8809,9 +8809,10 @@ function takeSettingsProc() {
   const s = settingsProc;
   settingsProc = null;
   settingsProcSoon();
-  if (!s) return null;
+  if (!s) { if (TEST) global.__settingsProcTaken = 'none'; return null; }
   const wc = s.view.webContents;
-  if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading() || wc.getURL() !== 'about:blank' || s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))) { try { wc.close(); } catch { /* gone */ } return null; }
+  if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading() || wc.getURL() !== 'about:blank' || s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))) { if (TEST) global.__settingsProcTaken = 'rejected ' + [wc.isDestroyed(), wc.isCrashed(), wc.isLoading(), wc.getURL(), s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))].join(','); try { wc.close(); } catch { /* gone */ } return null; }
+  if (TEST) global.__settingsProcTaken = 'pooled';
   forgetBlank(wc);
   return s.view;
 }
