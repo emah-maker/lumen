@@ -103,7 +103,7 @@ body { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
 .ic-downloads { background: #30b0c7; } .ic-updates { background: #ff6b3d; } .ic-advanced { background: #636366; }
 
 main { padding: 28px 40px 96px; max-width: calc(760px + 80px); width: 100%; margin: 0 auto; }
-.pane-title { font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -0.022em; margin: 2px 4px 22px; }
+.pane-title { font-size: 26px; line-height: 1.15; font-weight: 600; letter-spacing: -0.022em; margin: 2px 4px 22px; }
 .group { margin-bottom: 22px; }
 .group-title { font-size: 12px; line-height: 1.3; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); margin: 0 16px 6px; }
 .subhead { margin: -6px 0 6px -10px; }
