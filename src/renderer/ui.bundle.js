@@ -7347,7 +7347,7 @@ function startChat() {
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
-        const closeLabel = tr('chats.closeTabs', 'Close tabs opened by this chat');
+        const closeLabel = tr('chats.closeTabs', 'Close tabs this chat opened');
         const closeTabs = iconButton('closetabs', closeLabel);
         closeTabs.onclick = async () => {
           closeTabs.disabled = true;
@@ -9372,33 +9372,60 @@ function hideAiSummary(state) {
   const on = window.lumenHideAiTabs === true;
   const ai = (state?.tabs || []).filter((x) => x.aiOpened);
   const hidden = ai.filter((x) => aiHiddenTab(x, state)).length;
-  return { on, total: ai.length, hidden, shown: on ? ai.length - hidden : 0 };
+  // [ai tabs] A hidden tab that needs you (an approval to answer, a dialog waiting, an error page) must not be invisible: the chip says so and a click shows it.
+  const needs = ai.filter((x) => aiHiddenTab(x, state) && aiTabNeedsYou(x)).map((x) => x.id);
+  return { on, total: ai.length, hidden, shown: on ? ai.length - hidden : 0, needs };
 }
+function aiTabNeedsYou(tab) { return tab.chat === 'approval' || Boolean(tab.alert) || Boolean(tab.error); }
 function syncHideAiToggle(state) {
   if (!hideAiButton) return;
-  const { on, total, hidden: out, shown } = hideAiSummary(state);
+  const { on, total, hidden: out, shown, needs } = hideAiSummary(state);
   const count = on ? out : total;
   hideAiButton.hidden = !on && total === 0; // nothing to hide: no button (it stays while the toggle is on, so it can be turned off)
   hideAiButton.setAttribute('aria-pressed', String(on));
   const plural = (n) => (n === 1 ? 'one' : 'other');
   const label = !on ? t(`sidebar.hideAiTabs.off.${plural(total)}`, { count: total })
+    : needs.length > 0 ? t(`sidebar.hideAiTabs.needs.${plural(needs.length)}`, { count: needs.length })
     : out > 0 && shown > 0 ? t(`sidebar.hideAiTabs.more.${plural(out)}`, { count: out })
       : out > 0 ? t(`sidebar.hideAiTabs.on.${plural(out)}`, { count: out })
         : shown > 0 ? t(`sidebar.hideAiTabs.inView.${plural(shown)}`, { count: shown })
           : t('sidebar.hideAiTabs.on.none');
   hideAiButton.title = label;
+  // (the name stays "Hide AI tabs", the state is aria-pressed; only a tab that needs you is spoken as a description)
+  if (needs.length > 0) hideAiButton.setAttribute('aria-description', label); else hideAiButton.removeAttribute('aria-description');
+  hideAiButton.dataset.needs = needs.join(','); // (the click shows the first of them instead of switching the toggle)
+  hideAiButton.classList.toggle('needs-you', needs.length > 0);
   const badge = $('hide-ai-tabs-count');
   // While the toggle is hiding or sparing tabs the button says so in words ("2 hidden", "2 more hidden" beside the AI tab in front, "1 in view"), not just with a number:
   // nothing in the strip says tabs went missing otherwise
   const chip = $('hide-ai-tabs-label');
-  const words = on && (out > 0 || shown > 0);
+  const words = on && (out > 0 || shown > 0 || needs.length > 0);
   chip.hidden = !words;
-  chip.textContent = !words ? '' : out > 0 ? t(shown > 0 ? 'sidebar.hideAiTabs.chipMore' : 'sidebar.hideAiTabs.chip', { count: out }) : t('sidebar.hideAiTabs.chipInView', { count: shown });
+  chip.textContent = !words ? '' : needs.length > 0 ? t(`sidebar.hideAiTabs.chipNeeds.${plural(needs.length)}`, { count: needs.length }) : out > 0 ? t(shown > 0 ? 'sidebar.hideAiTabs.chipMore' : 'sidebar.hideAiTabs.chip', { count: out }) : t('sidebar.hideAiTabs.chipInView', { count: shown });
   hideAiButton.classList.toggle('has-label', words);
   badge.hidden = count === 0 && !(on && shown > 0); // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count || shown);
 }
+// Hide, or close them outright. The Menu key and Shift+F10 open the same menu (under the button, since there is no pointer to put it at).
+let hideAiMenuKeyAt = 0;
+function openHideAiMenu(fromKeyboard) {
+  const r = hideAiButton.getBoundingClientRect();
+  window.browser.hideAiTabsMenu?.(fromKeyboard ? { x: Math.round(r.left), y: Math.round(r.bottom) } : undefined);
+}
+hideAiButton?.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (Date.now() - hideAiMenuKeyAt < 500) return; // (the key's own contextmenu event right after its keydown)
+  openHideAiMenu(e.clientX === 0 && e.clientY === 0 && e.button !== 2);
+});
+hideAiButton?.addEventListener('keydown', (e) => {
+  if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+  e.preventDefault();
+  hideAiMenuKeyAt = Date.now();
+  openHideAiMenu(true);
+});
 hideAiButton?.addEventListener('click', async () => {
+  const needs = (hideAiButton.dataset.needs || '').split(',').filter(Boolean).map(Number);
+  if (needs.length) { window.browser.switchTab(needs[0]); return; } // a hidden tab needs you: show it (it is in front, so the strip then draws it)
   const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);
   if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
 });
