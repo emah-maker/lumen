@@ -93,7 +93,7 @@ const PAGE = (mode) => `<!doctype html><title>Editor ${mode}</title><textarea id
     check('new-tab hint names Ctrl+Enter for asking the AI', /Ctrl\+Enter to ask AI/.test(hint) && !/Mod\+/.test(hint), hint);
     await tabJs("document.getElementById('q').focus()");
     await sendTo('tab', 'Return', ['control']);
-    const chat = await waitFor(async () => (await app.evaluate(() => global.__chatPage.tabs())).find((t) => t.id === id && /chat-page\.html/.test(t.url)), 10000);
+    const chat = await waitFor(async () => (await app.evaluate(() => global.__chatPage.tabs())).find((t) => t.chat && /chat-page\.html$/.test(t.url)), 10000); // (the new-tab page turns into the chat page)
     check('new-tab box: Ctrl+Enter opens the full-page chat in that tab', Boolean(chat), JSON.stringify(await app.evaluate(() => global.__chatPage.tabs())));
     check('new-tab box: and did not open the Meeting helper', !(await meetingShown()), '');
   } catch (err) {
