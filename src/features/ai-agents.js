@@ -344,7 +344,7 @@ function setupAiAgents(deps) {
   // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
   function startGrokGate() {
-    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
+    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, extraTools: runTools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
@@ -354,6 +354,10 @@ function setupAiAgents(deps) {
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
   const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : codex?.owns(session?.engine) ? codex : codex?.keepWarm?.owner(session?.engine) || warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
+  // [connectors] The connector tool (the user's connected accounts) is offered only to a run Lumen itself started and still owns: its per-run
+  // random tag (mcp config / bearer token Lumen writes into that run's own temp config) is what proves it. An outside client has no such tag,
+  // so it never sees the tool and is refused if it names it. A background task's run is left out too (nobody there to confirm a write).
+  const runTools = (session) => (session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)) ? deps.connectorTools?.() || [] : []);
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
   // own, so its MCP token file is never another chat's).
@@ -408,6 +412,7 @@ function setupAiAgents(deps) {
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
+    global.__mcpToolsFor = (session) => [...deps.tools.map((t) => t), ...(session?.engine ? runTools(session) : [])].map((t) => t.name); // what tools/list gives this session
     global.__bgEngineCount = () => bgEngines.size;
   }
 
@@ -535,6 +540,7 @@ function setupAiAgents(deps) {
     mcpServer = require('../automation/mcp').startServer({
       userData: app.getPath('userData'),
       tools: deps.tools,
+      extraTools: runTools,
       callTool: mcpCallTool,
       // A bridge that names a run (LUMEN_ENGINE) is served only while that run is live: a stale or foreign
       // tag is refused, never treated as an outside agent.

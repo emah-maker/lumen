@@ -11,6 +11,7 @@ const PAGES = {
   architecture: { title: 'Architecture', file: 'docs/architecture.md' },
   'auto-model': { title: 'Auto model', file: 'docs/auto-model.md' },
   'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
+  connectors: { title: 'Connectors', file: 'docs/connectors.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
