@@ -6,7 +6,7 @@ const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
 require('./_tmp-cleanup');
-const { createExternalApps, writeTokenFile, nameKey, cleanName, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS } = require('../src/features/external-apps');
+const { createExternalApps, writeTokenFile, cleanName, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS } = require('../src/features/external-apps');
 const clientToken = require('../src/automation/client-token');
 const mcp = require('../src/automation/mcp');
 
@@ -169,7 +169,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
 
   // ---------- review round 2: a name is locked at admission, and the small things
   {
-    const { ext, events, c } = make();
+    const { ext, events } = make();
     ext.setPolicy(() => 'ask');
     ext.add({ name: 'Fake App' });
     const s = session({ clientName: 'Foo' });
@@ -285,7 +285,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
 
   // ---------- the token file, the launch environment, an empty token
   {
-    const { ext, file, dir } = make();
+    const { ext, dir } = make();
     const made = ext.add({ name: 'File App' });
     const body = fs.readFileSync(made.tokenFile, 'utf8');
     check('Add app writes the token to a file of its own, next to the profile files', body === made.token && made.tokenFile.startsWith(path.join(dir, 'external-app-tokens')));
@@ -336,7 +336,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     const { ext, events } = make();
     ext.setPolicy(() => 'ask');
     const made = ext.add({ name: 'Fake App' });
-    const made2 = ext.add({ name: 'Second App' });
+    ext.add({ name: 'Second App' });
     const server = mcp.startServer({ userData, tools: [{ name: 'list_tabs', description: 'x', input_schema: { type: 'object' } }, { name: 'wait', description: 'x', input_schema: { type: 'object' } }], callTool: async (name, args, s) => { const call = ext.beginCall(s); if (call.refuse) return { content: [{ type: 'text', text: call.refuse }], isError: true }; try { const how = name === 'wait' ? await new Promise((res) => { const t = setTimeout(() => res('done'), 4000); call.signal?.addEventListener('abort', () => { clearTimeout(t); res('stopped'); }); }) : 'ok'; return { content: [{ type: 'text', text: how }], isError: how === 'stopped' }; } finally { call.end(); } },
       enabled: () => true, onEvent: () => {}, identify: (h) => (h.client === undefined ? null : ext.identify(h)), onInitialize: (s, i) => ext.admit(s, i), onClose: (s) => ext.detach(s) });
     await new Promise((r) => setTimeout(r, 100));
