@@ -9354,22 +9354,21 @@ let snapshot = null;
 let freezeToken = 0;
 let earlyFreeze = null; // a snapshot started on pointerdown
 
-// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers.
+// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers. Async: only the 2 px strip is decoded, off the
+// main thread (drawing the whole decoded snapshot and reading it back cost ~9 ms inside the frame that shows a freeze).
 function edgeColor(img) {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 24;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); // (a CPU canvas: getImageData on a GPU one waits for the readback, a 30 ms stall on the frame that opens a freeze)
-    ctx.drawImage(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, 0, 0, 1, 24);
+  return createImageBitmap(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, { resizeWidth: 1, resizeHeight: 24, resizeQuality: 'low' }).then((bitmap) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.canvas.width = 1;
+    ctx.canvas.height = 24;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
     const d = ctx.getImageData(0, 0, 1, 24).data;
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
     const n = d.length / 4;
     return `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
-  } catch {
-    return '';
-  }
+  }).catch(() => '');
 }
 
 // fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
@@ -9399,8 +9398,7 @@ async function freezePage() {
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  lastSnapshotEdge = edgeColor(img);
-  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
+  edgeColor(img).then((colour) => { if (!colour || img !== snapshot) return; lastSnapshotEdge = colour; viewport.style.setProperty('--snapshot-edge', colour); });
   viewport.append(img);
   // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
   // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
