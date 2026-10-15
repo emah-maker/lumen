@@ -27,6 +27,7 @@ function rig(opts = {}) {
     r.thumbs.activity();
     await sleep(200);
     r.thumbs.stop();
+    await sleep(30); // (a capture already under way still lands, as the last frame)
     const after = r.sent.length;
     check('a run refreshes on a clock, starting with a first frame', after >= 3 && r.sent[0].type === 'thumb' && r.sent[0].tabId === 1, String(after));
     await sleep(120);

@@ -250,7 +250,7 @@ const earlyLabel = (name) => EARLY_LABELS[name] || 'Using a tool'; // (never the
 const clip = (v, n = 80) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const fileName = (p) => clip(path.basename(String(p || '')) || p, 60);
 // [step labels] The line comes from renderer/step-labels.js (the tool's own description, else a humanized label); the UI draws it again from name + input in the user's language.
-const stepLabels = require('../renderer/step-labels');
+const stepLabels = new Proxy({}, { get: (_t, k) => require('../renderer/step-labels')[k] }); // (loaded when the first step needs it)
 function builtinLabel(name, input = {}) {
   const n = String(name);
   const readable = stepLabels.defaults.label(n, input);
@@ -266,7 +266,7 @@ function builtinLabel(name, input = {}) {
   if (n === 'Skill') return `Using the ${clip(input.skill || input.command, 40)} skill`;
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
   if (mcp) return `Using ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}`;
-  return stepLabels.defaults.en('step.tool'); // (never the raw tool name)
+  return stepLabels.en('step.tool'); // (never the raw tool name)
 }
 const isLumenTool = (name) => /^mcp__lumen__/.test(String(name || ''));
 // [full access] The message as typed when it is a slash command ("/goal ship it", "/context"), else null.

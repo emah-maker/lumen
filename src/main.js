@@ -9062,7 +9062,7 @@ const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
-const stepLabelsLib = require('./renderer/step-labels'); // [step labels] bounds what a step keeps of its input in the saved chat
+const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
   if (msg.type === 'thinking') {
@@ -9086,7 +9086,7 @@ function trackRunDetails(run, msg) {
 }
 // [activity cards] The Browser card's live thumbnail of the tab a run works in (features/step-thumbs.js). The chat reports whether any card
 // is on screen ('agent:thumbs-visible'); while none is, nothing is captured. Light graphics (or no hardware drawing) refreshes on navigation only.
-const stepThumbs = require('./features/step-thumbs');
+const stepThumbs = { createThumbs: (opts) => require('./features/step-thumbs').createThumbs(opts), isNavigation: (name) => require('./features/step-thumbs').isNavigation(name) }; // (loaded on the first browser step)
 const thumbVisibleBy = new Map(); // webContents id -> a card is on screen there
 const thumbsVisible = () => {
   let known = false;

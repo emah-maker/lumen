@@ -431,7 +431,29 @@ $('model').addEventListener('change', async (e) => {
 // ---------- chat ----------
 
 const messages = $('messages');
-window.stepUI?.init(messages); // [step labels] click / Enter on a step opens its details
+// [step labels] The step cards' code (step-labels.js, step-ui.js, step-ui.css) is not part of the start-up bundle: it loads the first time a message is sent or a
+// chat with cards is drawn (the chat page lists it itself). A step that arrives before it has loaded gets a plain row.
+let stepUILoad = null;
+function loadStepUI() {
+  if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); } // click / Enter on a step opens its details
+  if (stepUILoad) return stepUILoad;
+  const head = document.head;
+  head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
+  const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
+  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => window.stepUI?.init(messages));
+  return stepUILoad;
+}
+if (window.stepUI) window.stepUI.init(messages);
+function plainStep(event, label) {
+  const step = document.createElement('div');
+  step.className = event.id ? 'step running' : 'step done';
+  step.innerHTML = '<span class="step-detail"></span>';
+  step.firstChild.textContent = label;
+  step.title = label;
+  if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); }
+  appendToTurn(step);
+  return step;
+}
 const prompt = $('prompt');
 const send = $('send');
 let running = false;
@@ -1152,6 +1174,7 @@ function fileChips(files) {
   return row;
 }
 function startTurn(text, images, tabs = null) {
+  loadStepUI();
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   const pictures = imageItems(images);
@@ -1440,7 +1463,7 @@ window.assistant.onEvent((event) => {
       settleThinking();
       endStream();
       turn.text = null; // next text starts a fresh block after any tool steps
-      if (event.type === 'text_block') window.stepUI.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
+      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
       turn.textSource = '';
       turn.thinking = null;
       break;
@@ -1482,13 +1505,13 @@ window.assistant.onEvent((event) => {
       bubble.append(cardEl);
       appendToTurn(bubble);
       if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
-      window.stepUI.fileMade(turn, event.file); // the Terminal / Files card offers it too
+      window.stepUI?.fileMade(turn, event.file); // the Terminal / Files card offers it too
       announce(t('aifile.added', { name: event.file.name }));
       break;
     }
     case 'text': {
       settleThinking();
-      if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI.endCard(turn); }
+      if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
       break;
@@ -1506,7 +1529,7 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
-      const step = window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text });
+      const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text }) : plainStep(event, event.label || fallback);
       if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
@@ -1520,7 +1543,7 @@ window.assistant.onEvent((event) => {
       const step = turn.steps.get(event.id);
       if (!step) break;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
-      window.stepUI.update(turn, step, { ...event, label: event.label || fallback });
+      if (window.stepUI) window.stepUI.update(turn, step, { ...event, label: event.label || fallback }); else if (event.label) { step.firstChild.textContent = event.label; step.title = event.label; }
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       break;
     }
@@ -1530,7 +1553,7 @@ window.assistant.onEvent((event) => {
       step.classList.remove('running', 'done', 'failed', 'stopped');
       step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
       showStepTime(step, true);
-      const plain = window.stepUI.done(turn, step, event); // a built-in tool's failure reads as a sentence with a short reason
+      const plain = window.stepUI?.done(turn, step, event); // a built-in tool's failure reads as a sentence with a short reason
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
       if (!event.ok && event.error && !plain) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -1544,7 +1567,7 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'thumb': // the tab the AI works in, as a small picture for its Browser card
-      window.stepUI.thumb(turn, event);
+      window.stepUI?.thumb(turn, event);
       break;
     case 'screen_attached': // [screen context] the tab's screenshot (or its text) went along with the message
       screenChip([...messages.querySelectorAll('.msg.user')].pop(), event);
@@ -1637,7 +1660,7 @@ function finishTurn(event, { early }) {
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
-  window.stepUI.finalize(turn);
+  window.stepUI?.finalize(turn);
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {
@@ -2331,7 +2354,8 @@ function resolveApproval(approvalId, ok, names) {
 const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) => f && typeof f.ref === 'string' && typeof f.name === 'string').map((f) => ({ file: true, name: f.name, size: Number(f.size) || 0, type: String(f.type || ''), ref: f.ref }));
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
-function showHistory(items) {
+function showHistory(items, loaded = false) {
+  if (!loaded && !window.stepUI && Array.isArray(items) && items.some((i) => i && i.cards)) { loadStepUI().then(() => showHistory(items, true)); return; } // (a chat with cards waits for their code)
   restoring = true;
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom(); // (the "jump to latest" button follows where the view ended)
