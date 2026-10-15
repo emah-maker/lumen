@@ -2,7 +2,7 @@
 // like System Settings: a large title, then grouped lists of rows. Deep things open as sub-pages.
 // Everything goes through window.lumenSettings (settings-preload.js); the backend is
 // settings-backend.js.
-const S = window.lumenSettings;
+const S = window.settingsEarly ? window.settingsEarly(window.lumenSettings) : window.lumenSettings; // (renderer/settings-early.js)
 const $ = (id) => document.getElementById(id);
 
 function h(tag, props = {}, ...children) {
@@ -43,10 +43,14 @@ async function save(key, value) {
 // A description of more than a line or two is clamped to two lines; fitDescs() adds a quiet "Show more" only where the text really is clipped.
 const CLAMP_FROM = 60;
 function fitDescs() {
-  for (const d of document.querySelectorAll('.desc.clamp')) {
+  const todo = [];
+  for (const d of document.querySelectorAll('.desc.clamp')) { // (reads first: a write in between would make the next read lay the page out again)
     if (!d.offsetParent || d.classList.contains('open')) continue; // on another page, filtered out, or already opened
+    if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue; // (in a list below the screen that is not laid out yet: asking its size would lay it out; it is looked at when it nears the screen)
     const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
-    const clipped = d.scrollHeight > d.clientHeight + 1;
+    todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
+  }
+  for (const [d, has, clipped] of todo) {
     if (clipped && !has) {
       const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
       more.addEventListener('click', () => {
@@ -189,9 +193,8 @@ const importSummary = (r) => tr('settings.import.done', 'Imported from {browser}
 });
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
-  let names;
-  try { names = new Intl.DisplayNames([navigator.language], { type: 'language' }); } catch {}
-  return (tag) => { try { return names?.of(tag) || tag; } catch { return tag; } };
+  let names; // (made on first use: loading the language data takes 6 ms the page doesn't need to open)
+  return (tag) => { try { names ||= new Intl.DisplayNames([navigator.language], { type: 'language' }); return names.of(tag) || tag; } catch { return tag; } };
 })();
 const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -240,6 +243,22 @@ const ALIASES = {
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
 const slots = new Map(); // slot or sub-page id -> Slot
+// Probes that start a process in main (is the CLI there, is it signed in, which version) wait until the page has painted and is idle.
+let paintedResolve = () => {};
+const painted = new Promise((resolve) => { paintedResolve = resolve; });
+// (one at a time, 40 ms apart: each starts a program, and two together hold the main process for over 20 ms)
+let laterChain = painted;
+const later = (fn) => {
+  const turn = laterChain.then(() => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 400 }) : setTimeout(resolve, 50))));
+  laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
+  return turn.then(fn);
+};
+let isBuilt = () => true; // set up by init(): is the builder (by id) done
+let neededBuilds = () => []; // ...the builders a page needs before it is shown
+let buildOne = () => Promise.resolve();
+let buildAll = () => Promise.resolve();
+let allDone = false;
+window.__settingsPerf = { visibleDone: false }; // (read by test/settings-open-perf.js)
 let forceRoute = null; // a widget's gear on the new-tab page opens Home > Widgets, whatever hash it used
 
 // A run of grouped lists inside a category (or a sub-page). Builders append rows to it; the first append
@@ -606,7 +625,7 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  S.ai.cliStatus().then(renderCli).catch(() => {});
+  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
@@ -637,7 +656,7 @@ async function buildAi(card) {
     const ccState = snip.id === 'claude' ? status() : null;
     const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      S.ai.claudeCodeStatus().then((s) => {
+      later(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
@@ -670,7 +689,7 @@ async function buildAi(card) {
       cxActions.replaceChildren(...buttons);
     }
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
-    if (cxState) refreshCodex(false);
+    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
@@ -721,6 +740,10 @@ async function buildAi(card) {
   describe(auto.enabled, auto.port);
   card.at('automation').append(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), portRow);
 
+}
+
+// General > Import and Default browser. (Its own builder: the General page, which opens first, needs these two and not the AI page's rows.)
+function buildImport(card) {
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
   card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
@@ -745,8 +768,8 @@ async function buildAi(card) {
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
   const defaultNote = status('default-browser-status');
   const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('settings.default.button', 'Make default') });
-  const renderDefault = async () => {
-    const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
+  const renderDefault = async (cachedFirst) => { // (opening Settings may show the last answer; coming back to the page asks again)
+    const yes = await S.ai.isDefaultBrowser?.({ cached: cachedFirst === true }).catch(() => null);
     defaultButton.hidden = yes === true;
     flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Another browser is the default.'), '');
   };
@@ -762,7 +785,7 @@ async function buildAi(card) {
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
   card.at('default-browser').append(defaultRow);
-  renderDefault();
+  renderDefault(true);
 }
 
 // A Relaunch button in the row of a setting that only takes effect at launch; shown while that
@@ -2454,7 +2477,7 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
+  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
@@ -2954,10 +2977,13 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
   const SS = window.settingsSearch;
   const words = SS.parse(query());
   const searching = words.length > 0;
+  const wasSearching = searchedBefore;
+  searchedBefore = searching;
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
@@ -2973,11 +2999,13 @@ function show() {
     let hits = 0;
     let best = 0;
     for (const g of slot.groups) {
-      const rows = [...g.querySelectorAll('.row')];
+      const rows = searching || wasSearching ? [...g.querySelectorAll('.row')] : [];
       if (!searching) {
-        for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
-        for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
-        g.hidden = false;
+        if (wasSearching) {
+          for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
+          for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
+          g.hidden = false;
+        }
         continue;
       }
       const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
@@ -3024,7 +3052,9 @@ function show() {
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
   for (const slot of slots.values()) if (slot.isSub) { slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id; slot.pane.style.order = searching ? String(-(slot.best || 0)) : ''; } // (a page shown in place ranks with its best row)
+  performance.mark('show:loops');
   syncNavStop();
+  performance.mark('show:nav');
   $('no-results').hidden = !searching || any;
   const suggest = $('no-results-suggest');
   if (!suggest.children.length) {
@@ -3034,6 +3064,7 @@ function show() {
   }
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
   highlight(words);
+  performance.mark('show:end');
   requestAnimationFrame(fitDescs);
 }
 
@@ -3069,7 +3100,24 @@ function initNavKeys() {
   window.addEventListener('resize', edgeFade);
 }
 
+// The page a link or the remembered category would show, without touching anything: which builders to start before the route is run.
+function guessView() {
+  const id = location.hash.slice(1);
+  const sub = slots.get(id);
+  if (sub?.isSub) return { cat: sub.cat, sub: id };
+  if (categories.has(id)) return { cat: id, sub: null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
+}
+let routeSeq = 0;
 function route() {
+  const seq = ++routeSeq;
+  const r = resolveRoute();
+  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  if (!need.length) finishRoute(r);
+  else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
+}
+function resolveRoute() {
   let id = location.hash.slice(1);
   let focus = null;
   let focusEl = null;
@@ -3081,9 +3129,38 @@ function route() {
   else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
+  return { id, focus, focusEl };
+}
+// The first page is laid out with its first screen only: the lists below the fold wait for the next frame (the first layout of a page costs
+// about 1 ms a row, and nothing there can be seen yet). FOLD_ROWS: about what fits above the fold.
+const FOLD_ROWS = 3;
+let foldedGroups = [];
+let firstRouteDone = false;
+function foldBelowTheFirstScreen() {
+  const pane = view.sub ? slots.get(view.sub)?.pane : categories.get(view.cat)?.pane;
+  let rows = 0;
+  const later = [];
+  for (const g of pane ? pane.querySelectorAll('.group') : []) {
+    if (rows >= FOLD_ROWS) { g.classList.add('later'); later.push(g); } else rows += g.querySelectorAll('.row').length;
+  }
+  return later;
+}
+function revealFolded() {
+  if (!foldedGroups.length) return;
+  for (const g of foldedGroups) { g.classList.remove('later'); g.classList.add('lazy'); } // (lazy: laid out when it nears the screen, not all at once)
+  foldedGroups = [];
+  requestAnimationFrame(fitDescs);
+}
+function finishRoute({ id, focus, focusEl }) {
+  revealFolded(); // (a page change before the next frame: everything that was folded is there)
   if (document.activeElement === $('search') && !query()) $('search').blur(); // (#search is also the sidebar field's id: the browser would focus it)
   if (query()) $('search').value = '';
+  if (!firstRouteDone && !ALIASES[id] && !query()) foldedGroups = foldBelowTheFirstScreen(); // (a link to a place further down needs it laid out)
+  firstRouteDone = true;
+  performance.mark('settings:route');
   show();
+  performance.mark('settings:shown');
+  window.__settingsPerf.visibleDone = true; // (the first screen is complete and laid out: it paints next; the lists below it follow in the next frame)
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
@@ -3099,7 +3176,10 @@ async function init() {
     $('search').disabled = true;
     return;
   }
-  st = await S.get();
+  performance.mark('settings:init');
+  const [first, strings] = await Promise.all([S.get(), S.strings?.().catch(() => null)]);
+  performance.mark('settings:data');
+  st = first;
   // [subagents] the sidebar's Helpers button changes the same setting: coming back to this page shows what it is now
   window.addEventListener('focus', async () => {
     try {
@@ -3107,7 +3187,7 @@ async function init() {
       if (st && fresh.prefs.aiSubagents !== st.prefs.aiSubagents) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'aiSubagents' } })); }
     } catch { /* the page is closing */ }
   });
-  window.setI18n?.(await S.strings?.().catch(() => null)); // renderer/i18n.js
+  window.setI18n?.(strings); // renderer/i18n.js
   applyPageClasses();
   // The sidebar and the pages, in order. Titles in the system's language; English (above) when a locale lacks one.
   for (const def of CATEGORIES) {
@@ -3140,45 +3220,99 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];
-  await Promise.all(BUILDS.map(async ([sid, build]) => {
-    const slot = slots.get(sid);
-    try {
-      await build(slot);
-    } catch (err) {
-      slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
-    }
-  }));
-  refreshRestartNotes();
+  // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
+  // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
+  const FOOT = {
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
+    'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
+  };
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'usage', 'extensions-page', 'internals']);
+  const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
+  const started = new Map(); // builder id -> promise
+  const finished = new Set();
+  const buildFn = new Map(BUILDS);
+  isBuilt = (sid) => finished.has(sid);
+  neededBuilds = (v) => {
+    const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
+    if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+  };
   // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
   // address bar") is said once: a one-row list loses the heading, a longer one keeps it and the row's label is read by screen readers only.
   const norm = (text) => text.trim().toLowerCase().replace(/[.…:]+$/, '');
-  for (const slot of slots.values()) for (const g of slot.groups) {
-    const t = g.querySelector('.group-title');
-    const rows = g.querySelectorAll('.row');
-    const first = rows[0]?.querySelector('.label');
-    if (!t || !first) continue;
-    const a = norm(t.textContent);
-    const b = norm(first.textContent);
-    const same = a === b;
-    const near = b.startsWith(`${a} `) || a.startsWith(`${b} `);
-    if (rows.length === 1 && (same || near)) t.remove();
-    else if (same) first.classList.add('sr-only');
-  }
+  const tidy = (slot) => {
+    for (const g of slot.groups) {
+      const t = g.querySelector('.group-title');
+      const rows = g.querySelectorAll('.row');
+      const first = rows[0]?.querySelector('.label');
+      if (!t || !first) continue;
+      const a = norm(t.textContent);
+      const b = norm(first.textContent);
+      const same = a === b;
+      const near = b.startsWith(`${a} `) || a.startsWith(`${b} `);
+      if (rows.length === 1 && (same || near)) t.remove();
+      else if (same) first.classList.add('sr-only');
+    }
+  };
+  // (a list is tidied once every builder that puts rows in it is done)
+  const tidyReady = () => {
+    for (const [sid, slot] of slots) {
+      if (slot.tidied) continue;
+      const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
+      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      if (done) { slot.tidied = true; tidy(slot); }
+    }
+  };
+  buildOne = (sid) => {
+    if (!started.has(sid)) {
+      started.set(sid, (async () => {
+        const slot = slots.get(sid);
+        try {
+          performance.mark('build:' + sid);
+          await buildFn.get(sid)(slot);
+          performance.mark('built:' + sid);
+        } catch (err) {
+          slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
+        }
+        finished.add(sid);
+        tidyReady();
+        refreshRestartNotes();
+      })());
+    }
+    return started.get(sid);
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  let allBuilt = null;
+  buildAll = () => allBuilt ||= (async () => {
+    for (const [sid] of BUILDS) { if (!started.has(sid)) { await tick(); buildOne(sid); } } // (one section per task: input is answered in between)
+    await Promise.all(BUILDS.map(([sid]) => buildOne(sid)));
+    allDone = true;
+    document.body.dataset.ready = '1';
+  })();
+  // (AI model's builder also makes the sub-pages and rows other pages link to, so it always runs; the page's own builders run beside it)
+  const wanted = guessView();
+  const hash = location.hash.slice(1);
+  const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
+  document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
   document.fonts?.ready.then(fitDescs).catch(() => {});
-  $('search').addEventListener('input', show);
+  $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
       e.preventDefault();
+      buildAll();
       $('search').focus();
       $('search').select();
     } else if (e.key === 'Escape' && document.activeElement === $('search') && $('search').value) {
@@ -3189,7 +3323,14 @@ async function init() {
   initNavKeys();
   window.addEventListener('hashchange', route);
   route();
-  document.body.dataset.ready = '1';
+  // shown: the page can be used now; ready: every section is built too (see buildAll)
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.body.dataset.shown = '1';
+    revealFolded();
+    paintedResolve();
+    performance.mark('settings:visible');
+    buildAll();
+  }));
 }
 
 init();
