@@ -47,7 +47,7 @@ function createDesktop(deps = {}) {
   let session = null; // { id, signal, emit, target, cardId, ... }
   let seq = 0;
   const cards = new Map(); // card id -> { hwnd, app, name } (what "Open" may bring forward; only windows the AI used)
-  const sources = new WeakMap(); // run (its signal / context) -> the programs whose text the run has read
+  const sources = new WeakMap(); // run (its signal / context) -> Map(program -> is it a document program) for the programs whose text the run has read
   const stats = { calls: 0, sessions: 0, takeovers: 0, stops: 0 };
 
   const policyOpts = (ctx) => ({ master: S.master(), terminals: S.terminals(), allowed: S.allowed(), once: ctx?.once, lumenPid: lumen.pid, lumenExe: lumen.exe });
@@ -93,8 +93,10 @@ function createDesktop(deps = {}) {
   // connector's answer, text from an app) neither Always nor Once covers an acting call: it asks every time, naming what it wants to do.
   // Taint has two sources. Web, email or connector content (ctx.tainted) covers the whole run. Text read from an app covers only acting in
   // OTHER apps: reading Word and acting in Word needs no new card, reading Word and acting in Excel does.
-  const noteRead = (ctx, win) => { const k = ctx.signal || ctx; if (!sources.has(k)) sources.set(k, new Set()); sources.get(k).add(sourceKey(win)); };
-  const readElsewhere = (ctx, win) => { const set = sources.get(ctx.signal || ctx); return Boolean(set) && [...set].some((k) => k !== sourceKey(win)); };
+  // Only a known document program (Word, Excel, PowerPoint, Notepad, MATLAB) is exempt from its own text: text read from a browser, a mail or chat
+  // app, a file manager, a shell or any program not on that list counts like web content for acting anywhere, that same program included.
+  const noteRead = (ctx, win) => { const k = ctx.signal || ctx; if (!sources.has(k)) sources.set(k, new Map()); sources.get(k).set(sourceKey(win), policy.isDocumentApp(win)); };
+  const readElsewhere = (ctx, win) => { const map = sources.get(ctx.signal || ctx); return Boolean(map) && [...map].some(([k, doc]) => k !== sourceKey(win) || !doc); };
   async function authorize(win, ctx, { acting = false, what = '' } = {}) {
     const tainted = acting && (Boolean(ctx.tainted?.()) || readElsewhere(ctx, win));
     const opts = policyOpts(ctx);

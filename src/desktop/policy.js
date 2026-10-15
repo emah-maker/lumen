@@ -87,6 +87,11 @@ function blockedReason(win, opts = {}) {
 }
 
 const appKey = (win) => exeKey(win?.exe);
+// Document-type programs: text read from one is the user's own document, so acting in that same program needs no new card. Everything else
+// (browsers, mail, chat, file managers, shells, and any program not listed) is treated like web content: text read from it taints acting everywhere.
+const DOCUMENT_APPS = new Set(['winword', 'excel', 'powerpnt', 'notepad', 'matlab']);
+const isDocumentApp = (win) => { const ids = identities(win); return ids.length > 0 && ids.some((id) => DOCUMENT_APPS.has(id)) && !ids.some((id) => NOT_DOCUMENT.has(id)); };
+const NOT_DOCUMENT = new Set(['chrome', 'msedge', 'firefox', 'brave', 'opera', 'opera_gx', 'arc', 'outlook', 'olk', 'thunderbird', 'teams', 'ms-teams', 'slack', 'discord', 'whatsapp', 'telegram', 'zoom', 'messenger', 'explorer', 'cmd', 'powershell', 'pwsh', 'windowsterminal', 'code', 'devenv']);
 // Programs that are not terminals but can start one (or run anything) from inside: the card says so.
 const SHELL_CAPABLE = new Set(['explorer', 'code', 'devenv', 'cursor', 'windsurf', 'idea64', 'pycharm64', 'rider64', 'sublime_text', 'notepad++']);
 const WARN_SHELL = 'Note: this program can also start a terminal or run commands (its address bar, "Open in terminal", a built-in terminal), so allowing it can let the AI run things.';
@@ -148,6 +153,6 @@ function stepLabel(action, args = {}, name = '') {
 }
 
 module.exports = {
-  blockedReason, decide, clean, friendlyName, stepLabel, procKey, exeKey, baseOf, identities, appKey, WARN_SHELL, OFF_TEXT, NOT_WINDOWS, MAX_APPS,
+  blockedReason, decide, clean, isDocumentApp, DOCUMENT_APPS, friendlyName, stepLabel, procKey, exeKey, baseOf, identities, appKey, WARN_SHELL, OFF_TEXT, NOT_WINDOWS, MAX_APPS,
   TERMINALS, SECURITY, PASSWORD_MANAGERS, FINANCE,
 };

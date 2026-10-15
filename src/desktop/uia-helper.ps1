@@ -19,7 +19,7 @@ $script:procs = @{}
 $script:native = $false
 $script:launchable = @{}
 # A field that says it is a password (or a PIN, secret, card code) is treated as one even when the app does not report IsPassword.
-$PWRE = '(?i)pass(word|code|phrase)|\bpin\b|secret|\bcvv\b|\bcvc\b|security code'
+$PWRE = '(?i)pass(word|code|phrase)|\bpin\b|secret|\btoken\b|api[ _-]?key|recovery[ _-]?code|\bcvv\b|\bcvc\b|security code'
 $PWTYPES = @('Edit', 'Pane', 'ComboBox', 'Document', 'Custom', 'Spinner')
 # Test seam (src/desktop tests only; the client sets this variable only in a development test run, never in a packaged Lumen):
 # a request may carry test = { states: [...], sink: true, delay: ms } to script what the keyboard guard sees and to collect keys instead of sending them.
@@ -48,6 +48,11 @@ public static class LumenNative {
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, uint flags, System.Text.StringBuilder name, ref uint size);
+  // The image path through QueryFullProcessImageName: works where Process.MainModule is refused (elevated or other-bitness programs).
+  public static string ImagePath(long pid) { IntPtr h = OpenProcess(0x1000, false, (uint)pid); if (h == IntPtr.Zero) return ""; try { System.Text.StringBuilder sb = new System.Text.StringBuilder(1024); uint n = 1024; return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString() : ""; } finally { CloseHandle(h); } }
   public static long ForegroundPid() { uint p; IntPtr h = GetForegroundWindow(); if (h == IntPtr.Zero) return 0; GetWindowThreadProcessId(h, out p); return p; }
   public static void Init() { try { SetProcessDPIAware(); } catch { } }
   public static long Foreground() { return GetForegroundWindow().ToInt64(); }
@@ -84,6 +89,7 @@ function Proc-Info($procId) {
     if ($script:procs.ContainsKey($key)) { return $script:procs[$key] }
     $info.proc = $p.ProcessName
     try { $info.exe = $p.MainModule.FileName } catch { }
+    if (-not $info.exe) { try { Ensure-Native; $info.exe = [LumenNative]::ImagePath([int64]$procId) } catch { } }
     if ($info.exe) { try { $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($info.exe); $info.description = [string]$vi.FileDescription; $info.original = [string]$vi.OriginalFilename; $info.company = [string]$vi.CompanyName } catch { } }
     $script:procs[$key] = $info
   } catch { }

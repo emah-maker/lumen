@@ -329,6 +329,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('agent: app text taints web actions but not as web content (appOnly); read_urls, connector and other taints clear it, and the controller sees only web / email / connector taint', /markTainted\(run, \{ app: true \}\)/.test(ag) && /holder\.appOnly = true/.test(ag) && /holder\.appOnly = false/.test(ag) && /return Boolean\(h\?\.tainted && !h\.appOnly\)/.test(ag));
   }
   {
+    // only document programs may be read and then acted in without a card; mail, browsers, chat, shells and unknown programs count like web content
+    const mkRig = (win) => makeRig({ apps: [win], allowed: [{ app: key(win.exe), name: policy.friendlyName(win.proc) }] });
+    const readThenAct = async (win) => { const rig = mkRig(win); await rig.d.run({ action: 'read_app', args: { id: 'w' + win.hwnd } }, rig.ctx); rig.setAnswer(false); const m = await rejects(() => rig.d.run({ action: 'click', args: { element: 'e2' } }, rig.ctx)); return { rig, m }; };
+    const outlook = await readThenAct(mk(210, 50, 'OUTLOOK', 'Inbox - Outlook', 'C:\\Office\\OUTLOOK.EXE'));
+    check('read Outlook, then act in Outlook: a card asks (mail text is untrusted even in its own app)', /did not allow this action/.test(outlook.m) && outlook.rig.asked.length === 1 && /read content earlier/.test(outlook.rig.asked[0].title), J(outlook.rig.asked.map((a) => a.title)));
+    const word2 = await readThenAct(mk(211, 51, 'WINWORD', 'Report.docx - Word', WORDX));
+    check('read Word, then act in Word: no card', word2.m === null && word2.rig.asked.length === 0, J([word2.m, word2.rig.asked.length]));
+    const unknown = await readThenAct(mk(212, 52, 'mystery', 'Whatever', 'C:\\Tools\\mystery.exe'));
+    check('read an unknown program, then act in it: a card asks (only known document programs are exempt)', /did not allow this action/.test(unknown.m) && unknown.rig.asked.length === 1, J([unknown.m, unknown.rig.asked.length]));
+    const others = [['browser', 'chrome', 'C:\\G\\chrome.exe'], ['Edge', 'msedge', 'C:\\E\\msedge.exe'], ['Firefox', 'firefox', 'C:\\F\\firefox.exe'], ['Thunderbird', 'thunderbird', 'C:\\T\\thunderbird.exe'], ['Teams', 'ms-teams', 'C:\\T\\ms-teams.exe'], ['Slack', 'slack', 'C:\\S\\slack.exe'], ['Discord', 'Discord', 'C:\\D\\Discord.exe'], ['File Explorer', 'explorer', 'C:\\Windows\\explorer.exe'], ['VS Code', 'code', 'C:\\V\\Code.exe']];
+    const results = [];
+    for (const [label, proc, exe] of others) { const r = await readThenAct(mk(220 + results.length, 60 + results.length, proc, 'x', exe)); results.push([label, r.rig.asked.length]); }
+    check('browsers, mail, chat, file managers and shell-capable apps all ask after being read: ' + others.map((o) => o[0]).join(', '), results.every(([, n]) => n === 1), J(results));
+    check('the document list is exactly Word, Excel, PowerPoint, Notepad and MATLAB', J([...policy.DOCUMENT_APPS].sort()) === '["excel","matlab","notepad","powerpnt","winword"]' && policy.isDocumentApp({ proc: 'excel', exe: 'C:\\Office\\EXCEL.EXE' }) && !policy.isDocumentApp({ proc: 'mystery', exe: 'C:\\x\\mystery.exe' }));
+    const helperSrcPw = fs.readFileSync(path.join(__dirname, '..', 'src', 'desktop', 'uia-helper.ps1'), 'utf8');
+    const re = new RegExp(/\$PWRE = '\(\?i\)([^']+)'/.exec(helperSrcPw)[1], 'i');
+    check('password-name heuristic also covers token, API key, secret key and recovery code (and not ordinary names)', ['Access token', 'API key', 'api_key', 'Secret key', 'Recovery code', 'Password', 'PIN', 'CVV'].every((n) => re.test(n)) && ['Your name', 'Search', 'Pinterest', 'Tokenize'].every((n) => !re.test(n)));
+    check('helper: falls back to QueryFullProcessImageName for the image path when MainModule is refused', /QueryFullProcessImageName/.test(helperSrcPw) && /\[LumenNative\]::ImagePath/.test(helperSrcPw));
+  }
+  {
     // open_app never grants silently: the window that appears is approved on its own merits
     const apps = [word];
     const NOTEPAD = 'C:\\Windows\\notepad.exe';
