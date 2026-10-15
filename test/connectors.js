@@ -106,7 +106,7 @@ async function main() {
     const b64 = (t) => Buffer.from(t).toString('base64');
     check('on disk: the tokens are encrypted (no plaintext, no plain base64), only the account and settings are readable', !disk.includes(TOKENS.github) && !disk.includes(TOKENS.todoist) && !disk.includes(b64(TOKENS.github)) && !disk.includes(b64(TOKENS.todoist)) && /"secret": "/.test(disk) && /school\.instructure\.com/.test(disk), disk);
     check('…and no other file in the profile holds a token', ['settings.json', 'mcp-servers.json'].every((n) => { try { return !fs.readFileSync(path.join(profile, n), 'utf8').includes(TOKENS.github); } catch { return true; } }), '');
-    const secretWrong = await app.evaluate(async () => global.__connectors.list().connectors.every((c) => !JSON.stringify(c).includes('github_pat_')));
+    const secretWrong = await app.evaluate(async (_e, t) => !JSON.stringify(global.__connectors.list()).includes(t), TOKENS.github);
     check('the list the page gets holds no token', secretWrong, '');
 
     console.log('--- the AI uses them');
