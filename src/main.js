@@ -7348,7 +7348,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: agentOf ? agentWindowTitle(agentOf.label) : 'Lumen',
-    icon: WINDOW_ICON,
+    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode, ~50 ms of the main process; the taskbar shows the app's own)
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
@@ -7440,6 +7440,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     // The window's own dropdown and downloads views: closing a window leaves their pages (a renderer process each) running.
     for (const v of [rec === curRec ? suggestView : rec.suggestView, rec === curRec ? downloadsView : rec.downloadsView]) { try { if (v && !v.webContents.isDestroyed()) v.webContents.close(); } catch { /* gone */ } }
     if (rec === curRec) { suggestView = null; downloadsView = null; }
+    rec.suggestView = null; rec.downloadsView = null; // (closedWindows keeps rec for Reopen Closed Window: not the dead views)
     dropDeadWindowViews();
     winRecs.delete(rec);
     const kept = closedWindows.find((c) => c.rec === rec);
@@ -7651,6 +7652,32 @@ const agentWindows = createAgentWindows({
   ...(TEST && Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) > 0 ? { graceMs: Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) } : {}),
 });
 if (TEST) global.__agentWindows = { windows: agentWindows, recOf: (id) => [...winRecs].find((r) => r.win.id === id), count: () => [...winRecs].filter((r) => r.agent && rcAlive(r)).length };
+// [agent window] A tab an agent opened and has not used for a while is unloaded (its page closes; agentTabById wakes it, reloading it, on the
+// agent's next call that names it). One session working in several tabs (tab_id) otherwise kept every page it ever opened live, a renderer
+// process each (~225 MB for a heavy page). Never the window's front tab, a tab a call is working in, one that is loading or playing audio,
+// or a window the user has used.
+let AGENT_TAB_IDLE_MS = TEST && Number(process.env.LUMEN_AGENT_TAB_IDLE_MS) > 0 ? Number(process.env.LUMEN_AGENT_TAB_IDLE_MS) : 3 * 60 * 1000;
+function sweepAgentTabs() {
+  const now = Date.now();
+  for (const rec of [...winRecs]) {
+    if (!rec.agent || rec.agent.used || !rcAlive(rec)) continue;
+    withWindow(rec, () => {
+      let freed = false;
+      for (const tab of tabs) {
+        if (!alive(tab) || tab.sleeping || tab.frozen || tab.placeholder || tab.pinned || tab.id === activeId) continue;
+        tab.agentUsedAt ||= now;
+        if (now - tab.agentUsedAt < AGENT_TAB_IDLE_MS || agent.usingTab(tab.id)) continue;
+        const wc = tab.view.webContents;
+        if (wc.isLoading() || wc.isCurrentlyAudible() || agentOffLimits(tab)) continue;
+        sleepTab(tab);
+        freed = true;
+      }
+      if (freed) sendTabs();
+    });
+  }
+}
+scheduler.every('agent-tabs', TEST && process.env.LUMEN_AGENT_TAB_IDLE_MS ? 1000 : 30 * 1000, () => { if ([...winRecs].some((r) => r.agent)) sweepAgentTabs(); });
+if (TEST) global.__agentTabs = { sweep: sweepAgentTabs, setIdleMs: (ms) => { AGENT_TAB_IDLE_MS = ms; }, state: () => [...winRecs].filter((r) => r.agent && rcAlive(r)).map((r) => tabsOf(r).map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), active: t.id === r.activeId }))) };
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
@@ -7849,6 +7876,7 @@ const agentTabById = (id) => {
     }
   }
   if (isAsleep(t)) withWindow(owner, () => wakeTab(t));
+  if (t) t.agentUsedAt = Date.now(); // (the agent window's idle sweep: sweepAgentTabs)
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
 // [ask across tabs] This window's tabs as read_tabs and the "@" picker see them (features/tabs-ask.js

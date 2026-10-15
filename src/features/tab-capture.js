@@ -70,4 +70,29 @@ async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } 
   return null;
 }
 
-module.exports = { captureTab, cssClip, captureThumb };
+// The tab's visible area as a JPEG already scaled to maxWidth, drawn and encoded by the browser's own processes: { data (base64), width,
+// height }, or null (no debugger, a tab that will not paint: the caller falls back to captureTab). capturePage() hands the main process
+// the full-size bitmap (2160 px wide on a high-DPI screen); nativeImage.resize() of it then ran 14 to 45 ms on the main thread per
+// screenshot (a CPU profile of 6 agents at once: 800 ms of resize in 5 s), toJPEG 4 to 13 ms more. Here the main process receives only
+// the finished JPEG.
+async function captureJpeg(wc, { maxWidth, quality }) {
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
+    const m = await dbg.sendCommand('Page.getLayoutMetrics');
+    const v = m.cssVisualViewport;
+    if (!(v?.clientWidth > 0 && v?.clientHeight > 0)) return null;
+    const scale = Math.min(maxWidth / v.clientWidth, 2); // (never magnified past 2x: a narrow view is not blown up to the full width)
+    const width = Math.max(1, Math.round(v.clientWidth * scale));
+    const height = Math.max(1, Math.round(v.clientHeight * scale));
+    const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } });
+    return shot?.data ? { data: shot.data, width, height } : null;
+  } catch {
+    return null;
+  } finally {
+    if (attachedHere) { try { dbg.detach(); } catch {} }
+  }
+}
+
+module.exports = { captureTab, captureJpeg, cssClip, captureThumb };

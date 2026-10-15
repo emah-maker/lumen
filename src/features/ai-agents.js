@@ -417,16 +417,7 @@ function setupAiAgents(deps) {
   const LABEL_WAIT_MS = 150;
   const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
   // One session, several tabs: calls that name a tab (tab_id) run on it side by side with calls on other tabs. Acting calls on the
-  // SAME tab queue behind each other (a click never overlaps another click or a type there); reads never wait.
-  function onTabQueue(session, key, fn) {
-    if (key == null) return fn();
-    const queues = (session.tabQueues ||= new Map());
-    const run = (queues.get(key) || Promise.resolve()).then(fn, fn);
-    const tail = run.catch(() => {});
-    queues.set(key, tail);
-    tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
-    return run;
-  }
+  // SAME tab queue behind each other (features/tab-queue.js); reads never wait.
   async function mcpCallTool(name, args, session) {
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
@@ -445,10 +436,10 @@ function setupAiAgents(deps) {
     };
     // read_page with no mode gives an MCP client the compact outline (about a third of a full read's size), as the sidebar's models
     // are told to start with; "full" and extract stay one argument away.
-    const takesTab = require('../automation/mcp').TAB_ARG_TOOLS.has(name);
-    const tabArg = takesTab ? (args.tab_id ?? args.tabId) : undefined;
+    const takesTab = require('../automation/mcp').TAB_ARG_TOOLS.has(name) && Boolean(args) && typeof args === 'object';
+    const tabArg = takesTab ? ('tab_id' in args ? args.tab_id : args.tabId) : undefined;
     if (takesTab && ('tab_id' in args || 'tabId' in args)) { const { tab_id: _a, tabId: _b, ...rest } = args; args = rest; } // (not part of the tool's own input)
-    if (tabArg !== undefined && !Number.isInteger(tabArg)) return refuse('tab_id must be an integer: a tab from list_tabs.');
+    if (takesTab && tabArg !== undefined && !Number.isInteger(tabArg)) return refuse('tab_id must be an integer: a tab from list_tabs.');
     if (name === 'read_page' && !args.mode && !args.extract && !args.since_last && !args.elements && !args.text_offset && !args.element_offset) args = { ...args, mode: 'compact' };
     const problem = deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
@@ -532,7 +523,7 @@ function setupAiAgents(deps) {
     // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).
     if (engineRun) owner.callBegin?.(engineRun);
     try {
-      const result = await (require('../automation/mcp').annotationsFor(name) ? inPin(work) : onTabQueue(session, front, () => inPin(work)));
+      const result = await (require('../automation/mcp').QUEUE_EXEMPT.has(name) ? inPin(work) : (session.tabQueue ||= require('./tab-queue').createTabQueue()).run(front, () => inPin(work), signal));
       toUi({ type: 'tool_done', id: stepId, ok: true });
       return { content: toMcpContent(result), isError: false };
     } catch (err) {

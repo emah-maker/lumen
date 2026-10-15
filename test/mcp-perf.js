@@ -12,6 +12,7 @@
 // measurement. LUMEN_MCP_PERF_REPORT=<file> writes the measurements as JSON; LUMEN_MCP_PERF_MEASURE=1 only measures (no bounds).
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
+const { openSettingsTab } = require('./settings-tab');
 const { spawn, spawnSync } = require('child_process');
 const http = require('http');
 const path = require('path');
@@ -143,8 +144,31 @@ function startAgent({ env, clientName }) {
     const samples = () => { const s = []; for (let i = 0; i < 3; i++) { s.push(treeStats([appPid, ...agents.map((a) => a.pid)])); } return { count: s[0].count, wsMb: s.map((x) => x.wsMb).sort((a, b) => a - b)[1] }; };
     const procs = async (label) => { if (process.env.LUMEN_MCP_PERF_PROCS !== '1') return; const m = await app.evaluate(({ app: a, webContents }) => a.getAppMetrics().map((p) => `${p.pid}:${p.type}:${p.name || ''}:${Math.round(p.memory.workingSetSize / 1024)}`)); console.log(`[procs ${label}] ${m.join(' | ')}`); const wcs = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => `${w.id}:${w.getType()}:${w.getProcessId()}:${(w.getURL() || '').slice(-45)}:${w.hostWebContents?.id || ''}`)); console.log(`[wcs ${label}] ${wcs.join(' | ')}`); };
     await procs('idle');
+    // The idle baseline is taken once start-up has settled: one agent session is opened and closed first (its window, the modules and the
+    // renderer started on first use are all made and given back), then a garbage collection and readings until three in a row agree to
+    // within 40 MB. Without this the baseline was ~300 MB too high and "after close" came out far below it, which hid leaks.
+    const gcNow = () => app.evaluate(() => { try { process.getBuiltinModule('v8').setFlagsFromString('--expose-gc'); process.getBuiltinModule('vm').runInNewContext('gc')(); } catch { /* no gc */ } });
+    const settle = async () => {
+      const warm = startAgent({ env, clientName: 'claude-code' });
+      agents.push(warm);
+      await warm.init();
+      await warm.call('open_tab', { url: `${base}/heavy?p=1` });
+      warm.close();
+      await sleep(1000);
+      agents.splice(0, agents.length);
+      await sleep(7000); // (grace period, window closed)
+      let last = [];
+      for (let i = 0; i < 12; i++) {
+        await gcNow();
+        await sleep(2000);
+        last.push(samples().wsMb);
+        last = last.slice(-3);
+        if (last.length === 3 && Math.max(...last) - Math.min(...last) <= 40) break;
+      }
+    };
+    await settle();
     result.idle = samples();
-    console.log(`idle: ${result.idle.count} processes, ${result.idle.wsMb.toFixed(0)} MB`);
+    console.log(`idle:${result.idle.count} processes, ${result.idle.wsMb.toFixed(0)} MB`);
 
     const byTool = {};
     const record = (name, r) => { (byTool[name] ||= []).push(r.ms); if (r.error) throw new Error(`${name}: ${r.error}`); };
@@ -155,8 +179,10 @@ function startAgent({ env, clientName }) {
       await Promise.all(group.map((a) => a.init()));
       const bridgeInit = treeStats(group.map((a) => a.pid)).wsMb / n;
       await gap(true);
-      const prof = process.env.LUMEN_MCP_PERF_PROF && n === 1;
+      const prof = process.env.LUMEN_MCP_PERF_PROF && n === Number(process.env.LUMEN_MCP_PERF_PROF_N || 1);
       if (prof) await app.evaluate(() => new Promise((res) => { const S = process.getBuiltinModule('inspector').Session; const ses = global.__perfSes = new S(); ses.connect(); ses.post('Profiler.enable', () => ses.post('Profiler.setSamplingInterval', { interval: 100 }, () => ses.post('Profiler.start', res))); }));
+      const tr = process.env.LUMEN_MCP_PERF_TRACE && n === Number(process.env.LUMEN_MCP_PERF_PROF_N || 1);
+      if (tr) await app.evaluate(({ contentTracing }) => contentTracing.startRecording({ included_categories: ['toplevel', 'browser', 'navigation', 'devtools', 'views'] }));
       const t0 = Date.now();
       await Promise.all(group.map(async (a, s) => {
         for (let round = 0; round < 10; round++) { // 10 rounds x 5 calls = 50 calls
@@ -172,6 +198,7 @@ function startAgent({ env, clientName }) {
           record('click', await a.call('click', { text: `Open ${round + 3}` }));
         }
       }));
+      if (tr) await app.evaluate(({ contentTracing }, f) => contentTracing.stopRecording(f), process.env.LUMEN_MCP_PERF_TRACE);
       if (prof) { const p = await app.evaluate(() => new Promise((res) => global.__perfSes.post('Profiler.stop', (e, r) => res(JSON.stringify(r.profile))))); fs.writeFileSync(process.env.LUMEN_MCP_PERF_PROF, p); }
       const g = await gap('read');
       await gap(false);
@@ -190,6 +217,8 @@ function startAgent({ env, clientName }) {
       agents.splice(0, agents.length);
       let after = null;
       await sleep(9000); // (the 3 s grace period, the windows closing, memory being given back)
+      await gcNow();
+      await sleep(1500);
       after = samples();
       await procs(`after${n}`);
       const winsAfter = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
@@ -227,8 +256,10 @@ function startAgent({ env, clientName }) {
         await sleep(1000);
         agents.splice(0, agents.length);
         await sleep(9000);
+        await gcNow();
+        await sleep(1500);
         const after = samples();
-        const out = { open, after, wall, windows, p50: pct(lat, 0.5), p95: pct(lat, 0.95), gapMax: g.max, calls: lat.length };
+        const out = { open, after, wall, windows, p50: pct(lat, 0.5), p95: pct(lat, 0.95), gapMax: g.max, gapOver: g.over, calls: lat.length };
         lat.length = 0;
         result.multiTab[label] = out;
         console.log(`${label}: ${open.count} processes, ${open.wsMb.toFixed(0)} MB open (${open.wsMb - result.idle.wsMb > 0 ? '+' : ''}${(open.wsMb - result.idle.wsMb).toFixed(0)}), ${after.wsMb.toFixed(0)} MB after close; windows ${windows}; ${out.calls} calls in ${wall} ms, p50 ${out.p50.toFixed(0)} ms, p95 ${out.p95.toFixed(0)} ms; main gap ${g.max} ms`);
@@ -249,6 +280,11 @@ function startAgent({ env, clientName }) {
           if (!Number.isInteger(id)) throw new Error(`open_tab: ${r.text.slice(0, 200)}`);
           ids.push(id);
         }
+        // The click lands on the tab it names (a counter in each page), all five at once, and on no other.
+        const clicked = await Promise.all(ids.map((tab, s) => solo.callText('click', { tab_id: tab, text: `Open ${s + 11}` })));
+        check('five clicks at once, one per tab, all succeed', clicked.every((c) => !c.isError), clicked.map((c) => c.text.slice(0, 80)).join(' | '));
+        const counters = await Promise.all(ids.map((tab) => solo.callText('run_script', { tab_id: tab, code: 'String(window.__clicked)' })));
+        check('each tab got exactly its own click (page-side counter)', counters.every((c, s) => c.text.includes(String(s + 11)) && !c.isError), counters.map((c) => c.text.slice(0, 60)).join(' | '));
         const named = await solo.callText('read_page', { tab_id: ids[0] });
         check('read_page with tab_id reads that tab (not the front one)', /Heavy 900/.test(named.text) && !named.isError, named.text.slice(0, 200));
         const bad = await solo.callText('read_page', { tab_id: 999999 });
@@ -257,6 +293,84 @@ function startAgent({ env, clientName }) {
         check('a tab_id that is not an integer is refused', notInt.isError === true && /integer/.test(notInt.text), notInt.text.slice(0, 200));
         await Promise.all(ids.map(async (tab, s) => { for (let r = 0; r < 10; r++) await roundCalls((n, args) => solo.call(n, { ...(typeof args === 'string' ? { url: args } : args), tab_id: tab }), `${base}/heavy?p=${s * 100 + r}`, r, rec); }));
       });
+    }
+
+    // Idle agent tabs are unloaded between calls: a session that opened 5 tabs and works in one keeps one page live, and the others come
+    // back (reloaded) on the next call that names them.
+    {
+      const u = startAgent({ env, clientName: 'claude-code' });
+      agents.push(u);
+      await u.init();
+      const ids = [];
+      for (let i = 0; i < 5; i++) {
+        const r = await u.callText('open_tab', { url: `${base}/heavy?p=${950 + i}` });
+        ids.push(Number(/Opened tab ([0-9]+)/.exec(r.text)?.[1]));
+      }
+      for (const id of ids) await u.callText('find', { tab_id: id, query: 'Item 1' });
+      await sleep(1500);
+      const live = samples();
+      await app.evaluate(() => global.__agentTabs.setIdleMs(1500));
+      await sleep(2500);
+      await app.evaluate(() => global.__agentTabs.sweep());
+      await sleep(3000);
+      await gcNow();
+      await sleep(1500);
+      const state = (await app.evaluate(() => global.__agentTabs.state()))[0] || [];
+      const unloaded = samples();
+      const sleeping = state.filter((t) => t.sleeping).length;
+      result.unload = { live, unloaded, tabs: state.length, sleeping };
+      console.log(`idle unload: ${state.length} agent tabs, ${sleeping} unloaded; ${live.count} -> ${unloaded.count} processes, ${live.wsMb.toFixed(0)} -> ${unloaded.wsMb.toFixed(0)} MB`);
+      const sleeper = ids.find((id) => state.find((t) => t.id === id)?.sleeping);
+      let woke = null;
+      for (let i = 0; i < 40 && !woke; i++) {
+        const r = await u.callText('read_page', { tab_id: sleeper });
+        if (new RegExp(`Heavy ${950 + ids.indexOf(sleeper)}`).test(r.text)) woke = r.text; else await sleep(250);
+      }
+      result.unload.wokeReadable = Boolean(woke);
+      await app.evaluate(() => global.__agentTabs.setIdleMs(180000));
+      u.close();
+      await sleep(1000);
+      agents.splice(0, agents.length);
+    }
+
+    // tab_id may only name a tab of the agent's own window: not one of the user's tabs, not another agent's, not Settings.
+    {
+      const A = startAgent({ env, clientName: 'claude-code' });
+      const B = startAgent({ env, clientName: 'codex-mcp-client' });
+      agents.push(A, B);
+      await Promise.all([A.init(), B.init()]);
+      const opened = async (a, p) => {
+        const r = await a.callText('open_tab', { url: `${base}/heavy?p=${p}` });
+        const id = Number(/Opened tab ([0-9]+)/.exec(r.text)?.[1]);
+        if (!Number.isInteger(id)) throw new Error(`open_tab: ${r.text.slice(0, 200)}`);
+        return id;
+      };
+      const aTab = await opened(A, 700);
+      const bTab = await opened(B, 701);
+      const userTab = await app.evaluate(() => global.__windows.list()[0].tabs[0]);
+      const userUrl = () => app.evaluate(({ webContents }) => webContents.fromId(global.__windows.list()[0].tabs[0].contentsId).getURL());
+      const userUrlBefore = await userUrl();
+      const inSettings = await openSettingsTab(app);
+      const targets = [['one of the user\'s tabs', userTab.id], ['another session\'s tab', bTab], ['the Settings tab', inSettings.id]];
+      for (const [what, id] of targets) {
+        for (const [tool, args] of [['read_page', {}], ['click', { text: 'Open 1' }], ['navigate', { url: `${base}/heavy?p=666` }], ['run_script', { code: 'window.__clicked = 99' }]]) {
+          const r = await A.callText(tool, { ...args, tab_id: id });
+          check(`${tool} with tab_id of ${what} is refused`, r.isError === true, r.text.slice(0, 160));
+        }
+      }
+      check('refused calls changed nothing: the user\'s tab keeps its page', (await userUrl()) === userUrlBefore, await userUrl());
+      const b = await B.callText('read_page', { tab_id: bTab });
+      check('...the other session\'s tab still shows its page', /Heavy 701/.test(b.text), b.text.slice(0, 120));
+      const bClicked = await B.callText('run_script', { code: 'String(window.__clicked)' });
+      check('...and was not clicked or scripted', /undefined/.test(bClicked.text), bClicked.text.slice(0, 120));
+      const own = await A.callText('read_page', { tab_id: aTab });
+      check('an agent can still name its own tab', /Heavy 700/.test(own.text) && !own.isError, own.text.slice(0, 120));
+      const nul = await A.callText('read_page', { tab_id: null });
+      check('tab_id null is refused (not silently the front tab)', nul.isError === true && /integer/.test(nul.text), nul.text.slice(0, 120));
+      await app.evaluate((_e, id) => global.__agent.browser.closeTab(id), inSettings.id);
+      A.close(); B.close();
+      await sleep(1000);
+      agents.splice(0, agents.length);
     }
 
     // Per-session processes: the bridge alone (a Node-mode Lumen: nothing else is started with it).
@@ -279,7 +393,7 @@ function startAgent({ env, clientName }) {
       const sixth = result.sessions[6];
       check(`3 sessions cost at most ${BOUNDS.threeSessionsOverIdleMb} MB over idle (${(three.open.wsMb - idle).toFixed(0)})`, three.open.wsMb - idle <= BOUNDS.threeSessionsOverIdleMb, (three.open.wsMb - idle).toFixed(0));
       check(`6 sessions cost at most ${BOUNDS.sixSessionsOverIdleMb} MB over idle (${(sixth.open.wsMb - idle).toFixed(0)})`, sixth.open.wsMb - idle <= BOUNDS.sixSessionsOverIdleMb, (sixth.open.wsMb - idle).toFixed(0));
-      for (const n of [1, 3, 6]) check(`after ${n} sessions close, memory is within ${BOUNDS.afterCloseOverIdleMb} MB of idle (${(result.sessions[n].after.wsMb - idle).toFixed(0)})`, result.sessions[n].after.wsMb - idle <= BOUNDS.afterCloseOverIdleMb, (result.sessions[n].after.wsMb - idle).toFixed(0));
+      for (const n of [1, 3, 6]) check(`after ${n} sessions close, memory is within ${BOUNDS.afterCloseOverIdleMb} MB of idle either way (${(result.sessions[n].after.wsMb - idle).toFixed(0)})`, Math.abs(result.sessions[n].after.wsMb - idle) <= BOUNDS.afterCloseOverIdleMb, (result.sessions[n].after.wsMb - idle).toFixed(0));
       for (const n of [1, 3, 6]) check(`after ${n} sessions close, process count is back to idle +${BOUNDS.afterCloseExtraProcesses} (${result.sessions[n].after.count} vs ${result.idle.count})`, result.sessions[n].after.count <= result.idle.count + BOUNDS.afterCloseExtraProcesses, `${result.sessions[n].after.count}`);
       for (const n of [1, 3, 6]) {
         const per = (result.sessions[n].open.count - result.idle.count) / n;
@@ -287,7 +401,13 @@ function startAgent({ env, clientName }) {
       }
       check(`the bridge is ${BOUNDS.bridgeProcesses} process at most (${result.bridge.processes})`, result.bridge.processes <= BOUNDS.bridgeProcesses, result.bridge.processes);
       check(`one bridge stays under ${BOUNDS.bridgeMb} MB (${result.bridge.wsMb.toFixed(0)})`, result.bridge.wsMb <= BOUNDS.bridgeMb, result.bridge.wsMb);
-      check(`no main-process gap over ${BOUNDS.maxGapMs} ms during the calls (max ${result.maxGapMs})`, result.maxGapMs <= BOUNDS.maxGapMs, result.maxGapMs);
+      // The main process must never stall for more than 20 ms (the standing rule), in every phase. The count of stalls over 20 ms is ratcheted too,
+      // so that growth is caught whatever the maximum does.
+      const phases = [...[1, 3, 6].map((n) => [`${n} session${n > 1 ? 's' : ''}`, result.sessions[n].gapMax, result.sessions[n].gapOver, BOUNDS.gapOver[`s${n}`]]), ['five sessions', result.multiTab.five_sessions.gapMax, result.multiTab.five_sessions.gapOver, BOUNDS.gapOver.five], ['one session, five tabs', result.multiTab.one_session_five_tabs.gapMax, result.multiTab.one_session_five_tabs.gapOver, BOUNDS.gapOver.tabs]];
+      for (const [label, max, over, ratchet] of phases) {
+        check(`main-process gap at most ${BOUNDS.maxGapMs} ms during the calls, ${label} (max ${max})`, max <= BOUNDS.maxGapMs, max);
+        check(`...and at most ${ratchet} stalls over 20 ms, ${label} (${over})`, over <= ratchet, over);
+      }
       for (const [name, b] of Object.entries(BOUNDS.p95Ms)) check(`${name} p95 under ${b} ms (${(result.tools[name]?.p95 || 0).toFixed(0)})`, result.tools[name] && result.tools[name].p95 <= b, result.tools[name]?.p95);
       const five = result.multiTab.five_sessions;
       const tabs = result.multiTab.one_session_five_tabs;
@@ -297,6 +417,10 @@ function startAgent({ env, clientName }) {
       check(`...and one window of its own, none per tab (${tabs.windows} windows with the user's)`, tabs.windows <= BOUNDS.fiveTabsOneSessionMaxWindows, tabs.windows);
       check(`...calls p95 under ${BOUNDS.fiveTabsP95Ms} ms (${tabs.p95.toFixed(0)}) and all 250 done in under ${BOUNDS.fiveTabsWallMs} ms (${tabs.wall}): tabs run side by side, not queued`, tabs.p95 <= BOUNDS.fiveTabsP95Ms && tabs.wall <= BOUNDS.fiveTabsWallMs && tabs.calls === 250, `${tabs.p95} ${tabs.wall} ${tabs.calls}`);
       check(`...and nothing left behind after it closes (${tabs.after.count} processes vs ${result.idle.count} at idle)`, tabs.after.count <= result.idle.count + BOUNDS.afterCloseExtraProcesses, tabs.after.count);
+      const un = result.unload;
+      check(`idle agent tabs are unloaded: ${un.sleeping} of ${un.tabs} (all but the front one)`, un.sleeping >= BOUNDS.unloadedTabs, `${un.sleeping}/${un.tabs}`);
+      check(`...which frees at least ${BOUNDS.unloadFreedProcesses} processes (${un.live.count} -> ${un.unloaded.count}) and ${BOUNDS.unloadFreedMb} MB (${(un.live.wsMb - un.unloaded.wsMb).toFixed(0)})`, un.live.count - un.unloaded.count >= BOUNDS.unloadFreedProcesses && un.live.wsMb - un.unloaded.wsMb >= BOUNDS.unloadFreedMb, `${un.live.count - un.unloaded.count} proc ${(un.live.wsMb - un.unloaded.wsMb).toFixed(0)} MB`);
+      check('...and an unloaded tab named by tab_id comes back readable', un.wokeReadable, 'still empty after 10 s');
       check(`read_page payload at most ${BOUNDS.readPageBytes} bytes (${result.payload.read_page_bytes})`, result.payload.read_page_bytes <= BOUNDS.readPageBytes, result.payload.read_page_bytes);
       check(`screenshot payload at most ${BOUNDS.screenshotBytes} bytes (${result.payload.screenshot_bytes})`, result.payload.screenshot_bytes <= BOUNDS.screenshotBytes, result.payload.screenshot_bytes);
     }
