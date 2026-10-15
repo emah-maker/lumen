@@ -248,8 +248,9 @@ let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
 
 // Only the settings tab's own top-level settings document may use the prefs:* calls.
+let spareSettings = null; // [settings intent] { view, timer }: the Settings page loading in a view of its own, before it is a tab (see prepareSettings)
 function isSettingsSender(event) {
-  return tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+  return (tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender) || (spareSettings && spareSettings.view.webContents === event.sender))
     && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url);
 }
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
@@ -265,17 +266,17 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:run-now', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
@@ -985,6 +986,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-files-newtab', type: 'frame', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }); // [files] the new-tab page's Files widget (features/files.js)
+  session.defaultSession.registerPreloadScript({ id: 'lumen-newtab-ai', type: 'frame', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }); // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
   hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
@@ -1494,6 +1496,7 @@ function extensionsMenu() {
 // doesn't open with scroll arrows or run past the window. { x, y, right } is the button's left,
 // bottom and right edge in the UI's window coordinates (`right` is missing from older callers).
 function showAppMenu({ x, y, right }) {
+  prepareSettings(); // [settings intent] (the menu holds Settings: it is most often what the user is after)
   const wc = activeTab()?.webContents;
   const web = isWebUrl(wc?.getURL());
   const chunk = (items, id, label, order) => ({ items, fold: id ? { id, label, order } : null });
@@ -1514,6 +1517,7 @@ function showAppMenu({ x, y, right }) {
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
+        { label: t('menu.toggleSidebar'), accelerator: 'CmdOrCtrl+J', click: toggleSidebarFromKeys }, // (a page that uses Ctrl+J gets it first: the menu still shows it)
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
@@ -1856,7 +1860,7 @@ function tabState() {
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by AI" in its card)
+        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };
@@ -2560,9 +2564,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
-    // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
-    // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
-    if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
+    // Ctrl/Cmd+Enter is never a browser shortcut: it is the page's (send in Gmail, Slack and chat sites, submit in forms) and Lumen's own boxes' ("send now").
     // Page-first keys (Ctrl+S, Ctrl+P, Ctrl+F...; features/page-first-keys.js) go to the page, and Lumen's action runs only if the page did not handle them.
     if (input.type === 'keyDown' && pageFirstKeys.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab()?.webContents === wc) handleShortcut({ preventDefault() {} }, input); })) return;
     handleShortcut(event, input);
@@ -4450,7 +4452,7 @@ const setup = require('./features/setup').create({
 });
 ipcMain.handle('settings:setup-state', () => setup.state());
 ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
-ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:default-browser', (_e, o) => setup.isDefault(o?.cached ? { maxAgeMs: 60000 } : {})); // (cached: Settings opening shows the last answer at once)
 ipcMain.handle('settings:make-default', () => setup.makeDefault());
 ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
@@ -4585,7 +4587,6 @@ function askFromHome(event, url, tabId) {
   let text;
   let params;
   try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
-  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab', send: params.get('send') === '1' }); return true; } // Ask AI: the full-page chat, here or (Ctrl+click) in a new tab; send=1 asks the draft in a new chat
   if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
@@ -4674,6 +4675,7 @@ function bookmarksMenu() {
   const marked = list.some((b) => b.url === current);
   return [
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
+    { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
@@ -5026,7 +5028,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') toggleSidebarFromKeys();
-  else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
+  else if (mod && input.shift && !input.alt && key === 'e') toggleMeetingHelper(); // Ctrl+Shift+E: Meeting helper (Ctrl+Enter is "send now" in the box you type in)
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
@@ -5098,7 +5100,7 @@ function toggleChatPage() {
   else chatPageRt.open();
 }
 
-// Mod+Enter: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
+// Ctrl+Shift+E: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
 function toggleMeetingHelper() {
   ui()?.focus();
   ui()?.send('meeting:toggle');
@@ -5140,7 +5142,17 @@ const chats = () => (chatStore ||= createChatStore({
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
   legacyFile: CHAT_FILE(),
+  onError: (err) => chatSaveFailed(err),
 }));
+// A save that failed (a full disk, a locked file, the keychain): said once per session, in the tab strip's toast, with the reason. The chat stays
+// in memory and the next save tries again.
+let chatSaveWarned = false;
+function chatSaveFailed(err) {
+  console.error('Could not save chat:', err?.message);
+  if (chatSaveWarned) return;
+  chatSaveWarned = true;
+  try { toast(`Couldn't save this chat: ${String(err?.code || err?.message || 'unknown error').slice(0, 80)}`); } catch { /* no window to say it in */ }
+}
 let chatId = null; // the open chat
 // [temporary chat] Chats started with "Temporary chat" on the chat page: never written to disk, never listed (they live only in
 // memory until the user leaves them). Ids are random, so the set simply stays for the session.
@@ -5159,10 +5171,74 @@ function syncProjectInstructions() {
   if (!settings) return;
   const block = projectBlockFor(chatId);
   if (block) settings.projectInstructions = block; else delete settings.projectInstructions;
+  const work = projectWorkFolderFor(chatId); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
+  if (work) settings.projectWorkFolder = work; else delete settings.projectWorkFolder;
 }
 function keepPendingProject(id) {
   const pid = pendingProject.get(id);
   if (pid && chats().has(id)) { chats().setProject(id, pid); pendingProject.delete(id); }
+}
+// ---------- [project folders] (features/project-folders.js)
+// A project can have a real folder; its chats are mirrored there as Markdown files (plain text, NOT encrypted: the project's settings say
+// so), and a folder can be where the AI works (a chat's own pick, else its project's). All file work is async and never on the saving path:
+// a change schedules a write ~2 s after the last one, and the writes run one after another with the main thread free between them.
+// Loaded on first use (a project's folder, a chat's work folder, a mirror write), not at startup (test/perf-budget.js counts startup modules).
+let projectFoldersMod = null;
+const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('./features/project-folders'))[key] });
+let documentsOverride = null; // TEST only (global.__projectFolders.setDocuments): the Documents folder of a test is never the user's own
+const documentsDir = () => documentsOverride || (TEST ? path.join(app.getPath('userData'), 'test-documents') : app.getPath('documents'));
+const projectsParent = () => { const d = String(readSettings().projectsDir || ''); return d && path.isAbsolute(d) ? d : path.join(documentsDir(), 'Lumen Projects'); };
+const projectById = (id) => chats().projects().find((p) => p.id === id) || null;
+const projectIdOf = (id) => (chats().projectOf(id)?.id) || pendingProject.get(id) || null;
+// Where a chat's Markdown file belongs: its project's folder while the project has one and the toggle is on (force: whatever the toggle).
+const mirrorFolderOf = (id, force = false) => { if (temporaryChats.has(id)) return ''; const p = chats().projectOf(id); return p?.folder && (force || p.mirror !== false) ? p.folder : ''; };
+let mirrorChain = Promise.resolve();
+const serial = (fn) => { const run = mirrorChain.then(fn, fn); mirrorChain = run.catch(() => {}); return run; };
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+let chatMirror = null;
+const mirror = () => (chatMirror ||= projectFolders.createMirror({
+  render: async (id) => { await nextTurn(); const out = chatMarkdown(id); return out ? { id, title: out.title, created: out.created, updated: out.updated, model: out.model, markdown: out.markdown } : null; },
+  folderOf: mirrorFolderOf,
+  onError: (err) => console.error('Project folder:', err?.message || err),
+}));
+let mirrorDebounceObj = null; // (made on first use, with the module above)
+const mirrorDebounce = new Proxy({}, { get: (_t, key) => { const d = (mirrorDebounceObj ||= projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000)); const v = d[key]; return typeof v === 'function' ? v.bind(d) : v; } });
+function mirrorChatSoon(id) { try { if (id && mirrorFolderOf(id)) mirrorDebounce.schedule(id); } catch { /* the chat is saved either way */ } }
+// Chats moved between projects ([[chat id, the project it was in]], read before the move): the file leaves the old folder (to Chats/Removed)
+// and is written in the new one.
+function mirrorAfterMove(before) {
+  const work = [];
+  for (const [id, from] of before) {
+    if ((projectIdOf(id) || null) === (from || null)) continue;
+    work.push({ id, from: from ? projectById(from)?.folder || '' : '' });
+  }
+  if (!work.length) return;
+  serial(async () => { for (const w of work) { mirrorDebounce.cancel(w.id); await mirror().write(w.id, { from: w.from }); await nextTurn(); } }).catch(() => {});
+}
+const deletedFrom = new Map(); // chat id -> the project folder its file was in when the chat was deleted (the file moves to Chats/Deleted once the undo time is over)
+// A project whose folder is gone shows "Folder missing" (Locate / Recreate). Looked at in the background (never in the list call) and at most every 3 s.
+const folderState = new Map(); // project id -> { folder, ok }
+let folderLook = 0;
+function lookAtProjectFolders() {
+  if (Date.now() - folderLook < 3000) return;
+  folderLook = Date.now();
+  for (const p of chats().projects()) {
+    if (!p.folder) continue;
+    fs.promises.stat(p.folder).then((s) => s.isDirectory(), () => false).then((ok) => {
+      const was = folderState.get(p.id);
+      folderState.set(p.id, { folder: p.folder, ok });
+      if (was ? (was.folder !== p.folder || was.ok !== ok) : !ok) pushAttention();
+    });
+  }
+}
+const withFolderState = (p) => { const st = folderState.get(p.id); return p.folder && st && st.folder === p.folder && !st.ok ? { ...p, folderMissing: true } : p; };
+// What a project's chats work in: its working folder, else its own folder.
+const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id); const p = pid ? projectById(pid) : chats().projectOf(id); return p ? (p.workFolder || p.folder || '') : ''; } catch { return ''; } };
+// The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
+function workFolderInfo(settings = agent.messages.settings) {
+  const own = typeof settings?.workFolder === 'string' ? settings.workFolder : '';
+  const dir = own || (typeof settings?.projectWorkFolder === 'string' ? settings.projectWorkFolder : projectWorkFolderFor(chatId)); // (a new chat has no settings yet: its project decides)
+  return dir ? { path: dir, shown: projectFolders.shortPath(dir, { home: require('os').homedir() }), source: own ? 'chat' : 'project' } : null;
 }
 const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
 // Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
@@ -5197,11 +5273,12 @@ function saveChat(generation = chatGeneration) {
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
-    chats().save(chatId, snapshot);
+    chats().saveAsync(chatId, snapshot); // (written in the background: no stall of the main thread; features/chat-store.js. Quitting writes what is pending at once)
     keepPendingProject(chatId);
-    if (chats().current() !== chatId) chats().setCurrent(chatId);
+    mirrorChatSoon(chatId); // [project folders]
+    if (chats().current() !== chatId) chats().setCurrent(chatId, { defer: true });
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // During a long task the chat is saved after each step too, so quitting mid-run keeps what was done.
@@ -5210,11 +5287,18 @@ function saveChatSoon(generation) {
   clearTimeout(saveChatTimer);
   saveChatTimer = setTimeout(() => saveChat(generation), 1000);
 }
-app.on('before-quit', () => {
+// Everything not on disk yet is written now, on this thread: the app is closing, or Windows is logging off or shutting down (no time for more).
+function flushChatsNow() {
   saveChat();
-  try { chats().flush(); } catch { /* nothing pending */ }
+  try { if (mirrorDebounceObj) mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now (none if nothing was ever mirrored) */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
-});
+  try { chats().flush(); } catch { /* nothing pending */ }
+}
+app.on('before-quit', flushChatsNow);
+app.on('will-quit', flushChatsNow); // (again: whatever a quit handler saved after the first)
+app.on('session-end', flushChatsNow); // (Windows logoff / shutdown, where the app event exists)
+app.on('browser-window-created', (_e, w) => { try { w.on('session-end', flushChatsNow); } catch { /* not a window that gets it */ } }); // (...and where only the window gets it)
+app.whenReady().then(() => { try { require('electron').powerMonitor.on('shutdown', flushChatsNow); } catch { /* the event is not on this platform */ } }).catch(() => {});
 
 function loadChat() {
   try {
@@ -5235,10 +5319,11 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false, quiet = false } = {}) {
+// `loaded`: the chat's saved snapshot, already read (chats:open reads it without stopping the main thread).
+function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
-  const snapshot = id && !live ? chats().load(id) : null;
+  const snapshot = id && !live ? (loaded || chats().load(id)) : null;
   // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
   // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
   if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
@@ -5258,7 +5343,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   const wasUnread = unreadChats.delete(chatId);
   if (id && (snapshot || live)) chats().setCurrent(id, { defer: true }); // (the pointer only a restart reads: written a moment later, not inside the tab switch)
-  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
+  else if (!quiet) chats().setCurrent(null, { defer: true }); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   // A quiet switch (a window's sidebar following its front tab's chat, from a call it made: syncToSender) changes no run's mark unless it
   // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
   // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
@@ -5277,7 +5362,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
+  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -5297,9 +5382,9 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); }
+    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
@@ -5842,14 +5927,35 @@ const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === n
 ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
 // The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
-// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
+// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close tabs the AI opened all still reach them).
 ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
+// Right-click on that toggle: the same switch, and closing the AI's tabs outright (every window, with Undo, as the menus'
+// "Close tabs the AI opened" does), so tabs the user no longer wants need not just be hidden.
+function hideAiMenuTemplate() {
+  const count = aiTabSelect({}).length;
+  return [
+    { label: t('sidebar.hideAiTabs.menu.hide'), type: 'checkbox', checked: readSettings().hideAiTabs === true, click: (item) => { settingsBackend.set('hideAiTabs', item.checked); } },
+    { type: 'separator' },
+    { label: count ? t('sidebar.hideAiTabs.menu.close', { count }) : t('sidebar.hideAiTabs.menu.closeNone'), enabled: count > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } },
+  ];
+}
+const hideAiMenuPops = []; // (tests: where each request to open the menu came from; the test build opens no native menu)
+ipcMain.on('tabs:hide-ai-menu', (event, at) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || owner.isDestroyed()) return;
+  // From the keyboard (Menu key, Shift+F10) the strip says where: under the button
+  const pos = Number.isFinite(at?.x) && Number.isFinite(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {};
+  if (TEST) { hideAiMenuPops.push(pos); return; }
+  Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner, ...pos });
+});
+if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops.slice();
+if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
-// The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
+// The taskbar's command (Jump List task, Dock menu) and the menus' "Close tabs the AI opened": every normal window's AI tabs, each
 // window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
 // A private window has no AI tabs of this kind (it is in no window record). With none to close, a brief line shows in the
 // window in front, and only if one is visible.
@@ -7979,7 +8085,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -8689,6 +8795,42 @@ accentCss = require('./features/accent-css').create({ rendererDir: path.join(__d
 for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
+// [settings intent] The user is about to open Settings (pressed the menu button, or is typing lumen://settings): the page starts loading
+// in a view of its own now, and the tab takes it over when the open follows. Nothing is kept: with no open within SPARE_SETTINGS_MS it is closed.
+const SPARE_SETTINGS_MS = 5000;
+function dropSpareSettings() {
+  const s = spareSettings;
+  if (!s) return;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
+  try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+}
+function prepareSettings() {
+  if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
+  try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
+  const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
+  // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
+  // shown but out of sight, far to the left of it, until it becomes the tab (which puts it in place).
+  try { const b = view.getBounds(); view.setBounds({ ...b, x: -30000 }); win.contentView.addChildView(view); view.setVisible(true); } catch { /* it loads without */ }
+  s.timer.unref?.();
+  view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
+  spareSettings = s;
+  view.webContents.loadURL(settingsPage.urlFor('')).catch(() => {});
+}
+function takeSpareSettings() {
+  const s = spareSettings;
+  if (!s) return null;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  const wc = s.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed()) { try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ } try { wc.close(); } catch { /* gone */ } return null; }
+  try { s.view.setVisible(false); } catch { /* the tab shows it */ }
+  return s.view;
+}
+ipcMain.on('prepare-settings', () => prepareSettings());
 function openSettingsPage(section = '', { replace = null } = {}) {
   const url = settingsPage.urlFor(section);
   const existing = tabs.find((t) => t.settings && alive(t));
@@ -8700,7 +8842,13 @@ function openSettingsPage(section = '', { replace = null } = {}) {
     switchTab(existing.id);
     return existing.id;
   }
-  const { id } = openTab(url, { settings: true });
+  const spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  const { id } = openTab(url, { settings: true, view: spare });
+  if (spare) {
+    const wc = spare.webContents;
+    const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
+    if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }
+  }
   if (replace) takePlace(id, replace);
   return id;
 }
@@ -8720,7 +8868,7 @@ function replaceTab(oldId, url) {
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
 if (TEST) {
-  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
+  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, prepare: prepareSettings, hasSpare: () => Boolean(spareSettings), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
 function applyContentBounds(bounds) {
@@ -8917,6 +9065,44 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
   });
 }
 // Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
+// ---------- [newtab-images] the new-tab page's Ask AI: text and pictures reach the full-page chat through these calls, never the page's URL ----------
+// Only a tab's top frame showing renderer/newtab.html may call them (the page's own preload, preload/newtab-preload.js, exposes them).
+{
+  const newtabImages = { get lib() { return require('./features/newtab-images'); } }; // (loaded on first use)
+  const newTabTab = (event) => (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') ? tabByContents(event.sender) : null);
+  ipcMain.handle('newtab-ai:ask', (event, o) => {
+    const tab = newTabTab(event);
+    if (!tab || !o || typeof o !== 'object') return false;
+    const images = newtabImages.lib.clean(o.images);
+    const text = typeof o.text === 'string' ? o.text.trim().slice(0, 20000) : '';
+    chatPageRt?.fromHome(tab.id, { draft: text, images, inNewTab: o.inNewTab === true, send: Boolean(text || images.length) }); // (nothing typed: it only opens the chat)
+    return true;
+  });
+  ipcMain.handle('newtab-ai:pick', async (event) => {
+    if (!newTabTab(event)) return null;
+    let paths;
+    if (TEST && global.__newtabPick) paths = await global.__newtabPick(); // tests answer for the OS picker
+    else {
+      const owner = BrowserWindow.fromWebContents(event.sender) || win;
+      const picked = await electronDialog.showOpenDialog(owner && !owner.isDestroyed() ? owner : undefined, { title: t('newtab.images.pick'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('newtab.images.pickFilter'), extensions: newtabImages.lib.EXTENSIONS }] });
+      paths = picked.canceled ? [] : picked.filePaths;
+    }
+    const images = [];
+    const problems = [];
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, newtabImages.lib.MAX_IMAGES)) {
+      const name = path.basename(String(p));
+      try {
+        const type = newtabImages.lib.typeOf({ name });
+        const size = (await fs.promises.stat(p)).size;
+        if (!type) problems.push({ code: 'notImage', name });
+        else if (!size) problems.push({ code: 'empty', name });
+        else if (size > newtabImages.lib.MAX_BYTES) problems.push({ code: 'big', name });
+        else images.push({ name, type, data: await fs.promises.readFile(p) });
+      } catch { problems.push({ code: 'unreadable', name }); }
+    }
+    return { images, problems };
+  });
+}
 ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFromOtherApps(fileUrlsFor(paths.slice(0, 20))); });
 ipcMain.on('tab:new', (_e, url) => {
   const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
@@ -9088,7 +9274,7 @@ ipcMain.on('nav:history-menu', (e, direction, point) => {
 if (TEST) global.__navHistoryMenu = (direction) => navHistoryTemplate(direction).map((i) => ({ label: i.label || '---', click: i.click }));
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
+ipcMain.handle('suggest:query', async (_e, query) => { if (/^\s*(lumen:\/\/)?settings\b/i.test(String(query))) prepareSettings(); /* [settings intent] */ await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
@@ -9542,7 +9728,7 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
     currentUsage: describeUsage(agent.messages.settings?.usage),
     currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
-    projects: chats().projects(), // [projects]
+    projects: (() => { lookAtProjectFolders(); return chats().projects().map(withFolderState); })(), // [projects] (+ [project folders] whether the folder is there)
     chats: (() => {
       const badges = chatBadges();
       const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
@@ -9554,9 +9740,18 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   };
 }));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
-ipcMain.handle('chats:open', (event, id) => {
-  syncToSender(event);
-  const view = switchChat(String(id));
+// Chats opened one after another: the read of an earlier one is dropped (it answers with whatever is open by then), so the last click is the chat shown.
+let openSeq = 0;
+async function readForOpen(id) {
+  const mine = ++openSeq;
+  const loaded = chatRuns.has(id) || id === chatId ? null : await chats().loadAsync(id); // (read in the background; the switch itself is then quick)
+  return { loaded, stale: mine !== openSeq };
+}
+ipcMain.handle('chats:open', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
+  syncToSender(event); // (with the switch, as one step: nothing else runs between them)
+  const view = switchChat(String(id), { loaded });
   if (view) {
     bindOpenChatHere(event.sender);
     chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
@@ -9565,9 +9760,11 @@ ipcMain.handle('chats:open', (event, id) => {
 });
 // "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
 // changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
-ipcMain.handle('chats:share', (event, id) => {
+ipcMain.handle('chats:share', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
   syncToSender(event);
-  const view = switchChat(String(id));
+  const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
     carriedTabs.delete(forTab);
@@ -9597,9 +9794,45 @@ ipcMain.handle('chats:show-tab', (event, id) => {
 // [projects] The list, and every change: a new one, an edit, delete (its chats stay, out of any project), a chat moved in or out,
 // and a new chat that starts inside a project.
 const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000) });
-ipcMain.handle('chats:project-save', (_e, project) => { const out = chats().saveProject(projectFields(project)); if (out) syncProjectInstructions(); return out; });
-ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; });
-ipcMain.handle('chats:project-set', (_e, id, projectId) => { const ok = chats().setProject(String(id), projectId ? String(projectId) : null); if (ok) syncProjectInstructions(); return ok; });
+const dialogParent = (event) => { try { return BrowserWindow.fromWebContents(event.sender) || win; } catch { return win; } };
+async function pickFolder(event, title, defaultPath) {
+  const picked = await electronDialog.showOpenDialog(dialogParent(event), { title, ...(defaultPath ? { defaultPath } : {}), properties: ['openDirectory', 'createDirectory'] });
+  return picked.canceled || !picked.filePaths[0] ? null : picked.filePaths[0];
+}
+// [project folders] Creating a project makes <Documents>\Lumen Projects\<name> (folderMode 'existing' with `folder` uses a folder the user picked;
+// 'none' makes none). Answers the project, { error } for a folder that cannot be used ('root' and 'home' want `confirmed: true`), or null.
+ipcMain.handle('chats:project-save', async (_e, project) => {
+  const fields = projectFields(project);
+  let made = '';
+  try {
+    const use = async (dir, confirmed) => { const chk = await projectFolders.checkWorkFolder(String(dir || ''), { confirmed: confirmed === true }); if (!chk.ok) throw Object.assign(new Error(chk.reason), { reason: chk.reason }); return chk.real; };
+    if (!fields.id) {
+      if (project?.folderMode === 'existing') { fields.folder = await use(project.folder, project.confirmed); fields.folderCreated = false; }
+      else if (project?.folderMode !== 'none' && fields.name.trim()) { made = await projectFolders.createProjectFolder({ parent: projectsParent(), name: fields.name }); fields.folder = made; fields.folderCreated = true; }
+    } else if (project?.folderMode === 'new') { // a project from before folders gets one now
+      if (!projectById(fields.id)?.folder) { made = await projectFolders.createProjectFolder({ parent: projectsParent(), name: fields.name }); fields.folder = made; fields.folderCreated = true; }
+    } else if (project?.folder !== undefined) {
+      if (project.folder) { fields.folder = await use(project.folder, project.confirmed); fields.folderCreated = false; } else fields.folder = '';
+    }
+    if (typeof project?.mirror === 'boolean') fields.mirror = project.mirror;
+    if (project?.workFolder !== undefined) fields.workFolder = project.workFolder ? await use(project.workFolder, project.confirmedWork) : '';
+  } catch (err) {
+    if (made) fs.promises.rmdir(made).catch(() => {});
+    return { error: err.reason || 'folder', message: String(err.message).slice(0, 200) };
+  }
+  const out = chats().saveProject(fields);
+  if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
+  syncProjectInstructions();
+  pushAttention();
+  return withFolderState(out);
+});
+ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; }); // (its folder, and the files in it, are never touched)
+ipcMain.handle('chats:project-set', (_e, id, projectId) => {
+  const before = [[String(id), projectIdOf(String(id))]];
+  const ok = chats().setProject(String(id), projectId ? String(projectId) : null);
+  if (ok) { syncProjectInstructions(); mirrorAfterMove(before); }
+  return ok;
+});
 // Drag and drop, and the row menu's "Move to project": one or several chats in one write, then every list redraws (pushAttention).
 // Answers { moves: [{ id, from }] } (what actually moved: the toast's Undo hands it back to chats:project-restore) or null. Moving is not
 // activity (the recency order stays) and does not touch a running chat. A chat still working on its first reply has no saved entry yet:
@@ -9609,6 +9842,7 @@ ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
   const list = chatIdList(ids);
   const target = projectId ? String(projectId) : null;
   if (target && !chats().projects().some((p) => p.id === target)) return null;
+  const before = list.map((id) => [id, projectIdOf(id)]);
   const moves = chats().moveToProject(list, target);
   if (!moves) return null;
   for (const id of list) {
@@ -9618,18 +9852,19 @@ ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
     if (target) pendingProject.set(id, target); else pendingProject.delete(id);
     moves.push({ id, from });
   }
-  if (moves.length) { syncProjectInstructions(); pushAttention(); }
+  if (moves.length) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
   return { moves };
 });
 ipcMain.handle('chats:project-restore', (_e, moves) => {
   const list = (Array.isArray(moves) ? moves : []).slice(0, 200).filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, from: m.from ? String(m.from) : null }));
+  const before = list.map((m) => [m.id, projectIdOf(m.id)]);
   let n = chats().restoreProjects(list);
   for (const m of list) {
     if (chats().has(m.id) || !chatRuns.has(m.id)) continue;
     if (m.from && chats().projects().some((p) => p.id === m.from)) pendingProject.set(m.id, m.from); else pendingProject.delete(m.id);
     n++;
   }
-  if (n) { syncProjectInstructions(); pushAttention(); }
+  if (n) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
   return n;
 });
 ipcMain.handle('chats:new-in-project', (event, projectId) => {
@@ -9639,7 +9874,101 @@ ipcMain.handle('chats:new-in-project', (event, projectId) => {
   syncProjectInstructions();
   return chatView();
 });
-ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
+// [project folders] The folder picker of the project editor ("Use an existing folder…").
+ipcMain.handle('chats:project-pick-folder', (event) => pickFolder(event, 'Choose a folder for this project', documentsDir()));
+// A project's folder: open it, Locate… (a folder missing, or moved), Recreate (make it again where it was), rename it to the project's name
+// (only a folder Lumen made, and only when nothing is in the way), choose its working folder, and "Write all now". Always { ok, ... }.
+ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
+  const p = projectById(String(id));
+  if (!p) return { ok: false, reason: 'unknown' };
+  const normal = (s) => (process.platform === 'win32' ? String(s).toLowerCase() : String(s));
+  try {
+    switch (action) {
+      case 'open': { if (!p.folder) return { ok: false, reason: 'none' }; return { ok: !(await shell.openPath(p.folder)) }; }
+      case 'locate': {
+        const dir = await pickFolder(event, 'Locate the project folder', p.folder ? path.dirname(p.folder) : documentsDir());
+        if (!dir) return { ok: false, reason: 'canceled' };
+        const chk = await projectFolders.checkWorkFolder(dir, { confirmed: arg === true });
+        if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
+        mirror().forgetFolder(p.folder || '');
+        const out = chats().saveProject({ id: p.id, name: p.name, folder: chk.real, folderCreated: false });
+        folderState.delete(p.id); syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'recreate': {
+        if (!p.folder || !path.isAbsolute(p.folder)) return { ok: false, reason: 'none' };
+        await fs.promises.mkdir(p.folder, { recursive: true });
+        folderState.set(p.id, { folder: p.folder, ok: true }); pushAttention();
+        return { ok: true };
+      }
+      case 'rename': {
+        if (!p.folder || !p.folderCreated) return { ok: false, reason: 'not-lumen' };
+        const want = projectFolders.safeFolderName(p.name);
+        if (normal(path.basename(p.folder)) === normal(want)) return { ok: false, reason: 'same' };
+        const target = path.join(path.dirname(p.folder), want);
+        if (await fs.promises.lstat(target).then(() => true, () => false)) return { ok: false, reason: 'exists' };
+        mirrorDebounce.flush().catch(() => {});
+        await mirrorChain; // (what is being written there lands first)
+        try { await fs.promises.rename(p.folder, target); } catch { return { ok: false, reason: 'busy' }; }
+        mirror().forgetFolder(p.folder);
+        const old = p.folder;
+        const rel = p.workFolder ? path.relative(old, p.workFolder) : null;
+        const out = chats().saveProject({ id: p.id, name: p.name, folder: target, folderCreated: true, ...(rel !== null && !rel.startsWith('..') && !path.isAbsolute(rel) ? { workFolder: path.join(target, rel) } : {}) });
+        folderState.delete(p.id); syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), folder: target, project: out && withFolderState(out) };
+      }
+      case 'work': {
+        const dir = await pickFolder(event, 'Choose where the AI works in this project', p.workFolder || p.folder || documentsDir());
+        if (!dir) return { ok: false, reason: 'canceled' };
+        const chk = await projectFolders.checkWorkFolder(dir, { confirmed: arg === true });
+        if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
+        const out = chats().saveProject({ id: p.id, name: p.name, workFolder: chk.real });
+        syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'work-clear': {
+        const out = chats().saveProject({ id: p.id, name: p.name, workFolder: '' });
+        syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'write-all': {
+        if (!p.folder) return { ok: false, reason: 'none' };
+        const ids = chats().list().filter((c) => c.project === p.id && !c.missing).map((c) => c.id);
+        const count = await serial(() => mirror().writeAll(ids, { force: true }));
+        return { ok: true, count, total: ids.length };
+      }
+      default: return { ok: false, reason: 'unknown' };
+    }
+  } catch (err) { return { ok: false, reason: 'error', message: String(err?.message || err).slice(0, 200) }; }
+});
+// [work folder] The open chat's own working folder (chats outside a project, or a project chat that works elsewhere): get / pick / set / clear / open.
+// Answers { ok, info: { path, shown, source, missing } | null }. A drive root or the home folder needs `confirmed` (reason 'root' | 'home').
+ipcMain.handle('chats:work-folder', async (event, action, arg, confirmed) => {
+  const id = chatId;
+  const answer = async (extra = {}) => {
+    const info = workFolderInfo();
+    if (info) info.missing = !(await fs.promises.stat(info.path).then((s) => s.isDirectory(), () => false));
+    return { ok: true, info, ...extra };
+  };
+  const settle = async (dir) => {
+    const chk = await projectFolders.checkWorkFolder(dir, { confirmed: confirmed === true });
+    if (!chk.ok) return { ok: false, reason: chk.reason, path: dir, info: workFolderInfo() };
+    if (id !== chatId) return { ok: false, reason: 'chat-changed' };
+    agent.setWorkFolder(chk.real, effectiveModel() || DEFAULT_MODEL);
+    if (agent.messages.length) saveChatSoon(chatGeneration);
+    return answer();
+  };
+  try {
+    switch (action) {
+      case 'pick': { const dir = await pickFolder(event, 'Choose a folder for the AI to work in', workFolderInfo()?.path); return dir ? settle(dir) : { ok: false, reason: 'canceled' }; }
+      case 'set': return settle(String(arg || ''));
+      case 'clear': agent.setWorkFolder('', effectiveModel() || DEFAULT_MODEL); if (agent.messages.length) saveChatSoon(chatGeneration); return answer();
+      case 'open': { const info = workFolderInfo(); return { ok: Boolean(info) && !(await shell.openPath(info.path)) }; }
+      default: return answer();
+    }
+  } catch (err) { return { ok: false, reason: 'error', message: String(err?.message || err).slice(0, 200) }; }
+});
+ipcMain.handle('chats:rename', (_e, id, title) => { const ok = chats().rename(String(id), String(title ?? '')); if (ok) mirrorChatSoon(String(id)); return ok; }); // ([project folders] the Markdown file follows the title)
 // Deleting the open chat leaves an empty one in its place. A saved chat is only hidden for UNDO_MS (the Undo toast); then it is
 // erased with its pictures, uploads and engine homes. If Lumen quits inside that time the chat stays hidden and is erased
 // on the next start (or by the store after a day), after the index on disk is read again; no delete ever runs before the app is ready.
@@ -9650,9 +9979,12 @@ function finishDelete(id) {
   pendingDeletes.delete(id);
   const waiting = chats().trashed().some((t) => t.id === id);
   if (!waiting) return; // undone meanwhile
+  const folder = deletedFrom.get(id) || chats().projectOf(id)?.folder || ''; // [project folders] where its Markdown file is
+  deletedFrom.delete(id);
   if (!chats().remove(id)) return; // (the index can't be read right now: it stays hidden and is tried again later)
   imageStore().removeChat(id); // its pictures go with it
   uploads().removeChat(id); // [uploads] and the files attached to it
+  if (folder) serial(() => mirror().trash(folder, id)).catch(() => {}); // [project folders] its Markdown file moves to Chats/Deleted (never erased)
   require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
   require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
 }
@@ -9675,7 +10007,10 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
+  const projectFolder = chats().projectOf(id)?.folder || ''; // [project folders]
+  mirrorDebounce.cancel(id);
   const undoable = chats().trash(id); // false: nothing saved to bring back (a first reply still coming)
+  if (undoable && projectFolder) deletedFrom.set(id, projectFolder);
   if (undoable) { clearTimeout(pendingDeletes.get(id)); const t = setTimeout(() => finishDelete(id), UNDO_MS); t.unref?.(); pendingDeletes.set(id, t); }
   const eraseNow = () => {
     if (undoable) return;
@@ -9705,7 +10040,7 @@ ipcMain.handle('chats:undo-delete', (_e, id) => {
   id = String(id);
   if (!pendingDeletes.has(id)) return false; // the time is up (or it was never hidden)
   const ok = chats().restore(id);
-  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); pushAttention(); }
+  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); deletedFrom.delete(id); mirrorChatSoon(id); pushAttention(); }
   return ok;
 });
 ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
@@ -9728,7 +10063,7 @@ function chatMarkdown(id, folder = null) {
     return `${encodeURIComponent(folder)}/${name}`;
   } : null;
   const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings), { pictureFile });
-  return { title, markdown, pictures };
+  return { id, title, markdown, pictures, created: entry?.created, updated: entry?.updated, model: snapshot.settings?.model || null };
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a
 // save dialog, so nothing is written anywhere the user didn't pick.
@@ -9777,6 +10112,7 @@ ipcMain.handle('chats:export', async (_e, id, format) => {
 });
 if (TEST) global.__chatFiles = () => fs.readdirSync(path.join(app.getPath('userData'), 'chats')).length;
 if (TEST) global.__chatPdf = (id) => { const out = chatMarkdown(String(id)); return out ? chatPdf(out) : null; };
+if (TEST) global.__projectFolders = { setDocuments: (dir) => { documentsOverride = dir || null; }, documents: () => documentsDir(), idle: async () => { await mirrorDebounce.flush(); await mirrorChain; }, pending: () => mirrorDebounce.pending(), mirrorFolderOf, mirrorSoon: mirrorChatSoon, workFolderInfo };
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 
 // ---------- pictures the AI made (features/gen-images.js) ----------
@@ -10343,7 +10679,7 @@ const updates = require('./features/updates').createUpdates({
   app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
-  beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
+  beforeInstall: () => { saveSession(); saveChat(); try { chats().flush(); } catch { /* nothing pending */ } }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits

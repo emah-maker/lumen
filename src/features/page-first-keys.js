@@ -41,6 +41,7 @@ const PAGE_FIRST = [
   { combo: 'mod+shift+a', does: 'Search tabs' },
   { combo: 'mod+shift+f', does: 'Open a recent file' },
   { combo: 'mod+shift+l', does: 'Chat as a page' },
+  { combo: 'mod+shift+e', does: 'Meeting helper' },
   { combo: 'mod+,', does: 'Settings' },
 ];
 

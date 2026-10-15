@@ -16,6 +16,7 @@
 // process that quit before the keychain was ready, and took every chat with it.
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { plainScripts } = require('../renderer/markdown.js'); // <sub>/<sup> as clean text in exports
@@ -27,7 +28,59 @@ const { autoTitle, cleanSaved } = require('./chat-title');
 
 const cleanTitle = (title) => String(title ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 
-function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now() }) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const nextTick = () => new Promise((r) => setImmediate(r));
+
+// JSON.stringify(value) built in slices: the work is cut up so that no single task of the main thread runs longer than SLICE_MS (a 400-message
+// chat stringified, hashed and measured in one go is several ms; a long one with versions is more). The text is the same as JSON.stringify's,
+// character for character (the digest of a chat that was loaded must match the one of the same chat saved again), and the hash and the size
+// of the messages' content (the list entry's `sig`) come out of the same pass. Arrays and objects are walked down to MAX_DEPTH
+// (snapshot -> messages -> a message -> its fields); below that a value is stringified whole.
+const SLICE_MS = 4;
+const MAX_DEPTH = 3;
+async function serializeInSlices(snapshot) {
+  const hash = crypto.createHash('sha1');
+  const parts = [];
+  let size = 0;
+  let started = performance.now();
+  const emit = (s) => { parts.push(s); hash.update(s); };
+  const breathe = async () => { if (performance.now() - started > SLICE_MS) { await nextTick(); started = performance.now(); } };
+  // Returns false when the value has no JSON form (undefined, a function): the caller leaves the key out.
+  async function walk(value, depth, trail) {
+    if (depth >= MAX_DEPTH || value === null || typeof value !== 'object' || typeof value.toJSON === 'function') {
+      const s = JSON.stringify(value);
+      if (s === undefined) return false;
+      if (trail === 'messages.*.content') size += s.length;
+      emit(s);
+      await breathe();
+      return true;
+    }
+    if (Array.isArray(value)) {
+      emit('[');
+      for (let i = 0; i < value.length; i++) {
+        if (i) emit(',');
+        if (!(await walk(value[i], depth + 1, trail === 'messages' ? 'messages.*' : ''))) emit('null');
+      }
+      emit(']');
+      return true;
+    }
+    emit('{');
+    let first = true;
+    for (const key of Object.keys(value)) {
+      const v = value[key];
+      if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
+      emit(`${first ? '' : ','}${JSON.stringify(key)}:`);
+      first = false;
+      await walk(v, depth + 1, depth === 0 ? key : trail === 'messages.*' ? `${trail}.${key}` : '');
+    }
+    emit('}');
+    return true;
+  }
+  await walk(snapshot, 0, '');
+  return { text: parts.join(''), digest: hash.digest('base64'), size };
+}
+
+function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now(), onError = (err) => console.error('Could not save chat:', err?.message) }) {
   const indexFile = path.join(dir, 'index.json');
   const chatFile = (id) => path.join(dir, `${id}.json`);
 
@@ -37,6 +90,36 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     fs.writeFileSync(tmp, JSON.stringify({ enc: encrypt(text ?? JSON.stringify(data)) }));
     fs.renameSync(tmp, file); // never a half-written file
   };
+  // The same, without a pause of the main thread: a temp file under its own name, then one rename. Writes to one file go one after the
+  // other (queued), never interleaved. `stillWanted()` is asked just before the rename: false drops the temp file (a newer write got there first).
+  const fileQueues = new Map();
+  const queued = (file, task) => {
+    const run = (fileQueues.get(file) || Promise.resolve()).then(task);
+    const tail = run.catch(() => {});
+    fileQueues.set(file, tail);
+    tail.then(() => { if (fileQueues.get(file) === tail) fileQueues.delete(file); });
+    return run;
+  };
+  let tmpSeq = 0;
+  const TRANSIENT_WRITE = new Set(['EBUSY', 'EPERM', 'EACCES']); // a scanner or indexer holds the target for a moment (Windows)
+  const writeAtomicAsync = (file, enc, stillWanted = () => true) => queued(file, async () => {
+    await fsp.mkdir(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}-${++tmpSeq}.tmp`;
+    try {
+      await fsp.writeFile(tmp, JSON.stringify({ enc }));
+      for (let attempt = 1; ; attempt++) {
+        if (!stillWanted()) { await fsp.rm(tmp, { force: true }); return false; }
+        try { await fsp.rename(tmp, file); return true; } catch (err) { // never a half-written file
+          if (!TRANSIENT_WRITE.has(err?.code) || attempt >= 4) throw err;
+          await sleep(20 * attempt);
+        }
+      }
+    } catch (err) {
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
+  });
+  const fileThere = (file) => fsp.access(file).then(() => true, () => false);
   const readEnc = (file, seen) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!data.enc) return data;
@@ -114,16 +197,29 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // Another writer on this profile may have added chats to the index since we read it. They join ours (and are never
   // pruned by us) so that our next write doesn't drop them and our prune doesn't delete their files.
   // Returns false when the disk index can't be read: then nothing may be deleted.
-  function syncFromDisk(idx) {
-    const disk = readDiskChats();
-    if (!disk) return false;
+  function mergeDisk(idx, disk) {
     for (const c of disk) {
       if (known.has(c.id) || idx.chats.some((x) => x.id === c.id)) continue;
       idx.chats.push(c);
       known.add(c.id);
       foreign.add(c.id);
     }
+  }
+  function syncFromDisk(idx) {
+    const disk = readDiskChats();
+    if (!disk) return false;
+    mergeDisk(idx, disk);
     return true;
+  }
+  // readDiskChats() without the pause (same answers: null when it can't be read, [] for no file).
+  async function readDiskChatsAsync() {
+    let raw;
+    try { raw = await fsp.readFile(indexFile, 'utf8'); } catch (err) { return err?.code === 'ENOENT' ? [] : null; }
+    try {
+      const outer = JSON.parse(raw);
+      const data = outer.enc ? JSON.parse(decrypt(outer.enc)) : outer;
+      return Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [];
+    } catch { return null; }
   }
   const remember = (idx) => { known.clear(); for (const c of idx.chats) known.add(c.id); };
   // A change that only moves the "open chat" pointer (switchChat, on every tab switch) is written a moment later, once: the index is read back
@@ -131,21 +227,72 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // the pointer along, and flush() (quitting) writes what is pending.
   let indexTimer = null;
   const INDEX_DEFER_MS = 4000; // (after the last change: switching tabs one after another writes once, when it stops)
+  let indexEpoch = 0; // counts the index writes made at once (writeIndex): an asynchronous write that started before one must not land over it
+  let indexDigest = null; // the text last written (or found on disk): an index that did not change is not encrypted and written again
+  let indexDirty = false; // changed in memory, not yet on disk
   const writeIndex = () => {
     clearTimeout(indexTimer);
     indexTimer = null;
     const idx = readIndex();
     if (idx.degraded || !available()) return;
+    indexEpoch++;
     syncFromDisk(idx);
     writeAtomic(indexFile, idx);
+    indexDigest = digestOf(JSON.stringify(idx));
+    indexDirty = false;
     remember(idx);
   };
-  const writeIndexSoon = () => {
+  // The same write without blocking: the disk's index is read, the text made, encrypted and written in the background, only when it
+  // differs from what was last written, and one write at a time (a change that arrives meanwhile is picked up by a second round).
+  let indexRun = null;
+  let indexAgain = false;
+  async function writeIndexAsyncOnce() {
+    const idx = readIndex();
+    if (idx.degraded || !available()) return;
+    const disk = await readDiskChatsAsync();
+    if (!disk) return; // (not readable now: nothing is written over it; the next change tries again)
+    const live = readIndex();
+    if (live !== idx || live.degraded) { indexAgain = true; return; } // (cleared meanwhile)
+    mergeDisk(idx, disk);
+    const epoch = indexEpoch;
+    const text = JSON.stringify(idx);
+    const digest = digestOf(text);
+    indexDirty = false;
+    remember(idx);
+    if (digest === indexDigest && await fileThere(indexFile)) return; // unchanged: nothing to write
+    const ok = await writeAtomicAsync(indexFile, encrypt(text), () => indexEpoch === epoch);
+    if (!ok || indexEpoch !== epoch) { indexAgain = true; return; } // a write at once got in: its state is newer, written again from memory if this one landed over it
+    indexDigest = digest;
+  }
+  function writeIndexAsync() {
     clearTimeout(indexTimer);
-    indexTimer = setTimeout(() => { indexTimer = null; try { writeIndex(); } catch { /* retried on the next write */ } }, INDEX_DEFER_MS);
+    indexTimer = null;
+    indexDirty = true;
+    if (indexRun) { indexAgain = true; return indexRun; }
+    indexRun = (async () => {
+      try {
+        let rounds = 0;
+        do { indexAgain = false; await writeIndexAsyncOnce(); } while (indexAgain && ++rounds < 5);
+      } catch (err) { indexDirty = true; onError(err); } finally { indexRun = null; }
+    })();
+    return indexRun;
+  }
+  // `ms`: how long to wait for more changes first (the timer only ever moves sooner).
+  let indexDueAt = 0;
+  const writeIndexSoon = (ms = INDEX_DEFER_MS) => {
+    indexDirty = true;
+    const due = Date.now() + ms;
+    if (indexTimer && indexDueAt <= due) return;
+    clearTimeout(indexTimer);
+    indexDueAt = due;
+    indexTimer = setTimeout(() => { indexTimer = null; writeIndexAsync(); }, ms);
     indexTimer.unref?.();
   };
-  const flush = () => { if (indexTimer) writeIndex(); };
+  // Quitting: what is pending is written now, at once (the app is closing; nothing is waiting on this thread).
+  const flush = () => {
+    for (const id of [...jobs.keys()]) flushJob(id);
+    if (indexTimer || indexDirty) writeIndex();
+  };
   // The last text written for each chat (a digest): saving a chat that has not changed since (leaving it on a tab switch) writes nothing.
   const savedDigest = new Map();
   const digestOf = (text) => crypto.createHash('sha1').update(text).digest('base64');
@@ -164,6 +311,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   function fileExists(id) {
     const t = Date.now();
     const seen = fileChecks.get(id);
+    if (jobs.has(id)) return true; // (being written: its file is about to be there)
     if (seen && t - seen.at < FILE_CHECK_MS) return seen.ok;
     const ok = fs.existsSync(chatFile(id));
     fileChecks.set(id, { at: t, ok });
@@ -195,6 +343,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // A file that is not there at all is never waited for: only a file that exists and is held (a scanner, a sync client) is tried again.
   function load(id, { retry = true } = {}) {
     if (!has(id)) return null;
+    if (jobs.has(id)) flushJob(id); // (a save still waiting: written now, so that what is read is what was saved)
     for (let attempt = 1; ; attempt++) {
       try {
         const seen = {};
@@ -212,16 +361,44 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
   }
 
+  // load() for a caller that can wait (an IPC handler): the file is read, decrypted and parsed without holding the main thread for
+  // the disk, and a save of this chat still waiting is finished first. Same answers as load().
+  async function loadAsync(id, { retry = true } = {}) {
+    if (!has(id)) return null;
+    if (jobs.has(id)) await settle(id);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const data = JSON.parse(await fsp.readFile(chatFile(id), 'utf8'));
+        if (!data.enc) return data;
+        await nextTick(); // (decrypting and parsing a long chat are separate tasks)
+        const text = decrypt(data.enc);
+        await nextTick();
+        const snapshot = JSON.parse(text);
+        savedDigest.set(id, digestOf(text));
+        return snapshot;
+      } catch (err) {
+        if (!TRANSIENT.has(err?.code)) return null;
+        if (err.code === 'ENOENT' && !(await fileThere(chatFile(id)))) return null;
+        if (retry && attempt < READ_TRIES) { await sleep(20 * attempt); continue; }
+        return null;
+      }
+    }
+  }
+
   // Is the chat in the history list (whether or not its file can be read right now)?
   function has(id) { return ID_RE.test(String(id)) && readIndex().chats.some((c) => c.id === id && !c.trashed); }
 
   // Writes the chat and its index entry. Returns false when nothing could be kept (no keychain).
-  function save(id, snapshot) {
+  // `indexLater`: the list entry is written in the background (a save finishing a waiting one, on a chat switch, must not also write the index).
+  function save(id, snapshot, { indexLater = false } = {}) {
     if (!ID_RE.test(String(id))) throw new Error('bad chat id');
     if (!available()) return false;
     if (!snapshot?.messages?.length) return true; // an empty chat is not worth a list entry
     const idx = readIndex();
     if (idx.degraded) return false; // the index can't be read right now: leave everything on disk as it is
+    const waiting = jobs.get(id);
+    cancelJob(id); // (what is saved now is newer than any save still waiting)
+    if (waiting) waiting.synced = snapshot;
     const text = JSON.stringify(snapshot);
     const digest = digestOf(text);
     let entry = idx.chats.find((c) => c.id === id);
@@ -230,7 +407,16 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     writeAtomic(chatFile(id), snapshot, text);
     savedDigest.set(id, digest);
     fileChecks.delete(id);
-    const isNew = !entry;
+    let size = 0; // (the messages' content, not their wrappers: a chat that went through restore() and snapshot() again must match)
+    for (const m of snapshot.messages) size += JSON.stringify(m.content).length;
+    applySaved(idx, id, snapshot, size, !entry);
+    if (indexLater) writeIndexSoon(0); else writeIndex();
+    purgeExpiredTrash(idx);
+    return true;
+  }
+  // The chat's list entry after its file was written (shared by save() and the background write).
+  function applySaved(idx, id, snapshot, size, isNew) {
+    let entry = idx.chats.find((c) => c.id === id);
     if (!entry) {
       entry = { id, title: '', renamed: false, created: now() };
       idx.chats.push(entry);
@@ -239,8 +425,6 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     // `updated` is the chat's last activity and the list's order. A save that changed nothing (leaving the chat, a research
     // pin, a setting) leaves it alone; new or changed messages move the chat to the top.
     const count = snapshot.messages.length;
-    let size = 0; // (the messages' content, not their wrappers: a chat that went through restore() and snapshot() again must match)
-    for (const m of snapshot.messages) size += JSON.stringify(m.content).length;
     const sig = `${count}:${size}`;
     // (an entry saved before `sig` existed is compared by message count only)
     if (isNew || (entry.sig === undefined ? entry.msgs !== count : entry.sig !== sig)) entry.updated = now();
@@ -252,9 +436,111 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     entry.msgs = count;
     delete entry.trashed; // (saved again: it was not deleted after all)
     archiveOverflow(idx, id);
-    writeIndex();
-    purgeExpiredTrash(idx);
+  }
+
+  // ---- saving without stopping the main thread (what the app uses; save() above is for quitting and for callers that need the file at once).
+  // saveAsync() takes the chat's snapshot and returns at once. Saves of one chat are coalesced (only the newest snapshot is written: a reply
+  // streaming in saves again and again), made one at a time per chat, and cut into slices (serializeInSlices) so that no task holds the
+  // thread for long; the file is written with fs.promises (a temp file, then one rename), and the index afterwards, once, only if it changed.
+  // jobs: id -> { snapshot (waiting), inflight (being written), timer, epoch (bumped by a save made at once: older writes stand down),
+  //               synced (the last snapshot save() wrote at once), isNew, done (promise of the running loop) }
+  const jobs = new Map();
+  const SAVE_COALESCE_MS = 40;
+  const INDEX_AFTER_SAVE_MS = 300; // a changed chat's list entry (order, counts) follows a moment later; a new chat's entry at once
+  function cancelJob(id) {
+    const job = jobs.get(id);
+    if (!job) return;
+    clearTimeout(job.timer);
+    job.timer = null;
+    job.epoch++;
+    job.snapshot = null;
+  }
+  function saveAsync(id, snapshot) {
+    if (!ID_RE.test(String(id))) throw new Error('bad chat id');
+    if (!available()) return false;
+    if (!snapshot?.messages?.length) return true;
+    const idx = readIndex();
+    if (idx.degraded) return false;
+    let job = jobs.get(id);
+    if (!job) { job = { snapshot: null, inflight: null, timer: null, epoch: 0, synced: null, isNew: false, done: null }; jobs.set(id, job); }
+    // The chat is listed from now on (a new one gets its entry here, so has() and setProject() see it before its file is written).
+    if (!idx.chats.some((c) => c.id === id)) {
+      idx.chats.push({ id, title: autoTitle(snapshot), renamed: false, created: now(), updated: now() });
+      job.isNew = true;
+    }
+    job.snapshot = snapshot;
+    if (!job.timer && !job.done) {
+      job.timer = setTimeout(() => { job.timer = null; start(id); }, SAVE_COALESCE_MS);
+      job.timer.unref?.();
+    }
     return true;
+  }
+  function start(id) {
+    const job = jobs.get(id);
+    if (!job) return null;
+    clearTimeout(job.timer);
+    job.timer = null;
+    if (!job.done) job.done = writeJob(id, job).finally(() => { job.done = null; if (job.snapshot) start(id); else if (!job.timer) jobs.delete(id); });
+    return job.done;
+  }
+  async function writeJob(id, job) {
+    try {
+      while (job.snapshot) {
+        const snapshot = job.snapshot;
+        const epoch = job.epoch;
+        job.snapshot = null;
+        job.inflight = snapshot;
+        if (!available() || readIndex().degraded) continue; // (nothing is kept without the keychain; the next save tries again)
+        const { text, digest, size } = await serializeInSlices(snapshot);
+        if (job.epoch !== epoch) continue; // (a save made at once, or a newer one, took over)
+        const entry = readIndex().chats.find((c) => c.id === id);
+        // Nothing changed since the last write (and its file and list entry are still there): nothing to encrypt, write or index.
+        if (entry && !entry.trashed && !job.isNew && savedDigest.get(id) === digest && await fileThere(chatFile(id))) continue;
+        await nextTick();
+        const enc = encrypt(text);
+        const wrote = await writeAtomicAsync(chatFile(id), enc, () => job.epoch === epoch);
+        if (job.epoch !== epoch) { // (save() wrote a newer one meanwhile: if this older file landed over it, write the newer one again)
+          if (wrote && job.synced) job.snapshot = job.snapshot || job.synced;
+          continue;
+        }
+        savedDigest.set(id, digest);
+        fileChecks.delete(id);
+        const idx = readIndex();
+        if (idx.degraded) continue;
+        applySaved(idx, id, snapshot, size, job.isNew);
+        purgeExpiredTrash(idx);
+        const wasNew = job.isNew;
+        job.isNew = false;
+        writeIndexSoon(wasNew ? 0 : INDEX_AFTER_SAVE_MS);
+      }
+    } catch (err) {
+      onError(err);
+    } finally {
+      job.inflight = null;
+    }
+  }
+  // Writes a chat's waiting (or running) save at once, on this thread: for load() of that chat, and for quitting.
+  function flushJob(id) {
+    const job = jobs.get(id);
+    if (!job) return;
+    const latest = job.snapshot || job.inflight;
+    cancelJob(id);
+    if (latest) { try { save(id, latest, { indexLater: true }); job.synced = latest; } catch (err) { onError(err); } }
+    if (!job.done) jobs.delete(id);
+  }
+  // Waits until a chat's saves are on disk.
+  async function settle(id) {
+    const job = jobs.get(id);
+    if (job) await start(id);
+  }
+  // Resolves when every save made so far is written, the index too (for tests and for callers that must not read stale files).
+  async function drain() {
+    for (let round = 0; round < 10; round++) {
+      await Promise.all([...jobs.keys()].map(settle));
+      if (indexTimer) writeIndexAsync();
+      if (indexRun) await indexRun;
+      if (!jobs.size && !indexRun && !indexTimer) return;
+    }
   }
 
   // Past `limit` active chats the oldest unpinned ones are archived (never deleted), except the open one, the one just saved
@@ -300,7 +586,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!entry || entry.trashed || readIndex().degraded) return false;
     if (entry.updated >= at) return false;
     entry.updated = at;
-    writeIndex();
+    writeIndexSoon(250);
     return true;
   }
   const setPinned = (id, on) => setFlag(id, 'pinned', Boolean(on));
@@ -318,7 +604,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const projects = () => projectList().map((p) => ({ ...p }));
   const projectById = (id) => projectList().find((p) => p.id === id) || null;
   // New project (no id) or an edit; null for an empty name, a full list, a degraded index or an unknown id.
-  function saveProject({ id, name, instructions } = {}) {
+  // Folder fields (features/project-folders.js; all optional, '' clears): `folder` (the project's real folder, an absolute path),
+  // `folderCreated` (Lumen made it: it may offer to rename it with the project), `mirror` (false: chats are not written as Markdown there;
+  // unset means on) and `workFolder` (where the AI works, instead of `folder`).
+  const cleanPath = (v) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 1000);
+  function saveProject({ id, name, instructions, folder, folderCreated, mirror, workFolder } = {}) {
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -331,6 +621,10 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     project.name = clean;
     if (instructions !== undefined) project.instructions = cleanText(instructions, MAX_INSTRUCTIONS);
+    if (folder !== undefined) { const f = cleanPath(folder); if (f) project.folder = f; else { delete project.folder; delete project.folderCreated; delete project.workFolder; } }
+    if (folderCreated !== undefined) { if (folderCreated && project.folder) project.folderCreated = true; else delete project.folderCreated; }
+    if (mirror !== undefined) { if (mirror === false) project.mirror = false; else delete project.mirror; }
+    if (workFolder !== undefined) { const w = cleanPath(workFolder); if (w) project.workFolder = w; else delete project.workFolder; }
     writeIndex();
     return { ...project };
   }
@@ -395,6 +689,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     const entry = entryOf(id);
     const idx = readIndex();
     if (!entry || idx.degraded || !available()) return false;
+    if (jobs.has(id)) flushJob(id); // (a save still waiting is written first: landing after the delete it would bring the chat back)
     entry.trashed = now();
     if (idx.current === id) idx.current = null;
     writeIndex();
@@ -465,6 +760,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (idx.degraded || !syncFromDisk(idx) || !idx.chats.some((c) => c.id === id)) return false;
     textCache.delete(id);
     savedDigest.delete(id);
+    cancelJob(id);
+    if (!jobs.get(id)?.done) jobs.delete(id);
     idx.chats =idx.chats.filter((c) => c.id !== id);
     if (idx.current === id) idx.current = null;
     fs.rmSync(chatFile(id), { force: true }); // (one file: the chat the user deleted)
@@ -505,10 +802,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   function clearAll() {
     index = null; // forgotten in memory only; read again from disk when needed
     known.clear(); foreign.clear(); fileChecks.clear(); savedDigest.clear();
-    clearTimeout(indexTimer); indexTimer = null;
+    clearTimeout(indexTimer); indexTimer = null; indexDirty = false; indexDigest = null;
+    for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
-  return { list, has, load, save, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
+  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
