@@ -5,6 +5,8 @@
 //   --dry-run        print the plan and the derived suite list; changes nothing (no fetch, worktree, process kill, push or tag)
 //   --checks-only    stop after the checks: nothing is pushed
 //   --resume         continue the release from the last finished stage (kept in the worktree's git dir)
+//   --hold-lock      (default) hold the machine-wide Electron lock (scripts/e2e-lock.js) for the whole checks stage
+//   --share-machine  lock per Electron suite instead (retry included), releasing between suites so a parallel agent can run then
 //   --kill-stale     stop electron processes left under this repo's worktrees (by PID, only those) before the checks
 //   --suite-timeout <minutes> (default 15)   --ci-timeout <minutes> (default 40)   --assets <n> (default 13)
 // Never run it while another Lumen test or release is using Electron: it refuses when a release worktree is mid-run.
@@ -13,8 +15,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const e2eLock = require('./e2e-lock');
 const { cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder } = require('./release-lib');
-const { Stop, sleep, say, run, must, git, gh, ghJson, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, waitForCi } = require('./ship-common');
+const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, waitForCi } = require('./ship-common');
 
 const STAGES = ['worktree', 'install', 'prepare', 'checks', 'pr', 'ci', 'merge', 'tag', 'publish'];
 const CO_AUTHOR = process.env.LUMEN_CO_AUTHOR || 'Claude Opus 5.5 <noreply@anthropic.com>';
@@ -50,9 +53,10 @@ const done = (st, stage) => STAGES.indexOf(st.stage) >= STAGES.indexOf(stage);
 
 // ----------------------------------------------------------------------------------------------------------------- preflight
 
-async function preflight(main, opts, mine) {
+async function preflight(main, opts, mine, withElectron = true) {
   const others = releaseWorktrees(main).filter((w) => w.dir !== mine && w.state.stage !== 'publish' && w.state.pid && alive(w.state.pid) && w.state.pid !== process.pid);
   if (others.length) throw new Stop(`another release is running (${others.map((w) => `${w.branch}, pid ${w.state.pid}`).join('; ')})`);
+  if (!withElectron) { say('preflight', 'the checks are done: skipping the Electron preflight (other agents may be running tests; only the checks need a quiet machine)'); return; }
   const all = listElectron();
   const stale = procsUnder(all, [main]);
   if (all.length > stale.length) say('preflight', `${all.length - stale.length} electron process(es) outside this repo (an installed Lumen?) are left alone`);
@@ -103,10 +107,18 @@ async function runChecks(wt, st, opts) {
   fs.mkdirSync(st.logs, { recursive: true });
   const timeoutMs = opts.suiteMinutes * 60000;
   st.checks = st.checks || {};
+  const owner = `release-${st.version}`;
+  const pending = stages.filter((x) => x.kind === 'electron' && !(st.checks[x.name] && st.checks[x.name].status !== 'fail'));
+  // The machine-wide Electron lock (docs/releasing.md): the whole checks stage by default, or per suite with --share-machine.
+  if (opts.holdLock && pending.length) { say('checks', 'taking the machine-wide Electron lock for the whole checks stage'); await e2eLock.acquire({ owner }); }
+  try {
   for (const stage of stages) {
     const prev = st.checks[stage.name];
     if (prev && prev.status !== 'fail') { say('checks', `skip  ${stage.name} (${prev.status} earlier)`); continue; }
     const logFile = path.join(st.logs, `${stage.name}.log`);
+    const perSuite = stage.kind === 'electron' && !opts.holdLock;
+    if (perSuite) { say('checks', `waiting for the Electron lock for ${stage.name}`); await e2eLock.acquire({ owner }); }
+    try {
     let r = await runStage(wt, stage, logFile, timeoutMs);
     let status = r.ok ? 'pass' : 'fail';
     if (!r.ok) {
@@ -123,7 +135,9 @@ async function runChecks(wt, st, opts) {
     const tag = { pass: 'PASS ', flaky: 'FLAKY', fail: 'FAIL ' }[status];
     say('checks', `${tag} ${stage.name} (${r.seconds}s${r.ok ? '' : `, ${r.code}`})`);
     if (status === 'fail') for (const l of failLines(logFile)) console.log(`            ${l.slice(0, 200)}`);
+    } finally { if (perSuite) e2eLock.release(); }
   }
+  } finally { if (opts.holdLock) e2eLock.release(); }
   const all = stages.map((s) => ({ name: s.name, ...st.checks[s.name] }));
   const failed = all.filter((x) => x.status === 'fail');
   const flaky = all.filter((x) => x.status === 'flaky');
@@ -176,7 +190,8 @@ async function ship(wt, st, version) {
     must(git(wt, 'push', '-q', '-u', 'origin', branch), 'git push');
     const bodyFile = path.join(st.logs, 'pr-body.md');
     fs.writeFileSync(bodyFile, releaseBody(wt, version, st));
-    const url = must(gh(wt, 'pr', 'create', '--base', 'main', '--head', branch, '--title', `Release ${version}`, '--body-file', bodyFile), 'gh pr create');
+    const existing = () => { const j = gh(wt, 'pr', 'view', branch, '--json', 'url'); try { return j.status === 0 ? { status: 0, stdout: JSON.parse(j.stdout).url } : null; } catch { return null; } };
+    const url = must(await ghRetry(wt, ['pr', 'create', '--base', 'main', '--head', branch, '--title', `Release ${version}`, '--body-file', bodyFile], { recheck: existing, log: (m) => say('pr', m) }), 'gh pr create');
     st.pr = Number(url.trim().split('/').pop());
     st.head = must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse');
     st.stage = 'pr'; saveState(wt, st);
@@ -189,9 +204,11 @@ async function ship(wt, st, version) {
     say('ci', 'passed');
   }
   if (!done(st, 'merge')) {
-    must(gh(wt, 'pr', 'merge', String(st.pr), '--squash', '--match-head-commit', st.head), 'gh pr merge');
+    // A transient error may hit after GitHub merged: before each retry, an already-merged PR counts as success.
+    const merged = () => { const j = gh(wt, 'pr', 'view', String(st.pr), '--json', 'state'); try { return j.status === 0 && JSON.parse(j.stdout).state === 'MERGED' ? { status: 0, stdout: '' } : null; } catch { return null; } };
+    must(await ghRetry(wt, ['pr', 'merge', String(st.pr), '--squash', '--match-head-commit', st.head], { recheck: merged, log: (m) => say('merge', m) }), 'gh pr merge');
     git(wt, 'fetch', '-q', 'origin');
-    st.mergeSha = ghJson(wt, 'pr', 'view', String(st.pr), '--json', 'mergeCommit').mergeCommit.oid;
+    st.mergeSha = (await ghJsonRetry(wt, ['pr', 'view', String(st.pr), '--json', 'mergeCommit'], { log: (m) => say('merge', m) })).mergeCommit.oid;
     st.stage = 'merge'; saveState(wt, st);
     say('merge', `squash-merged as ${st.mergeSha.slice(0, 8)}`);
   }
@@ -209,7 +226,7 @@ async function ship(wt, st, version) {
     say('publish', 'waiting for release.yml on the tag');
     const t0 = Date.now();
     for (;;) {
-      const runs = ghJson(wt, 'run', 'list', '--workflow', 'release.yml', '--branch', tag, '--json', 'status,conclusion,url');
+      const runs = await ghJsonRetry(wt, ['run', 'list', '--workflow', 'release.yml', '--branch', tag, '--json', 'status,conclusion,url'], { log: (m) => say('publish', m) });
       const r = runs && runs[0];
       if (r && r.status === 'completed') {
         if (r.conclusion !== 'success') throw new Stop(`release.yml ${r.conclusion}: ${r.url}`);
@@ -219,7 +236,7 @@ async function ship(wt, st, version) {
       if (Date.now() - t0 > 120 * 60000) throw new Stop('release.yml still running after 2 h');
       await sleep(60000);
     }
-    const assets = ghJson(wt, 'release', 'view', tag, '--json', 'assets,url');
+    const assets = await ghJsonRetry(wt, ['release', 'view', tag, '--json', 'assets,url'], { log: (m) => say('publish', m) });
     if (assets.assets.length !== st.assets) throw new Stop(`release ${tag} has ${assets.assets.length} assets, expected ${st.assets}: ${assets.url}`);
     st.stage = 'publish'; saveState(wt, st);
     say('publish', `${assets.assets.length} assets: ${assets.url}`);
@@ -245,7 +262,7 @@ function dryRun(main, spec, opts) {
   say('plan', `1. worktree: git fetch, worktree add release-${version} from origin/main`);
   say('plan', '2. install: npm ci --ignore-scripts, copy node_modules/electron/dist and path.txt from the main checkout');
   say('plan', `3. prepare: CHANGELOG "## Unreleased" -> "## ${version} (${localDate()})" with a fresh empty Unreleased; npm version ${version} --no-git-tag-version; node --check src/main.js; commit "Release ${version}"`);
-  say('plan', `4. checks: ${stages.length} stages, each with its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; an Electron suite that fails is retried once (passing the retry = flaky, reported, not blocking)`);
+  say('plan', `4. checks: ${stages.length} stages, each with its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; the Electron lock is ${opts.holdLock ? 'held for the whole stage' : 'taken per suite (--share-machine)'}; an Electron suite that fails is retried once (passing the retry = flaky, reported, not blocking)`);
   say('plan', `   order: ${stages.slice(0, 3).map((s) => s.name).join(', ')}, then ${derived.electron.length} Electron suites from scripts/test-all.js (${derived.electron.slice(0, 4).join(', ')}, ... ${derived.electron.slice(-3).join(', ')})`);
   if (derived.missing.length) say('plan', `   in test-all.js but no file (skipped): ${derived.missing.join(', ')}`);
   say('plan', `   not run (not in test-all.js, need network/keys/manual): ${derived.manual.length} file(s)`);
@@ -262,7 +279,7 @@ function dryRun(main, spec, opts) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, suiteMinutes: 15, ciMinutes: 40, assets: 13, only: null };
+  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, assets: 13, only: null };
   let spec = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -270,6 +287,8 @@ async function main() {
     else if (a === '--checks-only') opts.checksOnly = true;
     else if (a === '--resume') opts.resume = true;
     else if (a === '--kill-stale') opts.killStale = true;
+    else if (a === '--hold-lock') opts.holdLock = true;
+    else if (a === '--share-machine') opts.holdLock = false;
     else if (a === '--suite-timeout') opts.suiteMinutes = Number(args[++i]) || 15;
     else if (a === '--ci-timeout') opts.ciMinutes = Number(args[++i]) || 40;
     else if (a === '--assets') opts.assets = Number(args[++i]) || 13;
@@ -277,7 +296,7 @@ async function main() {
     else if (!a.startsWith('-') && !spec) spec = a;
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
-  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--only suite,suite]'); process.exit(2); }
+  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite]'); process.exit(2); }
   const main = mainCheckout(process.cwd());
   if (opts.dryRun) return dryRun(main, spec || 'patch', opts);
 
@@ -295,7 +314,7 @@ async function main() {
     version = bumpVersion(current, spec);
   }
   wt = wt || path.join(worktreesDir(main), `release-${version}`);
-  await preflight(main, opts, wt);
+  await preflight(main, opts, wt, !st || !done(st, 'checks'));
 
   if (!st) {
     must(git(main, 'fetch', '-q', '--tags', 'origin'), 'git fetch');

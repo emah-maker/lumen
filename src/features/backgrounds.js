@@ -57,6 +57,9 @@ const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id ===
 const isBackground = (id) => IDS.includes(id);
 // Text and cards: 'light' is the only background that turns the page's text dark; a picture is darkened under a scrim, so it is dark.
 const toneOf = (id) => byId(id)?.tone || 'plain';
+// The shades the page is drawn in over a background ('light' or 'dark'): the system's on Plain, light over a light background, dark over any other.
+// The new-tab page (accent, text) and the picker's preview in Settings both ask this, so the two can never disagree.
+const modeOf = (id, systemDark) => { const tone = toneOf(id); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 // The animated effects drawn over a background (renderer/newtab-effects.js), with a still preview each for the picker.
 // `fps` is how often it redraws (the particles and snow move at 30; the soft ones need far fewer); `soft` ones are drawn small and scaled up.
@@ -93,7 +96,7 @@ function dailyPick(key = dayKey()) {
   return ORDER[((day % ORDER.length) + ORDER.length) % ORDER.length];
 }
 
-const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
+const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.Backgrounds = api;
 })();

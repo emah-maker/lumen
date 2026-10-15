@@ -114,6 +114,22 @@ const ARGS_FULL = [
 
 const SETTING_SOURCES_PROJECT = ['--setting-sources', 'project'];
 
+// [work folder] A folder picked for the chat or its project (features/project-folders.js): the CLI runs in it, and without full access
+// gets its file tools (no shell) for that folder only: edits are auto-accepted inside it (acceptEdits) and refused anywhere else (nothing
+// can prompt in -p), and reads outside it are blocked too (blockReadsOutsideWorkingDirectories, which -p otherwise lets through).
+// The Lumen tools stay allowed as before. Full access already has everything: only its cwd changes.
+const WORK_TOOLS = 'Read,Write,Edit,Glob,Grep';
+const WORK_SETTINGS = JSON.stringify({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+function workArgs(args, workDir) {
+  const out = args.slice();
+  const swap = (flag, value) => { const i = out.indexOf(flag); if (i >= 0) out[i + 1] = value; };
+  swap('--tools', WORK_TOOLS);
+  swap('--allowedTools', 'mcp__lumen');
+  swap('--permission-mode', 'acceptEdits');
+  out.push('--add-dir', workDir, '--settings', WORK_SETTINGS);
+  return out;
+}
+
 // The picker's Claude Code choices (the part after 'claudecode:'). 'default' passes no --model, so
 // the CLI's own choice applies (its /model setting, else the plan's default); the rest are the family
 // aliases `claude --model` accepts (claude --help, 2.1.283), each following that family's latest model.
@@ -135,9 +151,9 @@ const MODELS = [
 // only project settings (--setting-sources project; the cwd is an empty folder, so none), which skips the user's CLAUDE.md, rules,
 // memory and hooks (about 1.9k tokens and a few hundred ms of SessionStart hooks per chat) while the OAuth login still works.
 // [full access] always loads them: it runs as in a terminal.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '' }) {
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '', workDir = '' }) {
   return [
-    ...(fullAccess ? ARGS_FULL : ARGS_BASE),
+    ...(fullAccess ? ARGS_FULL : workDir ? workArgs(ARGS_BASE, workDir) : ARGS_BASE),
     ...(!fullAccess && !userSettings ? SETTING_SOURCES_PROJECT : []),
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
@@ -200,7 +216,7 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
 // started with rather than respawning, and a warm start made before midnight stays usable after it.
 // [cc settings] userSettings is part of the key too (last, so warmModel's index holds): changing the setting ends a warm process.
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex'), Boolean(userSettings), effortLib.clean('claudecode', effort)]); // (effort last too, so warmModel's index holds)
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, userSettings = false, effort = '', workDir = '' }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex'), Boolean(userSettings), effortLib.clean('claudecode', effort), String(workDir || '')]); // (effort last too, so warmModel's index holds; the work folder after it)
 
 // [model switch] The model is the one part of a key a live CLI can change without a restart: a stream-json
 // `set_model` control request (checked against the CLI, 2.1.288) applies to the process's next message, even before
@@ -387,7 +403,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '' }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '', workDir = '' }) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -405,7 +421,9 @@ class ClaudeCodeEngine {
       this.workDirs.delete(dir);
       throw err;
     }
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort });
+    // [work folder] only a folder that is there is used (one that was deleted or moved since is the old empty folder again)
+    if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // [full access] The CLI loads the user's own MCP servers too, and its first turn waits for every one of them to connect (up to
@@ -424,7 +442,7 @@ class ClaudeCodeEngine {
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
     proc.model = model; // (set_model changes it: switchModel)
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model: proc.model, maxTurns, fullAccess, userSettings, effort }); };
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model: proc.model, maxTurns, fullAccess, userSettings, effort, workDir }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -437,7 +455,7 @@ class ClaudeCodeEngine {
       proc.turn?.exit(code);
     };
     try {
-      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: fullAccess ? os.homedir() : dir }); // an empty folder: no project settings or files ([full access]: the home folder, as in a terminal)
+      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: workDir || (fullAccess ? os.homedir() : dir) }); // [work folder] the chosen folder; else an empty folder: no project settings or files ([full access]: the home folder, as in a terminal)
     } catch (err) {
       proc.stderr = err.message;
       finish(err.code === 'ENOENT' ? 'ENOENT' : -1);
@@ -676,14 +694,14 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '' }, { fresh = false, attempt = 0 } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '', workDir = '' }, { fresh = false, attempt = 0 } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
     userSettings = userSettings || Boolean(this.needUserSettings);
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort }, { fresh, emit });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -702,7 +720,7 @@ class ClaudeCodeEngine {
     this.active = active;
 
     // The same message once more on a fresh process (attempt 1: no further automatic retry).
-    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, ...over }, { fresh: true, attempt: 1 });
+    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, ...over }, { fresh: true, attempt: 1 });
     let text = '';
     let finalText = '';
     let result = null;
@@ -882,7 +900,7 @@ class ClaudeCodeEngine {
     } else if (ok && this.keepAlive && !signal.aborted && prestart) {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
       // Its model may not be the next message's (Auto, routing): take() switches a model-only mismatch in place.
-      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, userSettings, effort };
+      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);
     }
@@ -939,7 +957,7 @@ class ClaudeCodeEngine {
       // Retried once with them; this engine keeps them from then on (needUserSettings), and the user is told which setting that is.
       if (!userSettings && !fullAccess && !expired && !text && !finalText && active.tools === 0 && settingsRetryable(failure)) {
         this.needUserSettings = true;
-        const again = await this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings: true }, { fresh: true });
+        const again = await this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings: true, effort, workDir }, { fresh: true });
         if (again.failed) this.needUserSettings = false; // it did not help: the next message tries the lean start again
         else if (!settingsNoticeShown) {
           settingsNoticeShown = true;
@@ -951,7 +969,7 @@ class ClaudeCodeEngine {
       if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code)) {
         emit({ type: 'status', text: 'Claude Code is busy, trying again…' });
         await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
-        if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort }, { fresh: true, attempt: 1 });
+        if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir }, { fresh: true, attempt: 1 });
       }
       emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
