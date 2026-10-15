@@ -3041,7 +3041,9 @@ function show() {
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
   for (const slot of slots.values()) if (slot.isSub) { slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id; slot.pane.style.order = searching ? String(-(slot.best || 0)) : ''; } // (a page shown in place ranks with its best row)
+  performance.mark('show:loops');
   syncNavStop();
+  performance.mark('show:nav');
   $('no-results').hidden = !searching || any;
   const suggest = $('no-results-suggest');
   if (!suggest.children.length) {
@@ -3051,6 +3053,7 @@ function show() {
   }
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
   highlight(words);
+  performance.mark('show:end');
   requestAnimationFrame(fitDescs);
 }
 
@@ -3259,7 +3262,9 @@ async function init() {
       started.set(sid, (async () => {
         const slot = slots.get(sid);
         try {
+          performance.mark('build:' + sid);
           await buildFn.get(sid)(slot);
+          performance.mark('built:' + sid);
         } catch (err) {
           slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
         }
