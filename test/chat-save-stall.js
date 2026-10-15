@@ -58,6 +58,17 @@ const waitFor = async (fn, ms = 20000) => { const end = Date.now() + ms; let v; 
     await ui.evaluate((id) => window.assistant.chats.open(id), ids.a);
     await waitFor(() => app.evaluate((_e, id) => global.__chats.id() === id, ids.a));
 
+    // One reply first, outside the measurement: the first run of a fresh process loads and compiles a lot of code (that is start-up, not saving).
+    const small = await app.evaluate(() => global.__smallId);
+    await ui.evaluate((id) => window.assistant.chats.open(id), small);
+    await waitFor(() => app.evaluate((_e, id) => global.__chats.id() === id, small), 5000);
+    await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
+    await ui.fill('#prompt', 'warm up');
+    await ui.press('#prompt', 'Enter');
+    check('the warm-up reply finished', Boolean(await waitFor(async () => /piece 59 of the streamed reply/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 30000)), 'no reply');
+    await ui.evaluate((id) => window.assistant.chats.open(id), ids.a);
+    await waitFor(() => app.evaluate((_e, id) => global.__chats.id() === id, ids.a), 5000);
+
     // The probe: setImmediate turns back to back. The gap between two turns is the longest task that held the main thread.
     await app.evaluate(() => {
       const G = global.__gap = { on: false, max: 0, over: [], turns: 0, phase: '' };
@@ -115,10 +126,8 @@ const waitFor = async (fn, ms = 20000) => { const end = Date.now() + ms; let v; 
     // 3. a reply streaming (in a small chat, so that what the agent itself does to start a run over 400 messages is not counted as saving) while
     //    the 400-message chat is saved 20 more times; the streaming chat's own saves (each step, and when the reply is done) are debounced.
     await phase('streaming');
-    const small = await app.evaluate(() => global.__smallId);
     await ui.evaluate((id) => window.assistant.chats.open(id), small);
     await waitFor(() => app.evaluate((_e, id) => global.__chats.id() === id, small), 5000);
-    await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
     await app.evaluate((_e, id) => {
       const store = global.__chats.store();
       const snap = global.__snapA;
@@ -128,7 +137,7 @@ const waitFor = async (fn, ms = 20000) => { const end = Date.now() + ms; let v; 
     }, ids.a);
     await ui.fill('#prompt', 'say something long');
     await ui.press('#prompt', 'Enter');
-    check('the streamed reply finished', Boolean(await waitFor(async () => /piece 59 of the streamed reply/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 30000)), 'no reply');
+    check('the streamed reply finished', Boolean(await waitFor(async () => (await ui.evaluate(() => document.getElementById('messages').textContent)).split('piece 59 of the streamed reply').length > 2, 30000)), 'no reply');
     await app.evaluate(async () => { await global.__savesDuringReply; await global.__chats.store().drain(); });
     const total = await gapNow();
     check('... while a reply streams in and the big chat is saved: no main-thread gap over 20 ms', total.over.length === 0, JSON.stringify(total.over));
@@ -144,8 +153,8 @@ const waitFor = async (fn, ms = 20000) => { const end = Date.now() + ms; let v; 
       return { count: snap?.messages?.length, lastEdit: JSON.stringify(snap.messages.at(-1)).includes('more 19'), listed: store.list().map((c) => c.id) };
     }, ids.a);
     check('the 400-message chat is on disk with its last edit', readBack.count === 400 && readBack.lastEdit, JSON.stringify(readBack));
+    const streamed = await app.evaluate((_e, id) => ({ hasReply: JSON.stringify(global.__chats.store().load(id)).split('piece 59 of the streamed reply').length > 2 }), small); // (the warm-up reply and this one)
     check('the streamed reply is in the chat it streamed into', streamed.hasReply, JSON.stringify(streamed));
-    const streamed = await app.evaluate((_e, id) => ({ hasReply: JSON.stringify(global.__chats.store().load(id)).includes('piece 59 of the streamed reply') }), small);
     check('both big chats are listed', readBack.listed.includes(ids.a) && readBack.listed.includes(ids.b), JSON.stringify(readBack.listed));
   } finally {
     await app.close().catch(() => {});
