@@ -14,7 +14,7 @@ const { Stop, say, run, must, git, gh, ghJson, mainCheckout, worktreesDir, listW
 
 const CHANGELOG = 'CHANGELOG.md';
 const SUITE_LIST = 'scripts/test-all.js';
-const BUNDLES = ['src/renderer/ui.bundle.js', 'src/renderer/ui.bundle.css', 'src/renderer/index.html', 'src/preload/preload.bundle.js'];
+const BUNDLES = ['src/renderer/ui.bundle.js', 'src/renderer/ui.bundle.css', 'src/renderer/index.html', 'src/renderer/settings.bundle.js', 'src/renderer/settings.bundle.css', 'src/renderer/settings.html', 'src/preload/preload.bundle.js'];
 const RESOLVABLE = [CHANGELOG, SUITE_LIST, ...BUNDLES];
 const CO_AUTHOR = process.env.LUMEN_CO_AUTHOR || 'Claude Opus 5.5 <noreply@anthropic.com>';
 

@@ -19,8 +19,22 @@ function shortUrl(url) {
   } catch { return url; }
 }
 
+// The title is made again on every save of a chat (each save of a streaming reply, each tab switch), and a long first message (a pasted
+// document) costs several ms of regexes each time: the answer for a text already seen is kept (a few recent ones; the text is the key).
+function remembered(fn) {
+  const seen = new Map();
+  return (text) => {
+    if (seen.has(text)) return seen.get(text);
+    const out = fn(text);
+    if (seen.size >= 32) seen.delete(seen.keys().next().value);
+    seen.set(text, out);
+    return out;
+  };
+}
+
 // A message as a title: no markup, a long address as its host, no slash-command word, no lead-in or sign-off, capitalised.
-function tidy(raw) {
+const tidy = remembered(tidyText);
+function tidyText(raw) {
   let text = String(raw).replace(/https?:\/\/[^\s)]+/gi, (url) => (url.length > 28 ? shortUrl(url) : url)).replace(/[*`#>]+|(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])/g, '').replace(/\s+/g, ' ').trim();
   const cmd = /^\/(?:think|deep|fast|btw)\b\s*([\s\S]*)$/i.exec(text); // a Lumen slash command is not part of the topic
   let trimmed = false;
@@ -41,7 +55,13 @@ function cut(text, max) {
 
 // The user-visible text of one message's content blocks: Lumen's additions removed.
 function userText(blocks) {
-  return blocks.filter((b) => b.type === 'text').map((b) => String(b.text)
+  const texts = [];
+  for (const b of blocks) if (b.type === 'text') texts.push(String(b.text));
+  return userTextOf(texts.length === 1 ? texts[0] : texts.join('\u0000'), texts.length);
+}
+const userTextOf = remembered((joined) => cleanBlocks(joined.split('\u0000')));
+function cleanBlocks(texts) {
+  return texts.map((b) => String(b)
     .replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/g, '')
     .replace(/<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g, '')
     .replace(/<attached_files>[\s\S]*?<\/attached_files>\s*/g, '') // [uploads] the names and refs of attached files
