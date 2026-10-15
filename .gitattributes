@@ -8,5 +8,8 @@ scripts/test-all.js merge=lumen-list
 # Generated: git keeps our copy on a conflict (lumen-bundle), and scripts/land.js rebuilds them from the merged sources
 src/renderer/ui.bundle.js merge=lumen-bundle
 src/renderer/ui.bundle.css merge=lumen-bundle
+src/renderer/settings.bundle.js merge=lumen-bundle
+src/renderer/settings.bundle.css merge=lumen-bundle
+src/renderer/settings.html merge=lumen-bundle
 src/renderer/index.html merge=lumen-bundle
 src/preload/preload.bundle.js merge=lumen-bundle

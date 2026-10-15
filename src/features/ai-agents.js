@@ -817,7 +817,9 @@ function setupAiAgents(deps) {
     const [cc, gb, ag, cx] = await Promise.all([safe(claudeCodeEngine().status(false)), safe(grokBuildEngine().status(false)), safe(antigravityEngine().status(false)), safe(codexEngine().status(false))]);
     const s = readSettings();
     const row = (id, name, st, extra) => ({ id, name, installed: Boolean(st?.installed), signedIn: st?.installed ? st.signedIn ?? 'unknown' : false, ...extra });
-    const [ccV, gbV, agV] = await Promise.all([binVersion(claudeCodeEngine().bin), binVersion(grokBuildEngine().bin), binVersion(antigravityEngine().bin)]);
+    // Started 15 ms apart, not together: starting a process holds the main process for about 10 ms, and three at once were one 35 ms stall. (Each answer is kept: only the first look starts anything.)
+    const apart = (bin, ms) => new Promise((resolve) => setTimeout(() => binVersion(bin).then(resolve, () => resolve(null)), ms));
+    const [ccV, gbV, agV] = await Promise.all([apart(claudeCodeEngine().bin, 0), apart(grokBuildEngine().bin, 15), apart(antigravityEngine().bin, 30)]);
     return [
       row('claudecode', 'Claude Code', cc, { path: claudeCodeEngine().bin || null, version: ccV, account: cc ? claudePlan(cc) : null, offered: s.claudeCodeSidebar !== false }),
       row('grokbuild', 'Grok Build', gb, { path: grokBuildEngine().bin || null, version: gbV, account: gb?.account || null, offered: grokSidebar() }),

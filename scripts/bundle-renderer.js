@@ -1,5 +1,6 @@
 // Builds the main window's page: index.html from index.src.html, with its 29 scripts and 9 stylesheets
-// joined into ui.bundle.js and ui.bundle.css. One file each loads far faster than thirty-eight from disk
+// joined into ui.bundle.js and ui.bundle.css. The Settings page gets the same: settings.html from settings.src.html, joined into
+// settings.bundle.js and settings.bundle.css (it took 180 ms to load 16 scripts and 5 stylesheets one by one). One file each loads far faster than thirty-eight from disk
 // (about 100 ms off the window's first tab showing), and the script runs deferred, after the markup has painted.
 // The output is committed; test/units.js checks it still matches this script's output.
 // Edit index.src.html and the files it lists, then run:  node scripts/bundle-renderer.js
@@ -11,7 +12,7 @@ const read = (file) => fs.readFileSync(path.join(DIR, file), 'utf8').replace(/\r
 const SCRIPT = /[ \t]*<script src="([^"]+)"><\/script>(?:<!--.*?-->)?[ \t]*\n?/g;
 const STYLE = /[ \t]*<link rel="stylesheet" href="([^"]+)" \/>(?:<!--.*?-->)?[ \t]*\n?/g;
 
-// The stylesheets' comments are left out of ui.bundle.css (about 30 KB the window would load and parse on every start; the
+// The stylesheets' comments are left out of ui.bundle.css and settings.bundle.css (about 30 KB the window would load and parse on every start; the
 // source files keep them). A string is copied as it is, so a "/*" inside content: "…" or a url("…") is never taken for a comment.
 function stripCssComments(css) {
   let out = '';
@@ -24,8 +25,10 @@ function stripCssComments(css) {
   return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
 }
 
-function bundle() {
-  const src = read('index.src.html');
+// `page` is 'index' (-> ui.bundle.*) or 'settings' (-> settings.bundle.*)
+function bundle(page = 'index') {
+  const base = page === 'index' ? 'ui' : page;
+  const src = read(`${page}.src.html`);
   const scripts = [...src.matchAll(SCRIPT)].map((m) => m[1]);
   const styles = [...src.matchAll(STYLE)].map((m) => m[1]);
   const js = [
@@ -41,16 +44,18 @@ function bundle() {
   let nScript = 0;
   let nStyle = 0;
   const html = src
-    .replace(SCRIPT, () => (nScript++ ? '' : '  <script src="ui.bundle.js" defer></script>\n'))
-    .replace(STYLE, () => (nStyle++ ? '' : '  <link rel="stylesheet" href="ui.bundle.css" />\n'));
-  return { html, js, css, scripts, styles };
+    .replace(SCRIPT, () => (nScript++ ? '' : `  <script src="${base}.bundle.js" defer></script>\n`))
+    .replace(STYLE, () => (nStyle++ ? '' : `  <link rel="stylesheet" href="${base}.bundle.css" />\n`));
+  return { html, js, css, scripts, styles, base };
 }
 
 if (require.main === module) {
-  const out = bundle();
-  fs.writeFileSync(path.join(DIR, 'index.html'), out.html);
-  fs.writeFileSync(path.join(DIR, 'ui.bundle.js'), out.js);
-  fs.writeFileSync(path.join(DIR, 'ui.bundle.css'), out.css);
-  console.log(`wrote index.html, ui.bundle.js (${out.scripts.length} scripts), ui.bundle.css (${out.styles.length} stylesheets)`);
+  for (const page of ['index', 'settings']) {
+    const out = bundle(page);
+    fs.writeFileSync(path.join(DIR, `${page}.html`), out.html);
+    fs.writeFileSync(path.join(DIR, `${out.base}.bundle.js`), out.js);
+    fs.writeFileSync(path.join(DIR, `${out.base}.bundle.css`), out.css);
+    console.log(`wrote ${page}.html, ${out.base}.bundle.js (${out.scripts.length} scripts), ${out.base}.bundle.css (${out.styles.length} stylesheets)`);
+  }
 }
 module.exports = { bundle };
