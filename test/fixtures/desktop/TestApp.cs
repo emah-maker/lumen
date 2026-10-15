@@ -23,7 +23,7 @@ class TestApp {
     AutomationProperties.SetAutomationId(agree, "chkAgree");
     PasswordBox pass = new PasswordBox { Password = "s3cret-value", Width = 220, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
     AutomationProperties.SetName(pass, "Secret"); AutomationProperties.SetAutomationId(pass, "txtSecret");
-    go.Click += delegate { result.Text = "Hello, " + name.Text; };
+    go.Click += delegate { result.Text = "Hello, " + name.Text; w.Title = title + " - greeted " + name.Text; }; // (the title bar paints even where the window's client area does not, so a capture changes too)
     panel.Children.Add(name); panel.Children.Add(go); panel.Children.Add(result); panel.Children.Add(agree); panel.Children.Add(pass);
     w.Content = panel;
     app.Run(w);

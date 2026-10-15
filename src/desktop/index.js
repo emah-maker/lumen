@@ -229,7 +229,7 @@ function createDesktop(deps = {}) {
     try {
       const r = await getClient().call('shot', { hwnd: s.target.hwnd, w: 420, q: 55 }, { timeoutMs: 6000 });
       if (session !== s || !r.image) return;
-      const sig = `${r.image.length}:${r.image.slice(-48)}:${r.image.slice(200, 248)}`;
+      const sig = require('crypto').createHash('md5').update(r.image).digest('hex');
       if (sig === s.thumbSig) return;
       s.thumbSig = sig;
       s.card.thumb = `data:image/jpeg;base64,${r.image}`;

@@ -23,6 +23,11 @@ $PWRE = '(?i)pass(word|code|phrase)|\bpin\b|secret|\bcvv\b|\bcvc\b|security code
 $PWTYPES = @('Edit', 'Pane', 'ComboBox', 'Document', 'Custom', 'Spinner')
 $SHELL = @('Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland', 'XamlExplorerHostIslandWindow', 'Windows.UI.Core.CoreWindow', 'MSCTFIME UI', 'IME', 'tooltips_class32')
 
+# A second runspace, opened in the background, for Invoke (which can wait on a dialog): ready by the first click.
+$script:rs = [runspacefactory]::CreateRunspace()
+$script:rs.ApartmentState = 'MTA'
+$script:rs.OpenAsync()
+
 function Send($o) { [Console]::Out.WriteLine($ser.Serialize($o)); [Console]::Out.Flush() }
 
 # P/Invoke is compiled the first time a screenshot or a focus needs it (about half a second), never at start.
@@ -207,6 +212,7 @@ function Cmd-Invoke($req) {
   if (-not $e.Current.IsEnabled) { throw 'That item is disabled.' }
   # Invoke can wait for a dialog it opens to close: run it on its own thread and answer after a moment either way.
   $ps = [PowerShell]::Create()
+  if ($script:rs -and $script:rs.RunspaceStateInfo.State -eq 'Opened' -and $script:rs.RunspaceAvailability -eq 'Available') { $ps.Runspace = $script:rs }
   [void]$ps.AddScript({
     param($e)
     $p = $null
@@ -217,7 +223,7 @@ function Cmd-Invoke($req) {
     return 'none'
   }).AddArgument($e)
   $async = $ps.BeginInvoke()
-  if (-not $async.AsyncWaitHandle.WaitOne(1500)) { return @{ method = 'invoke'; note = 'It is still working or opened a dialog that waits for an answer. Read the app again.' } }
+  if (-not $async.AsyncWaitHandle.WaitOne(3500)) { return @{ method = 'invoke'; note = 'It is still working or opened a dialog that waits for an answer. Read the app again.' } }
   $method = [string]($ps.EndInvoke($async) | Select-Object -Last 1)
   $ps.Dispose()
   if ($method -ne 'none') { return @{ method = $method } }
