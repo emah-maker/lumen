@@ -310,7 +310,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
 function lockDown(file) {
   try { fs.chmodSync(file, 0o600); } catch {}
   if (process.platform === 'win32') {
-    const cp = require('child_process');
+    const cp = require('../ai/cli-utils'); // the hidden-spawn helper (windowsHide, no shell)
     const who = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
     cp.execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true });
     const acl = cp.execFileSync('icacls', [file], { encoding: 'utf8', windowsHide: true });
