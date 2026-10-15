@@ -88,7 +88,7 @@ const nowMs = () => Date.now();
 
 // app, screen: Electron's. hwOn(): Settings → hardware acceleration. send(channel, payload): to every window's UI.
 // readStatus(): app.getGPUFeatureStatus (a test replaces it). dir(): where diagnostics go.
-function install({ app, screen, hwOn, send, readStatus, dir, version = '', log = () => {}, onLoss = null, setTimeoutFn = setTimeout, now = nowMs }) {
+function install({ app, screen, hwOn, send, readStatus, dir, version = '', log = () => {}, onLoss = null, onSoftware = null, setTimeoutFn = setTimeout, now = nowMs }) {
   const fs = require('fs');
   const path = require('path');
   const calm = createCalm();
@@ -137,6 +137,7 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
 
   function checkNow() {
     const s = status();
+    if (softwareFallback(s)) { try { onSoftware?.(); } catch { /* the UI follows the next time it asks */ } } // [software mode] the renderers go to the software level at once; the notice below still offers the restart
     if (notice.shouldShow({ status: s, hwOn: hwOn(), baselineSoft: baseline ? softwareFallback(baseline) : false })) {
       stats.notices++;
       record({ e: 'software-notice', status: statusWords(s) });
@@ -179,7 +180,7 @@ function install({ app, screen, hwOn, send, readStatus, dir, version = '', log =
   const onDisplay = (name) => () => { if (poke('display')) record({ e: name }); };
   const wired = () => {
     for (const n of ['display-added', 'display-removed']) screen.on(n, onDisplay(n));
-    const t = setTimeoutFn(() => { baseline = status(); }, 10000); // once: what drawing looked like before any reset (unless one came first)
+    const t = setTimeoutFn(() => { baseline = status(); if (softwareFallback(baseline)) { try { onSoftware?.(); } catch { /* ignore */ } } }, 10000); // once: what drawing looked like before any reset (unless one came first)
     t.unref?.();
     const first = setTimeoutFn(() => { if (notice.resets()) baseline = null; }, 10001); first.unref?.();
     if (app.getGPUInfo) app.getGPUInfo('basic').then((i) => { activeGpu = gpuId(i); }).catch(() => {});

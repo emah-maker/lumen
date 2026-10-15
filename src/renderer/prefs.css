@@ -16,6 +16,17 @@
 /* Graphics: Light (settings-backend.js [igpu], an integrated GPU by default): the glass is a flat, slightly more opaque tint, no blur behind it. Motion stays. */
 .pref-gfx-light .composer { backdrop-filter: none; background: color-mix(in srgb, var(--surface-raised) 96%, transparent); }
 .pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
+/* Software drawing (no GPU: hardware acceleration off, safe drawing mode, or Chromium fell back; settings-backend.js [igpu] softwareGfx, on top of Light). Every pixel is
+   drawn and composited on the CPU, so: no backdrop blur anywhere, no blurred shadows (a hairline instead), no animation that repaints a large area or runs forever,
+   and short transitions. The sidebar moves without a page snapshot (app.js lumenSoftwareGfx). Video is untouched. */
+/* (the transition tokens are left alone: shortening --t-smooth and friends made the tab strip drop 3x the frames on a tab switch, measured) */
+:root.pref-gfx-soft :is(.composer, .attachment-remove, .task-create, .pane-title) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } /* (every backdrop-filter in the UI's sheets; a universal selector made each class change on the tab strip re-match every element) */
+.pref-gfx-soft .composer { transition: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+.pref-gfx-soft .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+.pref-gfx-soft .approval:not(.resolved):hover { transform: none; box-shadow: 0 0 0 1px var(--hairline); }
+.pref-gfx-soft .msg, .pref-gfx-soft .step, .pref-gfx-soft details.thinking, .pref-gfx-soft .notice, .pref-gfx-soft .error, .pref-gfx-soft .empty, .pref-gfx-soft .chip, .pref-gfx-soft body.chat-full .sidebar { animation: none !important; }
+.pref-gfx-soft .msg.assistant.streaming > :is(p, h1, h2, h3, h4):last-child::after, .pref-gfx-soft .msg.assistant.streaming > :is(ul, ol):last-child > li:last-child::after { animation: none; box-shadow: none; }
+.pref-gfx-soft .step.running::before, .pref-gfx-soft .agent-dot::after, .pref-gfx-soft .tab.ai-reading .tab-title { animation: none; }
 .pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }

@@ -215,6 +215,13 @@
     body.gfx-light.on-media:not(.has-effect) .frequent a, body.gfx-light.on-media:not(.has-effect) .privacy { background: rgba(255, 255, 255, 0.13); }
     body.gfx-light.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.18); }
     body.gfx-light.on-media .w-stack-menu, body.gfx-light.on-media .w-stack-panel { background: rgba(24, 24, 28, 0.9); }
+    /* Software drawing (settings-backend.js [igpu] softwareGfx; newtab.js sets still, calm and gfx-light with it): everything is drawn on the CPU, so also no blur on
+       anything, no blurred shadows (a hairline instead), no entrance animation and no skeleton shimmer. The effect is one still frame (newtab-effects.js). */
+    html body.gfx-soft *, html body.gfx-soft *::before, html body.gfx-soft *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+    html body.gfx-soft :is(.w-card, .w-card.lifted, .clock-card, .grid .tile, .frequent a, .w-stack-menu, .w-stack-panel, .w-dock-row, .w-dock-hint, .w-firstrun, .w-sz-note) { box-shadow: 0 0 0 0.5px var(--border) !important; }
+    html body.gfx-soft .grid a:hover .tile { transform: none; }
+    html body.gfx-soft :is(main, header, form, section, .w-skel i, .am-skel-line) { animation: none !important; }
+    html body.gfx-soft *, html body.gfx-soft *::before, html body.gfx-soft *::after { transition-duration: 0.01ms !important; }
     /* A stronger shadow under the clock, date and greeting, over a background or picture only. */
     body.on-media[data-clock-shadow="1"] header { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 24px rgba(0, 0, 0, 0.38); }
     /* The greeting's face. */
