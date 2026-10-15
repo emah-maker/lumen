@@ -257,10 +257,11 @@
   };
   // The soft effects' own palettes for Automatic (white or the text color would only fog the page).
   const SOFT_AUTO = { aurora: ['46, 213, 170', '94, 92, 230', '191, 90, 242', '10, 132, 255'], blobs: ['94, 92, 230', '255, 99, 132', '10, 132, 255', '255, 159, 64', '46, 213, 170', '191, 90, 242'] };
-  function colorsOf(choice, name) {
-    const text = rgbOf(getComputedStyle(document.body).color);
+  // `from`: the text color and the accent as CSS strings when they are not the page's own (the Settings preview draws with its own).
+  function colorsOf(choice, name, from = {}) {
+    const text = rgbOf(from.text || getComputedStyle(document.body).color);
     const colors = choice === 'rainbow' ? [...RAINBOW]
-      : choice === 'accent' ? [rgbOf(getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#0a84ff')]
+      : choice === 'accent' ? [rgbOf(from.accent || getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#0a84ff')]
         : /^#[0-9a-f]{6}$/i.test(choice || '') ? [rgbOf(choice)] : SOFT_AUTO[name] ? [...SOFT_AUTO[name]] : [text];
     colors.line = choice === 'rainbow' ? text : colors[0];
     return colors;
@@ -400,6 +401,77 @@
       document.documentElement.addEventListener('pointerleave', run.onLeave);
     }
     if (document.hidden) run.onVisibility(); else run.raf = requestAnimationFrame(frame);
+  };
+  // The same effects as a small picture: Settings → Home draws one on the preview's canvas (renderer/settings-preview.js). The scene is simulated at a
+  // page-sized stage (so the particle counts, speeds and sizes are what the page has) and drawn scaled down onto the canvas. Several independent
+  // previews never share state with the page's own run above; only the shared `style` size is set before each step.
+  //   const fx = createEffectPreview(canvas, { stageW, stageH });   fx.set({ name, color, amount, speed, size, text, accent, animate }); fx.stop();
+  // `animate`: false draws one still frame (Reduce motion, Performance mode). The loop asks for no frame while the canvas is offscreen
+  // (IntersectionObserver), hidden (a closed page or section) or the document is not in front, and at most one frame per effect interval.
+  window.createEffectPreview = (canvas, { stageW = 900, stageH = 380 } = {}) => {
+    const ctx = canvas.getContext('2d');
+    let r = null; let timer = 0; let raf = 0; let visible = true; let observer = null; let animate = false;
+    const stats = { frames: 0, maxMs: 0 };
+    const stopLoop = () => { clearTimeout(timer); cancelAnimationFrame(raf); timer = 0; raf = 0; };
+    const sizeCanvas = () => { // at one canvas pixel per CSS pixel of the preview (more would only cost more)
+      const w = Math.max(1, Math.round(canvas.clientWidth || 360)); const h = Math.max(1, Math.round(w * stageH / stageW));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      ctx.setTransform(w / stageW, 0, 0, h / stageH, 0, 0);
+    };
+    const paint = () => {
+      if (!r) return;
+      sizeCanvas();
+      style = { size: r.size };
+      ctx.clearRect(0, 0, stageW, stageH);
+      EFFECTS[r.name].draw(ctx, r.list, r.colors, r.mouse, r);
+      ctx.globalAlpha = 1;
+      fade(Object.assign(r, { ctx }));
+    };
+    const interval = () => 1000 / (r.light ? Math.min(LIGHT.fps, EFFECTS[r.name].fps || 30) : (EFFECTS[r.name].fps || 30)); // (Graphics: Light is calmer here too)
+    const frame = (t) => {
+      raf = 0;
+      if (!r || !animate || !visible || document.hidden) return;
+      const began = performance.now();
+      const dt = Math.min(3, (t - (r.last || t - interval())) / 16.7) * r.speed;
+      r.last = t;
+      style = { size: r.size };
+      for (const p of r.list) EFFECTS[r.name].step(p, stageW, stageH, dt, r.mouse);
+      paint();
+      const spent = performance.now() - began;
+      stats.frames++; stats.maxMs = Math.max(stats.maxMs, spent);
+      arm(interval() - 10 - spent);
+    };
+    const arm = (wait) => { clearTimeout(timer); timer = setTimeout(() => { timer = 0; if (!raf && animate && visible && !document.hidden) raf = requestAnimationFrame(frame); }, Math.max(0, wait)); };
+    const resume = () => { if (r && animate && visible && !document.hidden && !raf && !timer) { r.last = 0; raf = requestAnimationFrame(frame); } };
+    const onDoc = () => { if (document.hidden) stopLoop(); else resume(); };
+    document.addEventListener('visibilitychange', onDoc);
+    if (typeof IntersectionObserver === 'function') {
+      observer = new IntersectionObserver((entries) => { visible = entries[entries.length - 1].isIntersecting; if (visible) { paint(); resume(); } else stopLoop(); });
+      observer.observe(canvas);
+    }
+    return {
+      set({ name, color = 'auto', amount = 'normal', speed = 'normal', size = 'normal', text = '#ffffff', accent = '#0a84ff', animate: moving = false, light = false } = {}) {
+        if (!EFFECTS[name]) { stopLoop(); r = null; animate = false; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+        const k = { amount: LEVEL[amount] || 1, speed: LEVEL[speed] || 1, size: LEVEL[size] || 1 };
+        const same = r && r.name === name && r.amount === k.amount && r.size === k.size && r.light === light;
+        if (!same) { // new particles
+          stopLoop();
+          style = { size: k.size };
+          const e = EFFECTS[name];
+          const want = e.fixed ? e.fixed() : Math.round(Math.min(e.max, ((stageW * stageH) / 10000) * e.density) * k.amount * (light ? LIGHT.amount : 1));
+          const list = [];
+          while (list.length < want) list.push(Object.assign(e.make(stageW, stageH, false), { c: Math.floor(Math.random() * RAINBOW.length) }));
+          r = { name, list, w: stageW, h: stageH, mouse: { on: false, x: 0, y: 0 }, stats: { checks: 0 }, last: 0, light, ...k };
+        }
+        Object.assign(r, { speed: k.speed, color, colors: colorsOf(color, name, { text, accent }) });
+        animate = moving;
+        stopLoop();
+        paint(); // (always one frame; a loop only when it may move)
+        resume();
+      },
+      info: () => (r ? { name: r.name, count: r.list.length, colors: [...r.colors], light: r.light, animating: animate && visible && !document.hidden, frames: stats.frames, maxMs: stats.maxMs } : null),
+      stop() { stopLoop(); document.removeEventListener('visibilitychange', onDoc); observer?.disconnect(); r = null; },
+    };
   };
   // [gpu health] main says the GPU is recovering (a driver reset, a display change): the animation stops at once and starts again where it was.
   window.setBackdropCalm = (on) => {
