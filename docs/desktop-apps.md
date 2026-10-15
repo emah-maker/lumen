@@ -1,0 +1,47 @@
+# The AI using other apps
+
+Lumen's AI can operate other programs on your computer, such as Word, File Explorer or MATLAB, and the chat shows it working: a card with the app's icon, what it is doing and a live picture of the window. This works on **Windows**. On macOS the AI is told "Not available on this platform".
+
+It is **off by default**. Turn it on in **Settings → AI → Let the AI use other apps on this computer**. If you ask for something like "fix the heading in my Word report" while it is off, the AI asks to turn it on with a card that explains what it allows.
+
+## What the AI can do
+
+One tool, `desktop(action, args)`, with eight actions:
+
+| Action | What it does |
+|---|---|
+| `list_apps` | The open windows, by app name. Window titles are shown only for apps you have allowed. |
+| `focus_app` | Brings an app forward. |
+| `read_app` | Reads the window as a short outline: names, kinds, values, whether an item is disabled or checked, and an id (`e3`) for each item you can use. It is cut to a fixed size. |
+| `click`, `type` | Acts on an item by its id. It uses the app's own Invoke, Value and Toggle controls first; if an item has none it focuses it and sends keys. |
+| `press_keys` | A shortcut such as `ctrl+s`. `Alt+F4`, `Alt+Tab`, `Ctrl+Alt+Delete`, `Ctrl+Esc`, `Ctrl+Shift+Esc` and the Windows key are never sent. |
+| `screenshot_app` | A picture of the window. |
+| `open_app` | Starts an app by name, from the Start menu or the registered App Paths. It only starts what it finds there, never a path or arguments it makes up. |
+
+The tool is only in the AI's request while the switch is on, or when the conversation asks for an app, so it costs nothing otherwise. What an app shows is treated as untrusted content, the same as a web page: after reading one, the AI needs your OK for each new site it wants to open.
+
+## Who decides
+
+1. **Each app asks first.** "Allow the AI to use Microsoft Word?" with **Allow for this chat** (once), **Always allow this app**, or **Don't allow**. Bypass permissions does not answer this card for you. Always adds the app to **Settings → AI → Apps the AI can use**, where **Revoke** removes it.
+2. **Never available, with no override.** The AI is told plainly why when it tries:
+   - password fields (the item is left out of what it reads, and typing into one is refused; fields whose name says password, PIN or secret count too);
+   - Windows security, UAC (`consent.exe`), credential, lock-screen and sign-in windows;
+   - password managers (1Password, Bitwarden, KeePass and others);
+   - banking and finance apps, and a browser window showing a bank;
+   - Windows Settings, the Registry Editor and similar tools that change the computer;
+   - Lumen's own window;
+   - terminals (Command Prompt, PowerShell, Windows Terminal), unless you turn on **Also allow terminals**, which warns that a terminal can run anything.
+3. **Hands-off mode** stops the AI clicking and typing in apps too; reading still works.
+
+## You stay in control
+
+- A small banner stays at the top of the screen while it works: **The AI is using Word · Stop**. It never takes focus and clicks go through it, except on its buttons.
+- **Hold Esc** for about a second, or press **Ctrl+Alt+Esc**, to stop at once. The shortcut is registered only while the AI is using an app.
+- **Touch the app** (move the mouse over it, or type in it) and the AI pauses: the banner and the chat card say "You took over. Resume?" and the next step waits for Resume or Stop.
+- The chat card has **Open** to bring the app forward, plus Resume and Stop while it works.
+
+## How it works
+
+A small hidden PowerShell process (`src/desktop/uia-helper.ps1`) talks to Windows UI Automation and answers one JSON line per request. It starts on first use (about 0.3 s), ends on its own when idle, and is started through the same hidden-process path as Lumen's other helpers. Its window pictures and the card's thumbnails (every 1.5 s) are made in that process, so Lumen's main process only handles the small answer. Everything lives in `src/desktop/` and loads on first use, not at startup.
+
+Tests: `test/desktop-units.js` (permissions, pruning, keys, schema, the controller with a stand-in helper) and `test/desktop-apps.js` (a real WPF test window of its own, never a user app).

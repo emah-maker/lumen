@@ -165,6 +165,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       signedInSites: call('settings:signed-in-sites'), // [signed-in sites]
       removeSignedInSite: call('settings:remove-signed-in-site'),
       clearSignedInSites: call('settings:clear-signed-in-sites'),
+      desktopApps: call('settings:desktop-apps'), // [desktop apps]
+      removeDesktopApp: call('settings:remove-desktop-app'),
+      clearDesktopApps: call('settings:clear-desktop-apps'),
       aiGaps: call('settings:ai-gaps'), // [no handoff]
       clearAiGaps: call('settings:clear-ai-gaps'),
       sharedFiles: call('settings:shared-files'), // [screen context]

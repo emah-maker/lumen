@@ -13,6 +13,7 @@ const PAGES = {
   'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
+  'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
   'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },

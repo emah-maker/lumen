@@ -228,6 +228,10 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 - The proxy is the only way in, and no debugging port is ever opened. On Windows and Linux, Lumen starts through a small launcher (`src/automation/launcher.js`) that gives Chromium a private pipe. On macOS there is no launcher (it would lose links opened from other apps): `src/automation/cdp-inproc.js` answers the protocol inside Lumen from each tab's own debugger.
 - Through the macOS (in-process) backend, some browser-level features aren't available and answer with an error: `browser.newContext()`, `context.grantPermissions()`, download events and blocking downloads, window bounds. Clients share one debugger session per tab, so Fetch interception (`page.route`) works for one client at a time, and an iframe or worker that starts paused may already be running when a client resumes it.
 
+### The AI using other apps (Windows)
+
+Settings → AI → **Let the AI use other apps on this computer** (off by default) lets the AI read and operate programs such as Word, File Explorer or MATLAB. It asks before each app, a banner shows it working with a Stop button, Esc held stops it, and a card in the chat shows the app with a live thumbnail. Passwords, security prompts, password managers, banking apps and Lumen itself are never available. Details: [docs/desktop-apps.md](docs/desktop-apps.md).
+
 ## Token-efficient tools (all AIs)
 
 The sidebar agent, MCP clients and OpenAI/Grok/Gemini get the same cheaper tools:
@@ -327,6 +331,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
 - [Meeting helper](docs/meeting-helper.md): real-time answers with Ctrl+Shift+E, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [The AI using other apps](docs/desktop-apps.md): Word, File Explorer and more on your PC (Windows): per-app approval, what is never available, the banner and Stop
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 
