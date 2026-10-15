@@ -132,7 +132,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ## Keyboard shortcuts
 
-`Ctrl` is `Cmd` on macOS.
+`Ctrl` is `Cmd` on macOS. The in-app sheet (`Ctrl+Shift+/`) is the complete list. A website that uses a shortcut itself (Google Docs, VS Code for the web) gets the key first; the ⋯ menu shows the same shortcut for Lumen's action.
 
 | Action | How |
 |---|---|
@@ -140,6 +140,9 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
 | On the full-page chat: fold or open the chat list / new chat | `Ctrl+Shift+S` / `Ctrl+Shift+O` |
 | Ask the AI from the address bar | type, then `Alt+Enter` |
+| `Ctrl+Enter`, in the box you are typing in | Send it now: asks the AI on the new-tab page; in the sidebar chat, stops a running reply and sends yours |
+| Meeting helper | `Ctrl+Shift+E` |
+| New-tab page: go to the search box / switch Search and Ask AI | `/` / `Ctrl+/` or `Alt+A` |
 | New tab / close tab / focus address | `Ctrl+T` / `Ctrl+W` / `Ctrl+L` |
 | New window / close window | `Ctrl+N` / `Ctrl+Shift+W` |
 | Switch tabs | `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+1`–`9` |
@@ -322,7 +325,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
-- [Meeting helper](docs/meeting-helper.md): real-time answers with Mod+Enter, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
+- [Meeting helper](docs/meeting-helper.md): real-time answers with Ctrl+Shift+E, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next

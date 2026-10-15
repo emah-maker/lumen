@@ -1511,6 +1511,7 @@ function showAppMenu({ x, y, right }) {
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
+        { label: t('menu.toggleSidebar'), accelerator: 'CmdOrCtrl+J', click: toggleSidebarFromKeys }, // (a page that uses Ctrl+J gets it first: the menu still shows it)
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
@@ -2545,9 +2546,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
-    // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
-    // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
-    if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
+    // Ctrl/Cmd+Enter is never a browser shortcut: it is the page's (send in Gmail, Slack and chat sites, submit in forms) and Lumen's own boxes' ("send now").
     // Page-first keys (Ctrl+S, Ctrl+P, Ctrl+F...; features/page-first-keys.js) go to the page, and Lumen's action runs only if the page did not handle them.
     if (input.type === 'keyDown' && pageFirstKeys.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab()?.webContents === wc) handleShortcut({ preventDefault() {} }, input); })) return;
     handleShortcut(event, input);
@@ -4645,6 +4644,7 @@ function bookmarksMenu() {
   const marked = list.some((b) => b.url === current);
   return [
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
+    { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
@@ -4994,7 +4994,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') toggleSidebarFromKeys();
-  else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
+  else if (mod && input.shift && !input.alt && key === 'e') toggleMeetingHelper(); // Ctrl+Shift+E: Meeting helper (Ctrl+Enter is "send now" in the box you type in)
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
@@ -5066,7 +5066,7 @@ function toggleChatPage() {
   else chatPageRt.open();
 }
 
-// Mod+Enter: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
+// Ctrl+Shift+E: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
 function toggleMeetingHelper() {
   ui()?.focus();
   ui()?.send('meeting:toggle');

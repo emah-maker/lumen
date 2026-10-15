@@ -45,7 +45,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   let shown = null;
   const help = SH.createShortcutsHelp({ t, platform: 'win32', showNotes: async (opts) => { shown = opts; return { response: 0 }; } });
   check('shortcuts: open() shows the sheet in the notes dialog', (await help.open()) === true && shown.message === 'Keyboard Shortcuts' && shown.notes.length === win.length && shown.buttons[0] === 'Done', JSON.stringify(shown).slice(0, 200));
-  check('shortcuts: a row reads "New tab: `Ctrl+T`" (keys drawn as code)', shown.notes[0].blocks[0].text === 'New tab: `Ctrl+T`', shown.notes[0].blocks[0].text);
+  check('shortcuts: a row reads "New tab: `Ctrl+T`" (keys drawn as code)', shown.notes[1].blocks[0].text === 'New tab: `Ctrl+T`', shown.notes[1].blocks[0].text); // (notes[0] is the one-line page-first note)
   check('shortcuts: two chords are joined with "or"', shown.notes.flatMap((n) => n.blocks).some((b) => b.text === 'Reload: `Ctrl+R` or `F5`'), '');
 
   // ---- crash recovery
