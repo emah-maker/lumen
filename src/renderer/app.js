@@ -1812,7 +1812,8 @@ function syncHideAiToggle(state) {
         : shown > 0 ? t(`sidebar.hideAiTabs.inView.${plural(shown)}`, { count: shown })
           : t('sidebar.hideAiTabs.on.none');
   hideAiButton.title = label;
-  hideAiButton.setAttribute('aria-label', needs.length > 0 ? label : t('sidebar.hideAiTabs'));
+  // (the name stays "Hide AI tabs", the state is aria-pressed; only a tab that needs you is spoken as a description)
+  if (needs.length > 0) hideAiButton.setAttribute('aria-description', label); else hideAiButton.removeAttribute('aria-description');
   hideAiButton.dataset.needs = needs.join(','); // (the click shows the first of them instead of switching the toggle)
   hideAiButton.classList.toggle('needs-you', needs.length > 0);
   const badge = $('hide-ai-tabs-count');

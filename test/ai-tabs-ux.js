@@ -77,7 +77,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     const prefs = () => app.evaluate(() => global.__settings.backend.prefs?.() || {});
     const toggle = () => ui.evaluate(() => {
       const b = document.getElementById('hide-ai-tabs');
-      return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), title: b.title, aria: b.getAttribute('aria-label'), popup: b.getAttribute('aria-haspopup'), needs: b.classList.contains('needs-you'), chip: document.getElementById('hide-ai-tabs-label').textContent, chipShown: !document.getElementById('hide-ai-tabs-label').hidden };
+      return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), title: b.title, aria: b.getAttribute('aria-description') || '', popup: b.getAttribute('aria-haspopup'), needs: b.classList.contains('needs-you'), chip: document.getElementById('hide-ai-tabs-label').textContent, chipShown: !document.getElementById('hide-ai-tabs-label').hidden };
     });
 
     // -- Settings > AI > AI tabs
@@ -103,7 +103,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     check('settings: ...and Leave open as "off"', Boolean(await waitFor(async () => (await prefs()).closeAiTabs === 'off')), (await prefs()).closeAiTabs);
     // the strip button follows the setting
     const ai = await openAi(`${base}/ai1`);
-    const t1 = await waitFor(async () => { const x = await toggle(); return !x.hidden && x.pressed === 'true' && x; });
+    const t1 = await waitFor(async () => { const x = await toggle(); return !x.hidden && x.pressed === 'true' && /hidden/.test(x.title) && x; });
     check('toggle: switched on from Settings, the strip button shows it pressed, with its tooltip and haspopup', Boolean(t1) && t1.popup === 'menu' && /tab the AI opened/.test(t1.title), JSON.stringify(t1));
     check('toggle: the AI tab is out of the strip (hidden), not closed', Boolean(await waitFor(() => ui.evaluate((i) => !document.querySelector(`#tabs .tab[data-id="${i}"]`), ai))));
 
@@ -113,7 +113,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     await app.evaluate(({ webContents }, a) => { webContents.fromId(global.__aiTabs.tab(a.id).view.webContents.id).loadURL(a.url).catch(() => {}); }, { id: ai, url: 'http://127.0.0.1:1/' });
     const t2 = await waitFor(async () => { const x = await toggle(); return x.needs && x; }, 15000);
     check('chip: an AI tab with an error, hidden, turns the chip into "1 needs you"', Boolean(t2) && t2.chip === '1 needs you' && t2.chipShown, JSON.stringify(t2));
-    check('chip: its tooltip and spoken name say so too', Boolean(t2) && /needs you/.test(t2.title) && /needs you/.test(t2.aria), JSON.stringify(t2));
+    check('chip: its tooltip and spoken description say so too', Boolean(t2) && /needs you/.test(t2.title) && /needs you/.test(t2.aria), JSON.stringify(t2));
     const before = await active();
     await ui.click('#hide-ai-tabs');
     const shown = await waitFor(async () => (await active()) === ai);
