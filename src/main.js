@@ -2101,6 +2101,8 @@ scheduler.every('spare-policy', 60 * 1000, async () => {
     else if (action === 'make') makeSpareNewTab();
   }
   // the warm renderer (about:blank, for the next web page): likewise freed when memory is tight or no page has taken one for a while
+  if (settingsProc && (sparePolicy.isIdle(settingsProcUsedAt) || sparePolicy.memoryTight(facts) || !settingsProcOn())) dropSettingsProc(); // [settings process]
+  else if (!settingsProc && !sparePolicy.memoryTight(facts)) makeSettingsProc();
   if (warmTab && (sparePolicy.isIdle(warmUsedAt) || sparePolicy.memoryTight(facts))) { const w = warmTab; warmTab = null; try { w.view.webContents.close(); } catch { /* gone */ } }
   else if (!warmTab && !sparePolicy.memoryTight(facts)) makeWarmTab();
   // the spare chat page: dropped with the new-tab one when memory is tight, and when no chat page has been used for half an hour
@@ -7329,6 +7331,7 @@ let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
 let firstTabDone = false;
 firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSoon(); }); // (a session with a chat page in it: its next one is made now start-up is over)
+firstTabLoaded.then(() => settingsProcSoon(3000)); // [settings process]
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
@@ -8763,9 +8766,49 @@ function dropSpareSettings() {
   try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
   try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
 }
+// [settings process] A new view's renderer process takes about 90 ms to start (the navigation commits 100 ms in, against 17 ms in a view whose process is up), and
+// more on a busy PC. One blank view with the Settings page's preferences is kept, like the warm renderer for web pages (makeWarmTab): its process belongs to
+// no site yet, so the Settings page loads in it at once when the menu button is pressed. It is not the page, only a process: freed when memory is tight, with
+// Performance mode on, and after sparePolicy IDLE_MS without a Settings open; another is made a moment after one is used.
+let settingsProc = null; // { view, prefs }
+let settingsProcUsedAt = Date.now();
+const settingsProcOn = () => (!TEST || spareForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+function makeSettingsProc() {
+  if (settingsProc || !app.isReady() || quitting || !firstTabDone || !settingsProcOn() || sparePolicy.isIdle(settingsProcUsedAt)) return;
+  const prefs = settingsBackend.tabWebPreferences(true);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  const s = { view, prefs: JSON.stringify(prefs) };
+  view.webContents.once('render-process-gone', () => { if (settingsProc === s) { settingsProc = null; try { view.webContents.close(); } catch { /* gone */ } } });
+  view.webContents.loadURL('about:blank').catch(() => {});
+  settingsProc = s;
+}
+function dropSettingsProc() {
+  const s = settingsProc;
+  settingsProc = null;
+  try { if (s && !s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+}
+let settingsProcTimer = null;
+const settingsProcSoon = (ms = 1500) => { clearTimeout(settingsProcTimer); settingsProcTimer = setTimeout(makeSettingsProc, ms); settingsProcTimer.unref?.(); };
+// The pooled view, if it is ready (about:blank loaded, the same preferences as now); null otherwise.
+// Its about:blank never shows in the tab's back list.
+function forgetBlank(wc) {
+  wc.once('did-finish-load', () => { try { if (wc.navigationHistory.getEntryAtIndex(0)?.url === 'about:blank' && wc.navigationHistory.length() > 1) wc.navigationHistory.clear(); } catch { /* gone */ } });
+}
+function takeSettingsProc() {
+  settingsProcUsedAt = Date.now();
+  const s = settingsProc;
+  settingsProc = null;
+  settingsProcSoon();
+  if (!s) return null;
+  const wc = s.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading() || wc.getURL() !== 'about:blank' || s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))) { try { wc.close(); } catch { /* gone */ } return null; }
+  forgetBlank(wc);
+  return s.view;
+}
+if (TEST) global.__settingsProc = { has: () => Boolean(settingsProc), ready: () => Boolean(settingsProc && !settingsProc.view.webContents.isLoading()), drop: dropSettingsProc };
 function prepareSettings() {
   if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
-  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
+  const view = takeSettingsProc() || new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } }); // (the pooled one: its process is up)
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
   try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
   const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
@@ -8800,9 +8843,12 @@ function openSettingsPage(section = '', { replace = null } = {}) {
     switchTab(existing.id);
     return existing.id;
   }
-  const spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  let spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  let blank = false;
+  if (!spare) { spare = takeSettingsProc(); blank = Boolean(spare); if (blank) { try { spare.setBackgroundColor(pageBackground()); } catch { /* gone */ } } } // (no press before this open: the pooled process takes the page)
   const { id } = openTab(url, { settings: true, view: spare });
-  if (spare) {
+  if (blank) spare.webContents.loadURL(url).catch(() => {});
+  else if (spare) {
     const wc = spare.webContents;
     const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
     if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }

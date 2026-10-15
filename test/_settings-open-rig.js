@@ -129,7 +129,8 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
 
 // cold: the first open in a fresh app; warm: close that tab and open again in the same app.
 async function measure(profile, section = '', { intent = false } = {}) {
-  const app = await electron.launch({ args: [root], env: env(profile) });
+  // (LUMEN_TEST_SPARES: spare renderers are off in tests unless asked, as in test/perf-newtab.js: Settings is measured with its pooled process)
+  const app = await electron.launch({ args: [root], env: { ...env(profile), LUMEN_TEST_SPARES: '1' } });
   const pid = app.process().pid;
   try {
     const ui = await app.firstWindow();
