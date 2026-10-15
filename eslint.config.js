@@ -71,7 +71,7 @@ module.exports = [
     rules: { 'require-yield': 'off' },
   },
   // Functions the tests call inside the UI page (defined by renderer/app.js).
-  { files: ['test/exfil.js', 'test/mcp.js', 'test/mcpclient.js', 'test/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
+  { files: ['test/exfil.js', 'test/mcp.js', 'test/mcpclient.js', 'test/connectors.js', 'test/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
   // The model picker the sidebar page creates (renderer/chat-core.js), opened from page.evaluate.
   { files: ['test/models.js', 'test/usage.js'], languageOptions: { globals: { modelPicker: 'readonly' } } },
   { files: ['test/fixtures/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, ...globals.webextensions } } },
