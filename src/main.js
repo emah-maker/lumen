@@ -5108,7 +5108,17 @@ const chats = () => (chatStore ||= createChatStore({
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
   legacyFile: CHAT_FILE(),
+  onError: (err) => chatSaveFailed(err),
 }));
+// A save that failed (a full disk, a locked file, the keychain): said once per session, in the tab strip's toast, with the reason. The chat stays
+// in memory and the next save tries again.
+let chatSaveWarned = false;
+function chatSaveFailed(err) {
+  console.error('Could not save chat:', err?.message);
+  if (chatSaveWarned) return;
+  chatSaveWarned = true;
+  try { toast(`Couldn't save this chat: ${String(err?.code || err?.message || 'unknown error').slice(0, 80)}`); } catch { /* no window to say it in */ }
+}
 let chatId = null; // the open chat
 // [temporary chat] Chats started with "Temporary chat" on the chat page: never written to disk, never listed (they live only in
 // memory until the user leaves them). Ids are random, so the set simply stays for the session.
@@ -5229,12 +5239,12 @@ function saveChat(generation = chatGeneration) {
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
-    chats().save(chatId, snapshot);
+    chats().saveAsync(chatId, snapshot); // (written in the background: no stall of the main thread; features/chat-store.js. Quitting writes what is pending at once)
     keepPendingProject(chatId);
     mirrorChatSoon(chatId); // [project folders]
-    if (chats().current() !== chatId) chats().setCurrent(chatId);
+    if (chats().current() !== chatId) chats().setCurrent(chatId, { defer: true });
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // During a long task the chat is saved after each step too, so quitting mid-run keeps what was done.
@@ -5243,12 +5253,18 @@ function saveChatSoon(generation) {
   clearTimeout(saveChatTimer);
   saveChatTimer = setTimeout(() => saveChat(generation), 1000);
 }
-app.on('before-quit', () => {
+// Everything not on disk yet is written now, on this thread: the app is closing, or Windows is logging off or shutting down (no time for more).
+function flushChatsNow() {
   saveChat();
   try { if (mirrorDebounceObj) mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now (none if nothing was ever mirrored) */ }
-  try { chats().flush(); } catch { /* nothing pending */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
-});
+  try { chats().flush(); } catch { /* nothing pending */ }
+}
+app.on('before-quit', flushChatsNow);
+app.on('will-quit', flushChatsNow); // (again: whatever a quit handler saved after the first)
+app.on('session-end', flushChatsNow); // (Windows logoff / shutdown, where the app event exists)
+app.on('browser-window-created', (_e, w) => { try { w.on('session-end', flushChatsNow); } catch { /* not a window that gets it */ } }); // (...and where only the window gets it)
+app.whenReady().then(() => { try { require('electron').powerMonitor.on('shutdown', flushChatsNow); } catch { /* the event is not on this platform */ } }).catch(() => {});
 
 function loadChat() {
   try {
@@ -5269,10 +5285,11 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false, quiet = false } = {}) {
+// `loaded`: the chat's saved snapshot, already read (chats:open reads it without stopping the main thread).
+function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
-  const snapshot = id && !live ? chats().load(id) : null;
+  const snapshot = id && !live ? (loaded || chats().load(id)) : null;
   // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
   // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
   if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
@@ -5292,7 +5309,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   const wasUnread = unreadChats.delete(chatId);
   if (id && (snapshot || live)) chats().setCurrent(id, { defer: true }); // (the pointer only a restart reads: written a moment later, not inside the tab switch)
-  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
+  else if (!quiet) chats().setCurrent(null, { defer: true }); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   // A quiet switch (a window's sidebar following its front tab's chat, from a call it made: syncToSender) changes no run's mark unless it
   // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
   // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
@@ -5331,9 +5348,9 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
+    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
@@ -9494,9 +9511,18 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   };
 }));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
-ipcMain.handle('chats:open', (event, id) => {
-  syncToSender(event);
-  const view = switchChat(String(id));
+// Chats opened one after another: the read of an earlier one is dropped (it answers with whatever is open by then), so the last click is the chat shown.
+let openSeq = 0;
+async function readForOpen(id) {
+  const mine = ++openSeq;
+  const loaded = chatRuns.has(id) || id === chatId ? null : await chats().loadAsync(id); // (read in the background; the switch itself is then quick)
+  return { loaded, stale: mine !== openSeq };
+}
+ipcMain.handle('chats:open', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
+  syncToSender(event); // (with the switch, as one step: nothing else runs between them)
+  const view = switchChat(String(id), { loaded });
   if (view) {
     bindOpenChatHere(event.sender);
     chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
@@ -9505,9 +9531,11 @@ ipcMain.handle('chats:open', (event, id) => {
 });
 // "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
 // changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
-ipcMain.handle('chats:share', (event, id) => {
+ipcMain.handle('chats:share', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
   syncToSender(event);
-  const view = switchChat(String(id));
+  const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
     carriedTabs.delete(forTab);
@@ -10422,7 +10450,7 @@ const updates = require('./features/updates').createUpdates({
   app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
-  beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
+  beforeInstall: () => { saveSession(); saveChat(); try { chats().flush(); } catch { /* nothing pending */ } }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
