@@ -3130,7 +3130,9 @@ function guessView() {
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
+  performance.mark('route:start');
   const r = resolveRoute();
+  performance.mark('route:resolved');
   const need = neededBuilds(view, !firstRouteDone).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
@@ -3330,7 +3332,6 @@ async function init() {
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
-  document.fonts?.ready.then(fitDescs).catch(() => {});
   $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
@@ -3354,6 +3355,7 @@ async function init() {
     document.body.dataset.shown = '1';
     revealFolded();
     fillNavIcons();
+    document.fonts?.ready.then(fitDescs).catch(() => {}); // (after the first paint: asking for the font set makes the page update its styles)
     paintedResolve();
     performance.mark('settings:visible');
     for (const sid of neededBuilds(view)) buildOne(sid); // (the rest of this page: now, in the next frame)
