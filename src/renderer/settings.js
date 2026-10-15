@@ -3107,9 +3107,32 @@ function resolveRoute() {
   remember(view.cat);
   return { id, focus, focusEl };
 }
+// The first page is laid out with its first screen only: the lists below the fold wait for the next frame (the first layout of a page costs
+// about 1 ms a row, and nothing there can be seen yet). FOLD_ROWS: about what fits above the fold.
+const FOLD_ROWS = 9;
+let foldedGroups = [];
+let firstRouteDone = false;
+function foldBelowTheFirstScreen() {
+  const pane = view.sub ? slots.get(view.sub)?.pane : categories.get(view.cat)?.pane;
+  let rows = 0;
+  const later = [];
+  for (const g of pane ? pane.querySelectorAll('.group') : []) {
+    if (rows >= FOLD_ROWS) { g.classList.add('later'); later.push(g); } else rows += g.querySelectorAll('.row').length;
+  }
+  return later;
+}
+function revealFolded() {
+  if (!foldedGroups.length) return;
+  for (const g of foldedGroups) g.classList.remove('later');
+  foldedGroups = [];
+  requestAnimationFrame(fitDescs);
+}
 function finishRoute({ id, focus, focusEl }) {
+  revealFolded(); // (a page change before the next frame: everything that was folded is there)
   if (document.activeElement === $('search') && !query()) $('search').blur(); // (#search is also the sidebar field's id: the browser would focus it)
   if (query()) $('search').value = '';
+  if (!firstRouteDone && !ALIASES[id] && !query()) foldedGroups = foldBelowTheFirstScreen(); // (a link to a place further down needs it laid out)
+  firstRouteDone = true;
   show();
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
@@ -3249,7 +3272,7 @@ async function init() {
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
   document.fonts?.ready.then(fitDescs).catch(() => {});
-  $('search').addEventListener('input', () => { if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
+  $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {
@@ -3270,6 +3293,7 @@ async function init() {
   // shown: the page can be used now; ready: every section is built too (see buildAll)
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
+    revealFolded();
     window.__settingsPerf.visibleDone = true;
     paintedResolve();
     performance.mark('settings:visible');
