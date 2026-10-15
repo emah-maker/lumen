@@ -95,7 +95,7 @@ check('the empty-state title says Lumen when Auto (no single assistant) is picke
 // ---- 6) step timing and the Stop button
 const { format } = require('../src/renderer/step-time');
 check('step time: nothing under a second, tenths under ten, whole seconds, then minutes', format(400) === '' && format(1200) === '1.2s' && format(9400) === '9.4s' && format(12600) === '13s' && format(65000) === '1m 05s' && format(119700) === '2m 00s' && format(NaN) === '', [400, 1200, 9400, 12600, 65000, 119700].map(format).join());
-check('a running step ticks from 3 s and keeps its final time', /function showStepTime/.test(core) && /ms < 3000/.test(core) && /showStepTime\(step, true\)/.test(core) && /\.step \.step-time/.test(styles));
+check('a running step ticks from 1 s and keeps its final time', /function showStepTime/.test(core) && /ms < 1000/.test(core) && /showStepTime\(step, true\)/.test(core) && /\.step \.step-time/.test(styles));
 check('the Stop button has a word beside its square', /dataset\.label = value \? t\('composer\.stop\.short'\)/.test(core) && en['composer.stop.short'] === 'Stop' && /\.send\.stop::after \{ content: attr\(data-label\)/.test(styles));
 check('step-time.js is loaded by the sidebar and the chat page', /step-time\.js/.test(html) && /step-time\.js/.test(read('src', 'renderer', 'chat-page.html')) && /stepTime = api/.test(read('src', 'renderer', 'step-time.js')));
 

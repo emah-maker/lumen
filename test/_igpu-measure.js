@@ -63,11 +63,11 @@ async function waitForQuiet(maxMs = 30 * 60e3) {
 }
 
 // ---- the rig: one app per configuration
-async function launch({ settings = {}, size = [2560, 1600], quiet = true } = {}) {
+async function launch({ settings = {}, size = [2560, 1600], quiet = true, args = [] } = {}) {
   if (quiet) await waitForQuiet();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-igpu-'));
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ ...USER_SETTINGS, ...settings }));
-  const app = await electron.launch({ args: [ROOT], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' } });
+  const app = await electron.launch({ args: [ROOT, ...args], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' } });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const rig = { app, ui, profile, size };

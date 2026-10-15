@@ -2818,19 +2818,29 @@ function buildSystem(card) {
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
-  // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
-  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 20 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
-    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
+  // [igpu] Visual effects (the graphicsMode key; was "Graphics"): Automatic (Light on an integrated GPU, decided once at start-up) / Full / Light (settings-backend.js [igpu]).
+  // One status line says what is on right now (with Performance mode), a Restart button when drawing is in software, and a hint on a hybrid-GPU laptop.
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Visual effects'), tr('settings.graphics.desc', 'Light removes the blur behind glass surfaces and runs the new-tab effect lighter, which saves a lot on an integrated GPU or without graphics acceleration. Automatic uses Light on an integrated GPU and in software drawing.'),
+    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
   const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
+  const gfxRestart = h('button', { class: 'primary', id: 'graphics-restart', text: tr('settings.graphics.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
+  const gfxHint = h('span', { class: 'note', id: 'graphics-hint', hidden: true });
   const showGfxNote = () => {
     const g = st.graphics;
     const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.drawing) && mode !== 'full';
     const on = mode === 'light' || (mode === 'auto' && g?.integrated);
-    const why = mode === 'auto' ? (g?.why || '') : tr('settings.graphics.chosen', 'your choice');
-    gfxNote.textContent = tr(on ? 'settings.graphics.note.light' : 'settings.graphics.note.full', on ? 'Light is on ({why}{device}).' : 'Full effects are on ({why}{device}).', { why, device: g?.device ? `: ${g.device}` : '' });
+    const perf = tr(st.performance?.active ? 'settings.graphics.status.perfOn' : 'settings.graphics.status.perfOff', st.performance?.active ? 'Performance mode is on.' : 'Performance mode is off.');
+    const effects = soft ? tr('settings.graphics.status.software', 'Right now: software drawing, Light effects, a still background and no blur. Choose Full to keep every effect.')
+      : tr(on ? 'settings.graphics.status.light' : 'settings.graphics.status.full', on ? 'Right now: Light effects{device}.' : 'Right now: Full effects.', { device: g?.device ? ` (${g.device})` : '' });
+    gfxNote.textContent = soft ? effects : `${effects} ${perf}`;
+    gfxRestart.hidden = !soft; // (a restart is what brings hardware drawing back; the next start is normal)
+    const hybrid = mode === 'auto' && on && !soft && st.platform === 'win32' && g?.discrete;
+    gfxHint.hidden = !hybrid;
+    gfxHint.textContent = hybrid ? tr('settings.graphics.hybrid', 'Your PC also has {gpu}. To use it, open Windows Settings > System > Display > Graphics, add Lumen and choose High performance.', { gpu: g.discrete }) : '';
   };
   showGfxNote();
-  gfxRow.querySelector('.text').append(gfxNote);
+  gfxRow.querySelector('.text').append(gfxNote, gfxRestart, gfxHint);
   card.append(gfxRow);
   buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
   buildSwitchTiming(card.at('advanced-more'));
