@@ -57,7 +57,7 @@ const launch = (profile) => electron.launch({
   check('the AI\'s new tab opens in the background: the user stays on their tab', (await active()) === user, await active());
   check('it is marked as opened by the AI', await app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)?.openedBy), aiTab));
   const el = await waitFor(async () => (await tabEl(aiTab))?.ai && (await tabEl(aiTab)));
-  check('the strip marks it (a mark after the title, and a spoken note)', el?.ai && el.mark !== 'none' && /Opened by AI/.test(el.label || ''), JSON.stringify(el));
+  check('the strip marks it (a mark after the title, and a spoken note)', el?.ai && el.mark !== 'none' && /Opened by the AI/.test(el.label || ''), JSON.stringify(el));
   check('a tab the user opens has no mark', (await tabEl(user))?.ai === false);
 
   // ---- 2. The sidebar toggle.

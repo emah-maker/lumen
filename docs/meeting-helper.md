@@ -2,11 +2,11 @@
 
 A sidebar co-pilot that assists during and after web meetings (interviews, architecture discussions, and client calls) with real-time answers, saved agenda and resume context, stealth screen-share protection, and post-call summaries.
 
-Open it with **Mod+Enter** (`Cmd+Enter` on macOS, `Ctrl+Enter` on Windows/Linux) while Lumen's own sidebar or toolbar has focus, or anytime from the sidebar's ⋯ (More) menu under **Meeting helper**. Inside a web page, Ctrl/Cmd+Enter stays the page's own key (send in Gmail, Slack and chat sites, submit in forms).
+Open it with **Ctrl+Shift+E** (`Shift+Cmd+E` on macOS). A website that uses that key itself (Google Docs centres text with it) gets it first, so there (or anytime) use the sidebar's ⋯ (More) menu under **Meeting helper**. Ctrl/Cmd+Enter is no longer the Meeting helper's key: it always means "send what is in this box now" (and inside a web page it stays the page's own key).
 
 ## Live prompting
 
-During a live meeting, press `Mod+Enter` to bring up the helper, type what was asked, and get high-value answers and talking points immediately:
+During a live meeting, press `Ctrl+Shift+E` to bring up the helper, type what was asked, and get high-value answers and talking points immediately:
 
 - **Concise answers:** Formatted specifically for conversations: direct bullet points, no preamble, and actionable talking points.
 - **Engine routing:** If you have an API key connected, the helper uses your fast model. With no API key, it routes through your local Claude Code CLI (`haiku`), with zero external configuration needed.

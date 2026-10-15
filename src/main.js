@@ -276,7 +276,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
@@ -1513,6 +1513,7 @@ function showAppMenu({ x, y, right }) {
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
+        { label: t('menu.toggleSidebar'), accelerator: 'CmdOrCtrl+J', click: toggleSidebarFromKeys }, // (a page that uses Ctrl+J gets it first: the menu still shows it)
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
@@ -1844,7 +1845,7 @@ function tabState() {
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by AI" in its card)
+        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };
@@ -2547,9 +2548,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
-    // Ctrl/Cmd+Enter belongs to the page (send in Gmail, Slack and chat sites, submit in forms): the Meeting helper's Mod+Enter
-    // works from Lumen's own UI (sidebar, toolbar), and the sidebar's ⋯ menu opens it anywhere.
-    if (input.type === 'keyDown' && input.key === 'Enter' && shortcutMod(input) && !input.shift && !input.alt) return;
+    // Ctrl/Cmd+Enter is never a browser shortcut: it is the page's (send in Gmail, Slack and chat sites, submit in forms) and Lumen's own boxes' ("send now").
     // Page-first keys (Ctrl+S, Ctrl+P, Ctrl+F...; features/page-first-keys.js) go to the page, and Lumen's action runs only if the page did not handle them.
     if (input.type === 'keyDown' && pageFirstKeys.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab()?.webContents === wc) handleShortcut({ preventDefault() {} }, input); })) return;
     handleShortcut(event, input);
@@ -4647,6 +4646,7 @@ function bookmarksMenu() {
   const marked = list.some((b) => b.url === current);
   return [
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
+    { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
@@ -4996,7 +4996,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') toggleSidebarFromKeys();
-  else if (mod && !input.shift && !input.alt && key === 'enter') toggleMeetingHelper(); // Mod+Enter: Meeting helper
+  else if (mod && input.shift && !input.alt && key === 'e') toggleMeetingHelper(); // Ctrl+Shift+E: Meeting helper (Ctrl+Enter is "send now" in the box you type in)
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
   else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
@@ -5068,7 +5068,7 @@ function toggleChatPage() {
   else chatPageRt.open();
 }
 
-// Mod+Enter: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
+// Ctrl+Shift+E: toggle the Meeting Helper panel (opens the sidebar if closed, focuses the prompt).
 function toggleMeetingHelper() {
   ui()?.focus();
   ui()?.send('meeting:toggle');
@@ -5875,14 +5875,35 @@ const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === n
 ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
 // The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
-// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
+// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close tabs the AI opened all still reach them).
 ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
+// Right-click on that toggle: the same switch, and closing the AI's tabs outright (every window, with Undo, as the menus'
+// "Close tabs the AI opened" does), so tabs the user no longer wants need not just be hidden.
+function hideAiMenuTemplate() {
+  const count = aiTabSelect({}).length;
+  return [
+    { label: t('sidebar.hideAiTabs.menu.hide'), type: 'checkbox', checked: readSettings().hideAiTabs === true, click: (item) => { settingsBackend.set('hideAiTabs', item.checked); } },
+    { type: 'separator' },
+    { label: count ? t('sidebar.hideAiTabs.menu.close', { count }) : t('sidebar.hideAiTabs.menu.closeNone'), enabled: count > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } },
+  ];
+}
+const hideAiMenuPops = []; // (tests: where each request to open the menu came from; the test build opens no native menu)
+ipcMain.on('tabs:hide-ai-menu', (event, at) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || owner.isDestroyed()) return;
+  // From the keyboard (Menu key, Shift+F10) the strip says where: under the button
+  const pos = Number.isFinite(at?.x) && Number.isFinite(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {};
+  if (TEST) { hideAiMenuPops.push(pos); return; }
+  Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner, ...pos });
+});
+if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops.slice();
+if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
-// The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
+// The taskbar's command (Jump List task, Dock menu) and the menus' "Close tabs the AI opened": every normal window's AI tabs, each
 // window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
 // A private window has no AI tabs of this kind (it is in no window record). With none to close, a brief line shows in the
 // window in front, and only if one is visible.
