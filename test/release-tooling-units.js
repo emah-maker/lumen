@@ -186,5 +186,32 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
   }
 }
 
-console.log(failures ? `\n${failures} failed` : '\nall passed');
-process.exit(failures ? 1 : 0);
+// ---- gh retries and the checks-only preflight
+const sc = require('../scripts/ship-common');
+const rr = (status, stderr = '') => ({ status, stdout: '', stderr });
+check('retry: transient errors are recognised (GraphQL, 502/503/504, timeouts)', [rr(1, 'GraphQL: Something went wrong while executing your query'), rr(1, 'HTTP 502: Bad Gateway'), rr(1, 'HTTP 503'), rr(1, 'HTTP 504 gateway timeout'), rr(1, 'dial tcp: i/o timeout'), rr(1, 'read ECONNRESET')].every(sc.isTransient) && !sc.isTransient(rr(1, 'Pull request is not mergeable')) && !sc.isTransient(rr(0)));
+const relSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release.js'), 'utf8');
+check('preflight: the Electron preflight runs only while the checks are still to run', /preflight\(main, opts, wt, !st \|\| !done\(st, 'checks'\)\)/.test(relSrc) && /if \(!withElectron\)/.test(relSrc));
+check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghRetry\(wt, \['pr', 'create'/.test(relSrc) && /ghRetry\(wt, \['pr', 'merge'/.test(relSrc) && /ghJsonRetry\(wt, \['release', 'view'/.test(relSrc));
+
+(async () => {
+  const naps = [];
+  const o = (extra) => ({ nap: async (ms) => { naps.push(ms); }, ...extra });
+  let n = 0;
+  let r = await sc.ghRetry('.', ['x'], o({ runner: () => (++n < 3 ? rr(1, 'HTTP 502') : rr(0)) }));
+  check('retry: a transient failure is retried; the third try can succeed, with growing backoff', r.status === 0 && n === 3 && naps.length === 2 && naps[1] > naps[0], n + ' ' + naps);
+  n = 0;
+  r = await sc.ghRetry('.', ['x'], o({ runner: () => { n++; return rr(1, 'HTTP 503'); } }));
+  check('retry: gives up after 3 attempts and returns the failure', r.status !== 0 && n === 3, n);
+  n = 0;
+  r = await sc.ghRetry('.', ['x'], o({ runner: () => { n++; return rr(1, 'not mergeable'); } }));
+  check('retry: a real (non-transient) failure is not retried', r.status !== 0 && n === 1, n);
+  n = 0;
+  r = await sc.ghRetry('.', ['merge'], o({ runner: () => { n++; return rr(1, 'GraphQL: Something went wrong'); }, recheck: () => ({ status: 0, stdout: '' }) }));
+  check('retry: a merge that already landed (recheck says so) counts as success, with no second merge', r.status === 0 && n === 1, n);
+  n = 0;
+  r = await sc.ghRetry('.', ['merge'], o({ runner: () => { n++; return n < 2 ? rr(1, 'HTTP 504') : rr(0); }, recheck: () => null }));
+  check('retry: a recheck that finds nothing leads to the retry', r.status === 0 && n === 2, n);
+  console.log(failures ? `\n${failures} failed` : '\nall passed');
+  process.exit(failures ? 1 : 0);
+})();
