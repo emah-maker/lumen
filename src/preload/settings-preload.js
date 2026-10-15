@@ -188,7 +188,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       externalApps: {
         info: call('mcp:external-info'),
         enable: call('mcp:external-enable'),
-        setPrompt: call('mcp:external-prompt-setting'),
+        setRequireToken: call('mcp:external-require-token'),
+        setup: call('mcp:external-setup'),
         add: call('mcp:external-add'),
         revoke: call('mcp:external-revoke'),
         setAsk: call('mcp:external-ask'),

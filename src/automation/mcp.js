@@ -155,7 +155,7 @@ function startServer({ userData, tools, callTool, enabled, onEvent, onClose = nu
           return;
         }
         // [external apps] identify({ client, proof, nonce }) -> { client } | null (no app token: as before) | false (unknown or revoked app: refused)
-        const who = identify ? identify({ client: message.lumenClient, proof: message.lumenClientProof, nonce }) : null;
+        const who = identify && typeof message.lumenEngine !== 'string' ? identify({ client: message.lumenClient, proof: message.lumenClientProof, nonce }) : null; // (an engine's own tag never goes through it)
         if (who === false) { send({ lumenAuth: 'denied' }); socket.end(); return; }
         authed = true;
         clearTimeout(authTimer);
@@ -207,6 +207,13 @@ function connectOnce(userData) {
   });
 }
 
+// What the bridge hands the Lumen it starts: not its own mode flags, and never the app's token (it would live in Lumen and every process Lumen starts)
+// or an engine tag (Lumen's own engines would then present as this client).
+function launchEnv(env) {
+  for (const k of ['ELECTRON_RUN_AS_NODE', 'LUMEN_MCP_BRIDGE', 'LUMEN_CLIENT_TOKEN', 'LUMEN_CLIENT_TOKEN_FILE', 'LUMEN_ENGINE']) delete env[k];
+  return env;
+}
+
 async function connectOrLaunch(userData, launch, log) {
   try {
     return await connectOnce(userData);
@@ -214,8 +221,7 @@ async function connectOrLaunch(userData, launch, log) {
     log('Lumen is not running; starting it.');
     const { spawn } = require('child_process');
     const env = { ...process.env };
-    delete env.ELECTRON_RUN_AS_NODE;
-    delete env.LUMEN_MCP_BRIDGE;
+    launchEnv(env);
     const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', env, windowsHide: false });
     child.unref();
     const deadline = Date.now() + 30000;
@@ -278,7 +284,7 @@ async function relay() {
         try { msg = JSON.parse(line); } catch {}
         if (msg.lumenChallenge) {
           const lumenEngine = process.env.LUMEN_ENGINE || undefined; // set only by Lumen's Claude Code engine
-          socket.write(`${JSON.stringify({ lumenProof: proofFor(token, String(msg.lumenChallenge)), lumenEngine, ...require('./client-token').hello(process.env.LUMEN_CLIENT_TOKEN, String(msg.lumenChallenge)) })}\n`); // (LUMEN_CLIENT_TOKEN: an outside app's own token)
+          socket.write(`${JSON.stringify({ lumenProof: proofFor(token, String(msg.lumenChallenge)), lumenEngine, ...(lumenEngine ? {} : require('./client-token').hello(require('./client-token').fromEnv(), String(msg.lumenChallenge))) })}\n`); // (LUMEN_CLIENT_TOKEN: an outside app's own token)
           return;
         }
         if (msg.lumenAuth !== 'ok') {
@@ -328,4 +334,4 @@ function runBridge({ app }) {
 
 if (require.main === module) relay();
 
-module.exports = { clientLabel, annotationsFor, MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
+module.exports = { launchEnv, clientLabel, annotationsFor, MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it

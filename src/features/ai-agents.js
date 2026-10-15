@@ -122,8 +122,9 @@ function setupAiAgents(deps) {
   // Lumen (features/external-apps.js). They reach the MCP server below through its identify / onInitialize hooks and mcpCallTool's wrapper.
   const external = (() => {
     let real = null;
+    // (an engine session is skipped by the hooks below: the server serves an engine tag only to a live run of Lumen's own, enabled() under startMcp; keep it so)
     const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
-    for (const name of ['info', 'enable', 'prompt-setting', 'add', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
+    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
     ipcMain.handle('mcp:external-state', () => (real ? real.invoke.state() : { active: [], prompts: [] })); // (every window asks at start: that must not load it)
     for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });

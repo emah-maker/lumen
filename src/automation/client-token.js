@@ -13,9 +13,16 @@ function make() {
 const parse = (token) => { const m = PATTERN.exec(String(token || '').trim()); return m ? { id: m[1], token: m[0] } : null; };
 const proofFor = (token, nonce) => crypto.createHmac('sha256', token).update(`client:${nonce}`).digest('hex');
 
-// The fields the bridge adds to its first line when LUMEN_CLIENT_TOKEN is set (none when it is not: an unmanaged agent).
+// The token the bridge was given: the file named in LUMEN_CLIENT_TOKEN_FILE (the config holds a path, not the secret), else LUMEN_CLIENT_TOKEN.
+// undefined: neither is set (a token-less client). Set but empty or unreadable counts as set: '' (invalid, refused), never as "no token".
+function fromEnv(env = process.env) {
+  if (env.LUMEN_CLIENT_TOKEN_FILE !== undefined) { try { return require('fs').readFileSync(env.LUMEN_CLIENT_TOKEN_FILE, 'utf8').trim(); } catch { return ''; } }
+  return env.LUMEN_CLIENT_TOKEN;
+}
+
+// The fields the bridge adds to its first line when it has a token (none when it has not: a token-less client).
 function hello(token, nonce) {
-  if (!token) return {};
+  if (token === undefined || token === null) return {};
   const p = parse(token);
   return p ? { lumenClient: p.id, lumenClientProof: proofFor(p.token, nonce) } : { lumenClient: 'invalid', lumenClientProof: '' };
 }
@@ -27,4 +34,4 @@ function verify(token, nonce, proof) {
   return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
 
-module.exports = { make, parse, proofFor, hello, verify, PATTERN };
+module.exports = { make, parse, proofFor, hello, verify, fromEnv, PATTERN };

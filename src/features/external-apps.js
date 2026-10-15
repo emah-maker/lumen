@@ -5,8 +5,11 @@
 //  - Apps: one record per app, a name and a token of its own ("Add app"). The token is kept encrypted (safeStorage) in
 //    <userData>/external-apps.json and shown once, when it is made. The bridge proves it knows it (automation/client-token.js).
 //    Revoke deletes the record: its connections are cut at once and its token never works again.
-//  - Unmanaged agents (no token: Claude Code added the old way, Codex...) keep working as before, unless the user turned on "Ask when an
-//    unknown app connects": then the first connection from a new name waits for Allow / Deny, and Allow is remembered by name.
+//    The token also lives in a file of its own (user-only), <userData>/external-app-tokens/<id>.token, so a config names the file
+//    (LUMEN_CLIENT_TOKEN_FILE) and never holds the secret: nothing to commit by mistake.
+//  - Token-less clients (an older setup, or any program that knows the shared mcp-token) are "unverified": the name they give is only a
+//    label. With "Require a token for every app" on they are refused. Otherwise each connection waits for the user's Allow, which lasts
+//    that session only, is never stored, and always asks before it acts. A name that is a token app's or a built-in app's is refused.
 //  - Visibility: `state()` lists the apps working now (a call is running) or paused, for the toolbar pill. Stop ends the app's
 //    calls and connections; Take over pauses it (its calls are refused, with the reason) until Resume.
 //  - "Finished" notice: once an app's calls have stopped for RUN_QUIET_MS after it worked, `onFinished(app)` fires once.
@@ -24,17 +27,19 @@ const APPS = {
   'claude-code': 'Claude Code',
   other: 'Another app',
 };
+const MAX_PROMPTS = 3; // open "wants to use Lumen" prompts: a program that tries new names cannot flood the window
 const RUN_QUIET_MS = 4000; // an app's run is over once it has made no call for this long
 const PROMPT_WAIT_MS = 90000; // an unanswered "wants to use Lumen" is a Deny (not remembered)
 const DENY_MEMORY_MS = 10 * 60 * 1000; // a Deny holds for this long, so an app that retries does not ask again and again
 const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
 
-function createExternalApps({ file, safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let records = [];
   try {
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (Array.isArray(saved?.apps)) records = saved.apps.filter((r) => r && typeof r.id === 'string' && typeof r.name === 'string');
   } catch {}
+  const temp = []; // unverified clients the user allowed for their session (never saved)
   const live = new Map(); // id -> { sessions: Set, busy, controller, paused, ranAt, timer }
   const prompts = new Map(); // prompt id -> { id, name, resolve, timer }
   const denied = new Map(); // lower-cased name -> time it was denied
@@ -51,51 +56,52 @@ function createExternalApps({ file, safeStorage = null, now = Date.now, onChange
   };
   const saveSoon = () => { if (!saveTimer) { saveTimer = setTimer(save, 3000); saveTimer.unref?.(); } }; // (a last-used time is not worth a write per call)
   const runtime = (id) => { let l = live.get(id); if (!l) { l = { sessions: new Set(), busy: 0, controller: new AbortController(), paused: false, ranAt: 0, timer: null }; live.set(id, l); } return l; };
-  const byId = (id) => records.find((r) => r.id === id) || null;
+  const byId = (id) => records.find((r) => r.id === id) || temp.find((r) => r.id === id) || null;
   const pub = (r) => {
     const l = live.get(r.id);
-    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : 'name', createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
+    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : 'session', unverified: !r.secret, createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
   };
+  // (Linux's basic_text backend only obfuscates: that is no keychain)
+  const encryptionOk = () => Boolean(safeStorage?.isEncryptionAvailable?.()) && safeStorage.getSelectedStorageBackend?.() !== 'basic_text';
+  const tokenFileOf = (id) => path.join(tokenDir, `${id}.token`);
   const secretOf = (r) => {
-    if (!r.secret || !safeStorage?.isEncryptionAvailable?.()) return null;
+    if (!r.secret || !encryptionOk()) return null;
     try { return safeStorage.decryptString(Buffer.from(r.secret, 'base64')); } catch { return null; }
   };
 
   // ---- apps
-  function add({ name, app = 'other', ask = false } = {}) {
+  function add({ name, app = 'other', ask = true } = {}) {
     const label = cleanName(name) || APPS[app] || APPS.other;
-    if (!safeStorage?.isEncryptionAvailable?.()) throw new Error('This computer has no system keychain to keep the token in, so Lumen can’t make one safely.');
+    if (!encryptionOk()) throw new Error('This computer has no system keychain to keep the token in, so Lumen can’t make one safely.');
     if (records.some((r) => r.name.toLowerCase() === label.toLowerCase() && r.secret)) throw new Error(`There is already an app called “${label}”. Pick another name, or revoke that one first.`);
     const { id, token } = clientToken.make();
-    const rec = { id, name: label, app: APPS[app] ? app : 'other', secret: safeStorage.encryptString(token).toString('base64'), createdAt: now(), lastUsed: null, ask: ask === true };
+    const rec = { id, name: label, app: APPS[app] ? app : 'other', secret: safeStorage.encryptString(token).toString('base64'), createdAt: now(), lastUsed: null, ask: ask !== false };
+    const tokenFile = tokenFileOf(id);
+    try { writeTokenFile(tokenFile, token); } catch (err) { throw new Error(`Lumen couldn’t write the token file: ${err.message}`); }
     records.push(rec);
     save();
     onChange();
-    return { app: pub(rec), token }; // the only time the token is returned
+    return { app: pub(rec), token, tokenFile }; // the token itself is not shown anywhere: the config names the file
   }
-  // An unmanaged agent the user said Allow to: remembered by the name it gave, which is only a label (anything local can claim it).
-  function remember(name, ask = false) {
-    const label = cleanName(name) || 'An AI agent';
-    let rec = records.find((r) => !r.secret && r.name.toLowerCase() === label.toLowerCase());
-    if (!rec) { rec = { id: clientToken.make().id, name: label, app: 'other', secret: null, createdAt: now(), lastUsed: null, ask: false }; records.push(rec); }
-    rec.ask = ask === true;
-    save();
-    onChange();
-    return pub(rec);
+  // A token-less client the user said Allow to, for this connection only. Its name is only what it calls itself.
+  function temporary(name) {
+    const rec = { id: clientToken.make().id, name: cleanName(name) || 'An AI agent', app: 'other', secret: null, createdAt: now(), lastUsed: null, ask: true };
+    temp.push(rec);
+    return rec;
   }
-  const findByName = (name) => records.find((r) => !r.secret && r.name.toLowerCase() === cleanName(name).toLowerCase()) || null;
+  // A name a token-less client may not use: it would pass for an app the user set up (or for one they know).
+  const claimed = (name) => { const n = cleanName(name).toLowerCase(); return n && (Object.entries(APPS).some(([k, l]) => k !== 'other' && l.toLowerCase() === n) || records.some((r) => r.secret && r.name.toLowerCase() === n)); };
   function revoke(id) {
     const rec = byId(id);
     if (!rec) return false;
-    records = records.filter((r) => r !== rec);
-    save();
+    if (rec.secret) { records = records.filter((r) => r !== rec); save(); try { fs.rmSync(tokenFileOf(id), { force: true }); } catch {} } else temp.splice(temp.indexOf(rec), 1);
     cut(id);
     live.delete(id);
     onChange();
     return true;
   }
   function setAsk(id, on) { const rec = byId(id); if (!rec) return false; rec.ask = on === true; save(); onChange(); return true; }
-  const list = () => records.map(pub);
+  const list = () => [...records, ...temp].map(pub);
   const get = (id) => { const r = byId(id); return r ? pub(r) : null; };
 
   // ---- who is connecting (the `identify` hook): a managed app proves its token; no token is an unmanaged agent (null); a token that
@@ -121,28 +127,36 @@ function createExternalApps({ file, safeStorage = null, now = Date.now, onChange
   function detach(session) {
     const id = session?.externalId;
     const l = id && live.get(id);
-    if (l && l.sessions.delete(session)) onChange();
+    if (l && l.sessions.delete(session)) {
+      const rec = byId(id);
+      if (rec && !rec.secret && !l.sessions.size) { temp.splice(temp.indexOf(rec), 1); live.delete(id); } // an unverified client's Allow ends with its session
+      onChange();
+    }
   }
 
   // The `onInitialize` hook: null to let the session start, or the words it is refused with.
   async function admit(session, info = {}) {
-    if (session.engine) return null; // Lumen's own engines are not other apps
+    if (session.engine) return null; // Lumen's own engines are not other apps (the server serves an engine tag only to a live run of its own: ai-agents.js enabled())
+    if (session.externalId) return null; // a second initialize on a session already admitted
     if (session.client) { // it proved a token (identify)
       if (!attach(session, session.client)) return 'This app’s access to Lumen was revoked. Add it again in Lumen: Settings, AI, Let other apps use Lumen.';
       return null;
     }
-    if (!prefs.ask()) return null; // unmanaged, and the user has not asked to be asked: as before
-    const known = findByName(session.clientName);
-    if (known) { attach(session, known.id); return null; }
+    // No token: unverified. 'open' is for tests only (ai-agents tests that predate this); 'require' refuses; otherwise the user is asked.
+    const policy = prefs.policy();
+    if (policy === 'open') return null;
+    if (policy === 'require') return NEEDS_TOKEN;
+    if (claimed(session.clientName)) return `An app without a token can’t call itself “${cleanName(session.clientName)}”: that is the name of an app set up in Lumen. Give it its own token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    if (prompts.size >= MAX_PROMPTS && ![...prompts.values()].some((p) => p.key === cleanName(session.clientName).toLowerCase())) return 'Too many apps are waiting for the user’s answer in Lumen. Try again later.';
     const answer = await askUser(session.clientName);
-    if (answer.decision === 'deny') return `${session.clientName} was not allowed to use Lumen. The user can change that in Lumen: Settings, AI, Let other apps use Lumen.`;
-    const rec = remember(session.clientName, answer.decision === 'allow-ask');
-    attach(session, rec.id);
+    if (answer.decision !== 'allow') return `${cleanName(session.clientName) || 'The app'} was not allowed to use Lumen. Give it a token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    attach(session, temporary(session.clientName).id);
     return null;
   }
-  const prefs = { ask: () => false };
+  const NEEDS_TOKEN = 'Lumen needs a token for every app. Add this app in Lumen: Settings, AI, Let other apps use Lumen, and put its token file in the app’s config.';
+  const prefs = { policy: () => 'ask' };
 
-  // ---- "X wants to use Lumen": Allow / Allow and ask before it acts / Deny
+  // ---- "Unverified app X wants to use Lumen": Allow (this session) / Deny
   function askUser(name) {
     const key = cleanName(name).toLowerCase();
     if (now() - (denied.get(key) || -Infinity) < DENY_MEMORY_MS) return Promise.resolve({ decision: 'deny' });
@@ -162,7 +176,7 @@ function createExternalApps({ file, safeStorage = null, now = Date.now, onChange
   function answer(id, decision, timedOut = false) {
     const p = prompts.get(id);
     if (!p) return false;
-    const d = decision === 'allow' || decision === 'allow-ask' ? decision : 'deny';
+    const d = decision === 'allow' ? 'allow' : 'deny';
     prompts.delete(id);
     clearTimer(p.timer);
     if (d === 'deny' && !timedOut) denied.set(p.key, now());
@@ -175,12 +189,12 @@ function createExternalApps({ file, safeStorage = null, now = Date.now, onChange
 
   // ---- one call (the wrapper in mcpCallTool): { refuse } with the reason, or { signal, ask, end() }. Not for Lumen's own engines.
   function beginCall(session) {
-    const unmanaged = { signal: null, ask: false, end() {} }; // as before
+    const unmanaged = { signal: null, ask: false, end() {} };
     if (!session || session.engine) return unmanaged;
     // A client that skipped `initialize` (so was never admitted) gets no way round it.
     if (!session.externalId) {
       if (session.client) { if (!attach(session, session.client)) return { refuse: 'This app’s access to Lumen was revoked.' }; }
-      else return prefs.ask() ? { refuse: 'This app has not been allowed to use Lumen. Connect it again and answer the prompt in Lumen.' } : unmanaged;
+      else { const policy = prefs.policy(); return policy === 'open' ? unmanaged : policy === 'require' ? { refuse: NEEDS_TOKEN } : { refuse: 'This app has not been allowed to use Lumen. Connect it again and answer the prompt in Lumen.' }; }
     }
     const id = session.externalId;
     const rec = byId(id);
@@ -237,9 +251,22 @@ function createExternalApps({ file, safeStorage = null, now = Date.now, onChange
   const connectedCount = () => records.filter((r) => (live.get(r.id)?.sessions.size || 0) > 0).length;
   // Revoke-all (the master switch went off): every app is cut; the approvals stay.
   function disconnectAll() { for (const id of [...live.keys()]) { cut(id); runtimeDone(id); } onChange(); }
+  // "Require a token for every app" went on: unverified clients are cut now.
+  function disconnectUnverified() { for (const r of [...temp]) revoke(r.id); }
   function flush() { if (saveTimer) save(); }
 
-  return { add, remember, revoke, setAsk, list, get, identify, attach, detach, admit, answer, pendingPrompts, beginCall, stop, takeOver, resume, state, connectedCount, disconnectAll, sessionsOf: (id) => [...(live.get(id)?.sessions || [])], flush, setPrompting: (fn) => { prefs.ask = fn; }, raw: () => records };
+  return { add, revoke, setAsk, list, get, identify, attach, detach, admit, answer, pendingPrompts, beginCall, stop, takeOver, resume, state, connectedCount, disconnectAll, disconnectUnverified, tokenFileOf, sessionsOf: (id) => [...(live.get(id)?.sessions || [])], flush, setPolicy: (fn) => { prefs.policy = fn; }, raw: () => records };
+}
+
+// A file for the token with the user's access only (0600; on Windows the inherited rights are dropped and only this user is granted).
+function writeTokenFile(file, token) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, token, { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch {}
+  if (process.platform === 'win32') {
+    const who = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
+    try { require('child_process').execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true }); } catch {}
+  }
 }
 
 // Where each app keeps its MCP config, when that is a standard place (null: no file to open, e.g. Claude Code's is a command).
@@ -255,16 +282,21 @@ function configPath(app, { platform = process.platform, env = process.env, home 
 // The ready-to-paste setup for each app. `command` / `args` are how to run the bridge (ai-agents.js mcpCommand); `token` is the app's
 // token, or null where it is not known any more (shown once): a placeholder stands in and the text is still valid.
 const TOKEN_PLACEHOLDER = 'PASTE-THE-TOKEN-FROM-ADD-APP';
-function setupFor({ command, args, token = null, name = 'lumen', platform = process.platform } = {}) {
-  const env = { ELECTRON_RUN_AS_NODE: '1', LUMEN_CLIENT_TOKEN: token || TOKEN_PLACEHOLDER };
+const FILE_PLACEHOLDER = 'PATH-OF-THE-TOKEN-FILE-FROM-ADD-APP';
+// The bridge reads the token from the file named in LUMEN_CLIENT_TOKEN_FILE (the text holds a path, not the secret); `token` (the secret
+// itself, LUMEN_CLIENT_TOKEN) is only for a caller that insists. Neither: a placeholder stands in and the text is still valid.
+function setupFor({ command, args, tokenFile = null, token = null, name = 'lumen', platform = process.platform } = {}) {
+  const key = token && !tokenFile ? 'LUMEN_CLIENT_TOKEN' : 'LUMEN_CLIENT_TOKEN_FILE';
+  const value = token && !tokenFile ? token : tokenFile || FILE_PLACEHOLDER;
+  const env = { ELECTRON_RUN_AS_NODE: '1', [key]: value };
   const quoted = [command, ...args].map((a) => (platform === 'win32' || /\s/.test(a) ? `"${a}"` : a)).join(' ');
   const json = (o) => JSON.stringify(o, null, 2);
   return {
     'claude-desktop': { label: 'Claude Desktop', file: 'claude_desktop_config.json', where: 'Settings, Developer, Edit Config, then merge this in', text: json({ mcpServers: { [name]: { command, args, env } } }) },
-    cursor: { label: 'Cursor', file: '.cursor/mcp.json', where: '~/.cursor/mcp.json (all projects) or .cursor/mcp.json in a project', text: json({ mcpServers: { [name]: { command, args, env } } }) },
-    vscode: { label: 'VS Code', file: 'mcp.json', where: 'Command Palette, MCP: Open User Configuration (Copilot, Continue and other extensions read it too)', text: json({ servers: { [name]: { type: 'stdio', command, args, env } } }) },
-    'claude-code': { label: 'Claude Code', file: null, where: 'run it in a terminal', text: `${platform === 'win32' ? 'claude.cmd' : 'claude'} mcp add ${name} --scope user -e ELECTRON_RUN_AS_NODE=1 -e LUMEN_CLIENT_TOKEN=${token || TOKEN_PLACEHOLDER} -- ${quoted}` },
+    cursor: { label: 'Cursor', file: '.cursor/mcp.json', where: '~/.cursor/mcp.json, your user-level config', warning: 'Don’t commit this file. Use the user-level config (~/.cursor/mcp.json), not .cursor/mcp.json inside a project.', text: json({ mcpServers: { [name]: { command, args, env } } }) },
+    vscode: { label: 'VS Code', file: 'mcp.json', where: 'Command Palette, MCP: Open User Configuration (Copilot, Continue and other extensions read it too)', warning: 'Don’t commit this file. Use the user configuration, not .vscode/mcp.json inside a project.', text: json({ servers: { [name]: { type: 'stdio', command, args, env } } }) },
+    'claude-code': { label: 'Claude Code', file: null, where: 'run it in a terminal', warning: 'Keep --scope user: --scope project writes .mcp.json into the project, which gets committed.', text: `${platform === 'win32' ? 'claude.cmd' : 'claude'} mcp add ${name} --scope user -e ELECTRON_RUN_AS_NODE=1 -e "${key}=${value}" -- ${quoted}` },
   };
 }
 
-module.exports = { createExternalApps, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, cleanName };
+module.exports = { createExternalApps, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, MAX_PROMPTS, cleanName };

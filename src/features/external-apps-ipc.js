@@ -46,30 +46,33 @@ function setupExternalApps(deps) {
     file: path.join(app.getPath('userData'), 'external-apps.json'),
     safeStorage: isTest && global.__externalAppsSafeStorage ? global.__externalAppsSafeStorage : electron().safeStorage,
     onChange: broadcast,
-    onPrompt: (e) => { if (e.type === 'open') notify('Lumen', `${e.prompt.name} wants to use Lumen. Open Lumen to allow or deny it.`, { silent: false, onClick: () => { try { deps.userWc()?.focus(); } catch {} } }); },
+    onPrompt: (e) => { if (e.type === 'open') notify('Lumen', `Unverified app “${e.prompt.name}” wants to use Lumen. Open Lumen to allow or deny it.`, { silent: false, onClick: () => { try { deps.userWc()?.focus(); } catch {} } }); },
     onFinished: (a) => notify('Lumen', `${a.name} finished in Lumen`),
   });
-  ext.setPrompting(() => readSettings().externalAppsPrompt === true);
+  // Token required for every app (new users), or token-less clients asked one by one ('ask'). 'open' (no checks) exists only so the older tests, which
+  // drive Lumen through token-less sessions, keep running; test/external-apps.js turns it off (global.__externalStrict).
+  ext.setPolicy(() => (readSettings().externalAppsRequireToken === true ? 'require' : isTest && !global.__externalStrict ? 'open' : 'ask'));
 
   const enabled = () => readSettings().mcpEnabled === true;
-  const setup = (token = null) => externalApps.setupFor({ ...deps.mcpCommand(), token });
+  const setup = (tokenFile = null) => externalApps.setupFor({ ...deps.mcpCommand(), tokenFile });
   const paths = () => Object.fromEntries(['claude-desktop', 'cursor', 'vscode'].map((k) => [k, externalApps.configPath(k)]));
-  const info = () => ({ enabled: enabled(), prompt: readSettings().externalAppsPrompt === true, connected: ext.connectedCount(), apps: ext.list(), setup: setup(), paths: paths(), platform: process.platform });
+  const info = () => ({ enabled: enabled(), requireToken: readSettings().externalAppsRequireToken === true, connected: ext.connectedCount(), apps: ext.list(), setup: setup(), paths: paths(), platform: process.platform });
 
   invoke.info = () => info();
-  // The master switch. Turning it on from here also turns on "ask when an unknown app connects" (an older setup that already had
-  // agent connections on keeps its behaviour: the setting stays unset).
+  // The master switch. Turning it on from here (it was off) also requires a token for every app. Someone who already had agent connections on keeps
+  // token-less clients working, each asked about (Settings shows a warning and a one-click switch to require tokens).
   invoke.enable = (on) => {
     const s = readSettings();
-    writeSettings({ ...s, mcpEnabled: Boolean(on), ...(on && !s.mcpEnabled && s.externalAppsPrompt === undefined ? { externalAppsPrompt: true } : {}) });
+    writeSettings({ ...s, mcpEnabled: Boolean(on), ...(on && !s.mcpEnabled && s.externalAppsRequireToken === undefined ? { externalAppsRequireToken: true } : {}) });
     if (!on) { deps.mcpServer()?.disconnectAll(); deps.agentWindows?.windows.releaseAll(); ext.disconnectAll(); } else deps.startMcp();
     return info();
   };
-  invoke['prompt-setting'] = (on) => { writeSettings({ ...readSettings(), externalAppsPrompt: Boolean(on) }); return info(); };
+  invoke['require-token'] = (on) => { writeSettings({ ...readSettings(), externalAppsRequireToken: Boolean(on) }); if (on) ext.disconnectUnverified(); return info(); };
+  invoke.setup = (id) => { const a = ext.list().find((x) => x.id === String(id) && x.kind === 'token'); return a ? { ok: true, app: a, setup: setup(ext.tokenFileOf(a.id)) } : { ok: false }; };
   invoke.add = ({ name, app: kind, ask } = {}) => {
     try {
       const made = ext.add({ name, app: kind, ask });
-      return { ok: true, app: made.app, token: made.token, setup: setup(made.token), info: info() };
+      return { ok: true, app: made.app, setup: setup(made.tokenFile), info: info() }; // (the token itself stays in its file: it is shown nowhere)
     } catch (err) { return { ok: false, error: String(err?.message || err) }; }
   };
   invoke.revoke = (id) => ({ ok: ext.revoke(String(id)), info: info() });
@@ -94,7 +97,7 @@ function setupExternalApps(deps) {
   send_.resume = (id) => { ext.resume(String(id)); };
   invoke.state = () => ext.state();
 
-  return { ext, invoke, send: send_, test: { ext, notes, info, answer: (id, d) => ext.answer(id, d) } };
+  return { ext, invoke, send: send_, test: { ext, notes, info, answer: (id, d) => ext.answer(id, d), tokenFile: (id) => ext.tokenFileOf(id) } };
 }
 
 module.exports = { setupExternalApps };
