@@ -257,6 +257,9 @@ const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id ===
 const isBackground = (id) => IDS.includes(id);
 // Text and cards: 'light' is the only background that turns the page's text dark; a picture is darkened under a scrim, so it is dark.
 const toneOf = (id) => byId(id)?.tone || 'plain';
+// The shades the page is drawn in over a background ('light' or 'dark'): the system's on Plain, light over a light background, dark over any other.
+// The new-tab page (accent, text) and the picker's preview in Settings both ask this, so the two can never disagree.
+const modeOf = (id, systemDark) => { const tone = toneOf(id); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 // The animated effects drawn over a background (renderer/newtab-effects.js), with a still preview each for the picker.
 // `fps` is how often it redraws (the particles and snow move at 30; the soft ones need far fewer); `soft` ones are drawn small and scaled up.
@@ -293,9 +296,95 @@ function dailyPick(key = dayKey()) {
   return ORDER[((day % ORDER.length) + ORDER.length) % ORDER.length];
 }
 
-const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
+const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.Backgrounds = api;
+})();
+;
+// ---- ../features/clock-styles.js
+// [look] The new-tab clock's styles and the greeting's fonts: the choices, their defaults, the checks, and
+// the time split into parts. Pure functions, no DOM, no Electron: used by settings-backend.js (validates the
+// settings, lists the choices for Settings → Home), renderer/newtab.js (draws the clock) and the unit tests.
+// How each style looks (fonts, weight, tracking, layout) is CSS in renderer/newtab.html, with the same
+// stacks for the previews in renderer/settings.css. System fonts only: the page loads no fonts.
+(function () {
+'use strict';
+
+// Each style is a whole look: font, weight, size, tracking, and where the date sits.
+const CLOCK_STYLES = [
+  { id: 'classic', label: 'Classic', hint: 'Light and quiet. The original.' },
+  { id: 'rounded', label: 'Rounded', hint: 'Soft, rounded numerals.' },
+  { id: 'thin', label: 'Thin', hint: 'Large and ultralight, date on top, like a lock screen.' },
+  { id: 'serif', label: 'Serif', hint: 'A book face for the time and date.' },
+  { id: 'mono', label: 'Mono', hint: 'Monospaced, like a terminal.' },
+  { id: 'bold', label: 'Stacked', hint: 'Heavy hours over minutes.' },
+];
+const CLOCK_HOURS = ['auto', '12', '24']; // auto: as the system's language writes it
+const CLOCK_CARDS = ['none', 'soft', 'glass']; // what sits behind the clock and date
+const GREETING_FONTS = [
+  { id: 'classic', label: 'Classic' },
+  { id: 'match', label: 'Match clock' },
+  { id: 'rounded', label: 'Rounded' },
+  { id: 'serif', label: 'Serif' },
+  { id: 'thin', label: 'Thin' },
+  { id: 'mono', label: 'Mono' },
+  { id: 'hand', label: 'Handwritten' },
+];
+// Every default is what the page looked like before these choices existed.
+const DEFAULTS = { style: 'classic', hours: 'auto', seconds: false, date: true, card: 'none', shadow: false, greeting: 'classic' };
+
+const ids = (list) => list.map((s) => s.id);
+const oneOf = (allowed) => (v) => (allowed.includes(v) ? v : null);
+const cleanStyle = oneOf(ids(CLOCK_STYLES));
+const cleanHours = (v) => oneOf(CLOCK_HOURS)(typeof v === 'number' ? String(v) : v);
+const cleanCard = oneOf(CLOCK_CARDS);
+const cleanGreetingFont = oneOf(ids(GREETING_FONTS));
+// "Match clock": the greeting takes the clock's face (Stacked's is already the greeting's bold one).
+function greetingFontFor(font, clockStyle) {
+  const f = cleanGreetingFont(font) || DEFAULTS.greeting;
+  if (f !== 'match') return f;
+  const s = cleanStyle(clockStyle) || DEFAULTS.style;
+  return s === 'bold' ? 'classic' : s;
+}
+// Everything the page needs, from whatever the hash carried: anything unknown is the default.
+function clean(o) {
+  const c = o && typeof o === 'object' ? o : {};
+  return {
+    style: cleanStyle(c.style) || DEFAULTS.style,
+    hours: cleanHours(c.hours) || DEFAULTS.hours,
+    seconds: c.seconds === true,
+    date: c.date !== false,
+    card: cleanCard(c.card) || DEFAULTS.card,
+    shadow: c.shadow === true,
+    greeting: cleanGreetingFont(c.greeting) || DEFAULTS.greeting,
+  };
+}
+
+// The time as parts: { h, m, s (or ''), sep (between hours and minutes), ssep (before the seconds), text }. `hours` is auto | 12 | 24. The AM/PM marker is left out
+// (the page never showed it), and 24-hour keeps the leading zero ("09:41"), 12-hour never has one ("9:41").
+function clockParts(date, { hours = 'auto', seconds = false, locale } = {}) {
+  const opts = { hour: 'numeric', minute: '2-digit' };
+  if (seconds) opts.second = '2-digit';
+  if (hours === '12') opts.hour12 = true;
+  if (hours === '24') { opts.hourCycle = 'h23'; opts.hour = '2-digit'; }
+  let parts;
+  try { parts = new Intl.DateTimeFormat(locale || undefined, opts).formatToParts(date); } catch { parts = new Intl.DateTimeFormat('en-US', opts).formatToParts(date); }
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  const after = (type) => { const i = parts.findIndex((p) => p.type === type); const next = i >= 0 ? parts[i + 1] : null; return next?.type === 'literal' && next.value.trim() ? next.value : ':'; };
+  const sep = after('hour');
+  let h = get('hour');
+  if (hours === '12') h = String(Number(h) || 12);
+  const m = get('minute');
+  const s = seconds ? get('second') : '';
+  return { h, m, s, sep, ssep: s ? after('minute') : '', text: `${h}${sep}${m}${s ? `${after('minute')}${s}` : ''}` };
+}
+
+// "Good morning" and the like, by the hour: the new-tab page and Settings' preview of it say the same.
+const greetingFor = (date) => { const h = date.getHours(); return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+
+const api = { greetingFor, CLOCK_STYLES, CLOCK_HOURS, CLOCK_CARDS, GREETING_FONTS, DEFAULTS, cleanStyle, cleanHours, cleanCard, cleanGreetingFont, greetingFontFor, clean, clockParts };
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+else globalThis.ClockStyles = api;
 })();
 ;
 // ---- i18n.js
@@ -2636,6 +2725,161 @@ async function buildProviders(page) {
   }
 }
 ;
+// ---- settings-preview.js
+// Settings → Home: the live preview of the new-tab page. It shows what the page will look like with everything chosen now: the background (a
+// gradient, a solid, or your picture), the accent (also Match wallpaper), the animated effect drawn live at a small scale (the page's own effects,
+// renderer/newtab-effects.js), the clock (style, size, card, shadow), the greeting (font, your name), the search box's width, the widget cards'
+// glass, and the light or dark theme. Pointing at a background tile (or an effect) swaps only that, keeping all the rest.
+//
+// The text mode (white text over a dark background, dark text over a light one) is not decided here: features/backgrounds.js (modeOf, toneOf) is the
+// one rule, used by the page too. The looks (renderer/settings-preview.css) mirror renderer/newtab.html.
+//
+// Cost: nothing is built or drawn while the preview is not on screen (IntersectionObserver); the effect's script is loaded the first time an
+// effect is on; its loop asks for no frame while the preview is offscreen or the window is hidden, and Reduce motion / Performance mode draw one still frame.
+(() => {
+  'use strict';
+  const STAGE = { w: 1100, h: 440 }; // a page-sized stage, scaled into the box
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+
+  let effectsScript = null; // the effects' script, loaded once, when an effect is first shown
+  const withEffects = (then) => {
+    if (window.createEffectPreview) { then(); return; }
+    if (effectsScript) { effectsScript.addEventListener('load', then, { once: true }); return; }
+    effectsScript = el('script');
+    effectsScript.src = 'newtab-effects.js';
+    effectsScript.addEventListener('load', then, { once: true });
+    document.head.append(effectsScript);
+  };
+
+  // opts.state(): Settings' state (prefs, clock styles, performance); opts.picture(): the background picture as { url (data:), colors } or null.
+  function create(opts) {
+    const BG = window.Backgrounds; const TC = window.ThemeColors; const CS = window.ClockStyles;
+    const box = el('div', 'bg-preview ntp tone-plain');
+    box.id = 'bg-preview';
+    box.setAttribute('aria-hidden', 'true');
+    const bg = el('div', 'ntp-bg'); const scrim = el('div', 'ntp-scrim'); scrim.hidden = true;
+    const canvas = el('canvas', 'ntp-fx'); canvas.hidden = true;
+    const stage = el('div', 'ntp-stage');
+    const clockH = el('span', 'ntp-h'); const clockSep = el('span', 'ntp-sep'); const clockM = el('span', 'ntp-m'); const clockS = el('span', 'ntp-s');
+    const clock = el('p', 'ntp-clock'); clock.append(clockH, clockSep, clockM, clockS);
+    const date = el('p', 'ntp-date'); const hello = el('div', 'ntp-hello');
+    const clockCard = el('div', 'ntp-clock-card'); clockCard.append(clock, date);
+    const head = el('div', 'ntp-head'); head.append(clockCard, hello);
+    const search = el('div', 'ntp-search'); search.append(el('span', 'q', 'Search Google'), (() => { const m = el('div', 'ntp-mode'); m.append(el('span', 'on', 'Search'), el('span', '', 'Ask AI')); return m; })());
+    const col = el('div', 'ntp-col'); col.append(head, search);
+    const cards = el('div', 'ntp-cards');
+    for (const [title, body] of [['Weather', '18°'], ['Notes', null], ['Tasks', null]]) {
+      const c = el('div', 'ntp-card'); c.append(el('b', '', title));
+      if (body) c.append(el('em', '', body)); else c.append(el('i', 'hi'), el('i'));
+      cards.append(c);
+    }
+    stage.append(col, cards);
+    box.append(bg, scrim, canvas, stage);
+
+    let hovered = null; // { background } or { effect } while the pointer or keyboard is on a tile
+    let liveName = null; // what is typed in the name field, before it is saved
+    let pic = { v: -1, data: null }; // the background picture, fetched when first needed (and again when it changes)
+    let fx = null;
+    let dirty = true; let onScreen = false; let queued = false;
+
+    const prefsOf = () => opts.state()?.prefs || {};
+    const lookOf = () => {
+      const p = prefsOf();
+      let id = hovered?.background || (p.newTabShuffle === true ? BG.dailyPick() : p.newTabBackground);
+      if (id === 'image' && !p.newTabImage) id = 'plain'; // (a picture that is gone is Plain, as on the page)
+      if (!BG.byId(id)) id = 'plain';
+      return { p, id, effect: hovered?.effect || p.newTabEffect || 'none' };
+    };
+    const picture = () => { // fetched once per picture
+      const v = prefsOf().newTabImage || 0;
+      if (pic.v !== v) { pic = { v, data: null }; if (v) Promise.resolve(opts.picture()).then((d) => { if (pic.v === v) { pic.data = d; schedule(); } }).catch(() => {}); }
+      return pic.data;
+    };
+
+    function render() {
+      dirty = false;
+      const { p, id, effect } = lookOf();
+      const tone = BG.toneOf(id); // 'plain', 'dark' or 'light': the same call the new-tab page makes
+      const image = id === 'image' ? picture() : null;
+      const mode = BG.modeOf(id, dark.matches);
+      const light = Boolean(opts.state()?.graphics?.light); // Graphics: Light (Settings > Advanced): no blur behind glass, a calmer effect, as on the page
+      box.className = `bg-preview ntp tone-${tone}${effect !== 'none' ? ' has-fx' : ''}${light ? ' gfx-light' : ''}`;
+      box.dataset.gfx = light ? 'light' : 'full';
+      box.dataset.tone = tone; box.dataset.bg = id; box.dataset.effect = effect;
+      // background
+      const item = BG.byId(id);
+      bg.className = `ntp-bg bg-${id}`;
+      bg.style.background = image ? `#000 url("${image.url}") center / cover no-repeat` : item?.art || '';
+      scrim.hidden = id !== 'image';
+      // accent, in the shade the page is drawn in (features/theme-colors.js)
+      const seed = id === 'image' ? image?.colors?.[0] || null : item?.seed || null;
+      const accent = TC.accentOf(p.accentColor, seed)[mode];
+      const tokens = TC.tokensFor(accent, mode);
+      for (const [k, v] of Object.entries(TC.varsOf(tokens))) box.style.setProperty(k, v);
+      // clock, greeting, search, cards
+      const cs = CS.clean({ style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont });
+      box.dataset.clockStyle = cs.style; box.dataset.clockCard = cs.card; box.dataset.clockShadow = cs.shadow ? '1' : '0';
+      box.dataset.greetingFont = CS.greetingFontFor(cs.greeting, cs.style);
+      box.dataset.glass = ['frosted', 'clear'].includes(p.newTabWidgetGlass) ? p.newTabWidgetGlass : 'solid';
+      stage.style.setProperty('--clock-size', `${opts.state()?.clockPx?.[p.newTabClockSize] || 88}px`);
+      stage.style.setProperty('--search-w', `${Math.min(1000, Math.max(480, Number(p.newTabSearchWidth) || 640))}px`); // (the page's own range; 640 is Automatic)
+      const now = new Date();
+      const t = CS.clockParts(now, { hours: cs.hours, seconds: cs.seconds });
+      clockH.textContent = cs.style === 'bold' && /^\d$/.test(t.h) ? `0${t.h}` : t.h; clockSep.textContent = t.sep; clockM.textContent = t.m; clockS.textContent = t.s ? `${t.ssep}${t.s}` : '';
+      clock.hidden = p.newTabClock === false;
+      date.hidden = !cs.date;
+      clockCard.hidden = clock.hidden && date.hidden;
+      date.textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+      const name = (liveName ?? p.newTabName ?? '').trim().slice(0, 40);
+      hello.textContent = name ? `${CS.greetingFor(now)}, ${name}` : CS.greetingFor(now);
+      // the animated effect, on its own small canvas
+      applyEffect(p, effect, tokens.accent, light);
+      fit();
+    }
+
+    function applyEffect(p, effect, accent, light) {
+      canvas.hidden = effect === 'none';
+      if (effect === 'none' && !fx) return;
+      withEffects(() => {
+        if (!window.createEffectPreview) return;
+        fx ||= window.createEffectPreview(canvas, { stageW: STAGE.w, stageH: STAGE.h });
+        const moving = !p.reduceMotion && !opts.state()?.performance?.active && !reduced.matches; // Reduce motion and Performance mode: one still frame, as on the page
+        fx.set({ name: effect, color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, text: getComputedStyle(box).color, accent, animate: moving, light });
+      });
+    }
+
+    function fit() { const w = box.clientWidth; if (w > 0) box.style.setProperty('--k', String(w / STAGE.w)); }
+    const schedule = () => { // coalesce a burst of changes into one draw, and draw nothing while it cannot be seen
+      dirty = true;
+      if (!onScreen || queued) return;
+      queued = true;
+      queueMicrotask(() => { queued = false; if (onScreen && dirty) render(); });
+    };
+
+    if (typeof IntersectionObserver === 'function') new IntersectionObserver((entries) => { onScreen = entries[entries.length - 1].isIntersecting; if (onScreen && dirty) render(); }).observe(box);
+    else { onScreen = true; }
+    if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(box);
+    window.addEventListener('lumen-pref', (e) => { if (e.detail?.key === 'newTabName') liveName = null; schedule(); });
+    document.addEventListener('input', (e) => { if (e.target?.id === 'pref-newTabName') { liveName = e.target.value; schedule(); } });
+    dark.addEventListener('change', schedule);
+    reduced.addEventListener('change', schedule);
+
+    const api = {
+      el: box,
+      refresh: schedule, // after the state was replaced (a picture picked or removed, shuffle changed)
+      hover(over) { hovered = over || null; schedule(); }, // { background } or { effect }: just that, the rest as chosen
+      // For tests: what is drawn now.
+      info: () => ({ background: box.dataset.bg, tone: box.dataset.tone, effect: box.dataset.effect, glass: box.dataset.glass, gfx: box.dataset.gfx, clockStyle: box.dataset.clockStyle, greetingFont: box.dataset.greetingFont, accent: getComputedStyle(box).getPropertyValue('--accent').trim(), fx: fx?.info() || null }),
+    };
+    window.NewTabPreview.last = api; // (the tests read what is drawn: info())
+    return api;
+  }
+
+  window.NewTabPreview = { create, last: null };
+})();
+;
 // ---- settings.js
 // lumen://settings: a sidebar of categories with search, and one category per page (#category in the URL),
 // like System Settings: a large title, then grouped lists of rows. Deep things open as sub-pages.
@@ -3044,6 +3288,15 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
+  const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
+  const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
+  showProjectsDir();
+  const projectsRow = row(tr('settings.ai.projectsDir', 'Projects folder'), tr('settings.ai.projectsDirDesc', 'New projects get their own folder here. Chats in a project are also saved in it as Markdown files (not encrypted); chats outside projects never are.'),
+    h('button', { id: 'projects-dir-change', text: tr('settings.ai.projectsDirChange', 'Change…'), onclick: async () => { st = await S.pickProjectsDir(); showProjectsDir(); } }),
+    h('button', { id: 'projects-dir-reset', text: tr('settings.ai.projectsDirReset', 'Use Documents'), onclick: async () => { await save('projectsDir', ''); showProjectsDir(); } }));
+  projectsRow.querySelector('.text').append(projectsWhere);
+  card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
@@ -3567,12 +3820,9 @@ async function buildHome(card) {
   // The picker: a live preview that follows the pointer or the keyboard over the tiles, the backgrounds in groups (Gradients, Solids, Your picture)
   // and the animated effects. A tile's art is the same CSS the new-tab page uses (features/backgrounds.js; the older ones are classes in settings.css).
   const sections = h('div', { class: 'bg-sections', role: 'radiogroup', 'aria-label': 'New tab background', id: 'pref-newTabBackground' });
-  const preview = h('div', { class: 'bg-preview', id: 'bg-preview', 'aria-hidden': 'true' }, h('span', { class: 'bgp-clock', text: '9:41' }), h('span', { class: 'bgp-hello', text: 'Good evening' }), h('span', { class: 'bgp-search' }));
-  const showPreview = (item, effect) => { // a background (or an effect: its own still picture)
-    const tone = effect ? 'dark' : item.tone;
-    preview.className = `bg-preview tone-${tone}${effect ? '' : ` bg-${item.id}`}`;
-    preview.style.background = item.art || '';
-  };
+  // The preview shows the whole new-tab page as chosen (renderer/settings-preview.js); pointing at a tile swaps only that background or effect.
+  const preview = window.NewTabPreview.create({ state: () => st, picture: () => S.wallpaperPreview() });
+  const showPreview = (item, effect) => preview.hover(effect ? { effect: item.id } : { background: item.id });
   const shuffled = () => st.prefs.newTabShuffle === true;
   const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
@@ -3581,7 +3831,7 @@ async function buildHome(card) {
       onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
     if (item.art) btn.style.background = item.art;
     const show = () => showPreview(item);
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     return btn;
@@ -3613,7 +3863,7 @@ async function buildHome(card) {
     sections.classList.toggle('shuffled', shuffled());
     shuffleNote.hidden = !shuffled();
     shuffleNote.textContent = shuffled() ? `Today: ${BG.byId(BG.dailyPick())?.label}. Pick a background to stop shuffling.` : '';
-    showPreview(BG.byId(current) || BG.byId('plain'));
+    preview.refresh();
     for (const t of fxTiles.querySelectorAll('button')) { const on = t.dataset.value === st.prefs.newTabEffect; t.setAttribute('aria-checked', String(on)); t.tabIndex = on ? 0 : -1; }
   };
   // The animated effects, one still picture each.
@@ -3624,7 +3874,7 @@ async function buildHome(card) {
       onclick: async () => { await save('newTabEffect', fx.id); effectOptions.hidden = fx.id === 'none'; renderTiles(); } }, h('span', { text: fx.label }));
     if (fx.art) btn.style.background = fx.art;
     btn.addEventListener('pointerenter', () => showPreview(fx, true)); btn.addEventListener('focus', () => showPreview(fx, true));
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     fxTiles.append(btn);
   }
@@ -3637,7 +3887,7 @@ async function buildHome(card) {
   });
   card.group('Background').append(
     toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
-    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview, shuffleNote, sections, picture),
+    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
   );
   card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
@@ -5435,7 +5685,7 @@ function buildSystem(card) {
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
   // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
-  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 24 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 20 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
     [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
   const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
   const showGfxNote = () => {
