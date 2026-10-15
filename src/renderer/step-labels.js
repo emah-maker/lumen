@@ -171,7 +171,7 @@
       if (n === 'Task' || n === 'Agent') return t('step.subagent');
       if (n === 'Skill') return t('step.skill', { name: clip(i.skill || i.command, 40) });
       const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
-      if (mcp && mcp[1] !== 'lumen') return clip(t('step.mcp', { server: mcp[1].replace(/_/g, ' '), tool: mcp[2].replace(/_/g, ' ') }));
+      if (mcp && mcp[1] !== 'lumen') return clip(t('step.mcp', { server: mcp[1].replace(/_/g, ' ') })); // (the server, never the tool's own name)
       return '';
     };
 
@@ -199,7 +199,8 @@
     };
 
     // A failed step. { text: "Couldn't read p2.png", why: "the file was empty" }
-    const VERBS = [[/^Reading /, 'read'], [/^Writing /, 'write'], [/^Editing /, 'edit'], [/^Running /, 'run'], [/^Searching /, 'search'], [/^Opening /, 'open'], [/^Installing /, 'install'], [/^Listing /, 'list'], [/^Creating /, 'create'], [/^Deleting /, 'delete'], [/^Copying /, 'copy'], [/^Moving /, 'move'], [/^Fetching /, 'fetch'], [/^Checking /, 'check'], [/^Using /, 'use'], [/^Clicking/, 'click'], [/^Typing/, 'type'], [/^Looking /, 'look'], [/^Building /, 'build'], [/^Processing /, 'process']];
+    // Each verb has its own whole sentence in en.json (step.failed.<verb>): no sentence is built from pieces, so a language can order it its own way.
+    const VERBS = [[/^Reading /, 'read'], [/^Writing /, 'write'], [/^Editing /, 'edit'], [/^Running /, 'run'], [/^Searching /, 'search'], [/^Opening /, 'open'], [/^Installing /, 'install'], [/^Listing /, 'list'], [/^Creating /, 'create'], [/^Deleting /, 'delete'], [/^Copying /, 'copy'], [/^Moving /, 'move'], [/^Downloading /, 'download'], [/^Checking /, 'check'], [/^Using /, 'use'], [/^Building /, 'build'], [/^Processing /, 'process'], [/^Comparing /, 'compare'], [/^Committing /, 'commit'], [/^Pushing /, 'push'], [/^Pulling /, 'pull']];
     const cleanPaths = (s) => String(s || '').replace(/(?:[A-Za-z]:)?(?:[\\/][^\\/\s:"'<>|]+){2,}[\\/]?([^\\/\s:"'<>|]*)/g, (m, last) => last || base(m));
     L.reason = (error) => {
       const raw = String(error || '').replace(/\s+/g, ' ').trim();
@@ -218,7 +219,7 @@
     L.failure = (name, input, error, label) => {
       const l = label || L.label(name, input) || String(name || '');
       let text = '';
-      for (const [re, verb] of VERBS) if (re.test(l)) { text = t('step.failed', { verb, rest: l.replace(re, '').replace(/^\s+/, '') }); break; }
+      for (const [re, verb] of VERBS) if (re.test(l)) { text = t(`step.failed.${verb}`, { what: l.replace(re, '').replace(/^\s+/, '') }); break; }
       if (!text) text = t('step.failed.generic', { label: l });
       return { text: clip(text.replace(/\s+$/, ''), 80), why: L.reason(error) };
     };
@@ -238,20 +239,38 @@
     return L;
   }
 
-  // What is kept of a step's input with the saved chat: only the parts that name it, each bounded.
-  const KEEP = ['description', 'command', 'file_path', 'path', 'notebook_path', 'pattern', 'url', 'query', 'skill', 'text', 'key', 'direction', 'name', 'tab_id', 'action'];
+  // Secrets in a command or output (tokens, keys, passwords in arguments, headers, urls or env assignments) become "••••" before the text is shown or saved.
+  const MASK = '••••';
+  const SECRET_NAME = '[\\w.-]*(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential|auth(?:orization)?|bearer|cookie|session[_-]?id)[\\w.-]*';
+  const SECRET_RES = [
+    [new RegExp(`(-{1,2}${SECRET_NAME}[= ]+)("[^"]*"|'[^']*'|\\S+)`, 'gi'), `$1${MASK}`], // -Password hunter2, --token=abc
+    [new RegExp(`(\\b${SECRET_NAME}\\s*[=:]\\s*)("[^"]*"|'[^']*'|[^\\s;&|,]+)`, 'gi'), `$1${MASK}`], // API_KEY=abc, password: abc
+    [new RegExp(`(\\$env:${SECRET_NAME}\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s;&|]+)`, 'gi'), `$1${MASK}`],
+    [/((?:Authorization|Proxy-Authorization|X-Api-Key|Cookie)\s*:\s*)(?:Bearer\s+|Basic\s+|Token\s+)?[^\s"']+(?:\s+[^\s"']+)?/gi, `$1${MASK}`],
+    [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${MASK}`],
+    [/(:\/\/[^\s:/@]+:)[^\s@/]+@/g, `$1${MASK}@`], // https://user:pass@host
+    [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g, MASK],
+  ];
+  function redact(text) {
+    let out = String(text ?? '');
+    for (const [re, to] of SECRET_RES) out = out.replace(re, to);
+    return out;
+  }
+
+  // What is kept of a step's input with the saved chat: only the parts that name it, each bounded, secrets masked. (Not the text typed into a page: it may be a password.)
+  const KEEP = ['description', 'command', 'file_path', 'path', 'notebook_path', 'pattern', 'url', 'query', 'skill', 'key', 'direction', 'name', 'tab_id', 'action'];
   function compactInput(name, input) {
     if (!input || typeof input !== 'object') return null;
     const out = {};
     for (const k of KEEP) {
       const v = input[k];
-      if (typeof v === 'string' && v) out[k] = v.length > (k === 'command' ? 600 : 240) ? `${v.slice(0, k === 'command' ? 599 : 239)}…` : v;
+      if (typeof v === 'string' && v) { const r = redact(v); out[k] = r.length > (k === 'command' ? 600 : 240) ? `${r.slice(0, k === 'command' ? 599 : 239)}…` : r; }
       else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
     }
     return Object.keys(out).length ? out : null;
   }
 
-  const api = { create, summarizeCommand, surfaceOf, compactInput, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
+  const api = { create, summarizeCommand, surfaceOf, compactInput, redact, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
   if (typeof module === 'object' && module.exports) {
     // Node: the English strings (main's labels for the saved chat; the units).
     const table = require('../locales/en.json');

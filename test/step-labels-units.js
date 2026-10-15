@@ -9,6 +9,7 @@ let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 const eq = (label, got, want) => check(label, got === want, `${JSON.stringify(got)} !== ${JSON.stringify(want)}`);
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\r\n/g, '\n');
+const en = JSON.parse(read('src/locales/en.json'));
 const bash = (command, name = 'Bash') => L.label(name, { command });
 
 // ---- description wins
@@ -32,7 +33,8 @@ eq('WebFetch shows the host', L.label('WebFetch', { url: 'https://www.example.co
 eq('WebSearch', L.label('WebSearch', { query: 'electron 44 release notes' }), 'Searching the web for ‘electron 44 release notes’');
 eq('TodoWrite', L.label('TodoWrite', { todos: [] }), 'Updating the plan');
 eq('Skill', L.label('Skill', { skill: 'pdf' }), 'Using the pdf skill');
-eq('another MCP server\'s tool', L.label('mcp__github__create_issue', {}), 'Using github: create issue');
+eq('another MCP server\'s tool: the server, never the raw tool name', L.label('mcp__github__create_issue', {}), 'Using github');
+check('no label carries a raw tool name', !/create_issue|create issue/.test(L.label('mcp__github__create_issue', {})), '');
 eq('a Lumen MCP tool has no label here (the UI names it)', L.label('mcp__lumen__navigate', { url: 'https://youtube.com' }), '');
 eq('a shell tool with no command', L.label('PowerShell', {}), 'Using PowerShell');
 eq('Read without a path', L.label('Read', {}), 'Reading a file');
@@ -111,6 +113,28 @@ check('an unknown error is cut and carries no full path', (() => { const w = L.f
 eq('a failed step with a description keeps it', L.failure('Bash', { command: 'x', description: 'Render the PDF' }, 'boom').text, "Render the PDF didn't finish");
 eq('no error text: no reason', L.failure('Read', { file_path: 'a.txt' }, '').why, '');
 
+// ---- every verb has its own whole sentence (no verb + rest builder)
+check('the failure sentence is not built from pieces', !('step.failed' in en) && Object.keys(en).filter((k) => /^step\.failed\./.test(k)).every((k) => /\{what\}|\{label\}/.test(en[k])), '');
+eq('failed search', L.failure('Grep', { pattern: 'x', path: '/a/src' }, 'boom').text, "Couldn't search for ‘x’ in src");
+eq('failed download', L.failure('Bash', { command: 'curl -s https://a.com/x' }, 'boom').text, "Couldn't download from a.com");
+eq('failed install', L.failure('Bash', { command: 'npm ci' }, 'boom').text, "Couldn't install packages");
+
+// ---- secrets are masked before a command is shown or saved
+const SECRETS = [
+  ['curl -H "Authorization: Bearer abc123def456ghi" https://x.com', /abc123def456/],
+  ['psql -U me --password hunter2 db', /hunter2/],
+  ['export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwx && gh pr list', /ghp_abcdef/],
+  ['$env:API_KEY = "s3cretValue"; run.ps1', /s3cretValue/],
+  ['git clone https://me:pw123456@github.com/a/b', /pw123456/],
+  ['Connect-Thing -Password "my pass" -User bob', /my pass/],
+  ['echo sk-abcdefghijklmnop', /sk-abcdefghijkl/],
+  ['aws s3 ls --secret-access-key=AKIAABCDEFGHIJKLMNOP', /AKIAABCDEFGH/],
+];
+for (const [cmd, leak] of SECRETS) check(`redact: ${cmd.slice(0, 48)}`, !leak.test(sl.redact(cmd)) && sl.redact(cmd).includes('••••'), sl.redact(cmd));
+eq('a command without secrets is unchanged', sl.redact('npm test -- --grep auth-flow'), 'npm test -- --grep auth-flow');
+check('the saved input is masked', !/hunter2/.test(JSON.stringify(sl.compactInput('Bash', { command: 'tool --password hunter2', description: 'Sign in' }))), '');
+check('text typed into a page is never saved', sl.compactInput('type_text', { text: 'my-password', tab_id: 3 }).text === undefined, '');
+
 // ---- task names
 eq('task name drops politeness and articles', L.taskName('Can you please find the lab TA on Canvas for me?'), 'Find lab TA');
 eq('a short request stays', L.taskName('Open youtube'), 'Open youtube');
@@ -122,7 +146,6 @@ check('compactInput keeps the naming fields and bounds them', (() => { const c =
 // ---- wiring
 const html = ['src/renderer/index.src.html', 'src/renderer/chat-page.html'].map(read);
 check('both pages load step-labels.js before chat-core.js', html.every((h) => h.indexOf('<script src="step-labels.js">') > -1 && h.indexOf('<script src="step-labels.js">') < h.indexOf('<script src="chat-core.js">')), '');
-const en = JSON.parse(read('src/locales/en.json'));
 const used = new Set([...read('src/renderer/step-labels.js').matchAll(/\bT?\(?'((?:step|card)\.[\w.]+)'/g)].map((m) => m[1]));
 check('every step.* key the labeller uses is in en.json', [...used].every((k) => k in en), [...used].filter((k) => !(k in en)).join(','));
 

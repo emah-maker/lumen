@@ -262,6 +262,8 @@ contextBridge.exposeInMainWorld('assistant', {
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
   onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
   showAgentTarget: () => ipcRenderer.send('agent:show-target'),
+  openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
+  thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
