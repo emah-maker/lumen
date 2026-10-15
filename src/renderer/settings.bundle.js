@@ -3139,6 +3139,10 @@ const later = (fn) => {
   laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
   return turn.then(fn);
 };
+// The AI page's sign-in and version checks start programs; they run when the AI page is looked at (or searched), not while another page opens.
+let aiShownResolve = () => {};
+const aiShown = new Promise((resolve) => { aiShownResolve = resolve; });
+const laterOnAi = (fn) => aiShown.then(() => later(fn));
 let isBuilt = () => true; // set up by init(): is the builder (by id) done
 let neededBuilds = () => []; // ...the builders a page needs before it is shown (the second argument: for the very first paint)
 let buildOne = () => Promise.resolve();
@@ -3511,7 +3515,7 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
+  laterOnAi(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
@@ -3542,7 +3546,7 @@ async function buildAi(card) {
     const ccState = snip.id === 'claude' ? status() : null;
     const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      later(() => S.ai.claudeCodeStatus()).then((s) => {
+      laterOnAi(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
@@ -3575,7 +3579,7 @@ async function buildAi(card) {
       cxActions.replaceChildren(...buttons);
     }
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
-    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
+    if (cxState) laterOnAi(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
@@ -5363,7 +5367,7 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
+  laterOnAi(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
@@ -5880,6 +5884,7 @@ function show() {
   const searching = words.length > 0;
   const wasSearching = searchedBefore;
   searchedBefore = searching;
+  if (searching || view.cat === 'ai') aiShownResolve();
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
