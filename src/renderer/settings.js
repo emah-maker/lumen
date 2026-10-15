@@ -3218,14 +3218,14 @@ async function init() {
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
   const SUBS = new Set(['ai-providers', 'skills', 'macros', 'usage', 'extensions-page', 'internals']);
-  const SUB_BUILDER = { 'task-manager': 'internals' };
+  const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
   const started = new Map(); // builder id -> promise
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
   neededBuilds = (v) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
-    if (own && SUBS.has(own)) return [own];
+    if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
     return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
   };
   // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
@@ -3281,7 +3281,7 @@ async function init() {
   // (AI model's builder also makes the sub-pages and rows other pages link to, so it always runs; the page's own builders run beside it)
   const wanted = guessView();
   const hash = location.hash.slice(1);
-  const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.has(hash); // (a sub-page some builder makes: all of them run, as before)
+  const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
   await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });

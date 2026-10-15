@@ -105,7 +105,18 @@ const SAMPLER = `(() => {
       const id = await app.evaluate((_e, s) => global.__settings.open(s), 'widgets');
       await waitIn(id, 'document.body?.dataset.shown === "1"');
       await waitIn(id, 'document.body?.dataset.ready === "1"');
-      const state = await run(id, );
+      const state = await run(id, `(async () => {
+        const ws = await window.lumenSettings.widgets.state();
+        const type = ws.types[0]?.type;
+        if (!window.__widgetEditRoute || !type) return 'no editor';
+        window.__widgetEditRoute.applyEdit({ ...ws, edit: null, create: type });
+        const field = document.querySelector('#sec-widgets input[type=text], #sec-widgets input:not([type])');
+        if (!field) return 'no field';
+        const before = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(before);
+        field.value = 'changed'; field.dispatchEvent(new Event('input', { bubbles: true }));
+        const after = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(after);
+        return JSON.stringify({ clean: before.defaultPrevented, dirty: after.defaultPrevented });
+      })()`);
       check('Home > Widgets from a link is built, and its open form asks before the tab closes with unsaved changes (and not when unchanged)', state === JSON.stringify({ clean: false, dirty: true }), state);
       await closeSettings(id);
     }
