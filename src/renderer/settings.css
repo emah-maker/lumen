@@ -81,6 +81,7 @@ main { padding: 28px 40px 96px; max-width: calc(760px + 80px); width: 100%; marg
 .row { display: flex; align-items: center; gap: 16px; padding: 10px 16px; min-height: 46px; }
 .row + .row { border-top: 1px solid var(--hairline); }
 .row.filtered { display: none; }
+.group.lazy { content-visibility: auto; contain-intrinsic-size: auto 240px; } /* the lists below the first screen: laid out as they near the screen */
 .group.later { display: none; } /* below the first screen on the first frame (settings.js foldBelowTheFirstScreen) */
 .row.link { cursor: default; transition: background-color var(--t-fast) ease-out; }
 .row.link:hover { background: var(--hover); }

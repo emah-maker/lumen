@@ -3122,7 +3122,7 @@ function resolveRoute() {
 }
 // The first page is laid out with its first screen only: the lists below the fold wait for the next frame (the first layout of a page costs
 // about 1 ms a row, and nothing there can be seen yet). FOLD_ROWS: about what fits above the fold.
-const FOLD_ROWS = 6;
+const FOLD_ROWS = 3;
 let foldedGroups = [];
 let firstRouteDone = false;
 function foldBelowTheFirstScreen() {
@@ -3136,7 +3136,7 @@ function foldBelowTheFirstScreen() {
 }
 function revealFolded() {
   if (!foldedGroups.length) return;
-  for (const g of foldedGroups) g.classList.remove('later');
+  for (const g of foldedGroups) { g.classList.remove('later'); g.classList.add('lazy'); } // (lazy: laid out when it nears the screen, not all at once)
   foldedGroups = [];
   requestAnimationFrame(fitDescs);
 }
@@ -3291,6 +3291,7 @@ async function init() {
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
+  document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
   document.fonts?.ready.then(fitDescs).catch(() => {});
   $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
