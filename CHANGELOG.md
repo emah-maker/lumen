@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Ctrl+Enter means one thing: send what is in this box now, and the Keyboard Shortcuts sheet is complete.** The Meeting helper moves to **Ctrl+Shift+E** (⇧⌘E on a Mac), so Ctrl+Enter is no longer also its key (in the sidebar chat box it could open the helper instead of sending). The sheet now lists every shortcut Lumen handles, grouped into Tabs, Navigation, This page, AI, New tab page, Chat page and Lumen, with one line explaining that a site which uses a key itself (Google Docs, VS Code for the web) gets it first. The ⋯ menu shows the sidebar and Bookmark all tabs shortcuts, and the Meeting helper button and its box no longer show the placeholder "Mod+Enter".
 - **One group and one phrase for the tabs the AI opened.** Settings > AI has an **AI tabs** group: **Hide AI tabs**, **When the AI finishes** (Leave open, Ask or Close) and **Bring tabs the AI opened to the front**. The menus, the right-click menu, the taskbar task and the chat list all say "tabs the AI opened" now. A hidden tab that needs you shows "1 needs you" on the Hide button, and a click shows it. The button opens its menu from the keyboard (Menu key or Shift+F10).
 
 - **Right-click the sidebar's Hide AI tabs button to close the AI's tabs.** The menu has the Hide switch and **Close tabs the AI opened (N)**, which closes them in every window with Undo (the same as the menus' Close Tabs Opened by AI). With none left it says so.
