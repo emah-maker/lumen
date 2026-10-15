@@ -184,7 +184,8 @@ function refresh() {
     if (page) viewer.currentPageNumber = page;
     showScale();
   } else if (sizedAt !== `${w}x${h}` && ['page-width', 'page-fit', 'auto'].includes(String(viewer.currentScaleValue))) {
-    viewer.currentScaleValue = viewer.currentScaleValue; // (the fit scale is worked out again for the new size)
+    const fit = viewer.currentScaleValue;
+    viewer.currentScaleValue = fit; // (the fit scale is worked out again for the new size)
   }
   sizedAt = `${w}x${h}`;
   viewer.update();

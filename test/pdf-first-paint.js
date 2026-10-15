@@ -106,7 +106,7 @@ function makePdf(n) {
   try {
     // ---- 1-3: one, three and fifty pages, opened as a foreground tab
     for (const [label, key] of [['one page', 'one'], ['3 pages', 'three'], ['50 pages', 'big']]) {
-      const t = await open(files[key]);
+      await open(files[key]);
       await expectPaint(label, await waitFor(() => viewerContents(path.basename(files[key])), 15000));
       await closeTabs();
     }
@@ -115,7 +115,7 @@ function makePdf(n) {
     {
       const w = await win0();
       const front = w.activeId;
-      const t = await open(files.bg);
+      await open(files.bg);
       await switchTo(front); // the PDF's tab is now in the background while it loads
       await sleep(1500);
       const id = await waitFor(() => viewerContents('background.pdf'), 15000);
