@@ -416,6 +416,17 @@ function setupAiAgents(deps) {
   const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
   const LABEL_WAIT_MS = 150;
   const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
+  // One session, several tabs: calls that name a tab (tab_id) run on it side by side with calls on other tabs. Acting calls on the
+  // SAME tab queue behind each other (a click never overlaps another click or a type there); reads never wait.
+  function onTabQueue(session, key, fn) {
+    if (key == null) return fn();
+    const queues = (session.tabQueues ||= new Map());
+    const run = (queues.get(key) || Promise.resolve()).then(fn, fn);
+    const tail = run.catch(() => {});
+    queues.set(key, tail);
+    tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
+    return run;
+  }
   async function mcpCallTool(name, args, session) {
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
@@ -434,6 +445,10 @@ function setupAiAgents(deps) {
     };
     // read_page with no mode gives an MCP client the compact outline (about a third of a full read's size), as the sidebar's models
     // are told to start with; "full" and extract stay one argument away.
+    const takesTab = require('../automation/mcp').TAB_ARG_TOOLS.has(name);
+    const tabArg = takesTab ? (args.tab_id ?? args.tabId) : undefined;
+    if (takesTab && ('tab_id' in args || 'tabId' in args)) { const { tab_id: _a, tabId: _b, ...rest } = args; args = rest; } // (not part of the tool's own input)
+    if (tabArg !== undefined && !Number.isInteger(tabArg)) return refuse('tab_id must be an integer: a tab from list_tabs.');
     if (name === 'read_page' && !args.mode && !args.extract && !args.since_last && !args.elements && !args.text_offset && !args.element_offset) args = { ...args, mode: 'compact' };
     const problem = deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
@@ -476,7 +491,7 @@ function setupAiAgents(deps) {
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     // An outside agent's own window: the tab in front THERE (not the user's, not the sidebar run's).
-    const front = scope ? null : windows ? (agentRec ? windows.activeTabId(agentRec) : null) : agent.browser.activeTab()?.id;
+    const front = scope ? null : windows ? (agentRec ? (tabArg ?? windows.activeTabId(agentRec)) : null) : (tabArg ?? agent.browser.activeTab()?.id);
     const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn, null, null, windows ? { rec: agentRec, mcp: true, clipboard: (session.clipboard ||= require('./agent-hands-off').privateClipboard()) } : null));
     // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
     // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
@@ -505,6 +520,10 @@ function setupAiAgents(deps) {
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
     // the action it allows are about the same tab. Stop ends a long wait at once, either way.
     const work = async () => {
+      if (tabArg !== undefined) { // a tab of this agent's own window only (switch_tab's rule), and one that is still there
+        runAgent.foreignTabCheck([tabArg]);
+        if (!runAgent.browser.tabById?.(tabArg)) throw new Error(`No tab with id ${tabArg}. Call list_tabs.`);
+      }
       await runAgent.ensureAllowed(name, emit, signal, allow);
       acting = true;
       return abortable(runAgent.execute(name, args), signal);
@@ -513,7 +532,7 @@ function setupAiAgents(deps) {
     // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).
     if (engineRun) owner.callBegin?.(engineRun);
     try {
-      const result = await inPin(work);
+      const result = await (require('../automation/mcp').annotationsFor(name) ? inPin(work) : onTabQueue(session, front, () => inPin(work)));
       toUi({ type: 'tool_done', id: stepId, ok: true });
       return { content: toMcpContent(result), isError: false };
     } catch (err) {

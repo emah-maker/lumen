@@ -7437,6 +7437,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     uiReady = false;
     clearTimeout(freezeTimers.get(rec)); // no freeze timer outlives its window
     freezeTimers.delete(rec);
+    // The window's own dropdown and downloads views: closing a window leaves their pages (a renderer process each) running.
+    for (const v of [rec === curRec ? suggestView : rec.suggestView, rec === curRec ? downloadsView : rec.downloadsView]) { try { if (v && !v.webContents.isDestroyed()) v.webContents.close(); } catch { /* gone */ } }
+    if (rec === curRec) { suggestView = null; downloadsView = null; }
     dropDeadWindowViews();
     winRecs.delete(rec);
     const kept = closedWindows.find((c) => c.rec === rec);
@@ -7500,7 +7503,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     rec.uiLoaded = true;
     tabStripGate.forget(rec); // (tabs restored while this page was still loading were sent to nowhere: the strip must still get its first state, even if it is the one the gate last recorded)
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label }); // the badge that says whose window this is
-    firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
+    firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed() && !rec.agent) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); }); // (an agent's window never has an address bar typed in: its dropdown's renderer, ~110 MB, is made only if the user takes the window: address:touched)
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
       uiReady = true;
