@@ -12,6 +12,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
+    pickProjectsDir: call('prefs:pick-projects-dir'), // [projects] Settings > AI > Projects folder
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
     wallpaperPreview: call('prefs:wallpaper-preview'), // [look] the picture as a small data: URL, for Settings' preview

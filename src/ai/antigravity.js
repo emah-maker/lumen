@@ -325,7 +325,7 @@ const PROMPT_ARG_MAX = 20000;
 const FULL_FLAGS = ['--dangerously-skip-permissions']; // "Auto-approve all tool permission requests without prompting" (agy --help)
 // A silent shell command prints nothing for a long time: with full access the watchdog waits this long.
 const FULL_WATCHDOG_MS = 15 * 60 * 1000;
-function buildArgs({ prompt, conversation = null, model = 'default', fullAccess = false, effort = '' }) {
+function buildArgs({ prompt, conversation = null, model = 'default', fullAccess = false, effort = '', workDir = '' }) {
   return [
     '-p', prompt,
     '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
@@ -333,6 +333,7 @@ function buildArgs({ prompt, conversation = null, model = 'default', fullAccess 
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     ...effortLib.cliArgs('antigravity', effort), // Settings → AI → AI providers: --effort (agy 1.2.16 --help; none: agy's own default)
     ...(fullAccess ? FULL_FLAGS : ['--sandbox']), // --sandbox: "Run in a sandbox with terminal restrictions enabled" (agy --help)
+    ...(workDir ? ['--add-dir', workDir] : []), // [work folder] the folder picked for the chat or its project joins the workspace (agy --help: --add-dir)
   ];
 }
 
@@ -531,7 +532,7 @@ class AntigravityEngine {
 
   // One message. Resolves { text, sessionId (agy's conversation id), stopped?, failed?, planLimit?, usage?, model? }; errors are emitted, not thrown.
   // sessionId: the chat's saved conversation id, null on its first message.
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false, effort = '' }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false, effort = '', workDir = '' }) {
     fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
     const prepared = this.prepare({ scope, sessionId, fullAccess });
     const { bin, gate, home, folder } = await prepared;
@@ -569,7 +570,9 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort }), folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
+      // [work folder] the chosen folder (when it is there) is the working folder; agy's permission gate and sandbox are as before
+      if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
+      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort, workDir }), folder: fullAccess ? folder : workDir || folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})));
       // The run's token file. A newer message of the same chat ("Send now") may have written its own already: that one stays.

@@ -270,7 +270,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:run-now', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -5127,10 +5127,71 @@ function syncProjectInstructions() {
   if (!settings) return;
   const block = projectBlockFor(chatId);
   if (block) settings.projectInstructions = block; else delete settings.projectInstructions;
+  const work = projectWorkFolderFor(chatId); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
+  if (work) settings.projectWorkFolder = work; else delete settings.projectWorkFolder;
 }
 function keepPendingProject(id) {
   const pid = pendingProject.get(id);
   if (pid && chats().has(id)) { chats().setProject(id, pid); pendingProject.delete(id); }
+}
+// ---------- [project folders] (features/project-folders.js)
+// A project can have a real folder; its chats are mirrored there as Markdown files (plain text, NOT encrypted: the project's settings say
+// so), and a folder can be where the AI works (a chat's own pick, else its project's). All file work is async and never on the saving path:
+// a change schedules a write ~2 s after the last one, and the writes run one after another with the main thread free between them.
+const projectFolders = require('./features/project-folders');
+let documentsOverride = null; // TEST only (global.__projectFolders.setDocuments): the Documents folder of a test is never the user's own
+const documentsDir = () => documentsOverride || (TEST ? path.join(app.getPath('userData'), 'test-documents') : app.getPath('documents'));
+const projectsParent = () => { const d = String(readSettings().projectsDir || ''); return d && path.isAbsolute(d) ? d : path.join(documentsDir(), 'Lumen Projects'); };
+const projectById = (id) => chats().projects().find((p) => p.id === id) || null;
+const projectIdOf = (id) => (chats().projectOf(id)?.id) || pendingProject.get(id) || null;
+// Where a chat's Markdown file belongs: its project's folder while the project has one and the toggle is on (force: whatever the toggle).
+const mirrorFolderOf = (id, force = false) => { if (temporaryChats.has(id)) return ''; const p = chats().projectOf(id); return p?.folder && (force || p.mirror !== false) ? p.folder : ''; };
+let mirrorChain = Promise.resolve();
+const serial = (fn) => { const run = mirrorChain.then(fn, fn); mirrorChain = run.catch(() => {}); return run; };
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+let chatMirror = null;
+const mirror = () => (chatMirror ||= projectFolders.createMirror({
+  render: async (id) => { await nextTurn(); const out = chatMarkdown(id); return out ? { id, title: out.title, created: out.created, updated: out.updated, model: out.model, markdown: out.markdown } : null; },
+  folderOf: mirrorFolderOf,
+  onError: (err) => console.error('Project folder:', err?.message || err),
+}));
+const mirrorDebounce = projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000);
+function mirrorChatSoon(id) { try { if (id && mirrorFolderOf(id)) mirrorDebounce.schedule(id); } catch { /* the chat is saved either way */ } }
+// Chats moved between projects ([[chat id, the project it was in]], read before the move): the file leaves the old folder (to Chats/Removed)
+// and is written in the new one.
+function mirrorAfterMove(before) {
+  const work = [];
+  for (const [id, from] of before) {
+    if ((projectIdOf(id) || null) === (from || null)) continue;
+    work.push({ id, from: from ? projectById(from)?.folder || '' : '' });
+  }
+  if (!work.length) return;
+  serial(async () => { for (const w of work) { mirrorDebounce.cancel(w.id); await mirror().write(w.id, { from: w.from }); await nextTurn(); } }).catch(() => {});
+}
+const deletedFrom = new Map(); // chat id -> the project folder its file was in when the chat was deleted (the file moves to Chats/Deleted once the undo time is over)
+// A project whose folder is gone shows "Folder missing" (Locate / Recreate). Looked at in the background (never in the list call) and at most every 3 s.
+const folderState = new Map(); // project id -> { folder, ok }
+let folderLook = 0;
+function lookAtProjectFolders() {
+  if (Date.now() - folderLook < 3000) return;
+  folderLook = Date.now();
+  for (const p of chats().projects()) {
+    if (!p.folder) continue;
+    fs.promises.stat(p.folder).then((s) => s.isDirectory(), () => false).then((ok) => {
+      const was = folderState.get(p.id);
+      folderState.set(p.id, { folder: p.folder, ok });
+      if (was ? (was.folder !== p.folder || was.ok !== ok) : !ok) pushAttention();
+    });
+  }
+}
+const withFolderState = (p) => { const st = folderState.get(p.id); return p.folder && st && st.folder === p.folder && !st.ok ? { ...p, folderMissing: true } : p; };
+// What a project's chats work in: its working folder, else its own folder.
+const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id); const p = pid ? projectById(pid) : chats().projectOf(id); return p ? (p.workFolder || p.folder || '') : ''; } catch { return ''; } };
+// The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
+function workFolderInfo(settings = agent.messages.settings) {
+  const own = typeof settings?.workFolder === 'string' ? settings.workFolder : '';
+  const dir = own || (typeof settings?.projectWorkFolder === 'string' ? settings.projectWorkFolder : projectWorkFolderFor(chatId)); // (a new chat has no settings yet: its project decides)
+  return dir ? { path: dir, shown: projectFolders.shortPath(dir, { home: require('os').homedir() }), source: own ? 'chat' : 'project' } : null;
 }
 const emptyChatSettings = new Map(); // chat id -> settings (the model picked) of an empty chat left open elsewhere; see switchChat
 // Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
@@ -5167,6 +5228,7 @@ function saveChat(generation = chatGeneration) {
     if (!snapshot.messages.length) return;
     chats().save(chatId, snapshot);
     keepPendingProject(chatId);
+    mirrorChatSoon(chatId); // [project folders]
     if (chats().current() !== chatId) chats().setCurrent(chatId);
   } catch (err) {
     console.error('Could not save chat:', err.message);
@@ -5180,6 +5242,7 @@ function saveChatSoon(generation) {
 }
 app.on('before-quit', () => {
   saveChat();
+  try { mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now */ }
   try { chats().flush(); } catch { /* nothing pending */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
 });
@@ -5245,7 +5308,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
+  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -5265,7 +5328,7 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); }
+    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
@@ -7943,7 +8006,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -9395,7 +9458,7 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
     currentUsage: describeUsage(agent.messages.settings?.usage),
     currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
-    projects: chats().projects(), // [projects]
+    projects: (() => { lookAtProjectFolders(); return chats().projects().map(withFolderState); })(), // [projects] (+ [project folders] whether the folder is there)
     chats: (() => {
       const badges = chatBadges();
       const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
@@ -9450,9 +9513,45 @@ ipcMain.handle('chats:show-tab', (event, id) => {
 // [projects] The list, and every change: a new one, an edit, delete (its chats stay, out of any project), a chat moved in or out,
 // and a new chat that starts inside a project.
 const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000) });
-ipcMain.handle('chats:project-save', (_e, project) => { const out = chats().saveProject(projectFields(project)); if (out) syncProjectInstructions(); return out; });
-ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; });
-ipcMain.handle('chats:project-set', (_e, id, projectId) => { const ok = chats().setProject(String(id), projectId ? String(projectId) : null); if (ok) syncProjectInstructions(); return ok; });
+const dialogParent = (event) => { try { return BrowserWindow.fromWebContents(event.sender) || win; } catch { return win; } };
+async function pickFolder(event, title, defaultPath) {
+  const picked = await electronDialog.showOpenDialog(dialogParent(event), { title, ...(defaultPath ? { defaultPath } : {}), properties: ['openDirectory', 'createDirectory'] });
+  return picked.canceled || !picked.filePaths[0] ? null : picked.filePaths[0];
+}
+// [project folders] Creating a project makes <Documents>\Lumen Projects\<name> (folderMode 'existing' with `folder` uses a folder the user picked;
+// 'none' makes none). Answers the project, { error } for a folder that cannot be used ('root' and 'home' want `confirmed: true`), or null.
+ipcMain.handle('chats:project-save', async (_e, project) => {
+  const fields = projectFields(project);
+  let made = '';
+  try {
+    const use = async (dir, confirmed) => { const chk = await projectFolders.checkWorkFolder(String(dir || ''), { confirmed: confirmed === true }); if (!chk.ok) throw Object.assign(new Error(chk.reason), { reason: chk.reason }); return chk.real; };
+    if (!fields.id) {
+      if (project?.folderMode === 'existing') { fields.folder = await use(project.folder, project.confirmed); fields.folderCreated = false; }
+      else if (project?.folderMode !== 'none' && fields.name.trim()) { made = await projectFolders.createProjectFolder({ parent: projectsParent(), name: fields.name }); fields.folder = made; fields.folderCreated = true; }
+    } else if (project?.folderMode === 'new') { // a project from before folders gets one now
+      if (!projectById(fields.id)?.folder) { made = await projectFolders.createProjectFolder({ parent: projectsParent(), name: fields.name }); fields.folder = made; fields.folderCreated = true; }
+    } else if (project?.folder !== undefined) {
+      if (project.folder) { fields.folder = await use(project.folder, project.confirmed); fields.folderCreated = false; } else fields.folder = '';
+    }
+    if (typeof project?.mirror === 'boolean') fields.mirror = project.mirror;
+    if (project?.workFolder !== undefined) fields.workFolder = project.workFolder ? await use(project.workFolder, project.confirmedWork) : '';
+  } catch (err) {
+    if (made) fs.promises.rmdir(made).catch(() => {});
+    return { error: err.reason || 'folder', message: String(err.message).slice(0, 200) };
+  }
+  const out = chats().saveProject(fields);
+  if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
+  syncProjectInstructions();
+  pushAttention();
+  return withFolderState(out);
+});
+ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; }); // (its folder, and the files in it, are never touched)
+ipcMain.handle('chats:project-set', (_e, id, projectId) => {
+  const before = [[String(id), projectIdOf(String(id))]];
+  const ok = chats().setProject(String(id), projectId ? String(projectId) : null);
+  if (ok) { syncProjectInstructions(); mirrorAfterMove(before); }
+  return ok;
+});
 // Drag and drop, and the row menu's "Move to project": one or several chats in one write, then every list redraws (pushAttention).
 // Answers { moves: [{ id, from }] } (what actually moved: the toast's Undo hands it back to chats:project-restore) or null. Moving is not
 // activity (the recency order stays) and does not touch a running chat. A chat still working on its first reply has no saved entry yet:
@@ -9462,6 +9561,7 @@ ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
   const list = chatIdList(ids);
   const target = projectId ? String(projectId) : null;
   if (target && !chats().projects().some((p) => p.id === target)) return null;
+  const before = list.map((id) => [id, projectIdOf(id)]);
   const moves = chats().moveToProject(list, target);
   if (!moves) return null;
   for (const id of list) {
@@ -9471,18 +9571,19 @@ ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
     if (target) pendingProject.set(id, target); else pendingProject.delete(id);
     moves.push({ id, from });
   }
-  if (moves.length) { syncProjectInstructions(); pushAttention(); }
+  if (moves.length) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
   return { moves };
 });
 ipcMain.handle('chats:project-restore', (_e, moves) => {
   const list = (Array.isArray(moves) ? moves : []).slice(0, 200).filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, from: m.from ? String(m.from) : null }));
+  const before = list.map((m) => [m.id, projectIdOf(m.id)]);
   let n = chats().restoreProjects(list);
   for (const m of list) {
     if (chats().has(m.id) || !chatRuns.has(m.id)) continue;
     if (m.from && chats().projects().some((p) => p.id === m.from)) pendingProject.set(m.id, m.from); else pendingProject.delete(m.id);
     n++;
   }
-  if (n) { syncProjectInstructions(); pushAttention(); }
+  if (n) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
   return n;
 });
 ipcMain.handle('chats:new-in-project', (event, projectId) => {
@@ -9492,7 +9593,101 @@ ipcMain.handle('chats:new-in-project', (event, projectId) => {
   syncProjectInstructions();
   return chatView();
 });
-ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
+// [project folders] The folder picker of the project editor ("Use an existing folder…").
+ipcMain.handle('chats:project-pick-folder', (event) => pickFolder(event, 'Choose a folder for this project', documentsDir()));
+// A project's folder: open it, Locate… (a folder missing, or moved), Recreate (make it again where it was), rename it to the project's name
+// (only a folder Lumen made, and only when nothing is in the way), choose its working folder, and "Write all now". Always { ok, ... }.
+ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
+  const p = projectById(String(id));
+  if (!p) return { ok: false, reason: 'unknown' };
+  const normal = (s) => (process.platform === 'win32' ? String(s).toLowerCase() : String(s));
+  try {
+    switch (action) {
+      case 'open': { if (!p.folder) return { ok: false, reason: 'none' }; return { ok: !(await shell.openPath(p.folder)) }; }
+      case 'locate': {
+        const dir = await pickFolder(event, 'Locate the project folder', p.folder ? path.dirname(p.folder) : documentsDir());
+        if (!dir) return { ok: false, reason: 'canceled' };
+        const chk = await projectFolders.checkWorkFolder(dir, { confirmed: arg === true });
+        if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
+        mirror().forgetFolder(p.folder || '');
+        const out = chats().saveProject({ id: p.id, name: p.name, folder: chk.real, folderCreated: false });
+        folderState.delete(p.id); syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'recreate': {
+        if (!p.folder || !path.isAbsolute(p.folder)) return { ok: false, reason: 'none' };
+        await fs.promises.mkdir(p.folder, { recursive: true });
+        folderState.set(p.id, { folder: p.folder, ok: true }); pushAttention();
+        return { ok: true };
+      }
+      case 'rename': {
+        if (!p.folder || !p.folderCreated) return { ok: false, reason: 'not-lumen' };
+        const want = projectFolders.safeFolderName(p.name);
+        if (normal(path.basename(p.folder)) === normal(want)) return { ok: false, reason: 'same' };
+        const target = path.join(path.dirname(p.folder), want);
+        if (await fs.promises.lstat(target).then(() => true, () => false)) return { ok: false, reason: 'exists' };
+        mirrorDebounce.flush().catch(() => {});
+        await mirrorChain; // (what is being written there lands first)
+        try { await fs.promises.rename(p.folder, target); } catch { return { ok: false, reason: 'busy' }; }
+        mirror().forgetFolder(p.folder);
+        const old = p.folder;
+        const rel = p.workFolder ? path.relative(old, p.workFolder) : null;
+        const out = chats().saveProject({ id: p.id, name: p.name, folder: target, folderCreated: true, ...(rel !== null && !rel.startsWith('..') && !path.isAbsolute(rel) ? { workFolder: path.join(target, rel) } : {}) });
+        folderState.delete(p.id); syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), folder: target, project: out && withFolderState(out) };
+      }
+      case 'work': {
+        const dir = await pickFolder(event, 'Choose where the AI works in this project', p.workFolder || p.folder || documentsDir());
+        if (!dir) return { ok: false, reason: 'canceled' };
+        const chk = await projectFolders.checkWorkFolder(dir, { confirmed: arg === true });
+        if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
+        const out = chats().saveProject({ id: p.id, name: p.name, workFolder: chk.real });
+        syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'work-clear': {
+        const out = chats().saveProject({ id: p.id, name: p.name, workFolder: '' });
+        syncProjectInstructions(); pushAttention();
+        return { ok: Boolean(out), project: out && withFolderState(out) };
+      }
+      case 'write-all': {
+        if (!p.folder) return { ok: false, reason: 'none' };
+        const ids = chats().list().filter((c) => c.project === p.id && !c.missing).map((c) => c.id);
+        const count = await serial(() => mirror().writeAll(ids, { force: true }));
+        return { ok: true, count, total: ids.length };
+      }
+      default: return { ok: false, reason: 'unknown' };
+    }
+  } catch (err) { return { ok: false, reason: 'error', message: String(err?.message || err).slice(0, 200) }; }
+});
+// [work folder] The open chat's own working folder (chats outside a project, or a project chat that works elsewhere): get / pick / set / clear / open.
+// Answers { ok, info: { path, shown, source, missing } | null }. A drive root or the home folder needs `confirmed` (reason 'root' | 'home').
+ipcMain.handle('chats:work-folder', async (event, action, arg, confirmed) => {
+  const id = chatId;
+  const answer = async (extra = {}) => {
+    const info = workFolderInfo();
+    if (info) info.missing = !(await fs.promises.stat(info.path).then((s) => s.isDirectory(), () => false));
+    return { ok: true, info, ...extra };
+  };
+  const settle = async (dir) => {
+    const chk = await projectFolders.checkWorkFolder(dir, { confirmed: confirmed === true });
+    if (!chk.ok) return { ok: false, reason: chk.reason, path: dir, info: workFolderInfo() };
+    if (id !== chatId) return { ok: false, reason: 'chat-changed' };
+    agent.setWorkFolder(chk.real, effectiveModel() || DEFAULT_MODEL);
+    if (agent.messages.length) saveChatSoon(chatGeneration);
+    return answer();
+  };
+  try {
+    switch (action) {
+      case 'pick': { const dir = await pickFolder(event, 'Choose a folder for the AI to work in', workFolderInfo()?.path); return dir ? settle(dir) : { ok: false, reason: 'canceled' }; }
+      case 'set': return settle(String(arg || ''));
+      case 'clear': agent.setWorkFolder('', effectiveModel() || DEFAULT_MODEL); if (agent.messages.length) saveChatSoon(chatGeneration); return answer();
+      case 'open': { const info = workFolderInfo(); return { ok: Boolean(info) && !(await shell.openPath(info.path)) }; }
+      default: return answer();
+    }
+  } catch (err) { return { ok: false, reason: 'error', message: String(err?.message || err).slice(0, 200) }; }
+});
+ipcMain.handle('chats:rename', (_e, id, title) => { const ok = chats().rename(String(id), String(title ?? '')); if (ok) mirrorChatSoon(String(id)); return ok; }); // ([project folders] the Markdown file follows the title)
 // Deleting the open chat leaves an empty one in its place. A saved chat is only hidden for UNDO_MS (the Undo toast); then it is
 // erased with its pictures, uploads and engine homes. If Lumen quits inside that time the chat stays hidden and is erased
 // on the next start (or by the store after a day), after the index on disk is read again; no delete ever runs before the app is ready.
@@ -9503,9 +9698,12 @@ function finishDelete(id) {
   pendingDeletes.delete(id);
   const waiting = chats().trashed().some((t) => t.id === id);
   if (!waiting) return; // undone meanwhile
+  const folder = deletedFrom.get(id) || chats().projectOf(id)?.folder || ''; // [project folders] where its Markdown file is
+  deletedFrom.delete(id);
   if (!chats().remove(id)) return; // (the index can't be read right now: it stays hidden and is tried again later)
   imageStore().removeChat(id); // its pictures go with it
   uploads().removeChat(id); // [uploads] and the files attached to it
+  if (folder) serial(() => mirror().trash(folder, id)).catch(() => {}); // [project folders] its Markdown file moves to Chats/Deleted (never erased)
   require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
   require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
 }
@@ -9528,7 +9726,10 @@ ipcMain.handle('chats:delete', (event, id) => {
     clearTimeout(detachedSaves.get(id));
   }
   chatBind.unbindChat(id); // [chat per tab]
+  const projectFolder = chats().projectOf(id)?.folder || ''; // [project folders]
+  mirrorDebounce.cancel(id);
   const undoable = chats().trash(id); // false: nothing saved to bring back (a first reply still coming)
+  if (undoable && projectFolder) deletedFrom.set(id, projectFolder);
   if (undoable) { clearTimeout(pendingDeletes.get(id)); const t = setTimeout(() => finishDelete(id), UNDO_MS); t.unref?.(); pendingDeletes.set(id, t); }
   const eraseNow = () => {
     if (undoable) return;
@@ -9558,7 +9759,7 @@ ipcMain.handle('chats:undo-delete', (_e, id) => {
   id = String(id);
   if (!pendingDeletes.has(id)) return false; // the time is up (or it was never hidden)
   const ok = chats().restore(id);
-  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); pushAttention(); }
+  if (ok) { clearTimeout(pendingDeletes.get(id)); pendingDeletes.delete(id); deletedFrom.delete(id); mirrorChatSoon(id); pushAttention(); }
   return ok;
 });
 ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
@@ -9581,7 +9782,7 @@ function chatMarkdown(id, folder = null) {
     return `${encodeURIComponent(folder)}/${name}`;
   } : null;
   const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings), { pictureFile });
-  return { title, markdown, pictures };
+  return { id, title, markdown, pictures, created: entry?.created, updated: entry?.updated, model: snapshot.settings?.model || null };
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a
 // save dialog, so nothing is written anywhere the user didn't pick.
@@ -9630,6 +9831,7 @@ ipcMain.handle('chats:export', async (_e, id, format) => {
 });
 if (TEST) global.__chatFiles = () => fs.readdirSync(path.join(app.getPath('userData'), 'chats')).length;
 if (TEST) global.__chatPdf = (id) => { const out = chatMarkdown(String(id)); return out ? chatPdf(out) : null; };
+if (TEST) global.__projectFolders = { setDocuments: (dir) => { documentsOverride = dir || null; }, documents: () => documentsDir(), idle: async () => { await mirrorDebounce.flush(); await mirrorChain; }, pending: () => mirrorDebounce.pending(), mirrorFolderOf, mirrorSoon: mirrorChatSoon, workFolderInfo };
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 
 // ---------- pictures the AI made (features/gen-images.js) ----------
