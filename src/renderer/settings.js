@@ -393,6 +393,15 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
+  const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
+  const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
+  showProjectsDir();
+  const projectsRow = row(tr('settings.ai.projectsDir', 'Projects folder'), tr('settings.ai.projectsDirDesc', 'New projects get their own folder here. Chats in a project are also saved in it as Markdown files (not encrypted); chats outside projects never are.'),
+    h('button', { id: 'projects-dir-change', text: tr('settings.ai.projectsDirChange', 'Change…'), onclick: async () => { st = await S.pickProjectsDir(); showProjectsDir(); } }),
+    h('button', { id: 'projects-dir-reset', text: tr('settings.ai.projectsDirReset', 'Use Documents'), onclick: async () => { await save('projectsDir', ''); showProjectsDir(); } }));
+  projectsRow.querySelector('.text').append(projectsWhere);
+  card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
@@ -916,12 +925,9 @@ async function buildHome(card) {
   // The picker: a live preview that follows the pointer or the keyboard over the tiles, the backgrounds in groups (Gradients, Solids, Your picture)
   // and the animated effects. A tile's art is the same CSS the new-tab page uses (features/backgrounds.js; the older ones are classes in settings.css).
   const sections = h('div', { class: 'bg-sections', role: 'radiogroup', 'aria-label': 'New tab background', id: 'pref-newTabBackground' });
-  const preview = h('div', { class: 'bg-preview', id: 'bg-preview', 'aria-hidden': 'true' }, h('span', { class: 'bgp-clock', text: '9:41' }), h('span', { class: 'bgp-hello', text: 'Good evening' }), h('span', { class: 'bgp-search' }));
-  const showPreview = (item, effect) => { // a background (or an effect: its own still picture)
-    const tone = effect ? 'dark' : item.tone;
-    preview.className = `bg-preview tone-${tone}${effect ? '' : ` bg-${item.id}`}`;
-    preview.style.background = item.art || '';
-  };
+  // The preview shows the whole new-tab page as chosen (renderer/settings-preview.js); pointing at a tile swaps only that background or effect.
+  const preview = window.NewTabPreview.create({ state: () => st, picture: () => S.wallpaperPreview() });
+  const showPreview = (item, effect) => preview.hover(effect ? { effect: item.id } : { background: item.id });
   const shuffled = () => st.prefs.newTabShuffle === true;
   const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
@@ -930,7 +936,7 @@ async function buildHome(card) {
       onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
     if (item.art) btn.style.background = item.art;
     const show = () => showPreview(item);
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     return btn;
@@ -962,7 +968,7 @@ async function buildHome(card) {
     sections.classList.toggle('shuffled', shuffled());
     shuffleNote.hidden = !shuffled();
     shuffleNote.textContent = shuffled() ? `Today: ${BG.byId(BG.dailyPick())?.label}. Pick a background to stop shuffling.` : '';
-    showPreview(BG.byId(current) || BG.byId('plain'));
+    preview.refresh();
     for (const t of fxTiles.querySelectorAll('button')) { const on = t.dataset.value === st.prefs.newTabEffect; t.setAttribute('aria-checked', String(on)); t.tabIndex = on ? 0 : -1; }
   };
   // The animated effects, one still picture each.
@@ -973,7 +979,7 @@ async function buildHome(card) {
       onclick: async () => { await save('newTabEffect', fx.id); effectOptions.hidden = fx.id === 'none'; renderTiles(); } }, h('span', { text: fx.label }));
     if (fx.art) btn.style.background = fx.art;
     btn.addEventListener('pointerenter', () => showPreview(fx, true)); btn.addEventListener('focus', () => showPreview(fx, true));
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     fxTiles.append(btn);
   }
@@ -986,7 +992,7 @@ async function buildHome(card) {
   });
   card.group('Background').append(
     toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
-    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview, shuffleNote, sections, picture),
+    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
   );
   card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
@@ -2784,7 +2790,7 @@ function buildSystem(card) {
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
   // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
-  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 24 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 20 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
     [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
   const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
   const showGfxNote = () => {

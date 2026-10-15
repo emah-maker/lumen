@@ -893,14 +893,14 @@ class GrokBuildEngine {
     try { this.kill(child); } catch { /* already gone */ }
   }
 
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
     fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
     // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
     // long-lived `grok agent stdio` process answers (full access and a chosen effort get a process of their own kind, see
     // grok-warm.js). It returns null when it can't take this message (setting off, images, a start that failed before
     // anything was sent): then the one-process-per-message run below does.
     if (this.keepWarm) {
-      const warm = this.background ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, fullAccess, effort });
+      const warm = this.background || workFolder ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, fullAccess, effort });
       if (warm) return warm;
       this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
     }
@@ -911,7 +911,7 @@ class GrokBuildEngine {
     // ends; the last run there to end copies a refreshed token back.
     const releaseAuth = holdAuth(userGrokHome(), this.home);
     try {
-      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort });
+      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder });
     } finally {
       // Not awaited: the reply doesn't wait on it (the next link does). A process still going down (the turn was answered on its
       // `result` line, see attempt) may refresh the token as it ends, so the copy-back comes only after it has gone.
@@ -920,7 +920,7 @@ class GrokBuildEngine {
     }
   }
 
-  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
+  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -930,7 +930,8 @@ class GrokBuildEngine {
     const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort };
+    if (workFolder) { try { if (!(await fs.promises.stat(workFolder)).isDirectory()) workFolder = ''; } catch { workFolder = ''; } }
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -949,7 +950,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '' }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
     // The last message's process is still going down (see exitLater): it may hold the session's files, so it is gone before this one starts.
     if (this.exits.size) { await Promise.all([...this.exits]); if (signal.aborted) return { text: '', sessionId, stopped: true }; }
@@ -961,7 +962,10 @@ class GrokBuildEngine {
     // outlive this one message's tag, which is fresh every time.
     const gateRun = gate.open(tag, sessionId, { fullAccess });
     try { this.onFresh?.({ sessionId, resume }); } catch {}
-    const workDir = dir; // (full access too: Lumen's empty folder, see "FULL ACCESS")
+    // (full access too: Lumen's empty folder, see "FULL ACCESS".) [work folder] The folder the user picked for the chat or its project is the
+    // working folder instead (it must be there). The lockdown above is unchanged: Grok's own file tools stay off, and Lumen's list_files
+    // reads that folder, so nothing outside it becomes reachable.
+    const workDir = workFolder || dir;
     const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: workDir, model, maxTurns, background: this.background, fullAccess, effort });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.

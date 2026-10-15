@@ -191,6 +191,7 @@ contextBridge.exposeInMainWorld('assistant', {
     search: (query) => ipcRenderer.invoke('chats:search', query), // chats whose title or messages match: [{ id, snippet }]
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
+    workFolder: (action, arg, confirmed) => ipcRenderer.invoke('chats:work-folder', action, arg, confirmed), // [work folder] the open chat's folder: get / pick / set / clear / open
     onUsage: on('chats:usage'),
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen

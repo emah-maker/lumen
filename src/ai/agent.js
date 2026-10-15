@@ -63,6 +63,7 @@ const uploadFiles = require('../features/upload-files'); // [uploads] upload_fil
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
+const projectFolders = require('../features/project-folders'); // [work folder] the folder the AI works in: a chat's own, else its project's
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -705,7 +706,10 @@ ${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, li
   // Settings > AI > Custom instructions (ai/custom-instructions.js): the user's standing notes, delimited as preferences.
   const withCustom = settings.customInstructions ? `${withManners}\n\n${settings.customInstructions}` : withManners;
   // [projects] The chat's project instructions (ai/project-instructions.js), set by main from the chat's project.
-  return settings.projectInstructions ? `${withCustom}\n\n${settings.projectInstructions}` : withCustom;
+  const withProject = settings.projectInstructions ? `${withCustom}\n\n${settings.projectInstructions}` : withCustom;
+  // [work folder] Where the AI works, when the user picked a folder for the chat or its project.
+  const work = projectFolders.workFolderOf(settings).replace(/[\u0000-\u001f\u007f<>]/g, '');
+  return work ? `${withProject}\n\n<work_folder>\nThe user chose this folder for the chat: ${work}\nWork there. list_files with no folder lists it, and its read option reads a text file in it. If you can create or edit files, do it inside that folder only, and say where you saved anything. Never read or write outside it.\n</work_folder>` : withProject;
 }
 
 // ---- [claude code engine] extra guidance when the user's own Claude Code CLI answers (claude-code.js).
@@ -1827,6 +1831,14 @@ class Agent {
     return false;
   }
 
+  // [work folder] The folder the open chat works in ('' clears it: the chat's project, if any, decides again). Takes effect with the next
+  // message. A chat with no message yet has no settings: they start here, as setModel does (`model`: what the picker shows).
+  setWorkFolder(folder, model) {
+    const dir = String(folder || '');
+    if (!this.messages.settings) this.messages.settings = { adhdMode: true, ...this.getOptions(), model };
+    if (dir) this.messages.settings.workFolder = dir; else delete this.messages.settings.workFolder;
+  }
+
   // Leaves the open chat for an empty one and stops ITS reply. Only the open chat's own run is stopped: stop() also stops the only
   // live run when the open conversation was swapped under it, which here is another chat's run (a tab or a new chat is opened while a
   // different chat works: that chat has to keep going).
@@ -2710,7 +2722,7 @@ class Agent {
     // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
     // which would leave a stale name in a prompt that is fixed at spawn. A model the user picked is still named.
     const autoChosen = routed.auto || Boolean(settings.autoFrom);
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, workDir: projectFolders.workFolderOf(settings), userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -2884,6 +2896,10 @@ class Agent {
   // Images are capped inside grok-build.js's run() (capImages), not here.
   async grokBuildTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
+    // [work folder] Grok Build keeps its sessions per working folder: a different folder starts a new session (handed the chat so far).
+    const gbDir = projectFolders.workFolderOf(settings);
+    if (settings.gbSession && (settings.gbDir || '') !== gbDir) { delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen; }
+    settings.gbDir = gbDir;
     const resume = Boolean(settings.gbSession);
     const picked = engineModel(settings.model);
     // Switched to Grok Build mid-chat (or its session is gone): hand it the conversation so far, same as claudeCodeTurn.
@@ -2914,6 +2930,7 @@ class Agent {
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
       systemPrompt: this.grokBuildSystem(settings, fullAccess),
       fullAccess,
+      workFolder: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
@@ -2986,6 +3003,7 @@ class Agent {
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
+      workDir: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('antigravity', this.browser.effort?.('antigravity')), // Settings → AI → AI providers
       signal,
       emit,
@@ -3061,6 +3079,7 @@ ${prompt}` : prompt), historyImages: [] };
       model: picked, // 'default' or a Codex model id
       systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
+      workDir: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('codex', this.browser.effort?.('codex')), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
       emit,
@@ -5607,7 +5626,41 @@ ${out.text}${note}
   }
 
   // list_files: the downloads folder starts with Lumen's own list (paths and sizes, no disk search); read: a downloaded file's text.
+  // [work folder] The folder the open chat works in (its own pick, else its project's), when it is there; '' otherwise.
+  async workFolder(chat = taskScope.getStore()?.chat) {
+    const dir = projectFolders.workFolderOf(chat?.settings);
+    if (!dir) return '';
+    try { const r = await projectFolders.checkWorkFolder(dir, { confirmed: true }); return r.ok ? r.real : ''; } catch { return ''; }
+  }
+  // list_files and its read option inside the work folder. With one, no folder means that folder, and a relative or absolute path inside
+  // it works without the device-access setting: the folder is the user's own pick. A path outside it (and "desktop", "downloads"...) is not
+  // this: it keeps the rules it had. Never a path that leaves the folder by .. or a link; credential files stay hidden as everywhere.
+  async workFolderFiles(input, root) {
+    const path = require('path');
+    const name = String(input.folder ?? '').trim();
+    const shorthand = /^(desktop|downloads|documents|pictures|movies|videos|music|home)$/i.test(name) || name.startsWith('~');
+    const target = (raw) => (path.isAbsolute(raw) ? raw : path.join(root, raw));
+    if (input.read) {
+      const raw = String(input.read);
+      if (!(await projectFolders.isInside(root, target(raw)))) return null; // not ours: the download list's rules
+      const real = deviceAccess.checkedPath(target(raw), 'file', this.deviceOpts());
+      const entry = { name: path.basename(real), path: real, state: 'completed' };
+      this.markTainted(taskScope.getStore());
+      const got = await aiDownloads.readText(entry);
+      const more = got.to < got.total ? `\n[first ${got.to} of ${got.total} characters]` : '';
+      return `<untrusted_file_content name="${entry.name.replace(/[<>"&]/g, '')}">\n${got.text.replace(/<(\/?)untrusted_file_content/gi, '‹$1untrusted_file_content')}${more}\n</untrusted_file_content>`;
+    }
+    if (shorthand) return null;
+    const folder = name ? target(name) : root;
+    if (!(await projectFolders.isInside(root, folder))) return null;
+    return deviceAccess.listFiles({ ...input, folder }, this.deviceOpts());
+  }
   async listFilesTool(input) {
+    const root = await this.workFolder();
+    if (root) {
+      const own = await this.workFolderFiles(input, root);
+      if (own !== null) return own;
+    }
     const list = this.browser.downloadList?.() || [];
     if (input.read) return this.readDownload(input, list);
     const lead = String(input.folder || '').trim().toLowerCase() === 'downloads' ? aiDownloads.listText(list, { limit: input.limit, match: input.match }) : '';

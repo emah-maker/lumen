@@ -73,6 +73,9 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),
       runNow: () => ipcRenderer.invoke('chats:run-now'),
       newInProject: (projectId) => ipcRenderer.invoke('chats:new-in-project', projectId),
+      pickProjectFolder: () => ipcRenderer.invoke('chats:project-pick-folder'), // [project folders] "Use an existing folder…"
+      projectFolder: (id, action, arg) => ipcRenderer.invoke('chats:project-folder', id, action, arg), // open / locate / recreate / rename / work / work-clear / write-all
+      workFolder: (action, arg, confirmed) => ipcRenderer.invoke('chats:work-folder', action, arg, confirmed), // [work folder] the open chat's folder: get / pick / set / clear / open
       closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners]
       onUsage: on('chats:usage'),
       onContext: on('chats:context'),
