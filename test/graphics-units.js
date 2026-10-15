@@ -11,6 +11,7 @@ const msBasic = dev(0x1414, 'Microsoft Basic Render Driver', false);
 
 // ---- classify
 check('the user\'s laptop: Intel Arc 140T active, an RTX 5080 idle: integrated', G.classify([intel(true), nvidia(false), msBasic, dev(0x8086, null, false)]).integrated === true, JSON.stringify(G.classify([intel(true), nvidia(false)])));
+check('the hybrid laptop names its discrete card for the Settings hint', G.classify([intel(true), nvidia(false)]).discrete === 'NVIDIA GeForce RTX 5080 Laptop GPU' && G.classify([nvidia(false)]).discrete === null, JSON.stringify(G.classify([intel(true), nvidia(false)])));
 check('the same laptop with the RTX active (dGPU mode): not integrated', G.classify([intel(false), nvidia(true), msBasic]).integrated === false, JSON.stringify(G.classify([intel(false), nvidia(true)])));
 check('Intel UHD / Iris Xe active: integrated', ['Intel(R) UHD Graphics 620', 'Intel(R) Iris(R) Xe Graphics'].every((n) => G.classify([dev(0x8086, n, true), nvidia(false)]).integrated), 'no');
 check('a discrete Intel Arc A770 / B580 active: not integrated (with another GPU present)', ['Intel(R) Arc(TM) A770 Graphics', 'Intel(R) Arc(TM) B580 Graphics'].every((n) => !G.classify([dev(0x8086, n, true), intel(false)]).integrated), 'yes');
@@ -45,6 +46,24 @@ const g = G.create({ app: { getGPUInfo: async () => ({ gpuDevice: [intel(true), 
   const broken = G.create({ app: { getGPUInfo: async () => { throw new Error('no gpu'); } }, readSettings: () => ({}) });
   await broken.detect();
   check('a GPU query that fails leaves Full effects', broken.light() === false, 'light');
+  // ---- software drawing: Automatic is Light plus the software level; Full effects by hand keeps everything
+  const sw = [];
+  let swSettings = {};
+  const gs = G.create({ app: { getGPUInfo: async () => ({ gpuDevice: [nvidia(true), intel(false)] }), getGPUFeatureStatus: () => ({ gpu_compositing: 'disabled_software', rasterization: 'disabled_software' }) }, readSettings: () => swSettings, onChange: (i) => sw.push([i.light, i.software]) });
+  check('before detection nothing is software', gs.software() === false && gs.light() === false, JSON.stringify(gs.info()));
+  await gs.detect();
+  check('software compositing in the feature status: Automatic is Light and the software level, even on a discrete GPU', gs.software() === true && gs.light() === true, JSON.stringify(gs.info()));
+  check('the change was announced once, with both flags', JSON.stringify(sw) === '[[true,true]]', JSON.stringify(sw));
+  swSettings = { graphicsMode: 'full' }; check('Full effects by hand keeps every effect in software', gs.software() === false && gs.light() === false, JSON.stringify(gs.info()));
+  swSettings = { graphicsMode: 'light' }; check('Light chosen by hand in software drawing: the software level too', gs.software() === true && gs.light() === true, JSON.stringify(gs.info()));
+  const launch = G.create({ app: {}, readSettings: () => ({}), launchSoftware: true });
+  check('hardware acceleration off at launch: software from the first frame', launch.software() === true && launch.light() === true, JSON.stringify(launch.info()));
+  const mid = []; const hw = G.create({ app: { getGPUInfo: async () => ({ gpuDevice: [nvidia(true), intel(false)] }), getGPUFeatureStatus: () => ({ gpu_compositing: 'enabled', rasterization: 'enabled' }) }, readSettings: () => ({}), onChange: (i) => mid.push(i.software) });
+  await hw.detect();
+  check('a healthy hardware GPU: not software', hw.software() === false && hw.light() === false, JSON.stringify(hw.info()));
+  hw.markSoftware();
+  check('drawing falls to software mid-session (gpu-health): the level follows at once and is announced', hw.software() === true && hw.light() === true && mid[mid.length - 1] === true, JSON.stringify([hw.info(), mid]));
+  check('softStatus reads the status words', hw.softStatus({ gpu_compositing: 'disabled_software' }) && hw.softStatus({ gpu_compositing: 'enabled', rasterization: 'disabled_software' }) && !hw.softStatus({ gpu_compositing: 'enabled', rasterization: 'enabled' }) && !hw.softStatus(null), 'no');
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();
