@@ -202,11 +202,12 @@ function create(deps) {
 
   // The new-tab page's Ask AI (the way back from Home): this tab turns into the chat page, in place (inNewTab: a new tab
   // instead). What was typed in the new-tab box goes to the page: asked in a new chat when `send` is set (Enter in Ask AI),
-  // otherwise it waits in the composer as a draft and is never sent.
-  function fromHome(tabId, { draft = '', inNewTab = false, send = false } = {}) {
+  // otherwise it waits in the composer as a draft and is never sent. Pictures (checked, from newtab-ai:ask) ride with it and join that first message.
+  function fromHome(tabId, { draft = '', images = [], inNewTab = false, send = false } = {}) {
     const id = inNewTab ? deps.openTab(CHAT_URL, { managerPage: 'chat' }).id : deps.goChat(tabId);
     const text = String(draft || '').slice(0, 20000);
-    if (id != null && text.trim()) drafts.set(id, { text, send: Boolean(send) });
+    const pictures = Array.isArray(images) ? images.slice(0, 10) : []; // (main already checked them: newtab-ai:ask cleans what the page sent)
+    if (id != null && (text.trim() || pictures.length)) drafts.set(id, { text, send: Boolean(send), images: pictures });
     deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
     return id;
   }
@@ -220,7 +221,7 @@ function create(deps) {
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
       const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send) };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
