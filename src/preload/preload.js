@@ -257,6 +257,8 @@ contextBridge.exposeInMainWorld('assistant', {
   // AI agents over MCP
   onMcpEvent: on('mcp:event'),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
+  // Other apps using Lumen (external-apps.js): pills and prompt; mcp:external-<state|answer> / -<stop|takeover|resume>
+  externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
   onHistory: on('agent:history'),
   // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
   openFullPage: () => ipcRenderer.send('chat:open-page'),
@@ -268,6 +270,7 @@ contextBridge.exposeInMainWorld('assistant', {
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId), // [content guard]
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab

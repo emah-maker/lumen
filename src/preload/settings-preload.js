@@ -165,6 +165,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       signedInSites: call('settings:signed-in-sites'), // [signed-in sites]
       removeSignedInSite: call('settings:remove-signed-in-site'),
       clearSignedInSites: call('settings:clear-signed-in-sites'),
+      desktopApps: call('settings:desktop-apps'), // [desktop apps]
+      removeDesktopApp: call('settings:remove-desktop-app'),
+      clearDesktopApps: call('settings:clear-desktop-apps'),
       aiGaps: call('settings:ai-gaps'), // [no handoff]
       clearAiGaps: call('settings:clear-ai-gaps'),
       sharedFiles: call('settings:shared-files'), // [screen context]
@@ -184,6 +187,17 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       mcpInfo: call('mcp:info'),
       setMcpEnabled: call('mcp:set-enabled'),
       addToAgent: call('mcp:add-to-agent'),
+      // Let other apps use Lumen (features/external-apps.js): their tokens, the switch and the setup text
+      externalApps: {
+        info: call('mcp:external-info'),
+        enable: call('mcp:external-enable'),
+        setRequireToken: call('mcp:external-require-token'),
+        setup: call('mcp:external-setup'),
+        add: call('mcp:external-add'),
+        revoke: call('mcp:external-revoke'),
+        setAsk: call('mcp:external-ask'),
+        openConfig: call('mcp:external-open-config'),
+      },
       automationInfo: call('automation:info'),
       // Tools from MCP servers the user adds (features/mcp-client.js)
       mcpServers: {
@@ -193,6 +207,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         setEnabled: call('mcp:server-enable'),
         refresh: call('mcp:server-refresh'),
         setAlwaysAllow: call('mcp:tool-always'),
+      },
+      // Connectors: services the AI can use once connected (features/connectors/). Tokens go in, never come back.
+      connectors: {
+        list: call('connectors:list'),
+        detect: call('connectors:detect'),
+        connect: call('connectors:connect'),
+        disconnect: call('connectors:disconnect'),
+        signIn: call('connectors:sign-in'),
       },
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),
