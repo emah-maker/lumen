@@ -256,7 +256,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros|connectors):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -7870,6 +7870,86 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
+// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Nothing of it loads at
+// startup: the first thing that needs it (a chat turn while something is connected, the Connectors page, a connect) makes the service.
+// Until then "is anything connected" is answered from the small file itself. A request goes only to that service, and tests point each
+// at 127.0.0.1 (global.__connectorEndpoints), with plain http allowed for that address in test mode only.
+const connectorsOpen = (url) => { if (String(url).startsWith('https://')) openTab(url); };
+// Gmail reuses the widget's Google paths: its own sign-in for the API, the Google sign-in in Lumen for the unread feed.
+// (A test stands in for Google with global.__connectorsGoogle, looked up at each call.)
+const connectorsGoogleReal = {
+  status: async () => {
+    const GA = require('./features/gmail-atom');
+    const auth = widgets.gmailAuthState();
+    let signedIn = false;
+    let email = auth.email;
+    if (!auth.oauth) {
+      try {
+        const res = await googleMailFeed(GA.feedUrl(0));
+        const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+        signedIn = Boolean(parsed?.ok);
+        email = parsed?.email || '';
+      } catch { /* not reachable: not signed in */ }
+    }
+    return { oauth: auth.oauth, oneClick: auth.oneClick, session: signedIn, email };
+  },
+  api: (p) => widgets.gmailApi(p),
+  feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
+  connect: () => widgets.gmailConnect({}),
+  disconnect: () => widgets.gmailDisconnect(),
+};
+const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
+let connectorsLive = null;
+const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
+  userData: app.getPath('userData'),
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+  },
+  fetch: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }), // a token goes in the header; no cookies
+  sessionFetch: (url, options) => session.defaultSession.fetch(url, { ...options, credentials: 'include' }), // the user's signed-in Lumen session (Canvas)
+  endpoints: () => (TEST && global.__connectorEndpoints) || {},
+  testLoopback: TEST,
+  // Hosts that may be a school's Canvas: the Canvas session cookie's own domain first, then history and the sites the AI may read as the user.
+  detectHosts: async () => {
+    const hosts = new Set();
+    try { for (const c of await session.defaultSession.cookies.get({ name: 'canvas_session' })) hosts.add(String(c.domain || '').replace(/^\./, '')); } catch { /* none */ }
+    for (const h of signedInSites.hosts()) hosts.add(h);
+    for (const e of history.values()) { try { hosts.add(new URL(e.url).hostname); } catch { /* not an address */ } }
+    return [...hosts].filter(Boolean);
+  },
+  google: connectorsGoogle,
+  mcp: mcpClient,
+  openSignIn: connectorsOpen,
+}));
+let connectedOnDisk = null; // before the service exists: whether the file lists anything (read once)
+const anyConnected = () => {
+  if (connectorsLive) return connectorsLive.hasAny();
+  if (connectedOnDisk === null) {
+    try { connectedOnDisk = Object.keys(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'connectors.json'), 'utf8')).connected || {}).length > 0; } catch { connectedOnDisk = false; }
+  }
+  return connectedOnDisk;
+};
+const connectorsFacade = {
+  hasAny: () => anyConnected(),
+  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  isWrite: (input) => connectorsSvc().isWrite(input),
+  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  call: (input, opts) => connectorsSvc().call(input, opts),
+  list: () => connectorsSvc().list(),
+};
+ipcMain.handle('connectors:list', () => connectorsSvc().list());
+ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id)));
+ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
+ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
+ipcMain.handle('connectors:sign-in', (_e, id) => {
+  const url = connectorsSvc().signInUrl(String(id));
+  if (url) connectorsOpen(url);
+  return Boolean(url);
+});
+// The connector tool is not in the shared MCP tool list: an outside agent (Claude Code started in a terminal and the like) never sees the user's
+// connected accounts. Only a run Lumen itself started gets it, by its own per-run tag (features/ai-agents.js runTools).
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -8023,6 +8103,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
+  connectors: connectorsFacade, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
@@ -8184,6 +8265,8 @@ if (TEST) {
   global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
+  global.__connectors = connectorsFacade;
+  global.__mcpTools = EXTERNAL_TOOLS;
 }
 
 // ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
@@ -10579,6 +10662,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
+  connectorTools: () => connectorsFacade.defs(), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
