@@ -194,6 +194,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         refresh: call('mcp:server-refresh'),
         setAlwaysAllow: call('mcp:tool-always'),
       },
+      // Connectors: services the AI can use once connected (features/connectors/). Tokens go in, never come back.
+      connectors: {
+        list: call('connectors:list'),
+        detect: call('connectors:detect'),
+        connect: call('connectors:connect'),
+        disconnect: call('connectors:disconnect'),
+        signIn: call('connectors:sign-in'),
+      },
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),
       importFrom: call('import:run'),
