@@ -7869,9 +7869,13 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
-// [connectors] Gmail reuses the widget's Google paths: its own sign-in for the API, the Google sign-in in Lumen for the unread feed.
-// (A test stands in for Google with global.__connectorsGoogle, looked up at each call.)
+// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Nothing of it loads at
+// startup: the first thing that needs it (a chat turn while something is connected, the Connectors page, a connect) makes the service.
+// Until then "is anything connected" is answered from the small file itself. A request goes only to that service, and tests point each
+// at 127.0.0.1 (global.__connectorEndpoints), with plain http allowed for that address in test mode only.
 const connectorsOpen = (url) => { if (String(url).startsWith('https://')) openTab(url); };
+// Gmail reuses the widget's Google paths: its own sign-in for the API, the Google sign-in in Lumen for the unread feed.
+// (A test stands in for Google with global.__connectorsGoogle, looked up at each call.)
 const connectorsGoogleReal = {
   status: async () => {
     const GA = require('./features/gmail-atom');
@@ -7894,10 +7898,8 @@ const connectorsGoogleReal = {
   disconnect: () => widgets.gmailDisconnect(),
 };
 const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
-// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Loaded when first
-// used: nothing here runs at startup beyond reading the small list of what is connected. A request goes only to that service, and
-// tests point each at 127.0.0.1 (global.__connectorEndpoints) with plain http allowed for that address in test mode only.
-const connectorsService = require('./features/connectors/service').create({
+let connectorsLive = null;
+const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
   userData: app.getPath('userData'),
   secrets: {
     available: () => safeStorage.isEncryptionAvailable(),
@@ -7916,12 +7918,38 @@ const connectorsService = require('./features/connectors/service').create({
     for (const e of history.values()) { try { hosts.add(new URL(e.url).hostname); } catch { /* not an address */ } }
     return [...hosts].filter(Boolean);
   },
-  // Gmail reuses the widget's Google paths (its own sign-in for the API, the Google sign-in in Lumen for the unread feed).
   google: connectorsGoogle,
   mcp: mcpClient,
   openSignIn: connectorsOpen,
+}));
+let connectedOnDisk = null; // before the service exists: whether the file lists anything (read once)
+const anyConnected = () => {
+  if (connectorsLive) return connectorsLive.hasAny();
+  if (connectedOnDisk === null) {
+    try { connectedOnDisk = Object.keys(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'connectors.json'), 'utf8')).connected || {}).length > 0; } catch { connectedOnDisk = false; }
+  }
+  return connectedOnDisk;
+};
+const connectorsFacade = {
+  hasAny: () => anyConnected(),
+  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  isWrite: (input) => connectorsSvc().isWrite(input),
+  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  call: (input, opts) => connectorsSvc().call(input, opts),
+  list: () => connectorsSvc().list(),
+};
+ipcMain.handle('connectors:list', () => connectorsSvc().list());
+ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id)));
+ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
+ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
+ipcMain.handle('connectors:sign-in', (_e, id) => {
+  const url = connectorsSvc().signInUrl(String(id));
+  if (url) connectorsOpen(url);
+  return Boolean(url);
 });
-require('./features/connectors/service').registerIpc(ipcMain, connectorsService, { openSignIn: connectorsOpen });
+// The tools outside agents (Claude Code and the like, over MCP) are offered: Lumen's own, and the one connector tool while a service is connected.
+// Read at each tools/list and tools/call (mcp.js only maps and searches it), so connecting or disconnecting shows at once.
+const aiAgentsToolList = { map: (f) => [...EXTERNAL_TOOLS, ...connectorsFacade.defs()].map(f), some: (f) => [...EXTERNAL_TOOLS, ...connectorsFacade.defs()].some(f) };
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -8075,7 +8103,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
-  connectors: connectorsService, // [connectors] the one `connector` tool
+  connectors: connectorsFacade, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
@@ -8237,7 +8265,8 @@ if (TEST) {
   global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
-  global.__connectors = connectorsService;
+  global.__connectors = connectorsFacade;
+  global.__mcpTools = aiAgentsToolList;
 }
 
 // ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
@@ -10524,7 +10553,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
-  tools: { map: (f) => [...EXTERNAL_TOOLS, ...connectorsService.defs()].map(f), some: (f) => [...EXTERNAL_TOOLS, ...connectorsService.defs()].some(f) }, // [connectors] outside agents (Claude Code and the like) see the connector tool while a service is connected
+  tools: aiAgentsToolList,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)

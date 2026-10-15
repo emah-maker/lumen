@@ -26,6 +26,7 @@ const BASES = {
   todoist: 'https://api.todoist.com/api/v1',
   notion: 'https://api.notion.com/v1',
 };
+const GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F';
 const provider = (id) => require(`./providers/${id}`); // loaded when a connector is first used (not at startup)
 
 function create({
@@ -97,7 +98,8 @@ function create({
         const onAbort = () => controller.abort();
         signal?.addEventListener?.('abort', onAbort, { once: true });
         let res;
-        let text;
+        let text = '';
+        let redirected = false;
         try {
           res = await (def.kind === 'session' ? sessionFetch || fetch : fetch)(url.href, { method, headers: h, body: json !== undefined ? JSON.stringify(json) : undefined, redirect: 'manual', signal: controller.signal });
           const buf = Buffer.from(await res.arrayBuffer());
@@ -105,12 +107,14 @@ function create({
           text = buf.toString('utf8');
         } catch (err) {
           if (err instanceof ConnectorError) throw err;
-          if (signal?.aborted) throw new ConnectorError('Stopped.', 'other');
-          throw new ConnectorError(controller.signal.aborted ? `${def.name} took too long to answer.` : `Couldn’t reach ${def.name}. Check the connection.`, 'other');
+          if (/redirect/i.test(String(err?.message))) redirected = true; // Electron's fetch throws when a redirect is refused (a sign-in page)
+          else if (signal?.aborted) throw new ConnectorError('Stopped.', 'other');
+          else throw new ConnectorError(controller.signal.aborted ? `${def.name} took too long to answer.` : `Couldn’t reach ${def.name}. Check the connection.`, 'other');
         } finally {
           clearTimeout(timer);
           signal?.removeEventListener?.('abort', onAbort);
         }
+        if (redirected) res = { status: 302, headers: new Headers() };
         const status = res.type === 'opaqueredirect' ? 302 : res.status;
         if (def.kind === 'session' && !allowAuth && (status === 401 || status === 0 || (status >= 300 && status < 400))) throw authFail();
         if (!allowAuth && def.kind === 'token' && status === 401) throw authFail();
@@ -210,7 +214,7 @@ function create({
     if (st.oauth) mode = 'oauth';
     else if (st.session) mode = 'session';
     else {
-      try { openSignIn('https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F'); } catch { /* the message says what to do */ }
+      try { openSignIn(GOOGLE_SIGN_IN); } catch { /* the message says what to do */ }
       throw new Error('Sign in to Google in the tab that just opened, then press Connect again. (Or add a Google client in Settings → Home → Widgets for the full sign-in.)');
     }
     connected[def.id] = { at: now(), account: flat(st.email, 80), config: { mode, owned } };
@@ -296,23 +300,14 @@ function create({
     return out;
   }
 
-  return { list, detect, connect, disconnect, defs, validate, label, isWrite, hasAny, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  // Where "Sign in" on a card sends the user: the service's own sign-in page, opened as a normal tab (null when there is none).
+  function signInUrl(id) {
+    if (id === 'gmail') return GOOGLE_SIGN_IN;
+    const domain = connected[id]?.config?.domain;
+    return id === 'canvas' && domain ? `https://${domain}/` : null;
+  }
+
+  return { list, detect, connect, disconnect, signInUrl, defs, validate, label, isWrite, hasAny, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
-// Settings → You and AI → Connectors. The connectors: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only
-// Lumen's own settings page may call them.
-function registerIpc(ipcMain, svc, { openSignIn } = {}) {
-  ipcMain.handle('connectors:list', () => svc.list());
-  ipcMain.handle('connectors:detect', (_e, id) => svc.detect(String(id)));
-  ipcMain.handle('connectors:connect', (_e, id, input) => svc.connect(String(id), input && typeof input === 'object' ? input : {}));
-  ipcMain.handle('connectors:disconnect', (_e, id) => svc.disconnect(String(id)));
-  ipcMain.handle('connectors:sign-in', (_e, id) => {
-    const url = { canvas: null, gmail: 'https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F' }[String(id)];
-    const card = svc.list().connectors.find((c) => c.id === String(id));
-    const target = url || (card?.config?.domain ? `https://${card.config.domain}/` : null);
-    if (target) openSignIn?.(target);
-    return Boolean(target);
-  });
-}
-
-module.exports = { create, registerIpc };
+module.exports = { create };
