@@ -157,6 +157,8 @@ function startAgent({ env, clientName }) {
       await Promise.all(group.map((a) => a.init()));
       const bridgeInit = treeStats(group.map((a) => a.pid)).wsMb / n;
       await gap(true);
+      const prof = process.env.LUMEN_MCP_PERF_PROF && n === 1;
+      if (prof) await app.evaluate(() => new Promise((res) => { const S = process.getBuiltinModule('inspector').Session; const ses = global.__perfSes = new S(); ses.connect(); ses.post('Profiler.enable', () => ses.post('Profiler.setSamplingInterval', { interval: 100 }, () => ses.post('Profiler.start', res))); }));
       const t0 = Date.now();
       await Promise.all(group.map(async (a, s) => {
         for (let round = 0; round < 10; round++) { // 10 rounds x 5 calls = 50 calls
@@ -172,6 +174,7 @@ function startAgent({ env, clientName }) {
           record('click', await a.call('click', { text: `Open ${round + 3}` }));
         }
       }));
+      if (prof) { const p = await app.evaluate(() => new Promise((res) => global.__perfSes.post('Profiler.stop', (e, r) => res(JSON.stringify(r.profile))))); fs.writeFileSync(process.env.LUMEN_MCP_PERF_PROF, p); }
       const g = await gap('read');
       await gap(false);
       if (process.env.LUMEN_MCP_PERF_GAPS === '1') for (const [at, gp] of g.list) console.log(`  gap ${gp} ms at ${at}: during ${(globalThis.__calls || []).filter((c) => c[0] <= at && c[1] >= at - 1).map((c) => c[2]).join(',') || '(no call)'}`);
@@ -248,6 +251,12 @@ function startAgent({ env, clientName }) {
           if (!Number.isInteger(id)) throw new Error(`open_tab: ${r.text.slice(0, 200)}`);
           ids.push(id);
         }
+        const named = await solo.callText('read_page', { tab_id: ids[0] });
+        check('read_page with tab_id reads that tab (not the front one)', /Heavy 900/.test(named.text) && !named.isError, named.text.slice(0, 200));
+        const bad = await solo.callText('read_page', { tab_id: 999999 });
+        check('a tab_id that is not a tab of the agent window is refused', bad.isError === true && /No tab with id|not.*tab|list_tabs/i.test(bad.text), bad.text.slice(0, 200));
+        const notInt = await solo.callText('click', { tab_id: 'x', text: 'Open 1' });
+        check('a tab_id that is not an integer is refused', notInt.isError === true && /integer/.test(notInt.text), notInt.text.slice(0, 200));
         await Promise.all(ids.map(async (tab, s) => { for (let r = 0; r < 10; r++) await roundCalls((n, args) => solo.call(n, { ...(typeof args === 'string' ? { url: args } : args), tab_id: tab }), `${base}/heavy?p=${s * 100 + r}`, r, rec); }));
       });
     }
@@ -282,6 +291,14 @@ function startAgent({ env, clientName }) {
       check(`one bridge stays under ${BOUNDS.bridgeMb} MB (${result.bridge.wsMb.toFixed(0)})`, result.bridge.wsMb <= BOUNDS.bridgeMb, result.bridge.wsMb);
       check(`no main-process gap over ${BOUNDS.maxGapMs} ms during the calls (max ${result.maxGapMs})`, result.maxGapMs <= BOUNDS.maxGapMs, result.maxGapMs);
       for (const [name, b] of Object.entries(BOUNDS.p95Ms)) check(`${name} p95 under ${b} ms (${(result.tools[name]?.p95 || 0).toFixed(0)})`, result.tools[name] && result.tools[name].p95 <= b, result.tools[name]?.p95);
+      const five = result.multiTab.five_sessions;
+      const tabs = result.multiTab.one_session_five_tabs;
+      check(`one session driving 5 tabs: at most ${BOUNDS.fiveTabsOneSessionOverIdleMb} MB over idle (${(tabs.open.wsMb - idle).toFixed(0)})`, tabs.open.wsMb - idle <= BOUNDS.fiveTabsOneSessionOverIdleMb, (tabs.open.wsMb - idle).toFixed(0));
+      check(`...and at least ${BOUNDS.fiveTabsSavingMb} MB less than 5 sessions with a tab each (${(five.open.wsMb - tabs.open.wsMb).toFixed(0)})`, five.open.wsMb - tabs.open.wsMb >= BOUNDS.fiveTabsSavingMb, (five.open.wsMb - tabs.open.wsMb).toFixed(0));
+      check(`...in at most ${BOUNDS.fiveTabsOneSessionProcesses} processes (${tabs.open.count}; 5 sessions: ${five.open.count})`, tabs.open.count <= BOUNDS.fiveTabsOneSessionProcesses && tabs.open.count < five.open.count, tabs.open.count);
+      check(`...and one window of its own, none per tab (${tabs.windows} windows with the user's)`, tabs.windows <= BOUNDS.fiveTabsOneSessionMaxWindows, tabs.windows);
+      check(`...calls p95 under ${BOUNDS.fiveTabsP95Ms} ms (${tabs.p95.toFixed(0)}) and all 250 done in under ${BOUNDS.fiveTabsWallMs} ms (${tabs.wall}): tabs run side by side, not queued`, tabs.p95 <= BOUNDS.fiveTabsP95Ms && tabs.wall <= BOUNDS.fiveTabsWallMs && tabs.calls === 250, `${tabs.p95} ${tabs.wall} ${tabs.calls}`);
+      check(`...and nothing left behind after it closes (${tabs.after.count} processes vs ${result.idle.count} at idle)`, tabs.after.count <= result.idle.count + BOUNDS.afterCloseExtraProcesses, tabs.after.count);
       check(`read_page payload at most ${BOUNDS.readPageBytes} bytes (${result.payload.read_page_bytes})`, result.payload.read_page_bytes <= BOUNDS.readPageBytes, result.payload.read_page_bytes);
       check(`screenshot payload at most ${BOUNDS.screenshotBytes} bytes (${result.payload.screenshot_bytes})`, result.payload.screenshot_bytes <= BOUNDS.screenshotBytes, result.payload.screenshot_bytes);
     }
