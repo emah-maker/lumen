@@ -56,7 +56,7 @@ const captures = (app) => app.evaluate(() => global.__caps);
       const f1 = await rig.home('setBackdropEffect.info().stats.frames');
       await sleep(3000);
       const f2 = await rig.home('setBackdropEffect.info().stats.frames');
-      const look = await rig.home(`({ soft: document.body.classList.contains('gfx-soft'), still: setBackdropEffect.info().still, particles: setBackdropEffect.info().count, blurred: ${blurred} })`);
+      const look = await rig.home(`({ soft: document.body.classList.contains('gfx-soft'), still: document.body.classList.contains('still'), particles: setBackdropEffect.info().count, blurred: ${blurred} })`);
       if (mode === 'auto') {
         check(`the new-tab effect is one still frame (no frame drawn in 3 s: ${f1} -> ${f2}; still ${look.still}, ${look.particles} particles)`, look.soft && f2 === f1 && look.still === true, JSON.stringify({ f1, f2, look }));
         check('the new-tab page has no backdrop-filter on any element', look.blurred.length === 0, JSON.stringify(look.blurred));
