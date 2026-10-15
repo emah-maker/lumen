@@ -142,7 +142,13 @@ async function measure(profile, section = '', { intent = false } = {}) {
       for (const wc of webContents.getAllWebContents()) hook(wc);
       electronApp.on('web-contents-created', (_e, wc) => hook(wc));
     }, PAGE_PROBE);
-    await sleep(9000); // let the browser's own startup work finish (ad-block lists, looking for the CLIs): the first open is "cold" for Settings, not for the browser
+    await sleep(6000);
+    // The browser's own start-up work (ad-block lists, looking for the CLIs, ...) must be over: the first open is "cold" for Settings, not for the browser. Waited for by
+    // the main process itself: two 1.5 s windows in a row with no stall over 12 ms.
+    for (let quiet = 0, tries = 0; quiet < 2 && tries < 30; tries++) {
+      const worst = await app.evaluate(() => new Promise((resolve) => { let max = 0; let last = Date.now(); const end = last + 1500; const tick = () => { const n = Date.now(); max = Math.max(max, n - last); last = n; if (n < end) setImmediate(tick); else resolve(max); }; setImmediate(tick); }));
+      quiet = worst <= 12 ? quiet + 1 : 0;
+    }
     const cold = await openOnce(app, section, { ui: intent ? ui : null });
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
     await sleep(1200);
