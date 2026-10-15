@@ -8,6 +8,7 @@ const { seedProfile, measure, tmpProfile } = require('../test/_settings-open-rig
     for (const k of ['cold', 'warm']) {
       const m = r[k];
       console.log(`${(section || '(default)').padEnd(10)} ${k.padEnd(4)} paint ${m.paint} filled ${m.filled} input ${m.input} (latency ${m.inputLatency}) ready ${m.ready} | main max ${m.mainMax} over20 ${JSON.stringify(m.mainOver)} | longtasks ${JSON.stringify(m.longtasks)} loaf ${JSON.stringify(m.loafs)} placeholders ${m.placeholders}
+   ticks ${m.ticks}
    origin ${m.origin} opened ${m.opened} vis ${m.vis} (${m.vis0}) raf1 ${m.raf1} marks ${JSON.stringify(m.marks)}`);
     }
   }

@@ -8768,8 +8768,9 @@ function prepareSettings() {
   try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
   const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
   // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
-  // shown but out of sight, far to the left of it, until it becomes the tab (which puts it in place).
-  try { const b = view.getBounds(); view.setBounds({ ...b, x: -30000 }); win.contentView.addChildView(view); view.setVisible(true); } catch { /* it loads without */ }
+  // shown at the place a tab has, but under every other view (so nothing of it is seen), until it becomes the tab. There it is drawn (rasterized)
+  // before the tab takes it: moved in from the side it was another 20 ms to its first frame.
+  try { view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height }); win.contentView.addChildView(view, 0); view.setVisible(true); } catch { /* it loads without */ }
   s.timer.unref?.();
   view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
   spareSettings = s;
