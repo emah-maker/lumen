@@ -55,6 +55,23 @@ async function main() {
   check('Todoist project ids are plain words, never a path or query', /expected form/.test(registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '1/../x' } }) || '') && /expected form/.test(registry.validate({ app: 'todoist', action: 'add_task', args: { content: 'a', project_id: 'x&y=1' } }) || '') && registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '2203306141' } }) === null, '');
   check('Canvas addresses: with or without https, a page address works, junk does not', registry.cleanDomain('https://northeastern.instructure.com/courses/1') === 'northeastern.instructure.com' && registry.cleanDomain('School.Instructure.com') === 'school.instructure.com' && registry.cleanDomain('not a domain') === '' && registry.cleanDomain('javascript:alert(1)') === '', '');
 
+  console.log('--- the MCP server: the tool goes only to a run Lumen owns');
+  const mcp = require('../src/automation/mcp');
+  registry.setConnected(['github']);
+  const listSession = async (engine) => {
+    const sent = [];
+    const { handle } = mcp.createSession({ tools: [{ name: 'read_page', description: 'x', input_schema: { type: 'object' } }], extraTools: (sess) => (sess.engine === 'live-run-tag' ? [registry.toolDef()] : []), callTool: async (name) => ({ content: [{ type: 'text', text: 'ran ' + name }] }), enabled: () => true, onEvent: () => {}, send: (m) => sent.push(m), engine });
+    await handle({ id: 1, method: 'tools/list' });
+    await handle({ id: 2, method: 'tools/call', params: { name: 'connector', arguments: { app: 'github', action: 'prs' } } });
+    return { names: sent[0].result.tools.map((t) => t.name), call: sent[1] };
+  };
+  const own = await listSession('live-run-tag');
+  const outside = await listSession(null);
+  const forged = await listSession('guessed-tag');
+  check('a run Lumen started (its live per-run tag) lists and may call the connector tool', own.names.join() === 'read_page,connector' && own.call.result?.content?.[0]?.text === 'ran connector', JSON.stringify(own));
+  check('a client with no tag, or a tag Lumen does not know, never sees it and is refused: Unknown tool', outside.names.join() === 'read_page' && forged.names.join() === 'read_page' && /Unknown tool/.test(outside.call.error?.message) && /Unknown tool/.test(forged.call.error?.message), JSON.stringify([outside, forged]));
+  registry.setConnected([]);
+
   console.log('--- the service, against stand-in services');
   const fakes = await startFakes();
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-'));

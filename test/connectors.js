@@ -170,6 +170,45 @@ async function main() {
     check('hands-off mode blocks the write (no card, nothing sent) but not the read', !hands.events.some((e) => e.type === 'approval') && posts() === postsBeforeBypass && hands.results[0]?.error && /hands-off/.test(hands.results[0].text) && !hands.results[1]?.error, JSON.stringify(hands));
     await app.evaluate(() => { global.__agent.browser.handsOff = () => false; });
 
+    console.log('--- a run Lumen started itself (Claude Code and the other command-line engines) gets the tool; nobody else does');
+    // A fake Lumen-owned CLI run: its per-run tag is what the MCP server knows it by (features/ai-agents.js runTools). An outside client has none.
+    const cli = (answer, { bypass = false } = {}) => app.evaluate(async (_e, { answer: ans, bypass: byp }) => {
+      const agent = global.__agent;
+      agent.reset();
+      agent.browser.bypassPermissions = () => byp;
+      agent.messages.settings = { model: 'claudecode:default', adhdMode: true };
+      const out = { events: [] };
+      const text = (r) => (r.content || []).map((b) => b.text).join(' ');
+      agent.claudeCodeTurn = async (_m, _t, _i, signal, emit) => {
+        const tee = (e) => { out.events.push(e); if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, ans), 20); emit(e); };
+        global.__fakeEngine = { owns: (t) => t === 'run-tag-1', active: { emit: tee, signal, scope: agent.runScope } };
+        const own = { engine: 'run-tag-1', approvedHosts: new Set(), clientName: 'Claude', controller: new AbortController() };
+        const outside = { approvedHosts: new Set(), clientName: 'Some other app', controller: new AbortController() };
+        const forged = { engine: 'guessed-tag', approvedHosts: new Set(), clientName: 'Forger', controller: new AbortController() };
+        out.listed = { own: global.__mcpToolsFor(own).includes('connector'), outside: global.__mcpToolsFor(outside).includes('connector'), forged: global.__mcpToolsFor(forged).includes('connector') };
+        const read = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, own);
+        out.read = { text: text(read), isError: read.isError };
+        const write = await global.__mcpCallTool('connector', { app: 'todoist', action: 'add_task', args: { content: 'From the CLI' } }, own);
+        out.write = { text: text(write), isError: write.isError };
+        const outRead = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, outside);
+        const outWrite = await global.__mcpCallTool('connector', { app: 'todoist', action: 'add_task', args: { content: 'From outside' } }, outside);
+        const forgedRead = await global.__mcpCallTool('connector', { app: 'github', action: 'prs' }, forged);
+        out.outside = [outRead, outWrite, forgedRead].map((r) => ({ isError: r.isError, text: text(r) }));
+      };
+      await new Promise((resolve) => agent.run('use my apps', (e) => { if (e.type === 'done') resolve(); }));
+      global.__fakeEngine = null;
+      agent.browser.bypassPermissions = () => false;
+      return out;
+    }, { answer, bypass });
+    const before = posts();
+    const cliDenied = await cli(false, { bypass: true });
+    check('a Lumen-owned CLI run is offered the connector tool; an outside client and a forged tag are not', cliDenied.listed?.own === true && cliDenied.listed.outside === false && cliDenied.listed.forged === false, JSON.stringify(cliDenied.listed));
+    check('…it can read (untrusted data), and the same call from an outside client or a forged tag is refused', !cliDenied.read?.isError && /Add dark mode/.test(cliDenied.read.text) && /untrusted_page_content/.test(cliDenied.read.text) && cliDenied.outside?.every((r) => r.isError && /Unknown tool/.test(r.text)), JSON.stringify(cliDenied));
+    const cliCard = cliDenied.events.find((e) => e.type === 'approval');
+    check('…its write shows the card (even with Bypass permissions on, and with no Always allow) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.noAlways === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
+    const cliAllowed = await cli(true);
+    check('…and allowing the card adds the task', !cliAllowed.write?.isError && /Added: \d+\s+From the CLI/.test(cliAllowed.write.text) && posts() === before + 1, JSON.stringify(cliAllowed.write));
+
     console.log('--- disconnect');
     await inSettings("window.confirm = () => true; document.getElementById('conn-github-disconnect').click(); true");
     await waitFor(async () => (await inSettings("document.querySelector('[data-connector=github]')?.dataset.status")) === 'off');

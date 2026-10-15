@@ -7948,7 +7948,8 @@ ipcMain.handle('connectors:sign-in', (_e, id) => {
   if (url) connectorsOpen(url);
   return Boolean(url);
 });
-// The connector tool is never in the MCP tool list: outside agents (Claude Code and the like) don't get the user's connected accounts.
+// The connector tool is not in the shared MCP tool list: an outside agent (Claude Code started in a terminal and the like) never sees the user's
+// connected accounts. Only a run Lumen itself started gets it, by its own per-run tag (features/ai-agents.js runTools).
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -10661,6 +10662,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
+  connectorTools: () => connectorsFacade.defs(), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)
