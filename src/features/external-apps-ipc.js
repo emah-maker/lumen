@@ -94,8 +94,7 @@ function setupExternalApps(deps) {
   send_.resume = (id) => { ext.resume(String(id)); };
   invoke.state = () => ext.state();
 
-  if (isTest) global.__externalApps = { ext, notes, info, answer: (id, d) => ext.answer(id, d) };
-  return { ext, invoke, send: send_ };
+  return { ext, invoke, send: send_, test: { ext, notes, info, answer: (id, d) => ext.answer(id, d) } };
 }
 
 module.exports = { setupExternalApps };
