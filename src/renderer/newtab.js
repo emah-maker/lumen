@@ -351,7 +351,7 @@ window.addEventListener('hashchange', render);
     const connect = document.getElementById('mode-connect');
     if (connect) connect.hidden = !setup;
     const hintEl = document.getElementById('mode-hint');
-    if (hintEl && hintEl.dataset.base === undefined) hintEl.dataset.base = hintEl.textContent;
+    if (hintEl && hintEl.dataset.base === undefined) hintEl.dataset.base = hintEl.textContent.replace('Ctrl+Enter', /^Mac/.test(navigator.platform || '') ? '⌘↩' : 'Ctrl+Enter'); // (Cmd+Enter on a Mac; Ctrl+/ really is Control there)
     if (hintEl && !hintTimer) hintEl.textContent = setup ? 'No AI is connected yet.' : hintEl.dataset.base;
     input.placeholder = text;
     input.setAttribute('aria-label', text);
