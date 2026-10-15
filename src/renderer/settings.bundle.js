@@ -5874,8 +5874,11 @@ function applyPageClasses() {
 let view = { cat: DEFAULT_CATEGORY, sub: null }; // what the right pane shows
 const query = () => $('search').value.trim().toLowerCase();
 const REMEMBER = 'lumen.settings.category';
-const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
-const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
+// (localStorage is a call into the browser process: read once, and written a moment after the page is up, not while it opens)
+let rememberedRead; let rememberedId = null;
+const remembered = () => { if (!rememberedRead) { rememberedRead = true; try { const id = localStorage.getItem(REMEMBER); rememberedId = categories.has(id) ? id : null; } catch { rememberedId = null; } } return rememberedId; };
+let rememberTimer = 0;
+const remember = (id) => { rememberedId = id; clearTimeout(rememberTimer); rememberTimer = setTimeout(() => { try { localStorage.setItem(REMEMBER, id); } catch {} }, 800); };
 
 let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
