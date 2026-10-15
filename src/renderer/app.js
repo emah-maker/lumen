@@ -2280,6 +2280,7 @@ function openPageInfo() {
 }
 $('security').addEventListener('click', openPageInfo);
 $('security').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPageInfo(); } });
+$('app-menu').addEventListener('pointerdown', () => window.browser.prepareSettings?.()); // [settings intent] a press is about 100 ms before the click, and Settings is the most common pick
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).

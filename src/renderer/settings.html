@@ -4,12 +4,7 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'" />
   <title>Settings</title>
-  <link rel="stylesheet" href="tokens.css" />
-  <link rel="stylesheet" href="settings.css" />
-  <link rel="stylesheet" href="settings-preview.css" />
-  <link rel="stylesheet" href="picker.css" />
-  <link rel="stylesheet" href="settings-skills.css" />
-  <link rel="stylesheet" href="settings-macros.css" />
+  <link rel="stylesheet" href="settings.bundle.css" />
 </head>
 <body>
   <a class="skip" href="#main" data-i18n="settings.skip">Skip to settings</a>
@@ -32,24 +27,6 @@
     <p class="page-foot" data-i18n="settings.footer">Can’t find a setting? Press / to search all of them.</p>
     <p id="unavailable" class="empty" data-i18n="settings.unavailable" hidden>Settings can only be changed from Lumen's own settings tab. Open ⋯ → Settings.</p>
   </main>
-  <script src="../features/theme-colors.js"></script>
-  <script src="../features/backgrounds.js"></script>
-  <script src="../features/clock-styles.js"></script>
-  <script src="i18n.js"></script>
-  <script src="cli-access.js"></script>
-  <script src="usage-bars.js"></script>
-  <script src="picker-match.js"></script>
-  <script src="picker.js"></script>
-  <script src="model-catalog.js"></script>
-  <script src="widget-summary.js"></script>
-  <script src="settings-search.js"></script>
-  <script src="settings-updates.js"></script>
-  <script src="settings-unload.js"></script>
-  <script src="settings-mcp-servers.js"></script>
-  <script src="settings-skills.js"></script>
-  <script src="settings-macros.js"></script>
-  <script src="settings-providers.js"></script>
-  <script src="settings-preview.js"></script>
-  <script src="settings.js"></script>
+  <script src="settings.bundle.js" defer></script>
 </body>
 </html>

@@ -248,8 +248,9 @@ let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
 
 // Only the settings tab's own top-level settings document may use the prefs:* calls.
+let spareSettings = null; // [settings intent] { view, timer }: the Settings page loading in a view of its own, before it is a tab (see prepareSettings)
 function isSettingsSender(event) {
-  return tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+  return (tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender) || (spareSettings && spareSettings.view.webContents === event.sender))
     && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url);
 }
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
@@ -265,7 +266,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:thumbs-visible', 'agent:open-preview', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
@@ -1492,6 +1493,7 @@ function extensionsMenu() {
 // doesn't open with scroll arrows or run past the window. { x, y, right } is the button's left,
 // bottom and right edge in the UI's window coordinates (`right` is missing from older callers).
 function showAppMenu({ x, y, right }) {
+  prepareSettings(); // [settings intent] (the menu holds Settings: it is most often what the user is after)
   const wc = activeTab()?.webContents;
   const web = isWebUrl(wc?.getURL());
   const chunk = (items, id, label, order) => ({ items, fold: id ? { id, label, order } : null });
@@ -4420,7 +4422,7 @@ const setup = require('./features/setup').create({
 });
 ipcMain.handle('settings:setup-state', () => setup.state());
 ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
-ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:default-browser', (_e, o) => setup.isDefault(o?.cached ? { maxAgeMs: 60000 } : {})); // (cached: Settings opening shows the last answer at once)
 ipcMain.handle('settings:make-default', () => setup.makeDefault());
 ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
@@ -5108,7 +5110,17 @@ const chats = () => (chatStore ||= createChatStore({
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
   legacyFile: CHAT_FILE(),
+  onError: (err) => chatSaveFailed(err),
 }));
+// A save that failed (a full disk, a locked file, the keychain): said once per session, in the tab strip's toast, with the reason. The chat stays
+// in memory and the next save tries again.
+let chatSaveWarned = false;
+function chatSaveFailed(err) {
+  console.error('Could not save chat:', err?.message);
+  if (chatSaveWarned) return;
+  chatSaveWarned = true;
+  try { toast(`Couldn't save this chat: ${String(err?.code || err?.message || 'unknown error').slice(0, 80)}`); } catch { /* no window to say it in */ }
+}
 let chatId = null; // the open chat
 // [temporary chat] Chats started with "Temporary chat" on the chat page: never written to disk, never listed (they live only in
 // memory until the user leaves them). Ids are random, so the set simply stays for the session.
@@ -5138,7 +5150,9 @@ function keepPendingProject(id) {
 // A project can have a real folder; its chats are mirrored there as Markdown files (plain text, NOT encrypted: the project's settings say
 // so), and a folder can be where the AI works (a chat's own pick, else its project's). All file work is async and never on the saving path:
 // a change schedules a write ~2 s after the last one, and the writes run one after another with the main thread free between them.
-const projectFolders = require('./features/project-folders');
+// Loaded on first use (a project's folder, a chat's work folder, a mirror write), not at startup (test/perf-budget.js counts startup modules).
+let projectFoldersMod = null;
+const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('./features/project-folders'))[key] });
 let documentsOverride = null; // TEST only (global.__projectFolders.setDocuments): the Documents folder of a test is never the user's own
 const documentsDir = () => documentsOverride || (TEST ? path.join(app.getPath('userData'), 'test-documents') : app.getPath('documents'));
 const projectsParent = () => { const d = String(readSettings().projectsDir || ''); return d && path.isAbsolute(d) ? d : path.join(documentsDir(), 'Lumen Projects'); };
@@ -5155,7 +5169,8 @@ const mirror = () => (chatMirror ||= projectFolders.createMirror({
   folderOf: mirrorFolderOf,
   onError: (err) => console.error('Project folder:', err?.message || err),
 }));
-const mirrorDebounce = projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000);
+let mirrorDebounceObj = null; // (made on first use, with the module above)
+const mirrorDebounce = new Proxy({}, { get: (_t, key) => { const d = (mirrorDebounceObj ||= projectFolders.createDebouncer((id) => serial(() => mirror().write(id)), 2000)); const v = d[key]; return typeof v === 'function' ? v.bind(d) : v; } });
 function mirrorChatSoon(id) { try { if (id && mirrorFolderOf(id)) mirrorDebounce.schedule(id); } catch { /* the chat is saved either way */ } }
 // Chats moved between projects ([[chat id, the project it was in]], read before the move): the file leaves the old folder (to Chats/Removed)
 // and is written in the new one.
@@ -5226,12 +5241,12 @@ function saveChat(generation = chatGeneration) {
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
-    chats().save(chatId, snapshot);
+    chats().saveAsync(chatId, snapshot); // (written in the background: no stall of the main thread; features/chat-store.js. Quitting writes what is pending at once)
     keepPendingProject(chatId);
     mirrorChatSoon(chatId); // [project folders]
-    if (chats().current() !== chatId) chats().setCurrent(chatId);
+    if (chats().current() !== chatId) chats().setCurrent(chatId, { defer: true });
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // During a long task the chat is saved after each step too, so quitting mid-run keeps what was done.
@@ -5240,12 +5255,18 @@ function saveChatSoon(generation) {
   clearTimeout(saveChatTimer);
   saveChatTimer = setTimeout(() => saveChat(generation), 1000);
 }
-app.on('before-quit', () => {
+// Everything not on disk yet is written now, on this thread: the app is closing, or Windows is logging off or shutting down (no time for more).
+function flushChatsNow() {
   saveChat();
-  try { mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now */ }
-  try { chats().flush(); } catch { /* nothing pending */ }
+  try { if (mirrorDebounceObj) mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now (none if nothing was ever mirrored) */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
-});
+  try { chats().flush(); } catch { /* nothing pending */ }
+}
+app.on('before-quit', flushChatsNow);
+app.on('will-quit', flushChatsNow); // (again: whatever a quit handler saved after the first)
+app.on('session-end', flushChatsNow); // (Windows logoff / shutdown, where the app event exists)
+app.on('browser-window-created', (_e, w) => { try { w.on('session-end', flushChatsNow); } catch { /* not a window that gets it */ } }); // (...and where only the window gets it)
+app.whenReady().then(() => { try { require('electron').powerMonitor.on('shutdown', flushChatsNow); } catch { /* the event is not on this platform */ } }).catch(() => {});
 
 function loadChat() {
   try {
@@ -5266,10 +5287,11 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false, quiet = false } = {}) {
+// `loaded`: the chat's saved snapshot, already read (chats:open reads it without stopping the main thread).
+function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
-  const snapshot = id && !live ? chats().load(id) : null;
+  const snapshot = id && !live ? (loaded || chats().load(id)) : null;
   // A listed chat whose file is gone or unreadable is not opened as an empty chat under its id (that blanked a conversation already on
   // screen, and the next message would have replaced the saved chat): `ensure` is for a tab's own chat that has no file yet.
   if (id && !snapshot && !live && (!ensure || chats().has(id))) return null;
@@ -5289,7 +5311,7 @@ function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   const wasUnread = unreadChats.delete(chatId);
   if (id && (snapshot || live)) chats().setCurrent(id, { defer: true }); // (the pointer only a restart reads: written a moment later, not inside the tab switch)
-  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
+  else if (!quiet) chats().setCurrent(null, { defer: true }); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   // A quiet switch (a window's sidebar following its front tab's chat, from a call it made: syncToSender) changes no run's mark unless it
   // read an unread chat. Telling every window anyway made each one's Research panel (it refreshes on "chats:changed" with research:get,
   // which follows that window's tab) switch the chat back: two windows on different chats flooded each other with thousands of updates a second.
@@ -5328,9 +5350,9 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().save(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
+    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
@@ -8728,6 +8750,42 @@ accentCss = require('./features/accent-css').create({ rendererDir: path.join(__d
 for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
+// [settings intent] The user is about to open Settings (pressed the menu button, or is typing lumen://settings): the page starts loading
+// in a view of its own now, and the tab takes it over when the open follows. Nothing is kept: with no open within SPARE_SETTINGS_MS it is closed.
+const SPARE_SETTINGS_MS = 5000;
+function dropSpareSettings() {
+  const s = spareSettings;
+  if (!s) return;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
+  try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+}
+function prepareSettings() {
+  if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
+  try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
+  const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
+  // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
+  // shown but out of sight, far to the left of it, until it becomes the tab (which puts it in place).
+  try { const b = view.getBounds(); view.setBounds({ ...b, x: -30000 }); win.contentView.addChildView(view); view.setVisible(true); } catch { /* it loads without */ }
+  s.timer.unref?.();
+  view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
+  spareSettings = s;
+  view.webContents.loadURL(settingsPage.urlFor('')).catch(() => {});
+}
+function takeSpareSettings() {
+  const s = spareSettings;
+  if (!s) return null;
+  spareSettings = null;
+  clearTimeout(s.timer);
+  const wc = s.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed()) { try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ } try { wc.close(); } catch { /* gone */ } return null; }
+  try { s.view.setVisible(false); } catch { /* the tab shows it */ }
+  return s.view;
+}
+ipcMain.on('prepare-settings', () => prepareSettings());
 function openSettingsPage(section = '', { replace = null } = {}) {
   const url = settingsPage.urlFor(section);
   const existing = tabs.find((t) => t.settings && alive(t));
@@ -8739,7 +8797,13 @@ function openSettingsPage(section = '', { replace = null } = {}) {
     switchTab(existing.id);
     return existing.id;
   }
-  const { id } = openTab(url, { settings: true });
+  const spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  const { id } = openTab(url, { settings: true, view: spare });
+  if (spare) {
+    const wc = spare.webContents;
+    const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
+    if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }
+  }
   if (replace) takePlace(id, replace);
   return id;
 }
@@ -8759,7 +8823,7 @@ function replaceTab(oldId, url) {
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
 if (TEST) {
-  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
+  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, prepare: prepareSettings, hasSpare: () => Boolean(spareSettings), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
 function applyContentBounds(bounds) {
@@ -9025,7 +9089,7 @@ ipcMain.on('nav:history-menu', (e, direction, point) => {
 if (TEST) global.__navHistoryMenu = (direction) => navHistoryTemplate(direction).map((i) => ({ label: i.label || '---', click: i.click }));
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
+ipcMain.handle('suggest:query', async (_e, query) => { if (/^\s*(lumen:\/\/)?settings\b/i.test(String(query))) prepareSettings(); /* [settings intent] */ await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
@@ -9555,9 +9619,18 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   };
 }));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
-ipcMain.handle('chats:open', (event, id) => {
-  syncToSender(event);
-  const view = switchChat(String(id));
+// Chats opened one after another: the read of an earlier one is dropped (it answers with whatever is open by then), so the last click is the chat shown.
+let openSeq = 0;
+async function readForOpen(id) {
+  const mine = ++openSeq;
+  const loaded = chatRuns.has(id) || id === chatId ? null : await chats().loadAsync(id); // (read in the background; the switch itself is then quick)
+  return { loaded, stale: mine !== openSeq };
+}
+ipcMain.handle('chats:open', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
+  syncToSender(event); // (with the switch, as one step: nothing else runs between them)
+  const view = switchChat(String(id), { loaded });
   if (view) {
     bindOpenChatHere(event.sender);
     chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
@@ -9566,9 +9639,11 @@ ipcMain.handle('chats:open', (event, id) => {
 });
 // "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
 // changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
-ipcMain.handle('chats:share', (event, id) => {
+ipcMain.handle('chats:share', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
   syncToSender(event);
-  const view = switchChat(String(id));
+  const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
     carriedTabs.delete(forTab);
@@ -10483,7 +10558,7 @@ const updates = require('./features/updates').createUpdates({
   app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
-  beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
+  beforeInstall: () => { saveSession(); saveChat(); try { chats().flush(); } catch { /* nothing pending */ } }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
 app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits

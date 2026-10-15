@@ -63,7 +63,9 @@ const uploadFiles = require('../features/upload-files'); // [uploads] upload_fil
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
-const projectFolders = require('../features/project-folders'); // [work folder] the folder the AI works in: a chat's own, else its project's
+// [work folder] the folder the AI works in: a chat's own, else its project's. Loaded on first use, not at startup (test/perf-budget.js).
+let projectFoldersMod = null;
+const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('../features/project-folders'))[key] });
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
