@@ -829,12 +829,13 @@ body.chat-full .setup { text-align: left; }
 
 .step { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; margin: 3px 0; color: var(--muted); font-size: 12px; transition: color var(--t-base) ease-out; }
 .step::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--border); flex: none; transition: background-color var(--t-base) ease-out; }
-.step.running::before { background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: step-ring 1.4s var(--ease-out) infinite; }
+.step.running::before { box-sizing: border-box; background: transparent; border: 1.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; } /* [step labels] a small spinner */
 @keyframes step-ring { 0% { box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.45); } 100% { box-shadow: 0 0 0 6px rgb(var(--accent-rgb) / 0); } }
 .step.done::before { background: var(--success); animation: dot-pop var(--t-snappy) var(--spring-bouncy); }
 .step.failed::before { background: var(--danger); animation: dot-pop var(--t-snappy) var(--spring-bouncy); }
 @keyframes dot-pop { 0% { transform: scale(1.9); } 100% { transform: scale(1); } }
-.step.failed { color: var(--danger); }
+.step.failed { color: var(--muted); } /* the icon and the short reason carry the error colour, not the whole line */
+.step .step-why { color: var(--danger); }
 .step.stopped::before { background: var(--faint); }
 .step .step-detail { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .step .step-time { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }

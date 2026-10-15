@@ -1,0 +1,52 @@
+/* Steps and activity cards in the chat (renderer/step-ui.js), sidebar and full page alike. */
+
+/* ---- a step that opens: its command and output */
+.step[data-more] { cursor: pointer; border-radius: 6px; }
+.step[data-more]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.step[data-more] .step-detail::after { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 0 2px 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; opacity: .55; transform: rotate(45deg); transition: transform var(--t-base) var(--spring-smooth); }
+.step[data-more].open .step-detail::after { transform: rotate(-135deg); }
+.step-more { flex-basis: 100%; min-width: 0; margin: 4px 0 4px 14px; cursor: auto; display: flex; flex-direction: column; gap: 6px; }
+.step-sec { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.step-sec-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px 3px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+.step-copy { border: 0; background: none; color: var(--accent-text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; }
+.step-copy:hover { background: var(--accent-soft); }
+.step-copy:focus-visible { outline: 2px solid var(--accent); }
+.step-pre { margin: 0; padding: 6px 8px; max-height: 220px; overflow: auto; font: 11.5px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); white-space: pre-wrap; word-break: break-word; user-select: text; }
+.step-none { color: var(--muted); font-size: 11px; padding-left: 2px; }
+.step.failed .step-detail { color: var(--muted); }
+.step-group.live > summary { cursor: pointer; }
+
+/* ---- the activity card: Browser, Terminal, Files */
+.act-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; color: var(--text); animation: rise var(--t-smooth) var(--spring-smooth); }
+.act-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.act-icon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
+.act-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.act-card[data-state="working"] .act-icon, .act-card[data-state="approval"] .act-icon { box-shadow: 0 0 0 0 var(--accent-soft); animation: step-ring 1.6s var(--ease-out) infinite; }
+.act-titles { min-width: 0; flex: 1; }
+.act-title { font-weight: 600; font-size: 13px; }
+.act-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-card[data-state="approval"] .act-sub { color: var(--accent-text); }
+.act-shot { border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; }
+.act-thumb { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.act-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.act-actions > button[hidden] { display: none; }
+.act-toggle, .act-closeall { padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
+.act-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.act-toggle:hover, .act-closeall:hover { background: var(--accent-soft); }
+.act-toggle:focus-visible, .act-closeall:focus-visible, .act-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-toggle:disabled, .act-closeall:disabled { opacity: .5; cursor: default; }
+.act-tabs-note { color: var(--muted); font-size: 12px; }
+.act-undo { border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 2px; }
+.act-btn { flex: 1 1 140px; width: auto; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
+.act-btn:hover { background: var(--accent-soft); }
+.act-btn:focus-visible, .act-steps > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-steps > summary { cursor: pointer; list-style: none; color: var(--muted); font-size: 12px; border-radius: 6px; }
+.act-steps > summary::-webkit-details-marker { display: none; }
+.act-steps > summary::after { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 0 2px 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--t-base) var(--spring-smooth); }
+.act-steps[open] > summary::after { transform: rotate(-135deg); }
+.act-list { margin-top: 6px; }
+.act-list .step { margin: 3px 0; }
+.act-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.act-card { position: relative; }
+.pref-lite .act-card { animation: none; }
+@media (prefers-reduced-motion: reduce) { .act-card[data-state="working"] .act-icon, .act-card[data-state="approval"] .act-icon { animation: none; } }

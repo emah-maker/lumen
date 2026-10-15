@@ -3053,7 +3053,7 @@ function mcpPillRefresh() {
 }
 
 function mcpStepRow(event) {
-  const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+  const label = event.label || (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
   if (document.body.classList.contains('agent-window')) { mcpStepNow = `${event.clientName}: ${label}`; return; } // the pill says it; no chat row
   const step = document.createElement('div');
   step.className = 'step running mcp-step';

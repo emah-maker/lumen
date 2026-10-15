@@ -167,7 +167,8 @@
       out.push(box);
     }
     const tools = Array.isArray(item.tools) ? item.tools : [];
-    if (item.steps || tools.length) {
+    if (tools.length && item.cards && window.stepUI) out.push(...window.stepUI.restoreNodes(item)); // [step labels] cards for the browser and the shell, readable lines, details on demand
+    else if (item.steps || tools.length) {
       const count = item.steps || tools.length;
       const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });
       if (!tools.length) {
@@ -182,7 +183,7 @@
         summary.firstChild.textContent = label;
         const list = el('div', { className: 'step-items' });
         for (const tool of tools) {
-          const text = tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : tool.name || '');
+          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : t('step.tool')); // (an older chat keeps its rows; a command it still has is named plainly)
           const row = el('div', { className: tool.ok === false ? 'step failed restored' : 'step done restored', title: text });
           row.innerHTML = '<span class="step-detail"></span>';
           row.firstChild.textContent = text;
@@ -194,7 +195,7 @@
     }
     return out;
   }
-  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return tool.name || ''; } }
+  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return t('step.tool'); } }
 
   // ---- Ctrl+Shift+C: copy the latest reply
   document.addEventListener('keydown', (e) => {

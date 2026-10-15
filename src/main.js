@@ -268,7 +268,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
@@ -9167,6 +9167,7 @@ const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
+const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
   if (msg.type === 'thinking') {
@@ -9177,20 +9178,86 @@ function trackRunDetails(run, msg) {
   if (d.thinkingSince && ['text', 'text_block', 'tool', 'turn_start', 'done'].includes(msg.type)) { d.thinkingMs += Date.now() - d.thinkingSince; d.thinkingSince = 0; }
   if (msg.type === 'retry') { d.thinking = ''; d.thinkingMs = 0; }
   else if (msg.type === 'tool') {
-    if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: msg.input, ok: true });
+    if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: stepLabelsLib.compactInput(msg.name, msg.input) || msg.input, ok: true });
+  } else if (msg.type === 'thumb') {
+    if (msg.data) d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '' };
   } else if (msg.type === 'tool_update') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
-    if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = msg.input; }
+    if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = stepLabelsLib.compactInput(t.name, msg.input) || msg.input; }
   } else if (msg.type === 'tool_done') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
     if (t) t.ok = Boolean(msg.ok);
   } else if (msg.type === 'auto') d.auto = { label: msg.label, reason: msg.reason };
 }
+// [activity cards] The Browser card's live thumbnail of the tab a run works in (features/step-thumbs.js). The chat reports whether any card
+// is on screen ('agent:thumbs-visible'); while none is, nothing is captured. Light graphics (or no hardware drawing) refreshes on navigation only.
+const stepThumbs = { createThumbs: (opts) => require('./features/step-thumbs').createThumbs(opts), isNavigation: (name) => require('./features/step-thumbs').isNavigation(name) }; // (loaded on the first browser step)
+const thumbVisibleBy = new Map(); // webContents id -> a card is on screen there
+const thumbsVisible = () => {
+  let known = false;
+  let any = false;
+  for (const [id, v] of thumbVisibleBy) {
+    const wc = webContentsModule.fromId(id);
+    if (!wc || wc.isDestroyed()) { thumbVisibleBy.delete(id); continue; }
+    known = true;
+    if (v) any = true;
+  }
+  return known ? any : true;
+};
+if (TEST) {
+  global.__thumbsState = { visible: () => thumbsVisible(), by: () => [...thumbVisibleBy] };
+  // n captures of the tab in front, each sent to the UI as the chat gets it, one after another (a test measures the main process meanwhile)
+  global.__thumbsState.burst = async (n) => { let bytes = 0; for (let i = 0; i < n; i++) { const wc = activeTab()?.webContents; const data = wc ? await require('./features/tab-capture').captureThumb(wc) : null; if (data) { bytes += data.length; ui()?.send('thumb:probe', { type: 'thumb', data, url: wc.getURL(), tabId: activeId, aiTabs: 0 }); } await new Promise((r) => setTimeout(r, 30)); } return bytes; };
+}
+async function captureRunThumb(run) {
+  const id = agent.runTabIdFor(run.messages) ?? run.tabId;
+  const hit = id != null ? tabAnywhere(id) : null;
+  if (!hit || !alive(hit.t)) return null;
+  const wc = hit.t.view.webContents;
+  const url = wc.getURL();
+  if (!/^(https?|file):/i.test(url) || aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
+  const data = await require('./features/tab-capture').captureThumb(wc);
+  return data ? { data, url, title: wc.getTitle?.() || '', tabId: id } : null;
+}
+async function timedCapture(run) {
+  const t0 = performance.now();
+  try { return await captureRunThumb(run); } finally { if (TEST) (global.__thumbsState.windows ||= []).push([t0, performance.now()]); } // (a test checks the main process stayed free while these ran)
+}
+// Called for every event of a run (emit): starts, nudges and ends the run's thumbnailer.
+function noteThumbs(run, msg, push) {
+  if (msg.type === 'tool') {
+    const name = String(msg.name || '');
+    if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
+      (run.toolNames ||= new Map()).set(msg.id, name);
+      (run.thumbs ||= stepThumbs.createThumbs({
+        capture: () => timedCapture(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
+        light: () => graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false, visible: thumbsVisible,
+        intervalMs: Number(process.env.LUMEN_THUMB_MS) || 1500,
+      })).activity();
+    }
+  } else if (msg.type === 'tool_done') {
+    const name = run.toolNames?.get(msg.id);
+    if (name) run.thumbs?.settled(stepThumbs.isNavigation(name));
+  } else if (msg.type === 'done') run.thumbs?.stop();
+}
+ipcMain.on('agent:thumbs-visible', (event, visible) => { thumbVisibleBy.set(event.sender.id, visible === true); });
+// "Open preview" on a Browser card: the tab it shows, or its page again in a new tab when that tab is gone.
+ipcMain.handle('agent:open-preview', (event, target) => {
+  syncToSender(event);
+  const id = Number.isInteger(target?.tabId) ? target.tabId : null;
+  const hit = id != null ? tabAnywhere(id) : null;
+  if (hit && alive(hit.t)) { withWindow(hit.rec, () => switchTab(id)); return { ok: true, tabId: id, reopened: false }; }
+  const url = typeof target?.url === 'string' ? target.url : '';
+  if (!/^https?:\/\//i.test(url) || url.length > 4000) return { ok: false, reason: 'gone' };
+  const rec = recOfSender(event.sender);
+  const tab = rec ? withWindow(rec, () => openTab(url)) : openTab(url);
+  return { ok: Boolean(tab), tabId: tab?.id ?? null, reopened: true };
+});
 function stampRun(run, done = null) {
   try {
     const d = run.details;
     const info = { at: Date.now() };
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: d.thumb || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
@@ -9253,10 +9320,11 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const out = createCoalescer(sendOut);
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
-    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
+    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     trackRunDetails(run, msg);
+    noteThumbs(run, msg, (ev) => { if (!run.deleted) { trackRunDetails(run, ev); out.push(ev); } });
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
     else if (msg.type === 'error') { run.error = msg.text || 'error'; run.errorSummary = msg.summary || ''; }
