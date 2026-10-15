@@ -115,9 +115,7 @@ function startAgent({ env, clientName }) {
 (async () => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
-  let pageHits = 0;
   const server = http.createServer((req, res) => {
-    pageHits++;
     const n = Number(/p=(\d+)/.exec(req.url)?.[1] || 0);
     res.setHeader('Content-Type', 'text/html'); res.end(heavyPage(n));
   });
