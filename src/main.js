@@ -1842,7 +1842,7 @@ function tabState() {
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by AI" in its card)
+        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };
@@ -5873,13 +5873,13 @@ const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === n
 ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
 // The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
-// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
+// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close tabs the AI opened all still reach them).
 ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
 // Right-click on that toggle: the same switch, and closing the AI's tabs outright (every window, with Undo, as the menus'
-// "Close Tabs Opened by AI" does), so tabs the user no longer wants need not just be hidden.
+// "Close tabs the AI opened" does), so tabs the user no longer wants need not just be hidden.
 function hideAiMenuTemplate() {
   const count = aiTabSelect({}).length;
   return [
@@ -5888,15 +5888,20 @@ function hideAiMenuTemplate() {
     { label: count ? t('sidebar.hideAiTabs.menu.close', { count }) : t('sidebar.hideAiTabs.menu.closeNone'), enabled: count > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } },
   ];
 }
-ipcMain.on('tabs:hide-ai-menu', (event) => {
+let hideAiMenuPops = 0;
+ipcMain.on('tabs:hide-ai-menu', (event, at) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || owner.isDestroyed()) return;
-  Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner });
+  hideAiMenuPops++;
+  // From the keyboard (Menu key, Shift+F10) the strip says where: under the button
+  const pos = Number.isFinite(at?.x) && Number.isFinite(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {};
+  Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner, ...pos });
 });
+if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops;
 if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
-// The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
+// The taskbar's command (Jump List task, Dock menu) and the menus' "Close tabs the AI opened": every normal window's AI tabs, each
 // window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
 // A private window has no AI tabs of this kind (it is in no window record). With none to close, a brief line shows in the
 // window in front, and only if one is visible.

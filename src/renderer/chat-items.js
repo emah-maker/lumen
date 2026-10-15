@@ -441,7 +441,7 @@
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
-        const closeLabel = tr('chats.closeTabs', 'Close tabs opened by this chat');
+        const closeLabel = tr('chats.closeTabs', 'Close tabs this chat opened');
         const closeTabs = iconButton('closetabs', closeLabel);
         closeTabs.onclick = async () => {
           closeTabs.disabled = true;
