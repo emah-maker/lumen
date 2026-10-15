@@ -3104,7 +3104,7 @@ explain describe list find give compare difference summarize summary write rewri
   function makeCard(turn, surface, host) {
     const el0 = el('section', { className: 'act-card' });
     el0.dataset.surface = surface;
-    el0.dataset.state = 'working';
+    el0.dataset.state = ''; // (the first refresh sets it: a browser card starts being watched then)
     el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div></div></div>'
       + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"></div>'
       + '<button type="button" class="act-btn" hidden></button>'
@@ -3117,19 +3117,19 @@ explain describe list find give compare difference summarize summary write rewri
     host.append(el0);
     turn.cards ||= [];
     turn.cards.push(card);
-    if (surface === 'browser') watch(el0);
     refreshCard(turn, card);
     return card;
   }
   function stateOf(turn, card) {
-    if (card.running > 0) return (turn?.approvalsWaiting?.() && card === turn.card) ? 'approval' : 'working';
+    // A card is working until the assistant's narration ends it (or the turn ends), however briefly no step runs between two steps.
+    if (card.running > 0 || !card.ended) return (turn?.approvalsWaiting?.() && card === turn.card) ? 'approval' : 'working';
     return card.stopped ? 'stopped' : 'completed';
   }
   function refreshCard(turn, card) {
     const state = stateOf(turn, card);
     if (card.el.dataset.state !== state) {
       card.el.dataset.state = state;
-      if (state !== 'working' && state !== 'approval' && card.surface === 'browser') unwatch(card.el);
+      if (card.surface === 'browser') { if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
     }
     const kind = card.surface === 'browser' ? 'browser' : card.writes && !card.shell ? 'files' : 'terminal'; // "Computer", or "Files changed" when only files were written
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
@@ -3161,7 +3161,7 @@ explain describe list find give compare difference summarize summary write rewri
 
   // ---- the turn's steps
   // opts: { append(el) puts a plain node in the chat above the working line, label (the engine's own), task }
-  function endCard(turn) { if (turn) { turn.card = null; turn.plain = null; } }
+  function endCard(turn) { if (!turn) return; const card = turn.card; turn.card = null; turn.plain = null; if (card) { card.ended = true; refreshCard(turn, card); } }
   function labelFor(event) {
     const own = window.stepLabels && SL().label(event.name, event.input || {});
     return own || event.label || '';
@@ -3235,6 +3235,7 @@ explain describe list find give compare difference summarize summary write rewri
     for (const card of turn?.cards || []) {
       for (const row of card.list.querySelectorAll('.step.stopped')) { card.stopped = true; row._card && (row._card.running = Math.max(0, row._card.running - 1)); }
       card.running = 0;
+      card.ended = true;
       refreshCard(turn, card);
     }
   }
@@ -3303,7 +3304,7 @@ explain describe list find give compare difference summarize summary write rewri
         legacy.summary.firstChild.textContent = tr(legacy.n === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: legacy.n });
       }
     }
-    for (const card of turn.cards) { card.el.dataset.state = 'completed'; }
+    for (const card of turn.cards) { card.ended = true; if (card.surface === 'browser') card.task = item.task || ''; }
     const t = item.thumb;
     if (t && t.data) {
       const last = [...turn.cards].reverse().find((c) => c.surface === 'browser');
@@ -4988,7 +4989,7 @@ window.assistant.onEvent((event) => {
       settleThinking();
       endStream();
       turn.text = null; // next text starts a fresh block after any tool steps
-      window.stepUI.endCard(turn);
+      if (event.type === 'text_block') window.stepUI.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
       turn.textSource = '';
       turn.thinking = null;
       break;

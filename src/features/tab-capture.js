@@ -51,10 +51,12 @@ async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } 
   try {
     if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; }
     const zoom = wc.getZoomFactor?.() || 1;
+    let dpr = 1; // (the picture is `width` device pixels wide, whatever the display's scale)
+    try { dpr = Math.max(1, Number((await dbg.sendCommand('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }))?.result?.value) || 1); } catch { /* 1 */ }
     const cssW = w / zoom;
     const cssH = Math.min(h / zoom, cssW * 0.625); // the card shows a 16:10 window onto the top of the page
     for (const [q, k] of [[quality, 1], [38, 1], [32, 0.75]]) {
-      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: Math.min(1, (width * k) / cssW) } });
+      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: Math.min(1, (width * k) / (cssW * dpr)) } });
       if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
     }
   } catch { /* try the screenshot path */ } finally {

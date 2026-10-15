@@ -1457,6 +1457,7 @@ function itemExtras(chatMessages, m, mi) {
   if (model) out.model = model;
   if (meta.thinking) { out.thinking = meta.thinking; if (meta.thinkingMs) out.thinkingMs = meta.thinkingMs; }
   if (meta.tools) out.tools = meta.tools;
+  if (meta.task) out.task = meta.task; // [activity cards] the request in a few words, for the card's subtitle
   if (meta.cards) out.cards = true; // [activity cards] saved by a version that draws cards: its steps carry bounded, masked inputs
   if (meta.thumb) out.thumb = meta.thumb; // [activity cards] the last frame of the tab the AI worked in
   if (meta.auto) out.auto = meta.auto;
@@ -1806,7 +1807,7 @@ class Agent {
       if (blocks.some((b) => b.type === 'text' && b.text?.trim()) || blocks.some((b) => b.type === 'generated_image' || b.type === 'ai_file')) { last = i; break; }
     }
     if (last < 0) return;
-    const patch = branches.cleanMeta({ thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, cards: info.cards, auto: info.auto });
+    const patch = branches.cleanMeta({ thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, cards: info.cards, task: info.task, auto: info.auto });
     if (patch) branches.setMeta(messages[last], patch);
   }
 

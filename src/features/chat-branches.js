@@ -42,6 +42,7 @@ function cleanMeta(raw) {
     if (tools.length) out.tools = tools;
   }
   if (raw.cards === true) out.cards = true;
+  if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };
   if (raw.auto && typeof raw.auto === 'object' && typeof raw.auto.label === 'string') out.auto = { label: raw.auto.label.slice(0, 120), ...(typeof raw.auto.reason === 'string' ? { reason: raw.auto.reason.slice(0, 300) } : {}) };
   if (raw.feedback === 'up' || raw.feedback === 'down') out.feedback = raw.feedback;

@@ -9078,6 +9078,7 @@ const thumbsVisible = () => {
   }
   return known ? any : true;
 };
+if (TEST) global.__thumbsState = { visible: () => thumbsVisible(), by: () => [...thumbVisibleBy] };
 async function captureRunThumb(run) {
   const id = agent.runTabIdFor(run.messages) ?? run.tabId;
   const hit = id != null ? tabAnywhere(id) : null;
@@ -9088,6 +9089,10 @@ async function captureRunThumb(run) {
   const data = await require('./features/tab-capture').captureThumb(wc);
   return data ? { data, url, title: wc.getTitle?.() || '', tabId: id } : null;
 }
+async function timedCapture(run) {
+  const t0 = performance.now();
+  try { return await captureRunThumb(run); } finally { if (TEST) (global.__thumbsState.windows ||= []).push([t0, performance.now()]); } // (a test checks the main process stayed free while these ran)
+}
 // Called for every event of a run (emit): starts, nudges and ends the run's thumbnailer.
 function noteThumbs(run, msg, push) {
   if (msg.type === 'tool') {
@@ -9095,7 +9100,7 @@ function noteThumbs(run, msg, push) {
     if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
       (run.thumbs ||= stepThumbs.createThumbs({
-        capture: () => captureRunThumb(run), send: push,
+        capture: () => timedCapture(run), send: push,
         light: () => graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false, visible: thumbsVisible,
         intervalMs: Number(process.env.LUMEN_THUMB_MS) || 1500,
       })).activity();
@@ -9122,7 +9127,7 @@ function stampRun(run, done = null) {
   try {
     const d = run.details;
     const info = { at: Date.now() };
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, thumb: d.thumb || undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: d.thumb || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
