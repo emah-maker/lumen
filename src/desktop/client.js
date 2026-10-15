@@ -118,7 +118,6 @@ function createClient(deps = {}) {
         reject(Object.assign(new Error(`The app did not answer in time (${cmd}). It may be busy or showing a dialog.`), { timeout: true }));
         if (child === c) stop(); // a helper stuck on one call is replaced, not waited for
       }, timeoutMs);
-      timer.unref?.();
       waiting.set(id, { resolve, reject, timer });
       try { c.stdin.write(`${JSON.stringify({ ...args, id, cmd })}\n`); } catch (err) { waiting.delete(id); clearTimeout(timer); reject(err); }
     });

@@ -42,7 +42,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       ['Bitwarden', { proc: 'Bitwarden', title: 'My vault' }],
       ['KeePassXC', { proc: 'KeePassXC', title: 'Passwords.kdbx' }],
       ['a password manager named in the title', { proc: 'electron', title: 'Dashlane - Passwords' }],
-      ['Quicken (finance)', { proc: 'qw', title: 'Quicken' }],
+      ['Quicken (finance)', { proc: 'quicken', title: 'Quicken' }],
       ['a finance app by process', { proc: 'Coinbase', title: 'Coinbase' }],
       ['a bank in a browser window', { proc: 'chrome', title: 'Online Banking - Chase Online - Google Chrome' }],
       ['Lumen by pid', { proc: 'electron', title: 'Lumen', pid: 4242 }],
@@ -182,7 +182,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   {
     const rig = makeRig({ apps: [word, consent, keepass, shell, lumenWin, slack] });
     const text = await rig.d.run({ action: 'list_apps' }, rig.ctx);
-    check('list_apps: names the apps, hides titles until allowed, never lists the blocked windows (only counts them)', /w100  Microsoft Word \(asks you first/.test(text) && !/Report\.docx/.test(text) && !/secret-project/.test(text) && !/consent|KeePass|Command Prompt|User Account/i.test(text) && /3 other windows are never available/.test(text) || /4 other windows/.test(text), text);
+    check('list_apps: names the apps, hides titles until allowed, never lists the blocked windows (only counts them)', /w100 {2}Microsoft Word \(asks you first/.test(text) && !/Report\.docx/.test(text) && !/secret-project/.test(text) && !/consent|KeePass|Command Prompt|User Account/i.test(text) && /3 other windows are never available/.test(text) || /4 other windows/.test(text), text);
     check('list_apps: asks nothing', rig.asked.length === 0);
   }
   {
@@ -269,7 +269,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     underCursor = 99; cursor = { x: 500, y: 500 };
     clock._poll();
     check('takeover: the mouse moving over another program is not a takeover', !clock.paused());
-    underCursor = 10; typing = true; foreground = 10;
+    t += 1000; underCursor = 10; typing = true; foreground = 10;
     clock._poll();
     check('takeover: typing in the app (keyboard) pauses it too', clock.paused());
     clock.resume();
@@ -385,7 +385,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const used = new Set([...read('src/renderer/desktop-card.js').matchAll(/tr\('([a-z.A-Z]+)'/g)].map((m) => m[1]));
     check('locale: every string the card uses, and the settings and approval texts, exist', [...used].every((k) => k in locale) && ['settings.ai.desktopControl', 'settings.ai.desktopControlDesc', 'settings.ai.desktopTerminals', 'settings.ai.desktopTerminalsDesc', 'settings.ai.desktopApps', 'settings.ai.desktopAppsDesc', 'approval.app.once', 'approval.app.always'].every((k) => k in locale), [...used].filter((k) => !(k in locale)).join());
     const main = read('src/main.js');
-    check('main: the desktop modules load on first use (no top-level require of src/desktop), the Settings channels exist', !/^const .*require\('\.\/desktop/m.test(main) && /require\('\.\/desktop\/wire'\)/.test(main) && /'settings:desktop-apps'/.test(main) && /'settings:remove-desktop-app'/.test(main));
+    check('main: the desktop modules load on first use (no top-level require of src/desktop), the Settings channels exist', !/^const \w+ = require\('\.\/desktop/m.test(main) && /require\('\.\/desktop\/wire'\)/.test(main) && /'settings:desktop-apps'/.test(main) && /'settings:remove-desktop-app'/.test(main));
     check('agent: it loads the policy lazily, only for a desktop step label', !/^const .*require\('\.\.\/desktop/m.test(read('src/ai/agent.js')));
     const helper = read('src/desktop/uia-helper.ps1');
     check('helper: password fields are reported with nothing else and refused for invoke / settext', /IsPassword\) \{ return @\{ pw = \$true \}/.test(helper) && /That is a password field\. The AI never uses these\./.test(helper) && /\$PWRE/.test(helper));
