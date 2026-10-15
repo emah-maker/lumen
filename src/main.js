@@ -8654,6 +8654,7 @@ function dropSpareSettings() {
   if (!s) return;
   spareSettings = null;
   clearTimeout(s.timer);
+  try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
   try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
 }
 function prepareSettings() {
@@ -8661,7 +8662,10 @@ function prepareSettings() {
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
   try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
-  const s = { view, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
+  const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
+  // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
+  // shown but out of sight, far to the left of it, until it becomes the tab (which puts it in place).
+  try { const b = view.getBounds(); view.setBounds({ ...b, x: -30000 }); win.contentView.addChildView(view); view.setVisible(true); } catch { /* it loads without */ }
   s.timer.unref?.();
   view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
   spareSettings = s;
@@ -8673,7 +8677,8 @@ function takeSpareSettings() {
   spareSettings = null;
   clearTimeout(s.timer);
   const wc = s.view.webContents;
-  if (wc.isDestroyed() || wc.isCrashed()) { try { wc.close(); } catch { /* gone */ } return null; }
+  if (wc.isDestroyed() || wc.isCrashed()) { try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ } try { wc.close(); } catch { /* gone */ } return null; }
+  try { s.view.setVisible(false); } catch { /* the tab shows it */ }
   return s.view;
 }
 ipcMain.on('prepare-settings', () => prepareSettings());
