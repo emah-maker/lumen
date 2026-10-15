@@ -2641,6 +2641,80 @@ explain describe list find give compare difference summarize summary write rewri
   window.aiFiles = { card, autoOpen };
 })();
 ;
+// ---- desktop-card.js
+// The "Computer" activity card: the AI working in another program on this PC (src/desktop/). One card per app per run, drawn from
+// { type: 'desktop_card', surface: 'app', id, app, title, status, task, thumbnail, icon } events (the same payload shape the browser card
+// uses: surface, app, title, status, thumbnail). Kept in its own module so it can be merged with a shared card component later.
+//   window.desktopCard.update(event) -> the card's element (created on first sight, updated in place after), with
+//   { created: true } when it is new so the caller can place it in the conversation.
+// The thumbnail is a data: image main made from a window capture; the only other input is text, always set with textContent.
+(() => {
+  const tr = (key, vars) => window.t(key, vars);
+  const IMAGE = /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+  const cards = new Map(); // id -> element
+
+  const statusText = (status, task) => {
+    if (status === 'completed') return tr('desktopcard.completed', { task: task || tr('desktopcard.done') });
+    if (status === 'paused') return tr('desktopcard.paused');
+    if (status === 'stopped') return tr('desktopcard.stopped');
+    return tr('desktopcard.working', { task: task || tr('desktopcard.working.default') });
+  };
+
+  function build(event) {
+    const card = el('div', { className: 'desktop-card' });
+    card.dataset.id = event.id;
+    card.setAttribute('role', 'group');
+    const icon = el('img', { className: 'dc-icon', alt: '', hidden: true, draggable: false });
+    const name = el('div', { className: 'dc-app' });
+    const status = el('div', { className: 'dc-status', role: 'status' });
+    const open = el('button', { type: 'button', className: 'dc-btn dc-open', textContent: tr('desktopcard.open') });
+    const resume = el('button', { type: 'button', className: 'dc-btn dc-resume primary', textContent: tr('desktopcard.resume'), hidden: true });
+    const stop = el('button', { type: 'button', className: 'dc-btn dc-stop', textContent: tr('desktopcard.stop'), hidden: true });
+    const thumb = el('img', { className: 'dc-thumb', alt: '', hidden: true, draggable: false });
+    open.onclick = () => { open.disabled = true; Promise.resolve(window.assistant?.desktopOpen?.(card.dataset.id)).catch(() => {}).finally(() => { open.disabled = false; }); };
+    resume.onclick = () => window.assistant?.desktopControl?.('resume');
+    stop.onclick = () => window.assistant?.desktopControl?.('stop');
+    card.append(
+      el('div', { className: 'dc-head' }, icon, el('div', { className: 'dc-meta' }, name, status), el('div', { className: 'dc-bar' }, resume, stop, open)),
+      thumb,
+    );
+    return card;
+  }
+
+  function update(event) {
+    if (!event || typeof event.id !== 'string') return null;
+    let card = cards.get(event.id);
+    let created = false;
+    if (!card || !card.isConnected) {
+      if (card && !card.isConnected) cards.delete(event.id);
+      card = build(event);
+      cards.set(event.id, card);
+      created = true;
+      while (cards.size > 60) cards.delete(cards.keys().next().value);
+    }
+    const q = (sel) => card.querySelector(sel);
+    const live = event.status === 'working' || event.status === 'paused';
+    card.dataset.status = event.status || 'working';
+    q('.dc-app').textContent = String(event.app || tr('desktopcard.app'));
+    q('.dc-status').textContent = statusText(event.status, String(event.task || ''));
+    card.setAttribute('aria-label', `${q('.dc-app').textContent}: ${q('.dc-status').textContent}`);
+    q('.dc-resume').hidden = event.status !== 'paused';
+    q('.dc-stop').hidden = !live;
+    q('.dc-open').hidden = event.status === 'stopped' && !event.thumbnail;
+    if (typeof event.icon === 'string' && IMAGE.test(event.icon)) { const i = q('.dc-icon'); if (i.src !== event.icon) i.src = event.icon; i.hidden = false; }
+    if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) {
+      const t = q('.dc-thumb');
+      if (t.src !== event.thumbnail) t.src = event.thumbnail;
+      t.alt = tr('desktopcard.thumbAlt', { app: q('.dc-app').textContent });
+      t.hidden = false;
+    }
+    return { card, created };
+  }
+
+  window.desktopCard = { update, count: () => cards.size };
+})();
+;
 // ---- run-state.js
 // What a view should do with main's answer about the chat it shows (renderer/chat-core.js reconcile()): 'keep' when the
 // view already matches (same chat, same running state), 'adopt' when only the chat's id was not known yet, 'sync' when
@@ -4163,7 +4237,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4459,6 +4533,22 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
+    case 'desktop_card': { // [desktop apps] the "Computer" card: the AI working in another program, with its live thumbnail (renderer/desktop-card.js)
+      const drawn = window.desktopCard?.update(event);
+      if (!drawn) break;
+      if (drawn.created) {
+        settleThinking();
+        finishReply(turn.text, turn.textSource);
+        endStream();
+        turn.text = null;
+        turn.textSource = '';
+        const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant desktop-cards' });
+        bubble.append(drawn.card);
+        appendToTurn(bubble);
+        announce(t('desktopcard.announce', { app: event.app || '' }));
+      }
+      break;
+    }
     case 'tool_update': { // a step shown early (its input still streaming) gets its real label
       const step = turn.steps.get(event.id);
       if (!step) break;
@@ -4498,7 +4588,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, note: event.note, upload: event.upload });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -4970,10 +5060,11 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, note } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
@@ -5077,7 +5168,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, noAlways = false, note = '' }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -5086,7 +5177,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
-    textContent: terminal
+    textContent: ownDetail ? String(ownDetail)
+      : terminal
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
@@ -5096,8 +5188,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
-  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('approval.once') });
-  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
+  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');

@@ -533,6 +533,20 @@ const DELEGATE_TOOL = {
   },
   eager_input_streaming: true,
 };
+// [desktop apps] desktop operates other programs on this Windows PC (src/desktop/, docs/desktop-apps.md). One dispatcher tool keeps the tool prompt small. Offered to the
+// sidebar's API chats only while Settings > AI > "Let the AI use other apps on this computer" is on, or once the conversation asks for an app (requestFor / otherTurn),
+// so the default request costs nothing. Not listed to MCP clients or the CLI engines.
+const DESKTOP_TOOL = {
+  name: 'desktop',
+  description: 'Operate other apps on this Windows PC (Word, File Explorer...). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys}. The user is asked per app.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app'] }, args: { type: 'object' } }, required: ['action'] },
+  eager_input_streaming: true,
+};
+const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'open_app']); // (list_apps, read_app and screenshot_app only read)
+// What an app shows (titles, text, a picture) is untrusted content: after these actions web actions ask (the run is tainted, app-only), and src/desktop asks a card before acting in any OTHER app than the one that was read.
+const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app']);
+// A conversation that asks for another app (not just the word "word") is offered the tool even while the switch is off, so the AI can ask to turn it on.
+const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [research] research_board is the sidebar chat's own source list (settings.research), so, like delegate, it is not listed to MCP clients or the CLI engines.
 const BOARD_TOOL = { ...research.BOARD_TOOL, eager_input_streaming: true };
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
@@ -562,6 +576,7 @@ function slimTool(tool) {
 const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
+const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
 // What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
@@ -901,7 +916,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true } = {}) { // delegate: the helpers setting (the tool is offered)
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false } = {}) { // delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app)
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -916,7 +931,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], [BOARD_TOOL])),
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL])),
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -934,6 +949,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
 const TOOL_SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.input_schema]));
 TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for non-Claude models
 TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
+TOOL_SCHEMAS.desktop = DESKTOP_TOOL.input_schema;
 TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
 
 const KEY_CODES = {
@@ -972,7 +988,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'connector']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1970,6 +1986,7 @@ class Agent {
       repairHistory(messages);
     } finally {
       if (this.controller === controller) this.controller = null;
+      this.desktopFinish(controller.signal); // [desktop apps] the banner goes, the card says Completed
       const undo = this.undoSummary(log);
       emit({ type: 'done', model: messages.settings?.model, ...(messages.settings?.autoFrom && messages.settings.autoLast ? { auto: { label: messages.settings.autoLast.label, reason: messages.settings.autoLast.reason } } : {}), ...(undo ? { undo } : {}) });
       if (modelBefore && messages.settings) { messages.settings.model = modelBefore; delete messages.settings.fallbackFrom; delete messages.settings.autoFrom; }
@@ -3526,7 +3543,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn() });
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages) });
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3579,7 +3596,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(await this.externalToolDefs(emit))] : [], // [mcp client]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps]
       signal,
       emit,
       noTools,
@@ -3936,7 +3953,7 @@ ${prompt}` : prompt), historyImages: [] };
       }
       const run = () => this.execute(name, args);
       const value = await (scope ? taskScope.run({ ...scope, helper: true, ...(hostGate ? { gate: hostGate } : {}) }, run) : run());
-      if (name === 'read_urls') { state.run.tainted = true; read = true; }
+      if (name === 'read_urls') { state.run.tainted = true; state.run.appOnly = false; read = true; }
       return value;
     };
     // [agents out of sight] The chat that called delegate gets the delegate call's own row and the final answers, not a row per helper
@@ -3958,6 +3975,7 @@ ${prompt}` : prompt), historyImages: [] };
   async describeStep(name, input) {
     try {
       if (this.isExternalTool(name)) { const f = this.browser.externalTools.lookupTool(name); return `Using ${f.tool} from ${f.server}`; } // [mcp client]
+      if (name === 'desktop') { const p = require('../desktop/policy'); return p.stepLabel(String(input?.action || ''), input?.args && typeof input.args === 'object' ? input.args : {}); } // [desktop apps]
       if (name === 'connector') return connectors.stepLabel(input); // [connectors] "Using Canvas · Upcoming assignments"
       if (name === 'navigate') return `Opening ${hostOf(input.url)}`;
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
@@ -4076,6 +4094,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
+    if (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // app text taints web actions, but not the desktop tool's own acting calls on the same app (src/desktop tracks its sources)
     if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
@@ -4169,6 +4188,7 @@ ${prompt}` : prompt), historyImages: [] };
   // a tool that clicks, types, scrolls, navigates or runs a script is refused on a tab the AI did not open itself. Reading
   // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
   handsOffCheck(name, input = {}) {
+    if (name === 'desktop' && DESKTOP_ACTING.has(String(input?.action || '')) && this.browser.handsOff?.() && !this.userRun()) throw new Error("Hands-off mode is on: the user does not let the AI click or type for them, so this app action was not run. Reading apps (list_apps, read_app, screenshot_app) still works."); // [desktop apps]
     if (!manners.isActionTool(name) || !this.browser.handsOff?.() || this.userRun()) return;
     let ids;
     try {
@@ -4704,6 +4724,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (holder) {
       holder.onlyFrom = holder.tainted ? (holder.onlyFrom === found.server ? found.server : null) : found.server;
       holder.tainted = true;
+      holder.appOnly = false;
     }
     this.externalGrant = name; // execute() runs an outside tool only right after this
   }
@@ -4724,7 +4745,7 @@ ${prompt}` : prompt), historyImages: [] };
       const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector' });
       if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
     }
-    if (holder) { holder.tainted = true; holder.onlyFrom = null; }
+    if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
   }
 
@@ -4905,10 +4926,12 @@ ${out.text}${note}
   }
 
   // A chat (via its task scope) or an MCP session has seen page content; see ensureAllowed.
-  markTainted(run = taskScope.getStore()) {
+  markTainted(run = taskScope.getStore(), { app = false } = {}) {
     const holder = taintHolder(run);
     if (!holder) return;
+    if (app) { if (!holder.tainted) { holder.tainted = true; holder.appOnly = true; } return; } // [desktop apps] text from an app: web actions ask, but it is not web, email or connector content
     holder.tainted = true;
+    holder.appOnly = false;
     holder.onlyFrom = null; // [mcp client] not only one server's output any more (see allowExternal)
   }
 
@@ -4919,7 +4942,7 @@ ${out.text}${note}
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
-    if (action !== 'upload-pick' && !noBypass && this.bypassOn()) {
+    if (action !== 'upload-pick' && action !== 'app' && !noBypass && this.bypassOn()) { // ('app': which program the AI may use is always the user's to answer, even with Bypass on)
       const id = `auto-allow-${++this.approvalSeq}`;
       try {
         emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });
@@ -4930,6 +4953,8 @@ ${out.text}${note}
     const approvalId = ++this.approvalSeq;
     emit(action === 'upload' || action === 'upload-pick' // [uploads] the files and field the card is about (see uploadFile)
       ? { type: 'approval', approvalId, host, action, title, upload }
+      : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
+      ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
       ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}) }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
@@ -5156,6 +5181,40 @@ ${out.text}${note}
     return lines.join('\n');
   }
   // ---- [/uploads]
+
+  // ---- [desktop apps] src/desktop/ (loaded on first use): the AI operating other programs on this computer, docs/desktop-apps.md
+  desktopOffered(messages) {
+    try {
+      if (this.browser.desktopAccess?.() === true) return true;
+      for (let i = messages.length - 1, seen = 0; i >= 0 && seen < 6; i--) { // the latest few things the user said
+        const m = messages[i];
+        if (m?.role !== 'user') continue;
+        seen++;
+        const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
+        if (text.length < 4000 && DESKTOP_INTENT.test(text)) return true;
+      }
+    } catch { /* not offered */ }
+    return false;
+  }
+  desktop() {
+    if (this.desktopCtl) return this.desktopCtl;
+    if (!this.browser.desktop) throw new Error('Using other apps is not available here.');
+    return (this.desktopCtl = this.browser.desktop());
+  }
+  desktopTool(input) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate || gate.external || gate.noAsk) throw new Error('Using other apps needs the user in the chat to approve each app, so it is not available here.');
+    const hosts = gate.hosts;
+    const ctx = {
+      emit: gate.emit, signal: gate.signal,
+      tainted: () => { const h = taintHolder(gate.run); return Boolean(h?.tainted && !h.appOnly); }, // read a page, an email or a connector's answer earlier: acting calls ask a card every time (text from apps is tracked per app, in src/desktop)
+      once: { has: (app) => hosts.has(`app:${app}`), add: (app) => hosts.add(`app:${app}`) }, // Once: for this chat (the chat's approved set; never saved)
+      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways === true, upload: { detail: card.detail, allowLabel: card.allowLabel } }),
+    };
+    return this.desktop().run(input, ctx);
+  }
+  desktopFinish(signal) { try { this.desktopCtl?.finishRun(signal); } catch { /* nothing to end */ } }
+  // ---- [/desktop apps]
 
   // ---- [device access] Settings > AI > "Let the AI use files on this computer" (features/device-access.js)
   deviceOpts() { return { profile: this.browser.profileDir?.() || '' }; }
@@ -6218,6 +6277,7 @@ ${same}
         return this.browser.macros.runForAI(input, this);
       }
       case 'delegate': return this.delegate(input); // [subagents]
+      case 'desktop': return this.desktopTool(input); // [desktop apps]
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
         while (Date.now() < until && !this.signalAborted()) await sleep(Math.min(250, until - Date.now()));

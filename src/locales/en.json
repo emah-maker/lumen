@@ -3209,5 +3209,26 @@
   "newtab.images.unreadable": "{name} could not be read.",
   "newtab.images.limit": "Up to {max} images: {n} left out.",
   "newtab.images.pick": "Add images to your question",
-  "newtab.images.pickFilter": "Images"
+  "newtab.images.pickFilter": "Images",
+  "approval.app.once": "Allow for this chat",
+  "approval.app.always": "Always allow this app",
+  "approval.app.always.title": "Add this app to Settings → AI → Apps the AI can use. You can remove it there.",
+  "desktopcard.working": "Working · {task}",
+  "desktopcard.working.default": "using the app",
+  "desktopcard.completed": "Completed · {task}",
+  "desktopcard.done": "done",
+  "desktopcard.paused": "Paused · you took over. Resume?",
+  "desktopcard.stopped": "Stopped",
+  "desktopcard.open": "Open",
+  "desktopcard.resume": "Resume",
+  "desktopcard.stop": "Stop",
+  "desktopcard.app": "App",
+  "desktopcard.thumbAlt": "Live view of {app}",
+  "desktopcard.announce": "The AI is using {app}",
+  "settings.ai.desktopControl": "Let the AI use other apps on this computer",
+  "settings.ai.desktopControlDesc": "Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time: it asks you before it uses each one, a banner at the top of the screen shows it working with a Stop button, holding Esc stops it, and touching the app yourself pauses it. It never reads or fills password fields, and Windows security prompts, password managers, banking apps and Lumen itself are never available.",
+  "settings.ai.desktopTerminals": "Also allow terminals",
+  "settings.ai.desktopTerminalsDesc": "Warning: a terminal (Command Prompt, PowerShell, Windows Terminal) can run anything on this computer, so only turn this on if you would let the AI type commands for you. Off by default.",
+  "settings.ai.desktopApps": "Apps the AI can use",
+  "settings.ai.desktopAppsDesc": "Apps you chose Always for. The AI still asks about any other app, and you can revoke one here at any time."
 }

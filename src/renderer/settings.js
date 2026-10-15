@@ -439,6 +439,8 @@ async function buildAi(card) {
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -500,6 +502,22 @@ async function buildAi(card) {
   card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
+
+  // [desktop apps] Apps the AI may always use (src/desktop/): added only from its approval card (Always); revoked here.
+  const appList = h('div', { class: 'list', id: 'ai-desktop-apps' });
+  const clearApps = h('button', { id: 'ai-desktop-apps-clear', text: 'Revoke all', onclick: async () => renderApps(await S.ai.clearDesktopApps()) });
+  const renderApps = async (apps) => {
+    apps ||= await S.ai.desktopApps();
+    clearApps.hidden = !apps.length;
+    appList.replaceChildren(...(apps.length ? apps.map(({ app, name, added }) => h('div', { class: 'item', 'data-app': app },
+      h('span', { class: 'grow', text: name, title: app }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Revoke', 'aria-label': `Revoke ${name}`, onclick: async () => renderApps(await S.ai.removeDesktopApp(app)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it uses any app.' })]));
+  };
+  card.at('ai-privacy').append(stackRow(tr('settings.ai.desktopApps', 'Apps the AI can use'), tr('settings.ai.desktopAppsDesc', 'Apps you chose Always for.'), appList,
+    h('div', { class: 'controls' }, clearApps)));
+  renderApps();
 
   // [screen context] Files on this computer the AI may always see: added only from its card ("Allow always for this file"); removed here.
   const sharedList = h('div', { class: 'list', id: 'ai-shared-files' });
