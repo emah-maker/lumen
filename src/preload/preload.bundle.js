@@ -478,7 +478,7 @@ contextBridge.exposeInMainWorld('browser', {
   dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
-  hideAiTabsMenu: () => ipcRenderer.send('tabs:hide-ai-menu'), // right-click on the toggle: hide or close the AI's tabs
+  hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at), // right-click on the toggle: hide or close the AI's tabs
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point), // right-click on Back / Forward: the pages behind / ahead
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go

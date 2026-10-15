@@ -335,6 +335,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .hide-ai-tabs.has-label { display: inline-flex; align-items: center; justify-content: center; width: auto; height: 28px; gap: 5px; padding: 0 10px 0 8px; border-radius: var(--r-xl); }
 .hide-ai-tabs.has-label .hide-ai-label { line-height: 1; }
 .hide-ai-tabs.has-label:hover { background: var(--accent-soft); }
+.hide-ai-tabs.needs-you, .hide-ai-tabs.needs-you:hover { color: var(--on-warning); background: var(--warning); } /* [ai tabs] a hidden tab needs you: unmissable, and a click shows it */
 .hide-ai-tabs.has-label .hide-ai-count { display: none; }
 .icon-btn.hands-off-strip { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: auto; min-width: 28px; height: 28px; flex: none; color: var(--accent); white-space: nowrap; }
 .hands-off-label { display: none; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
