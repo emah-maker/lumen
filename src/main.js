@@ -983,6 +983,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
+  session.defaultSession.registerPreloadScript({ id: 'lumen-newtab-ai', type: 'frame', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }); // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
   hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
@@ -4555,7 +4556,6 @@ function askFromHome(event, url, tabId) {
   let text;
   let params;
   try { params = new URL(url).searchParams; text = params.get('ask'); } catch { return false; }
-  if (text === null && params.has('chat') && tabId != null) { event.preventDefault(); chatPageRt?.fromHome(tabId, { draft: params.get('draft') || '', inNewTab: params.get('chat') === 'tab', send: params.get('send') === '1' }); return true; } // Ask AI: the full-page chat, here or (Ctrl+click) in a new tab; send=1 asks the draft in a new chat
   if (text === null && params.has('connect-ai')) { event.preventDefault(); openSettingsPage('ai-keys'); return true; } // Ask AI with nothing connected: its setup prompt
   if (text === null) return false;
   event.preventDefault();
@@ -8854,6 +8854,44 @@ ipcMain.on('chat:full', (_e, on) => {
   layout();
 });
 // Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
+// ---------- [newtab-images] the new-tab page's Ask AI: text and pictures reach the full-page chat through these calls, never the page's URL ----------
+// Only a tab's top frame showing renderer/newtab.html may call them (the page's own preload, preload/newtab-preload.js, exposes them).
+{
+  const newtabImages = require('./features/newtab-images');
+  const newTabTab = (event) => (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') ? tabByContents(event.sender) : null);
+  ipcMain.handle('newtab-ai:ask', (event, o) => {
+    const tab = newTabTab(event);
+    if (!tab || !o || typeof o !== 'object') return false;
+    const images = newtabImages.clean(o.images);
+    const text = typeof o.text === 'string' ? o.text.trim().slice(0, 20000) : '';
+    chatPageRt?.fromHome(tab.id, { draft: text, images, inNewTab: o.inNewTab === true, send: Boolean(text || images.length) }); // (nothing typed: it only opens the chat)
+    return true;
+  });
+  ipcMain.handle('newtab-ai:pick', async (event) => {
+    if (!newTabTab(event)) return null;
+    let paths;
+    if (TEST && global.__newtabPick) paths = await global.__newtabPick(); // tests answer for the OS picker
+    else {
+      const owner = BrowserWindow.fromWebContents(event.sender) || win;
+      const picked = await electronDialog.showOpenDialog(owner && !owner.isDestroyed() ? owner : undefined, { title: t('newtab.images.pick'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('newtab.images.pickFilter'), extensions: newtabImages.EXTENSIONS }] });
+      paths = picked.canceled ? [] : picked.filePaths;
+    }
+    const images = [];
+    const problems = [];
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, newtabImages.MAX_IMAGES)) {
+      const name = path.basename(String(p));
+      try {
+        const type = newtabImages.typeOf({ name });
+        const size = (await fs.promises.stat(p)).size;
+        if (!type) problems.push({ code: 'notImage', name });
+        else if (!size) problems.push({ code: 'empty', name });
+        else if (size > newtabImages.MAX_BYTES) problems.push({ code: 'big', name });
+        else images.push({ name, type, data: await fs.promises.readFile(p) });
+      } catch { problems.push({ code: 'unreadable', name }); }
+    }
+    return { images, problems };
+  });
+}
 ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFromOtherApps(fileUrlsFor(paths.slice(0, 20))); });
 ipcMain.on('tab:new', (_e, url) => {
   const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
