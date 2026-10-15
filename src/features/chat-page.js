@@ -33,7 +33,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // What the page may ask main for, beyond the chat channels main.js already serves the sidebar:
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
+  'agent:thumbs-visible', 'agent:open-preview', 'tabs:hide-ai', 'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
@@ -202,11 +202,12 @@ function create(deps) {
 
   // The new-tab page's Ask AI (the way back from Home): this tab turns into the chat page, in place (inNewTab: a new tab
   // instead). What was typed in the new-tab box goes to the page: asked in a new chat when `send` is set (Enter in Ask AI),
-  // otherwise it waits in the composer as a draft and is never sent.
-  function fromHome(tabId, { draft = '', inNewTab = false, send = false } = {}) {
+  // otherwise it waits in the composer as a draft and is never sent. Pictures (checked, from newtab-ai:ask) ride with it and join that first message.
+  function fromHome(tabId, { draft = '', images = [], inNewTab = false, send = false } = {}) {
     const id = inNewTab ? deps.openTab(CHAT_URL, { managerPage: 'chat' }).id : deps.goChat(tabId);
     const text = String(draft || '').slice(0, 20000);
-    if (id != null && text.trim()) drafts.set(id, { text, send: Boolean(send) });
+    const pictures = Array.isArray(images) ? images.slice(0, 10) : []; // (main already checked them: newtab-ai:ask cleans what the page sent)
+    if (id != null && (text.trim() || pictures.length)) drafts.set(id, { text, send: Boolean(send), images: pictures });
     deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
     return id;
   }
@@ -220,7 +221,7 @@ function create(deps) {
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
       const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send) };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });

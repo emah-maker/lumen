@@ -39,4 +39,35 @@ async function captureTab(wc, rect = null) {
   throw new Error('Could not take a screenshot of this tab right now. Use read_page or find instead.');
 }
 
-module.exports = { captureTab, cssClip };
+// [activity cards] A small JPEG of the tab for the chat's Browser card: the page is scaled and encoded by the browser engine (the DevTools
+// protocol's Page.captureScreenshot with a clip scale), so the main process only handles a ~40 KB base64 string, never a full-size bitmap.
+// Falls back to captureTab + resize when the protocol call fails. Answers base64 or null; at most about 60 KB.
+async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } = {}) {
+  const size = wc.getContentSize?.() || [0, 0];
+  const w = Math.max(1, size[0] || 1280);
+  const h = Math.max(1, size[1] || 800);
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; }
+    const zoom = wc.getZoomFactor?.() || 1;
+    let dpr = 1; // (the picture is `width` device pixels wide, whatever the display's scale)
+    try { dpr = Math.max(1, Number((await dbg.sendCommand('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }))?.result?.value) || 1); } catch { /* 1 */ }
+    const cssW = w / zoom;
+    const cssH = Math.min(h / zoom, cssW * 0.625); // the card shows a 16:10 window onto the top of the page
+    for (const [q, k] of [[quality, 1], [38, 1], [32, 0.75]]) {
+      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: Math.min(1, (width * k) / (cssW * dpr)) } });
+      if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
+    }
+  } catch { /* try the screenshot path */ } finally {
+    if (attachedHere) { try { dbg.detach(); } catch { /* gone */ } }
+  }
+  try {
+    const image = await captureTab(wc);
+    const sized = image.resize({ width, quality: 'good' });
+    for (const q of [quality, 38, 30]) { const jpeg = sized.toJPEG(q); if (jpeg.length <= maxBytes) return jpeg.toString('base64'); }
+  } catch { /* no picture right now */ }
+  return null;
+}
+
+module.exports = { captureTab, cssClip, captureThumb };

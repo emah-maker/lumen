@@ -160,13 +160,40 @@ async function open() {
   eventBus.on('pagesinit', () => {
     const z = fragment.get('zoom');
     const zoomValue = z && /^\d+(\.\d+)?$/.test(z.split(',')[0]) ? String(Number(z.split(',')[0]) / 100) : z === 'page-fit' || z === 'page-width' ? z : 'page-width';
-    viewer.currentScaleValue = zoomValue;
     const page = Number(fragment.get('page'));
-    if (Number.isInteger(page) && page >= 1 && page <= doc.numPages) viewer.currentPageNumber = page;
-    showScale();
+    initial = { zoomValue, page: Number.isInteger(page) && page >= 1 && page <= doc.numPages ? page : 0 };
+    refresh(); // (a view with no size yet waits: the first resize applies it)
     container.focus({ preventScroll: true });
   });
 }
+
+// What the user sees must not wait for a scroll. pdf.js draws the pages in view when the document opens, when the view scrolls and when
+// the app tells it to; a tab opened behind another one (or while the window was being laid out) has a view of no size, so its pages were
+// sized for nothing and drawn for nothing, and nothing told the viewer when the view got its size or came to the front. So: the first scale
+// and page wait for a real size, and every change of size or of visibility (and a moment after the document opens) re-applies a "fit"
+// scale and asks pdf.js to draw what is in view.
+let initial = null;
+let sizedAt = '';
+function refresh() {
+  const w = container.clientWidth; const h = container.clientHeight;
+  if (!viewer.pdfDocument || !w || !h) return;
+  if (initial) {
+    const { zoomValue, page } = initial;
+    initial = null;
+    viewer.currentScaleValue = zoomValue;
+    if (page) viewer.currentPageNumber = page;
+    showScale();
+  } else if (sizedAt !== `${w}x${h}` && ['page-width', 'page-fit', 'auto'].includes(String(viewer.currentScaleValue))) {
+    const fit = viewer.currentScaleValue;
+    viewer.currentScaleValue = fit; // (the fit scale is worked out again for the new size)
+  }
+  sizedAt = `${w}x${h}`;
+  viewer.update();
+}
+new ResizeObserver(refresh).observe(container);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+window.addEventListener('focus', refresh);
+eventBus.on('pagesloaded', () => { requestAnimationFrame(refresh); setTimeout(refresh, 300); });
 
 // What main.js's keyboard handling and the AI's tools call (the page has no IPC of its own).
 window.lumenPdf = {
