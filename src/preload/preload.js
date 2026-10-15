@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('browser', {
   dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
+  hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at), // right-click on the toggle: hide or close the AI's tabs
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point), // right-click on Back / Forward: the pages behind / ahead
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go
@@ -191,6 +192,7 @@ contextBridge.exposeInMainWorld('assistant', {
     search: (query) => ipcRenderer.invoke('chats:search', query), // chats whose title or messages match: [{ id, snippet }]
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
+    workFolder: (action, arg, confirmed) => ipcRenderer.invoke('chats:work-folder', action, arg, confirmed), // [work folder] the open chat's folder: get / pick / set / clear / open
     onUsage: on('chats:usage'),
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen

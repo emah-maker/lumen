@@ -75,7 +75,10 @@ function clockParts(date, { hours = 'auto', seconds = false, locale } = {}) {
   return { h, m, s, sep, ssep: s ? after('minute') : '', text: `${h}${sep}${m}${s ? `${after('minute')}${s}` : ''}` };
 }
 
-const api = { CLOCK_STYLES, CLOCK_HOURS, CLOCK_CARDS, GREETING_FONTS, DEFAULTS, cleanStyle, cleanHours, cleanCard, cleanGreetingFont, greetingFontFor, clean, clockParts };
+// "Good morning" and the like, by the hour: the new-tab page and Settings' preview of it say the same.
+const greetingFor = (date) => { const h = date.getHours(); return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+
+const api = { greetingFor, CLOCK_STYLES, CLOCK_HOURS, CLOCK_CARDS, GREETING_FONTS, DEFAULTS, cleanStyle, cleanHours, cleanCard, cleanGreetingFont, greetingFontFor, clean, clockParts };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.ClockStyles = api;
 })();

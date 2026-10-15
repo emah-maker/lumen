@@ -101,6 +101,7 @@ const DEFAULTS = {
   adblockAllow: [],
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
+  projectsDir: '', // [projects] the folder new projects' folders are made in; empty: <Documents>Lumen Projects (main.js projectsParent)
   askWhereToSave: false,
   pdfViewer: 'lumen', // lumen | chrome: which viewer a PDF opens in (features/pdf-viewer.js)
   spellcheck: true,
@@ -161,7 +162,7 @@ const DEFAULTS = {
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
-  meetingHelper: true, // [ai] meeting helper panel in sidebar (Mod+Enter) with live prompting, context, stealth mode and summaries (features/meeting.js)
+  meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
@@ -287,6 +288,7 @@ function validate(key, value) {
     case 'permissionDefaults':
       if (!value || typeof value !== 'object') return null;
       return Object.fromEntries(Object.keys(PERMISSIONS).filter((p) => value[p]).map((p) => [p, pick(value[p], ['ask', 'block'], 'ask')]));
+    case 'projectsDir':
     case 'downloadDir': {
       const dir = String(value || '');
       return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir)) ? dir : null;
@@ -537,6 +539,21 @@ function create(deps) {
     if (prefs().accentColor !== TC.MATCH_WALLPAPER) return;
     deps.refreshAccent?.();
     if (deps.broadcastUi) deps.broadcastUi('prefs:ui', uiPrefs()); else deps.ui()?.send('prefs:ui', uiPrefs());
+  }
+  // The picker's preview of "Your picture": a 360 px copy as a data: URL (Settings' page may not load files) and the colours sampled for the page.
+  let previewCache = { v: 0, shot: null };
+  function wallpaperPreview() {
+    const v = prefs().newTabImage;
+    if (!v || !fs.existsSync(wallpaperFile())) return null;
+    if (previewCache.v !== v) {
+      let shot = null;
+      try {
+        const small = require('electron').nativeImage.createFromPath(wallpaperFile()).resize({ width: 360, quality: 'good' });
+        shot = { url: `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`, colors: imageColorsFor(v) };
+      } catch (err) { console.error('[lumen] could not make the picture preview:', err.message); }
+      previewCache = { v, shot };
+    }
+    return previewCache.shot;
   }
   function removeWallpaper() {
     try { fs.rmSync(wallpaperFile(), { force: true }); } catch (err) { console.error('[lumen] could not remove the background picture:', err.message); }
@@ -885,7 +902,7 @@ function create(deps) {
       zooms: ZOOMS,
       tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES, readyRecent: require('../features/tab-ready').RECENT_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
-      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
+      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, clockPx: WS.CLOCK_PX, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,
       defaultDownloadDir: app.getPath('downloads'),
       spellcheckAvailable: process.platform === 'darwin' ? [] : ses().availableSpellCheckerLanguages,
@@ -1091,6 +1108,7 @@ function create(deps) {
     handle('prefs:switch-timing-clear', () => deps.switchTiming?.clear());
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
+    handle('prefs:wallpaper-preview', wallpaperPreview);
     // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out
     handle('prefs:widgets', () => deps.widgets.state());
     handle('prefs:widget-test', (input) => deps.widgets.test(input));
@@ -1148,6 +1166,10 @@ function create(deps) {
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });
     handle('prefs:widget-reset-layout', () => { deps.widgets.resetLayout(); return deps.widgets.state(); });
     handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
+    handle('prefs:pick-projects-dir', async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: prefs().projectsDir || app.getPath('documents') });
+      return canceled || !filePaths[0] ? state() : set('projectsDir', filePaths[0]);
+    });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);

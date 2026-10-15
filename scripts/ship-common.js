@@ -19,6 +19,29 @@ function run(cmd, args, opts = {}) {
 const must = (r, what) => { if (r.status !== 0) throw new Stop(`${what} failed: ${(r.stderr || r.stdout || r.error?.message || `exit ${r.status}`).split('\n').slice(-4).join(' | ')}`); return r.stdout; };
 const git = (cwd, ...args) => run('git', args, { cwd });
 const gh = (cwd, ...args) => run('gh', args, { cwd });
+// A gh failure worth retrying: GitHub's GraphQL "Something went wrong", HTTP 502/503/504, timeouts and dropped connections.
+const TRANSIENT = /something went wrong|\bHTTP (502|503|504)\b|bad gateway|service unavailable|gateway time-?out|timed? ?out|ETIMEDOUT|ECONNRESET|EAI_AGAIN|connection reset/i;
+const isTransient = (r) => r.status !== 0 && TRANSIENT.test(`${r.stderr || ''} ${r.stdout || ''} ${r.error ? r.error.message : ''}`);
+
+// gh with up to `tries` attempts and a growing backoff on transient errors. Before each retry `recheck()` may return a finished result
+// ({ status: 0, stdout }) when the failed call actually went through (a merge that landed, a PR that was created): that counts as success.
+async function ghRetry(cwd, args, { tries = 3, backoffMs = 2000, runner = gh, recheck = null, nap = sleep, log = () => {} } = {}) {
+  let r;
+  for (let i = 1; i <= tries; i++) {
+    r = runner(cwd, ...args);
+    if (r.status === 0 || !isTransient(r) || i === tries) return r;
+    log(`gh ${args.slice(0, 2).join(' ')} hit a transient error (attempt ${i} of ${tries}); retrying`);
+    await nap(backoffMs * i);
+    const done = recheck ? await recheck() : null;
+    if (done) return done;
+  }
+  return r;
+}
+async function ghJsonRetry(cwd, args, opts = {}) {
+  const out = must(await ghRetry(cwd, args, opts), `gh ${args.slice(0, 2).join(' ')}`);
+  try { return JSON.parse(out || 'null'); } catch { throw new Stop(`gh ${args.slice(0, 2).join(' ')} gave unreadable output`); }
+}
+
 function ghJson(cwd, ...args) {
   const out = must(gh(cwd, ...args), `gh ${args.slice(0, 2).join(' ')}`);
   try { return JSON.parse(out || 'null'); } catch { throw new Stop(`gh ${args.slice(0, 2).join(' ')} gave unreadable output`); }
@@ -95,4 +118,4 @@ async function waitForCi(cwd, sha, { appearMs = 10 * 60000, timeoutMs = 40 * 600
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 
-module.exports = { Stop, sleep, say, run, must, git, gh, ghJson, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState, waitForCi, readJson };
+module.exports = { Stop, sleep, say, run, must, git, gh, ghJson, ghRetry, ghJsonRetry, isTransient, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState, waitForCi, readJson };

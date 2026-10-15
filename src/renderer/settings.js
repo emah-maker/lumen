@@ -393,6 +393,22 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
+  const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
+  const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
+  showProjectsDir();
+  const projectsRow = row(tr('settings.ai.projectsDir', 'Projects folder'), tr('settings.ai.projectsDirDesc', 'New projects get their own folder here. Chats in a project are also saved in it as Markdown files (not encrypted); chats outside projects never are.'),
+    h('button', { id: 'projects-dir-change', text: tr('settings.ai.projectsDirChange', 'Change…'), onclick: async () => { st = await S.pickProjectsDir(); showProjectsDir(); } }),
+    h('button', { id: 'projects-dir-reset', text: tr('settings.ai.projectsDirReset', 'Use Documents'), onclick: async () => { await save('projectsDir', ''); showProjectsDir(); } }));
+  projectsRow.querySelector('.text').append(projectsWhere);
+  card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
+  // [ai tabs] one group for the tabs the AI opened: hide them, what happens when it finishes, and whether it may bring them to the front
+  card.group(tr('settings.ai.groupAiTabs', 'AI tabs')).append(
+    toggle('hideAiTabs', tr('settings.ai.hideAiTabs', 'Hide AI tabs'), tr('settings.ai.hideAiTabsDesc', 'Leaves the tabs the AI opened out of the tab strip, in every window. They stay open; the one you are on and one playing sound stay shown. A tab that needs you (an approval, a dialog, an error) shows as "needs you" so it is never lost.')),
+    toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Bring tabs the AI opened to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
+    select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
+      ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
@@ -404,9 +420,6 @@ async function buildAi(card) {
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Let the AI bring its tabs to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
-    select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Never leaves them open: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
-      ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Never', ask: 'Ask', always: 'Always' }[v])])),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -916,12 +929,9 @@ async function buildHome(card) {
   // The picker: a live preview that follows the pointer or the keyboard over the tiles, the backgrounds in groups (Gradients, Solids, Your picture)
   // and the animated effects. A tile's art is the same CSS the new-tab page uses (features/backgrounds.js; the older ones are classes in settings.css).
   const sections = h('div', { class: 'bg-sections', role: 'radiogroup', 'aria-label': 'New tab background', id: 'pref-newTabBackground' });
-  const preview = h('div', { class: 'bg-preview', id: 'bg-preview', 'aria-hidden': 'true' }, h('span', { class: 'bgp-clock', text: '9:41' }), h('span', { class: 'bgp-hello', text: 'Good evening' }), h('span', { class: 'bgp-search' }));
-  const showPreview = (item, effect) => { // a background (or an effect: its own still picture)
-    const tone = effect ? 'dark' : item.tone;
-    preview.className = `bg-preview tone-${tone}${effect ? '' : ` bg-${item.id}`}`;
-    preview.style.background = item.art || '';
-  };
+  // The preview shows the whole new-tab page as chosen (renderer/settings-preview.js); pointing at a tile swaps only that background or effect.
+  const preview = window.NewTabPreview.create({ state: () => st, picture: () => S.wallpaperPreview() });
+  const showPreview = (item, effect) => preview.hover(effect ? { effect: item.id } : { background: item.id });
   const shuffled = () => st.prefs.newTabShuffle === true;
   const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
@@ -930,7 +940,7 @@ async function buildHome(card) {
       onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
     if (item.art) btn.style.background = item.art;
     const show = () => showPreview(item);
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     return btn;
@@ -962,7 +972,7 @@ async function buildHome(card) {
     sections.classList.toggle('shuffled', shuffled());
     shuffleNote.hidden = !shuffled();
     shuffleNote.textContent = shuffled() ? `Today: ${BG.byId(BG.dailyPick())?.label}. Pick a background to stop shuffling.` : '';
-    showPreview(BG.byId(current) || BG.byId('plain'));
+    preview.refresh();
     for (const t of fxTiles.querySelectorAll('button')) { const on = t.dataset.value === st.prefs.newTabEffect; t.setAttribute('aria-checked', String(on)); t.tabIndex = on ? 0 : -1; }
   };
   // The animated effects, one still picture each.
@@ -973,7 +983,7 @@ async function buildHome(card) {
       onclick: async () => { await save('newTabEffect', fx.id); effectOptions.hidden = fx.id === 'none'; renderTiles(); } }, h('span', { text: fx.label }));
     if (fx.art) btn.style.background = fx.art;
     btn.addEventListener('pointerenter', () => showPreview(fx, true)); btn.addEventListener('focus', () => showPreview(fx, true));
-    const back = () => showPreview(BG.byId(currentId()) || BG.byId('plain'));
+    const back = () => preview.hover(null);
     btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
     fxTiles.append(btn);
   }
@@ -986,7 +996,7 @@ async function buildHome(card) {
   });
   card.group('Background').append(
     toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
-    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview, shuffleNote, sections, picture),
+    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
   );
   card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
