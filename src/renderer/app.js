@@ -1819,6 +1819,7 @@ function syncHideAiToggle(state) {
   badge.hidden = count === 0 && !(on && shown > 0); // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count || shown);
 }
+hideAiButton?.addEventListener('contextmenu', (e) => { e.preventDefault(); window.browser.hideAiTabsMenu?.(); }); // Hide, or close them outright
 hideAiButton?.addEventListener('click', async () => {
   const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);
   if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
