@@ -7332,6 +7332,7 @@ const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; 
 let firstTabDone = false;
 firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSoon(); }); // (a session with a chat page in it: its next one is made now start-up is over)
 firstTabLoaded.then(() => settingsProcSoon(3000)); // [settings process]
+firstTabLoaded.then(() => { const t = setTimeout(() => { try { settingsBackend.warmGpuInfo(); } catch { /* optional */ } setTimeout(() => { try { settingsBackend.warmTranslatePacks(); } catch { /* optional */ } }, 1500).unref?.(); }, 12000); t.unref?.(); }); // [settings] (the graphics devices, once)
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
