@@ -6,6 +6,7 @@ const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides te
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/perf-budget.js)
 const docTool = lazy(() => require('./document-tool')); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
 const docEdit = lazy(() => require('./doc-edit'));
+const connectors = lazy(() => require('../features/connectors/registry')); // [connectors] the one `connector` tool for the services the user connected (features/connectors/); loaded on first use
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
@@ -971,7 +972,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'connector']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1032,6 +1033,7 @@ function agentTabList(tabs) {
 }
 
 function validateInput(name, input) {
+  if (name === 'connector') return connectors.validate(input); // [connectors] offered only while one is connected
   const schema = TOOL_SCHEMAS[name];
   if (!schema) return `Unknown tool: ${name}`;
   if (!input || typeof input !== 'object') return 'Input must be an object';
@@ -3956,6 +3958,7 @@ ${prompt}` : prompt), historyImages: [] };
   async describeStep(name, input) {
     try {
       if (this.isExternalTool(name)) { const f = this.browser.externalTools.lookupTool(name); return `Using ${f.tool} from ${f.server}`; } // [mcp client]
+      if (name === 'connector') return connectors.stepLabel(input); // [connectors] "Using Canvas · Upcoming assignments"
       if (name === 'navigate') return `Opening ${hostOf(input.url)}`;
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
       if (name === 'click' && input.text) return `Clicking ${quote(input.text)}`;
@@ -4049,6 +4052,7 @@ ${prompt}` : prompt), historyImages: [] };
     this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
     const gate = { emit, signal, hosts, who, external, noAsk, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
+    if (name === 'connector') return this.allowConnector(input, gate); // [connectors]
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
     // A local PDF named in navigate / open_tab: opening shows (and reads) its text, so it asks like read_pdf does: once per file per chat,
@@ -4664,8 +4668,9 @@ ${prompt}` : prompt), historyImages: [] };
 
   // The servers' tools for this turn; a server that won't start is mentioned once per error.
   async externalToolDefs(emit) {
+    const own = this.browser.connectors?.defs() || []; // [connectors] one tool for every connected service (none when nothing is connected)
     const ext = this.browser.externalTools;
-    if (!ext) return [];
+    if (!ext) return own;
     const { defs, failed } = await ext.tools();
     this.mcpNoted ||= new Set();
     for (const f of failed) {
@@ -4674,7 +4679,7 @@ ${prompt}` : prompt), historyImages: [] };
       this.mcpNoted.add(key);
       emit({ type: 'notice', text: `The MCP server “${f.name}” didn’t start, so its tools aren’t available: ${f.error}` });
     }
-    return defs;
+    return [...own, ...defs];
   }
 
   // Every call asks, with its arguments on the card: an outside server gets whatever the arguments
@@ -4702,6 +4707,32 @@ ${prompt}` : prompt), historyImages: [] };
     }
     this.externalGrant = name; // execute() runs an outside tool only right after this
   }
+
+  // ---- [connectors] the `connector` tool: services the user connected in Settings → Connectors (features/connectors/).
+  // A read goes straight through (the user connected the service for this), and its answer is untrusted content like a page,
+  // so the chat counts as having read page content from then on. A write (add a task, send, post) always asks, with what it
+  // would do on the card, and needs a real click: "Always allow", Auto-allow, Bypass permissions, "agents don't ask", hands-off mode and
+  // background tasks never answer it. Outside agents (MCP clients) don't get the tool at all: the user's accounts are theirs to open up.
+  async allowConnector(input, { emit, signal, who, run, noAsk, external }) {
+    const svc = this.browser.connectors;
+    if (external || !svc?.hasAny()) throw new Error('Unknown tool: connector');
+    const holder = taintHolder(run);
+    if (svc.isWrite(input)) {
+      if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
+      if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
+      const { title, detail } = svc.describeWrite(input);
+      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector' });
+      if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
+    }
+    if (holder) { holder.tainted = true; holder.onlyFrom = null; }
+    (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
+  }
+
+  async runConnector(input) {
+    if (!this.connectorGrants?.delete(input)) throw new Error('Unknown tool: connector');
+    return this.browser.connectors.call(input);
+  }
+  // ---- [/connectors]
 
   async runExternal(name, input) {
     if (this.externalGrant !== name) throw new Error(`Unknown tool: ${name}`);
@@ -4885,10 +4916,10 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
-    if (action !== 'upload-pick' && this.bypassOn()) {
+    if (action !== 'upload-pick' && !noBypass && this.bypassOn()) {
       const id = `auto-allow-${++this.approvalSeq}`;
       try {
         emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });
@@ -4900,7 +4931,7 @@ ${out.text}${note}
     emit(action === 'upload' || action === 'upload-pick' // [uploads] the files and field the card is about (see uploadFile)
       ? { type: 'approval', approvalId, host, action, title, upload }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted }
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}) }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)
@@ -5389,6 +5420,7 @@ ${out.text}${note}
   // moved to such a site), and records what the outermost call changed in a sidebar run's log.
   async execute(name, input) {
     if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
+    if (name === 'connector') return this.runConnector(input); // [connectors] no tab involved
     this.aiOffCheck(name, input);
     this.offTabCheck(name, input); // [ai off-tab]
     this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)

@@ -323,6 +323,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 
 - [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
 - [Let other apps use Lumen](docs/external-apps.md): set up Claude Desktop, Cursor, VS Code and Claude Code with a token each, and watch, stop or revoke them
+- [Connectors](docs/connectors.md): let the AI use Canvas, Gmail, Google Calendar, GitHub, Todoist and Notion once you connect them, what each can read and do, and where the secrets go
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits

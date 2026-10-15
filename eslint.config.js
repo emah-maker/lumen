@@ -33,7 +33,7 @@ module.exports = [
   { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
-  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildExternalApps: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
   { files: ['src/renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-macros.js is loaded before settings.js and uses its helpers (called later, from its builder).
@@ -44,7 +44,7 @@ module.exports = [
   { files: ['src/renderer/settings-unload.js'], languageOptions: { globals: { S: 'readonly', st: 'readonly', h: 'readonly', tr: 'readonly', save: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', select: 'readonly', flash: 'readonly', withKeywords: 'readonly', applyPageClasses: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
   { files: ['src/renderer/settings-external-apps.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', $: 'readonly' } } },
-  { files: ['src/renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
+  { files: ['src/renderer/settings-mcp-servers.js', 'src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
   { files: ['src/renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.
@@ -72,7 +72,7 @@ module.exports = [
     rules: { 'require-yield': 'off' },
   },
   // Functions the tests call inside the UI page (defined by renderer/app.js).
-  { files: ['test/exfil.js', 'test/mcp.js', 'test/mcpclient.js', 'test/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
+  { files: ['test/exfil.js', 'test/mcp.js', 'test/mcpclient.js', 'test/connectors.js', 'test/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
   // The model picker the sidebar page creates (renderer/chat-core.js), opened from page.evaluate.
   { files: ['test/models.js', 'test/usage.js'], languageOptions: { globals: { modelPicker: 'readonly' } } },
   { files: ['test/fixtures/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, ...globals.webextensions } } },

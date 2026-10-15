@@ -65,10 +65,13 @@ const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? ANNOTATIONS : unde
 // ({ name, description, input_schema }); `callTool(name, args, session)` runs one and returns
 // { content, isError }. `enabled()` reflects the "Allow AI agents to connect" setting.
 // `engine`: the tag a bridge started by Lumen's own Claude Code engine carries (claude-code.js).
-function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, onInitialize = null }) {
+// `extraTools(session)`: tools offered to THIS session only (the connector tool, to a run Lumen itself started: its `engine` tag is a
+// random per-run value that is live only while that run is; an outside client has none, so it never sees them).
+function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, extraTools = null, onInitialize = null }) {
   const session = { clientName: 'An AI agent', initialized: false, controller: new AbortController(), engine };
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
+  const listFor = () => [...tools.map((t) => t), ...(session.engine ? extraTools?.(session) || [] : [])];
 
   async function handle(message) {
     const { id, method, params = {} } = message;
@@ -99,12 +102,12 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
         case 'tools/list':
           if (!session.listed) { session.listed = true; try { onListed?.(session); } catch {} } // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
-            tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema, ...(annotationsFor(t.name) ? { annotations: annotationsFor(t.name) } : {}) })),
+            tools: listFor().map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema, ...(annotationsFor(t.name) ? { annotations: annotationsFor(t.name) } : {}) })),
           });
         case 'tools/call': {
           if (!enabled(session)) return reply(id, { content: [{ type: 'text', text: 'AI agent connections are turned off in Lumen settings.' }], isError: true });
           const name = String(params.name || '');
-          if (!tools.some((t) => t.name === name)) return fail(id, -32602, `Unknown tool: ${name}`);
+          if (!listFor().some((t) => t.name === name)) return fail(id, -32602, `Unknown tool: ${name}`);
           return reply(id, await callTool(name, params.arguments || {}, session));
         }
         default:
@@ -120,7 +123,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, callTool, enabled, onEvent, onClose = null, onListed = null, identify = null, onInitialize = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
+function startServer({ userData, tools, extraTools = null, callTool, enabled, onEvent, onClose = null, onListed = null, identify = null, onInitialize = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -159,7 +162,7 @@ function startServer({ userData, tools, callTool, enabled, onEvent, onClose = nu
         if (who === false) { send({ lumenAuth: 'denied' }); socket.end(); return; }
         authed = true;
         clearTimeout(authTimer);
-        current = createSession({ tools, callTool, enabled, onEvent, onListed, onInitialize, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current = createSession({ tools, extraTools, callTool, enabled, onEvent, onListed, onInitialize, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
         current.session.disconnect = () => socket.destroy(); // [external apps] Stop and Revoke cut this connection
         if (who) current.session.client = who.client;
         sessions.add(current);

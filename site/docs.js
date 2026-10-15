@@ -12,6 +12,7 @@ const PAGES = {
   'auto-model': { title: 'Auto model', file: 'docs/auto-model.md' },
   'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
   'external-apps': { title: 'Let other apps use Lumen', file: 'docs/external-apps.md' },
+  connectors: { title: 'Connectors', file: 'docs/connectors.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
