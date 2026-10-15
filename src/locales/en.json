@@ -3065,5 +3065,18 @@
   "shortcuts.chatpage.home": "Back to the new tab page",
   "shortcuts.chatpage.stop": "Stop the reply (empty box)",
   "meeting.button.title": "Meeting helper (Ctrl+Shift+E)",
-  "meeting.prompt.placeholder": "Type what was just asked, then press Enter..."
+  "meeting.prompt.placeholder": "Type what was just asked, then press Enter...",
+  "newtab.images.attach": "Attach images",
+  "newtab.images.attach.full": "Attach images (the limit of {max} is reached)",
+  "newtab.images.group": "Attached images",
+  "newtab.images.remove": "Remove image",
+  "newtab.images.drop": "Drop images to add them",
+  "newtab.images.goToAsk": "Images go to Ask AI",
+  "newtab.images.notImage": "{name} is not a picture the chat can take.",
+  "newtab.images.empty": "{name} is empty.",
+  "newtab.images.big": "{name} is over {mb} MB.",
+  "newtab.images.unreadable": "{name} could not be read.",
+  "newtab.images.limit": "Up to {max} images: {n} left out.",
+  "newtab.images.pick": "Add images to your question",
+  "newtab.images.pickFilter": "Images"
 }

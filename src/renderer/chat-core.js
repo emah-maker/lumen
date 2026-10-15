@@ -978,14 +978,24 @@ function sendQueued() {
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
 // old one stays in the chat list). If a reply is still running it is not stopped: the question waits
 // its turn like any queued message, then opens the new chat.
-function askInNewChat(text) {
+// `files`: pictures from the new-tab box (File objects), put through the composer's own attach path (addFiles) so they are stored and sent like any picture added here.
+async function askInNewChat(text, files = []) {
+  let images = [];
+  if (files.length) { // (the box's own pictures wait aside while these are prepared)
+    const aside = attachments;
+    attachments = [];
+    await addFiles(files);
+    images = attachments;
+    attachments = aside;
+    renderAttachments();
+  }
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text }) }));
-    queued.push({ text, images: [], tabs: null, notice, fresh: true, chatId: shownChatId });
+    queued.push({ text, images, tabs: null, notice, fresh: true, chatId: shownChatId });
     return;
   }
   $('new-chat').click();
-  ask(text);
+  ask(text, images);
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.

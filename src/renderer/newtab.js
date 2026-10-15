@@ -317,9 +317,10 @@ render();
 window.addEventListener('hashchange', render);
 
 // The field either searches with the engine chosen in settings (the hash carries { label, url
-// with %s }) or asks the assistant. Asking reloads this page with ?chat=…&send=1; the browser cancels that
-// navigation and turns this tab into the full-page chat, which asks the question in a new chat. Ask AI is the one
-// way into the chat from here: with an empty box it just opens it (the same tab, Ctrl/Cmd+click: a new tab).
+// with %s }) or asks the assistant. Asking hands the question (and any pictures in the box) to the browser through
+// window.lumenNewtab.askAi (preload/newtab-preload.js; nothing goes in this page's address), which turns this tab into the
+// full-page chat; the chat asks it in a new chat. Ask AI is the one way into the chat from here: with an empty box it just
+// opens it (the same tab, Ctrl/Cmd+click: a new tab).
 (() => {
   const form = document.querySelector('form[role=search]');
   const input = document.getElementById('q');
@@ -338,6 +339,7 @@ window.addEventListener('hashchange', render);
     mode = next === 'ask' ? 'ask' : 'search';
     const { engine, who, connected, model, modelLabel } = current();
     const askRadio = document.getElementById('mode-ask');
+    form.classList.toggle('ni-ask', mode === 'ask'); // (the attach button shows in Ask AI only)
     askRadio.dataset.model = model; // exactly which model an ask goes to
     askRadio.title = `Open chat (${MAC ? 'Shift+Cmd+L' : 'Ctrl+Shift+L'})${modelLabel ? `. Answers with ${modelLabel}.` : ''}`;
     for (const r of radios) {
@@ -363,10 +365,26 @@ window.addEventListener('hashchange', render);
 
   // Search | Ask AI: a click picks the mode. Ask AI, when it is already the mode (or with Ctrl/Cmd held), is the chat button: it sends
   // what is typed to the full-page chat, or opens that chat when the box is empty.
-  const openChat = (inNewTab) => {
+  // Short notes in the hint line (images go to Ask AI, a picture that was left out), put back after a few seconds.
+  const hint = document.getElementById('mode-hint');
+  const say = (message, ms = 7000) => {
+    if (!hint) return;
+    hint.textContent = message;
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => { hintTimer = null; apply(mode, { save: false }); }, ms);
+  };
+  const images = window.NewtabImages.create({
+    form, input, strip: document.getElementById('ni-strip'), attach: document.getElementById('ni-attach'), dropNote: document.getElementById('ni-dropnote'),
+    bridge: window.lumenNewtab, say,
+    toAsk: () => { if (mode === 'ask') return false; apply('ask'); return true; }, // a picture added in Search mode switches the box to Ask AI
+  });
+  const openChat = async (inNewTab) => {
     const q = input.value.trim().slice(0, 20000);
-    if (q && !current().connected) { goConnect(); return; }
-    location.href = `${location.pathname}?chat=${inNewTab ? 'tab' : '1'}${q ? `&send=1&draft=${encodeURIComponent(q)}` : ''}${location.hash}`;
+    if ((q || images.count()) && !current().connected) { goConnect(); return; }
+    if (!window.lumenNewtab) return;
+    const pictures = await images.take();
+    const ok = await window.lumenNewtab.askAi({ text: q, images: pictures, inNewTab });
+    if (ok && inNewTab) images.clear(); // (the pictures went with the question; this page stays, as the text does)
   };
   for (const r of radios) {
     r.addEventListener('click', (e) => {
@@ -386,24 +404,9 @@ window.addEventListener('hashchange', render);
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
   });
 
-  // This box passes only words (the address of this page carries them): a picture pasted or dropped here is not
-  // taken in silently. It says where images go.
-  const hint = document.getElementById('mode-hint');
-  const hintText = hint ? hint.textContent : '';
-  const refuseImages = (e, files) => {
-    if (mode !== 'ask' || !hint || ![...files].some((f) => String(f.type).startsWith('image/'))) return;
-    e.preventDefault();
-    hint.textContent = 'Images can’t go in this box. Ask here, then add the picture in the chat (paste, drop, or the attach button).';
-    clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { hintTimer = null; hint.textContent = hintText; apply(mode, { save: false }); }, 9000);
-  };
-  input.addEventListener('paste', (e) => refuseImages(e, e.clipboardData?.files || []));
-  form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
-  form.addEventListener('drop', (e) => refuseImages(e, e.dataTransfer?.files || []));
-
   form.addEventListener('submit', (e) => {
     const q = input.value.trim();
-    if (mode === 'ask') {
+    if (mode === 'ask' || images.count()) { // (pictures only go to Ask AI)
       e.preventDefault();
       if (!current().connected) { goConnect(); return; }
       openChat(false); // (an empty box opens the chat itself)
