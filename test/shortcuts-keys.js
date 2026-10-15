@@ -83,11 +83,10 @@ const PAGE = (mode) => `<!doctype html><title>Editor ${mode}</title><textarea id
     check('on a page Ctrl+Enter is the page\'s own (it sees it) and does not open the Meeting helper', (await tabJs('window.__keys.slice()')).includes('enter') && !(await meetingShown()), JSON.stringify(await tabJs('window.__keys.slice()')));
 
     // ---- new-tab page: the hint names the key, and Ctrl+Enter asks the AI (the tab becomes the full-page chat)
-    const id = await app.evaluate(async () => {
+    await app.evaluate(async () => {
       const t = global.__agent.browser.openTab();
       await new Promise((r) => { t.webContents.once('did-finish-load', r); setTimeout(r, 6000); });
       global.__chatPage.switchTab(t.id);
-      return t.id;
     });
     await waitFor(() => tabJs("document.getElementById('q') ? 'yes' : ''"));
     const hint = await tabJs("document.getElementById('mode-hint').textContent");
