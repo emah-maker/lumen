@@ -25,19 +25,23 @@ function plan(iw, ih, w, h, bands = 2) {
 
 // image: a nativeImage; target: { width, height } (snapshot-size.js); tick: () => Promise (a turn of the event loop); mark: (label, fn) => fn()
 // (the hang recorder's). -> a nativeImage of the target size.
-async function resizeInBands(image, target, { createFromBitmap, tick, mark = (_l, fn) => fn(), bands = 2 }) {
+let joined = null; // the joined bitmap's buffer, kept between freezes: a fresh 4 MB allocation each time cost page faults (~3 ms) and garbage
+
+async function resizeInBands(image, target, { createFromBitmap, tick, mark = (_l, fn) => fn(), bands = 4 }) {
   const { width: iw, height: ih } = image.getSize();
   const { width: w, height: h } = target;
   if (h < 64 || bands < 2) return mark('freeze:resize', () => image.resize({ width: w, height: h, quality: 'good' }));
-  const parts = [];
+  const total = w * h * 4;
+  if (!joined || joined.length !== total) joined = Buffer.allocUnsafeSlow(total);
+  let at = 0;
   for (const p of plan(iw, ih, w, h, bands)) {
     mark('freeze:resize', () => {
       const band = image.crop({ x: 0, y: p.sy0, width: iw, height: p.sy1 - p.sy0 }).resize({ width: w, height: p.th, quality: 'good' });
-      parts.push(band.toBitmap().subarray(p.skip * w * 4, (p.skip + p.rows) * w * 4));
+      at += band.toBitmap().copy(joined, at, p.skip * w * 4, (p.skip + p.rows) * w * 4);
     });
     await tick();
   }
-  return mark('freeze:join', () => createFromBitmap(Buffer.concat(parts), { width: w, height: h }));
+  return mark('freeze:join', () => createFromBitmap(joined, { width: w, height: h }));
 }
 
 module.exports = { plan, resizeInBands, MARGIN };
