@@ -8773,12 +8773,21 @@ function dropSpareSettings() {
 let settingsProc = null; // { view, prefs }
 let settingsProcUsedAt = Date.now();
 const settingsProcOn = () => (!TEST || spareForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+// The first layout of the page was ~30 ms of creating the system font's instances (each weight of Segoe UI Variable takes ~7 ms the first time): done here,
+// in the pooled process while it waits, so the Settings page finds them made.
+const WARM_FONTS_JS = `(() => {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;visibility:hidden;left:-9999px';
+  for (const w of [400, 450, 500, 600, 700]) for (const px of [11, 12, 13, 14, 28]) { const s = document.createElement('span'); s.style.cssText = 'font:' + w + ' ' + px + 'px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif'; s.textContent = 'Settings Aa 0'; d.append(s); }
+  document.body.append(d); void d.offsetWidth; d.remove(); return true;
+})()`;
 function makeSettingsProc() {
   if (settingsProc || !app.isReady() || quitting || !firstTabDone || !settingsProcOn() || sparePolicy.isIdle(settingsProcUsedAt)) return;
   const prefs = settingsBackend.tabWebPreferences(true);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   const s = { view, prefs: JSON.stringify(prefs) };
   view.webContents.once('render-process-gone', () => { if (settingsProc === s) { settingsProc = null; try { view.webContents.close(); } catch { /* gone */ } } });
+  view.webContents.once('did-finish-load', () => { try { view.webContents.executeJavaScript(WARM_FONTS_JS, true).catch(() => {}); } catch { /* gone */ } });
   view.webContents.loadURL('about:blank').catch(() => {});
   settingsProc = s;
 }
