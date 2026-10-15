@@ -8857,12 +8857,12 @@ ipcMain.on('chat:full', (_e, on) => {
 // ---------- [newtab-images] the new-tab page's Ask AI: text and pictures reach the full-page chat through these calls, never the page's URL ----------
 // Only a tab's top frame showing renderer/newtab.html may call them (the page's own preload, preload/newtab-preload.js, exposes them).
 {
-  const newtabImages = require('./features/newtab-images');
+  const newtabImages = { get lib() { return require('./features/newtab-images'); } }; // (loaded on first use)
   const newTabTab = (event) => (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') ? tabByContents(event.sender) : null);
   ipcMain.handle('newtab-ai:ask', (event, o) => {
     const tab = newTabTab(event);
     if (!tab || !o || typeof o !== 'object') return false;
-    const images = newtabImages.clean(o.images);
+    const images = newtabImages.lib.clean(o.images);
     const text = typeof o.text === 'string' ? o.text.trim().slice(0, 20000) : '';
     chatPageRt?.fromHome(tab.id, { draft: text, images, inNewTab: o.inNewTab === true, send: Boolean(text || images.length) }); // (nothing typed: it only opens the chat)
     return true;
@@ -8873,19 +8873,19 @@ ipcMain.on('chat:full', (_e, on) => {
     if (TEST && global.__newtabPick) paths = await global.__newtabPick(); // tests answer for the OS picker
     else {
       const owner = BrowserWindow.fromWebContents(event.sender) || win;
-      const picked = await electronDialog.showOpenDialog(owner && !owner.isDestroyed() ? owner : undefined, { title: t('newtab.images.pick'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('newtab.images.pickFilter'), extensions: newtabImages.EXTENSIONS }] });
+      const picked = await electronDialog.showOpenDialog(owner && !owner.isDestroyed() ? owner : undefined, { title: t('newtab.images.pick'), properties: ['openFile', 'multiSelections'], filters: [{ name: t('newtab.images.pickFilter'), extensions: newtabImages.lib.EXTENSIONS }] });
       paths = picked.canceled ? [] : picked.filePaths;
     }
     const images = [];
     const problems = [];
-    for (const p of (Array.isArray(paths) ? paths : []).slice(0, newtabImages.MAX_IMAGES)) {
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, newtabImages.lib.MAX_IMAGES)) {
       const name = path.basename(String(p));
       try {
-        const type = newtabImages.typeOf({ name });
+        const type = newtabImages.lib.typeOf({ name });
         const size = (await fs.promises.stat(p)).size;
         if (!type) problems.push({ code: 'notImage', name });
         else if (!size) problems.push({ code: 'empty', name });
-        else if (size > newtabImages.MAX_BYTES) problems.push({ code: 'big', name });
+        else if (size > newtabImages.lib.MAX_BYTES) problems.push({ code: 'big', name });
         else images.push({ name, type, data: await fs.promises.readFile(p) });
       } catch { problems.push({ code: 'unreadable', name }); }
     }
