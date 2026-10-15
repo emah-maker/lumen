@@ -120,7 +120,15 @@ function setupAiAgents(deps) {
   const agentsNoAsk = () => readSettings().agentsNoAsk !== false;
   // [external apps] Other apps (Claude Desktop, Cursor, VS Code, Claude Code) with a token and a name of their own: Settings → AI → Let other apps use
   // Lumen (features/external-apps.js). They reach the MCP server below through its identify / onInitialize hooks and mcpCallTool's wrapper.
-  const externalApps = require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) });
+  const external = (() => {
+    let real = null;
+    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
+    for (const name of ['info', 'enable', 'prompt-setting', 'add', 'revoke', 'ask', 'open-config', 'answer', 'state']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
+    for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
+    if (require('../test-mode').isTest()) load(); // (tests reach global.__externalApps at once)
+    return { load, ext: () => load().ext };
+  })();
+  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i)), detach: (s) => { if (s.externalId) external.ext().detach(s); } };
 
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.

@@ -257,13 +257,8 @@ contextBridge.exposeInMainWorld('assistant', {
   // AI agents over MCP
   onMcpEvent: on('mcp:event'),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
-  // Other apps using Lumen (features/external-apps.js): the toolbar pills and the "wants to use Lumen" bar
-  onExternalState: on('external:state'),
-  externalState: () => ipcRenderer.invoke('mcp:external-state'),
-  externalStop: (id) => ipcRenderer.send('mcp:external-stop', id),
-  externalTakeOver: (id) => ipcRenderer.send('mcp:external-takeover', id),
-  externalResume: (id) => ipcRenderer.send('mcp:external-resume', id),
-  externalAnswer: (id, decision) => ipcRenderer.invoke('mcp:external-answer', id, decision),
+  // Other apps using Lumen (external-apps.js): pills and prompt; mcp:external-<state|answer> / -<stop|takeover|resume>
+  externalApps: { on: on('external:state'), ask: (m, ...a) => ipcRenderer.invoke(`mcp:external-${m}`, ...a), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
   onHistory: on('agent:history'),
   // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
   openFullPage: () => ipcRenderer.send('chat:open-page'),

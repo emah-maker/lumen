@@ -3030,7 +3030,7 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
 (() => {
   const pills = $('external-pills');
   const bar = $('external-bar');
-  if (!pills || !bar || !window.assistant.onExternalState) return;
+  if (!pills || !bar || !window.assistant.externalApps) return;
   const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
   const button = (cls, label, onclick) => Object.assign(el('button', cls, label), { type: 'button', onclick });
   function render(state) {
@@ -3042,8 +3042,8 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
       const text = el('span', 'external-pill-text', t(a.paused ? 'external.paused' : 'external.using', { client: a.name }));
       pill.title = text.textContent;
       pill.append(el('span', 'agent-dot'), text,
-        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalResume(a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalTakeOver(a.id)),
-        button('external-stop', t('external.stop'), () => window.assistant.externalStop(a.id)));
+        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalApps.send('resume', a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalApps.send('takeover', a.id)),
+        button('external-stop', t('external.stop'), () => window.assistant.externalApps.send('stop', a.id)));
       return pill;
     }));
     pills.hidden = !active.length;
@@ -3051,15 +3051,15 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     if (!ask) { bar.hidden = true; bar.replaceChildren(); delete bar.dataset.promptId; return; }
     if (bar.dataset.promptId === ask.id) return;
     bar.dataset.promptId = ask.id;
-    const answer = (decision) => window.assistant.externalAnswer(ask.id, decision);
+    const answer = (decision) => window.assistant.externalApps.ask('answer', ask.id, decision);
     bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
       button('primary', t('external.allow'), () => answer('allow')),
       button('', t('external.allowAsk'), () => answer('allow-ask')),
       button('', t('external.deny'), () => answer('deny')));
     bar.hidden = false;
   }
-  window.assistant.onExternalState(render);
-  window.assistant.externalState?.().then(render).catch(() => {});
+  window.assistant.externalApps.on(render);
+  window.assistant.externalApps.ask('state').then(render).catch(() => {});
 })();
 let mcpPillText = null;
 // The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)

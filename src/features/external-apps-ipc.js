@@ -2,13 +2,16 @@
 // "wants to use Lumen" prompt (sent to the windows as `external:state`), and the OS notifications. ai-agents.js calls this once and
 // hands the result to the MCP server's hooks (identify, onInitialize, onClose) and to mcpCallTool (beginCall).
 //
-// deps: { app, ipcMain, readSettings, writeSettings, userWc(), mcpCommand(), mcpServer(), startMcp(), agentWindows, showAgentWindow(rec) }
+// Returns { ext, invoke: { <name>: fn }, send: { <name>: fn } }: ai-agents.js registers them as mcp:external-<name> on first use (nothing here loads at
+// start-up: most people never use it). deps: { app, readSettings, writeSettings, userWc(), mcpCommand(), mcpServer(), startMcp(), agentWindows, showAgentWindow(rec) }
 const path = require('path');
 const fs = require('fs');
 const externalApps = require('./external-apps');
 
 function setupExternalApps(deps) {
-  const { app, ipcMain, readSettings, writeSettings } = deps;
+  const { app, readSettings, writeSettings } = deps;
+  const invoke = {};
+  const send_ = {};
   const isTest = require('../test-mode').isTest();
   const notes = []; // (tests read what would have been shown as an OS notification)
   const electron = () => require('electron');
@@ -53,25 +56,25 @@ function setupExternalApps(deps) {
   const paths = () => Object.fromEntries(['claude-desktop', 'cursor', 'vscode'].map((k) => [k, externalApps.configPath(k)]));
   const info = () => ({ enabled: enabled(), prompt: readSettings().externalAppsPrompt === true, connected: ext.connectedCount(), apps: ext.list(), setup: setup(), paths: paths(), platform: process.platform });
 
-  ipcMain.handle('mcp:external-info', () => info());
+  invoke.info = () => info();
   // The master switch. Turning it on from here also turns on "ask when an unknown app connects" (an older setup that already had
   // agent connections on keeps its behaviour: the setting stays unset).
-  ipcMain.handle('mcp:external-enable', (_e, on) => {
+  invoke.enable = (on) => {
     const s = readSettings();
     writeSettings({ ...s, mcpEnabled: Boolean(on), ...(on && !s.mcpEnabled && s.externalAppsPrompt === undefined ? { externalAppsPrompt: true } : {}) });
     if (!on) { deps.mcpServer()?.disconnectAll(); deps.agentWindows?.windows.releaseAll(); ext.disconnectAll(); } else deps.startMcp();
     return info();
-  });
-  ipcMain.handle('mcp:external-prompt-setting', (_e, on) => { writeSettings({ ...readSettings(), externalAppsPrompt: Boolean(on) }); return info(); });
-  ipcMain.handle('mcp:external-add', (_e, { name, app: kind, ask } = {}) => {
+  };
+  invoke['prompt-setting'] = (on) => { writeSettings({ ...readSettings(), externalAppsPrompt: Boolean(on) }); return info(); };
+  invoke.add = ({ name, app: kind, ask } = {}) => {
     try {
       const made = ext.add({ name, app: kind, ask });
       return { ok: true, app: made.app, token: made.token, setup: setup(made.token), info: info() };
     } catch (err) { return { ok: false, error: String(err?.message || err) }; }
-  });
-  ipcMain.handle('mcp:external-revoke', (_e, id) => ({ ok: ext.revoke(String(id)), info: info() }));
-  ipcMain.handle('mcp:external-ask', (_e, id, on) => ({ ok: ext.setAsk(String(id), on === true), info: info() }));
-  ipcMain.handle('mcp:external-open-config', (_e, kind) => {
+  };
+  invoke.revoke = (id) => ({ ok: ext.revoke(String(id)), info: info() });
+  invoke.ask = (id, on) => ({ ok: ext.setAsk(String(id), on === true), info: info() });
+  invoke['open-config'] = (kind) => {
     const file = externalApps.configPath(String(kind));
     if (!file) return { ok: false, path: null };
     if (isTest) return { ok: true, path: file, test: true }; // (never opens the user's real file)
@@ -80,19 +83,19 @@ function setupExternalApps(deps) {
     const dir = path.dirname(file);
     if (fs.existsSync(dir)) { shell.openPath(dir); return { ok: true, path: file, missing: true }; }
     return { ok: false, path: file, missing: true };
-  });
+  };
   // The prompt and the pill (the toolbar of any window).
-  ipcMain.handle('mcp:external-answer', (_e, id, decision) => ext.answer(String(id), String(decision)));
-  ipcMain.on('mcp:external-stop', (_e, id) => { ext.stop(String(id)); });
-  ipcMain.on('mcp:external-takeover', (_e, id) => {
+  invoke.answer = (id, decision) => ext.answer(String(id), String(decision));
+  send_.stop = (id) => { ext.stop(String(id)); };
+  send_.takeover = (id) => {
     ext.takeOver(String(id));
     for (const s of ext.sessionsOf(String(id))) { try { deps.showAgentWindow?.(deps.agentWindows?.windows.get(s)); } catch {} } // (its window comes forward: now it is the user's to use)
-  });
-  ipcMain.on('mcp:external-resume', (_e, id) => { ext.resume(String(id)); });
-  ipcMain.handle('mcp:external-state', () => ext.state());
+  };
+  send_.resume = (id) => { ext.resume(String(id)); };
+  invoke.state = () => ext.state();
 
   if (isTest) global.__externalApps = { ext, notes, info, answer: (id, d) => ext.answer(id, d) };
-  return ext;
+  return { ext, invoke, send: send_ };
 }
 
 module.exports = { setupExternalApps };

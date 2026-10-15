@@ -386,6 +386,8 @@
   "mcp.connected": "{client} connected to Lumen.",
   "mcp.disconnected": "{client} disconnected.",
   "mcp.driving": "Lumen is being driven by {client}",
+  "settings.ea.title": "Let other apps use Lumen",
+  "settings.ea.titleDesc": "Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.",
   "external.using": "{client} is using Lumen",
   "external.paused": "{client} is paused",
   "external.stop": "Stop",
