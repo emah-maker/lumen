@@ -147,7 +147,7 @@ check('compactInput keeps the naming fields and bounds them', (() => { const c =
 const page = read('src/renderer/chat-page.html');
 const core = read('src/renderer/chat-core.js');
 check('the full-page chat lists step-labels.js and step-ui.js before chat-core.js', page.indexOf('<script src="step-labels.js">') > -1 && page.indexOf('<script src="step-labels.js">') < page.indexOf('<script src="step-ui.js">') && page.indexOf('<script src="step-ui.js">') < page.indexOf('<script src="chat-core.js">') && /step-ui.css/.test(page), '');
-check('the sidebar loads them after its start-up bundle (not inside it), and a step before then gets a plain row', !/step-ui|step-labels/.test(read('src/renderer/index.src.html')) && /src: 'step-labels.js'/.test(core) && /src: 'step-ui.js'/.test(core) && /function plainStep/.test(core), '');
+check('the sidebar loads them after its start-up bundle (not inside it), and a step before then gets a plain row', !/step-ui|step-labels/.test(read('src/renderer/index.src.html')) && core.includes("script('step-labels.js')") && core.includes("script('step-ui.js')") && /function plainStep/.test(core), '');
 const used = new Set([...read('src/renderer/step-labels.js').matchAll(/\bT?\(?'((?:step|card)\.[\w.]+)'/g)].map((m) => m[1]));
 check('every step.* key the labeller uses is in en.json', [...used].every((k) => k in en), [...used].filter((k) => !(k in en)).join(','));
 

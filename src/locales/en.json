@@ -3183,5 +3183,10 @@
   "shortcuts.chatpage.home": "Back to the new tab page",
   "shortcuts.chatpage.stop": "Stop the reply (empty box)",
   "meeting.button.title": "Meeting helper (Ctrl+Shift+E)",
-  "meeting.prompt.placeholder": "Type what was just asked, then press Enter..."
+  "meeting.prompt.placeholder": "Type what was just asked, then press Enter...",
+  "card.aiTabs.hide": "Hide tabs the AI opened",
+  "card.aiTabs.show": "Show tabs the AI opened",
+  "card.aiTabs.count": "{label} ({count})",
+  "card.aiTabs.close": "Close them",
+  "card.aiTabs.closeLabel": "Close tabs the AI opened"
 }

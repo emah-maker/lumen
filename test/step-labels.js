@@ -93,8 +93,8 @@ process.stdin.on('data', async (d) => {
   // ---- the fake Claude API client: scripted steps per request, narration first, a pause in the 'wait' tool
   await app.evaluate(() => {
     const scripts = {
-      find: [{ text: 'Digging through the pages.', tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['navigate', { url: '@b' }] }, { tool: ['wait', { seconds: 3 }] }, { text: 'Found it on the second page.' }],
-      two: [{ text: 'Checking the first page.', tool: ['navigate', { url: '@a' }] }, { text: 'Now the second.', tool: ['navigate', { url: '@b' }] }, { text: 'All done.' }],
+      find: [{ text: 'Digging through the pages.', tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['navigate', { url: '@b' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['open_tab', { url: '@c' }] }, { text: 'Found it on the second page.' }],
+      two: [{ text: 'Checking the first page.', tool: ['open_tab', { url: '@a' }] }, { text: 'Now the second.', tool: ['navigate', { url: '@b' }] }, { text: 'All done.' }],
       page: [{ text: 'On it.', tool: ['navigate', { url: '@c' }] }, { tool: ['wait', { seconds: 2 }] }, { text: 'Done from the page.' }],
     };
     global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
@@ -174,9 +174,9 @@ process.stdin.on('data', async (d) => {
   check('when the run ends the card says "Done · <task>"', doneSub === 'Done · Find lab TA', doneSub);
   check('a closing narration line follows the card', await ui.evaluate(() => /Found it on the second page/.test([...document.querySelectorAll('#messages .msg.assistant')].pop()?.textContent || '')), 'no reply');
   const summary = await ui.evaluate((s) => document.querySelector(`${s} .act-steps > summary`)?.textContent, card());
-  check('the steps are folded under "N steps"', /^4 steps$/.test(summary), summary);
+  check('the steps are folded under "N steps"', /^5 steps$/.test(summary), summary);
   const lines = await ui.evaluate((s) => [...document.querySelectorAll(`${s} .act-list .step .step-detail`)].map((n) => n.textContent), card());
-  check('each step is one readable line (the site, not the whole address)', lines.length === 4 && /^Opening 127\.0\.0\.1/.test(lines[0]) && lines.every((l) => !/https?:\/\//.test(l)), J(lines));
+  check('each step is one readable line (the site, not the whole address)', lines.length === 5 && /^Opening 127\.0\.0\.1/.test(lines[0]) && lines.every((l) => !/https?:\/\//.test(l)), J(lines));
   const stoppedTimers = await ui.evaluate(() => document.querySelectorAll('#messages .step.running').length);
   check('no step is left running and the timer is gone', stoppedTimers === 0 && (await ui.evaluate(() => document.querySelectorAll('#messages .step[data-t0]').length)) === 0, String(stoppedTimers));
 
@@ -190,8 +190,28 @@ process.stdin.on('data', async (d) => {
   const longTasks = await ui.evaluate(() => window.__long);
   const thumbsSeen = await ui.evaluate(() => window.__thumbs);
   check('thumbnails were refreshed several times, each a small JPEG (≤ 60 KB)', thumbsSeen.length >= 3 && thumbsSeen.every((t) => t.bytes <= 60000), J(thumbsSeen));
-  check('the main process never stalled more than 20 ms while a thumbnail was captured (setImmediate gap)', gap.n > 100 && gap.captures >= 3 && gap.overCaptures <= 20, J(gap));
+  check('over the whole run the main process never stalled more than 50 ms (page loads and tab changes included)', gap.n > 100 && gap.captures >= 3 && gap.max <= 50, J(gap));
+  await app.evaluate(() => { global.__slProbe.max = 0; global.__slProbe.big = []; });
+  const burstBytes = await app.evaluate(() => global.__thumbsState.burst(15));
+  const burst = await app.evaluate(() => ({ max: Math.round(global.__slProbe.max), big: global.__slProbe.big.map(([t, g]) => Math.round(g)) }));
+  check('15 captures in a row (encode and send included): the main process never stalls more than 20 ms (setImmediate gap)', burstBytes > 15 * 500 && burst.max <= 20, J({ burstBytes, burst }));
   check('no long task over 50 ms in the chat renderer', longTasks.length === 0, J(longTasks));
+
+  // ---- the card's switch for the tabs the AI opened: hide / show them in the strip, in step with the sidebar's own toggle
+  const aiTabsInStrip = () => ui.evaluate(() => document.querySelectorAll('#tabs .tab.ai-opened').length);
+  const toggleText = () => ui.evaluate((s) => { const b = document.querySelector(`${s} .act-toggle`); return b && !b.hidden ? b.textContent : null; }, card());
+  await waitFor(async () => (await toggleText()) !== null, 8000);
+  check('the card offers "Hide tabs the AI opened (N)" next to "Open preview"', (await toggleText()) === 'Hide tabs the AI opened (1)' && (await ui.evaluate((s) => document.querySelector(`${s} .act-toggle`).parentElement === document.querySelector(`${s} .act-btn`).parentElement, card())), String(await toggleText()));
+  check('before: the AI\'s tab is in the strip, the sidebar toggle is off', (await aiTabsInStrip()) === 1 && (await ui.evaluate(() => document.getElementById('hide-ai-tabs').getAttribute('aria-pressed'))) === 'false', J([await aiTabsInStrip()]));
+  await ui.click(`${card()} .act-toggle`);
+  check('clicking it hides the AI\'s tabs from the strip, the sidebar toggle follows, and the card now says "Show…"', await waitFor(async () => (await aiTabsInStrip()) === 0 && (await ui.evaluate(() => document.getElementById('hide-ai-tabs').getAttribute('aria-pressed'))) === 'true' && (await toggleText()) === 'Show tabs the AI opened (1)', 6000), J([await aiTabsInStrip(), await toggleText()]));
+  check('the setting is the same one the sidebar toggle uses (hideAiTabs)', (await app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs ?? null)) !== false, 'setting');
+  await ui.click(`${card()} .act-toggle`);
+  check('clicking again shows them again', await waitFor(async () => (await aiTabsInStrip()) === 1 && (await ui.evaluate(() => document.getElementById('hide-ai-tabs').getAttribute('aria-pressed'))) === 'false' && (await toggleText()) === 'Hide tabs the AI opened (1)', 6000), J([await aiTabsInStrip(), await toggleText()]));
+  await ui.evaluate(() => document.getElementById('hide-ai-tabs').click());
+  check('the sidebar\'s own toggle moves the card\'s too', await waitFor(async () => (await toggleText()) === 'Show tabs the AI opened (1)' && (await aiTabsInStrip()) === 0, 6000), String(await toggleText()));
+  await ui.evaluate(() => document.getElementById('hide-ai-tabs').click());
+  check('…and back', await waitFor(async () => (await toggleText()) === 'Hide tabs the AI opened (1)' && (await aiTabsInStrip()) === 1, 6000), String(await toggleText()));
 
   // ---- Open preview: a tab still open is switched to; a closed one is reopened from its URL
   const runTab = thumbsSeen[thumbsSeen.length - 1];
@@ -204,6 +224,8 @@ process.stdin.on('data', async (d) => {
   const tabsBefore = await app.evaluate(() => global.__chatPage.tabs().length);
   await app.evaluate((_e, id) => global.__closeTabInteractive(id), runTab.tabId);
   await sleep(600);
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); // (each tab has its own sidebar)
+  await sleep(500);
   await ui.click(`${card()} .act-btn`);
   const reopened = await waitFor(async () => app.evaluate((_e, u) => { const a = global.__agent.browser.activeTab(); return a && a.id !== undefined && a.webContents.getURL() === u ? a.id : null; }, runTab.url), 6000);
   check('a closed tab is reopened from its URL', Boolean(reopened) && reopened !== runTab.tabId && tabsBefore >= 1, J({ reopened, runTab }));
@@ -230,7 +252,7 @@ process.stdin.on('data', async (d) => {
   check('a reopened chat shows the card with its final frame and "Done · <task>"', restored && restored.sub === 'Done · Find lab TA' && restored.btn, J(restored));
   const p3 = await pixel(card());
   check('the saved frame is not blank', p3.a === 255 && Math.max(...p3.rgb) > 120, J(p3));
-  check('…and its steps are there, folded', await ui.evaluate((s) => /^4 steps$/.test(document.querySelector(`${s} .act-steps > summary`)?.textContent || ''), card()), 'summary');
+  check('…and its steps are there, folded', await ui.evaluate((s) => /^5 steps$/.test(document.querySelector(`${s} .act-steps > summary`)?.textContent || ''), card()), 'summary');
 
   // ---- narration ends a card: the next steps start another one
   await ui.click('#new-chat');
@@ -251,8 +273,19 @@ process.stdin.on('data', async (d) => {
   await waitFor(() => ui.evaluate(() => document.querySelectorAll('#messages .act-card').length >= 1), 10000);
   await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop')), 40000);
   const lightFrames = await ui.evaluate(() => window.__thumbs.map((t) => new URL(t.url).pathname));
-  check('Light graphics: frames only for the first step and each page change (not every 1.5 s)', lightFrames.length >= 2 && lightFrames.length <= 3 && lightFrames.includes('/a') && lightFrames.includes('/b'), J(lightFrames));
+  check('Light graphics: frames only for the first step and each page change (not every 1.5 s)', lightFrames.length >= 2 && lightFrames.length <= 4 && lightFrames.includes('/a') && lightFrames.includes('/b'), J(lightFrames));
   await app.evaluate(() => global.__settings.backend.set('graphicsMode', 'full'));
+
+  // ---- "Close them": the tabs the AI opened close (with Undo), from the finished card
+  const closeBtn = `${card()} .act-closeall`;
+  const shownClose = await waitFor(() => ui.evaluate((sel) => { const b = document.querySelector(sel); return b && !b.hidden && b.textContent; }, closeBtn), 8000);
+  check('a finished card offers "Close them"', shownClose === 'Close them', String(shownClose));
+  const inStripBefore = await aiTabsInStrip();
+  await ui.click(closeBtn);
+  const closedNote = await waitFor(() => ui.evaluate((s) => { const n = document.querySelector(`${s} .act-tabs-note`); return n && !n.hidden && n.textContent; }, card()), 8000);
+  check('it closes them: "Closed 1 tab the AI opened." with Undo', /^Closed 1 tab the AI opened\. ?Undo$/.test(String(closedNote)) && inStripBefore >= 1 && await waitFor(async () => (await aiTabsInStrip()) === inStripBefore - 1, 6000), J([closedNote, inStripBefore, await aiTabsInStrip()]));
+  await ui.click(`${card()} .act-undo`);
+  check('Undo brings the tab back', await waitFor(() => ui.evaluate((s) => /^Reopened 1 tab\./.test(document.querySelector(`${s} .act-tabs-note`).textContent), card()), 8000), 'note');
 
   // ---- the full-page chat: the same cards, live and from history
   await ui.evaluate(() => document.getElementById('open-chat-page').click());

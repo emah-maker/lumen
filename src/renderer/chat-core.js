@@ -1529,7 +1529,7 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
-      const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text }) : plainStep(event, event.label || fallback);
+      const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
@@ -1660,7 +1660,7 @@ function finishTurn(event, { early }) {
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
-  window.stepUI?.finalize(turn);
+  window.stepUI?.finalize(turn, event);
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {

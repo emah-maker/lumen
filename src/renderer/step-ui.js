@@ -142,12 +142,17 @@
     el0.dataset.state = ''; // (the first refresh sets it: a browser card starts being watched then)
     el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div></div></div>'
       + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"></div>'
-      + '<button type="button" class="act-btn" hidden></button>'
+      + '<div class="act-actions"><button type="button" class="act-btn" hidden></button>'
+      + '<button type="button" class="act-toggle" hidden></button><button type="button" class="act-closeall" hidden></button></div>'
+      + '<div class="act-tabs-note" hidden></div>'
       + '<span class="act-live" role="status"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '' };
+    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
+    card.toggle.onclick = () => toggleAiTabs(card);
+    card.closeAll.onclick = () => closeAiTabs(card);
     card.shot.onclick = () => openIt(card); // (the picture does what the button does)
     host.append(el0);
     turn.cards ||= [];
@@ -180,9 +185,61 @@
     else if (card.file) label = tr(card.file.canTab || card.file.canSystem ? 'card.openFile' : 'card.showFolder');
     card.btn.hidden = !label;
     if (label && card.btn.textContent !== label) { card.btn.textContent = label; card.btn.title = card.surface === 'browser' ? tr('card.openPreview.title') : ''; }
+    refreshTabs(card, state);
     // The screen reader hears a card's state change (Working, Needs your OK, Done, Stopped), once each, never its steps.
     if (card.said !== state) { card.said = state; card.live.textContent = tr('card.live', { title: card.title.textContent, state: tr(`card.state.${state}`) }); }
   }
+  // ---- the tabs the AI opened: hide / show them in the strip (the sidebar's own toggle, the hideAiTabs setting) and close them with Undo
+  const hidingTabs = () => window.lumenHideAiTabs === true;
+  function refreshTabs(card, state) {
+    if (card.surface !== 'browser') return;
+    const n = Number(card.aiTabs) || 0;
+    const on = hidingTabs();
+    card.toggle.hidden = !(n > 0 || on); // (while the toggle is on it stays, so it can be turned off)
+    if (!card.toggle.hidden) {
+      const label = tr(on ? 'card.aiTabs.show' : 'card.aiTabs.hide');
+      const text = n > 0 ? tr('card.aiTabs.count', { label, count: n }) : label;
+      if (card.toggle.textContent !== text) card.toggle.textContent = text;
+      card.toggle.setAttribute('aria-pressed', String(on));
+      card.toggle.title = tr('sidebar.hideAiTabs.menu.hide');
+    }
+    card.closeAll.hidden = !(n > 0 && card.runId != null && state !== 'working' && state !== 'approval' && !card.closed); // (after the run: "Close them")
+    if (!card.closeAll.hidden && !card.closeAll.textContent) { card.closeAll.textContent = tr('card.aiTabs.close'); card.closeAll.setAttribute('aria-label', tr('card.aiTabs.closeLabel')); }
+  }
+  async function toggleAiTabs(card) {
+    const api = window.browser?.hideAiTabs ? (on) => window.browser.hideAiTabs(on) : window.assistant?.hideAiTabs;
+    if (!api) return;
+    card.toggle.disabled = true;
+    try {
+      const on = await Promise.resolve(api(!hidingTabs()));
+      if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); } // (the sidebar's toggle and the strip follow)
+    } catch { /* unchanged */ } finally { card.toggle.disabled = false; }
+  }
+  const pluralTabs = (base, n) => tr(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
+  async function closeAiTabs(card) {
+    const api = window.assistant;
+    if (!api?.closeAiTabs || card.runId == null) return;
+    card.closeAll.disabled = true;
+    const result = await Promise.resolve(api.closeAiTabs({ runId: card.runId })).catch(() => null);
+    card.closeAll.disabled = false;
+    card.closed = true;
+    card.note.hidden = false;
+    card.note.textContent = '';
+    if (!result?.closed) { card.note.textContent = tr('chat.aiTabs.none'); card.aiTabs = 0; refreshCard(null, card); return; }
+    card.aiTabs = 0;
+    card.note.append(el('span', { textContent: pluralTabs('chat.aiTabs.closed', result.closed) + ' ' }));
+    const undo = el('button', { type: 'button', className: 'act-undo', textContent: tr('chat.aiTabs.undo') });
+    undo.onclick = async () => {
+      undo.disabled = true;
+      const back = await Promise.resolve(api.undoCloseAiTabs?.(result.token)).catch(() => null);
+      card.note.textContent = back?.reopened ? pluralTabs('chat.aiTabs.reopened', back.reopened) : tr('chat.aiTabs.nothingReopened');
+      card.closed = false;
+    };
+    card.note.append(undo);
+    refreshCard(null, card);
+  }
+  document.addEventListener('lumen:hide-ai-tabs', () => { for (const c of document.querySelectorAll('.act-card[data-surface="browser"]')) if (c._card) refreshTabs(c._card, c.dataset.state); });
+
   function openIt(card) {
     const api = window.assistant;
     if (card.surface === 'browser' && card.tab) { Promise.resolve(api?.openPreview?.({ tabId: card.tab.tabId ?? null, url: card.tab.url || '' })).catch(() => {}); return; }
@@ -220,6 +277,7 @@
       }
       if (surface === 'shell' && window.stepLabels.SHELL.has(String(event.name))) card.shell = true;
       if (/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(String(event.name))) card.writes = true;
+      if (opts.runId != null && card.runId == null) card.runId = opts.runId;
       if (!card.first) card.first = label;
       card.count++;
       if (running) card.running++;
@@ -266,8 +324,9 @@
     return plain;
   }
   // The turn ended: steps still running were stopped.
-  function finalize(turn) {
+  function finalize(turn, event) {
     for (const card of turn?.cards || []) {
+      if (card.surface === 'browser' && Number.isFinite(event?.aiTabCount)) card.aiTabs = event.aiTabCount; // (the run is over: the tab it worked in counts now)
       for (const row of card.list.querySelectorAll('.step.stopped')) { card.stopped = true; row._card && (row._card.running = Math.max(0, row._card.running - 1)); }
       card.running = 0;
       card.ended = true;
@@ -284,6 +343,7 @@
     const card = [...(turn.cards || [])].reverse().find((c) => c.surface === 'browser');
     if (!card) return;
     card.tab = tab;
+    if (Number.isFinite(event.aiTabs)) card.aiTabs = event.aiTabs;
     setThumb(card, src);
     refreshCard(turn, card);
   }

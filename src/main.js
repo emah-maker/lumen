@@ -9163,7 +9163,11 @@ const thumbsVisible = () => {
   }
   return known ? any : true;
 };
-if (TEST) global.__thumbsState = { visible: () => thumbsVisible(), by: () => [...thumbVisibleBy] };
+if (TEST) {
+  global.__thumbsState = { visible: () => thumbsVisible(), by: () => [...thumbVisibleBy] };
+  // n captures of the tab in front, each sent to the UI as the chat gets it, one after another (a test measures the main process meanwhile)
+  global.__thumbsState.burst = async (n) => { let bytes = 0; for (let i = 0; i < n; i++) { const wc = activeTab()?.webContents; const data = wc ? await require('./features/tab-capture').captureThumb(wc) : null; if (data) { bytes += data.length; ui()?.send('thumb:probe', { type: 'thumb', data, url: wc.getURL(), tabId: activeId, aiTabs: 0 }); } await new Promise((r) => setTimeout(r, 30)); } return bytes; };
+}
 async function captureRunThumb(run) {
   const id = agent.runTabIdFor(run.messages) ?? run.tabId;
   const hit = id != null ? tabAnywhere(id) : null;
@@ -9185,7 +9189,7 @@ function noteThumbs(run, msg, push) {
     if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
       (run.thumbs ||= stepThumbs.createThumbs({
-        capture: () => timedCapture(run), send: push,
+        capture: () => timedCapture(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
         light: () => graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false, visible: thumbsVisible,
         intervalMs: Number(process.env.LUMEN_THUMB_MS) || 1500,
       })).activity();
@@ -9275,7 +9279,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const out = createCoalescer(sendOut);
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
-    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
+    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     trackRunDetails(run, msg);

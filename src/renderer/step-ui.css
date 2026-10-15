@@ -28,7 +28,16 @@
 .act-card[data-state="approval"] .act-sub { color: var(--accent-text); }
 .act-shot { border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; }
 .act-thumb { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
-.act-btn { width: 100%; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
+.act-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.act-actions > button[hidden] { display: none; }
+.act-toggle, .act-closeall { padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
+.act-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.act-toggle:hover, .act-closeall:hover { background: var(--accent-soft); }
+.act-toggle:focus-visible, .act-closeall:focus-visible, .act-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-toggle:disabled, .act-closeall:disabled { opacity: .5; cursor: default; }
+.act-tabs-note { color: var(--muted); font-size: 12px; }
+.act-undo { border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 2px; }
+.act-btn { flex: 1 1 140px; width: auto; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
 .act-btn:hover { background: var(--accent-soft); }
 .act-btn:focus-visible, .act-steps > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .act-steps > summary { cursor: pointer; list-style: none; color: var(--muted); font-size: 12px; border-radius: 6px; }
