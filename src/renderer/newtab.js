@@ -91,7 +91,7 @@ function applyLook(look) {
 }
 // [look] The accent's tokens (features/theme-colors.js) in the shades the page is drawn in: the system's on Plain, light on a light
 // background, dark on any other.
-const modeOf = (look) => { const tone = window.Backgrounds.toneOf(look.background); return tone === 'plain' ? (dark.matches ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const modeOf = (look) => window.Backgrounds.modeOf(look.background, dark.matches); // (features/backgrounds.js: the Settings preview asks the same)
 const ACCENT_VARS = ['--accent', '--accent-rgb', '--accent-bright', '--accent-deep', '--accent-text', '--accent-soft', '--ring', '--on-accent'];
 function applyAccent(look) {
   const mode = modeOf(look);
@@ -278,10 +278,7 @@ function privacy(blocked) {
   return card;
 }
 
-function greeting(now) {
-  const h = now.getHours();
-  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-}
+const greeting = (now) => window.ClockStyles.greetingFor(now); // (features/clock-styles.js)
 
 function render() {
   const { favorites: favs, frequent: freq, blocked, look, widgets } = data();

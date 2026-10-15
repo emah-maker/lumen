@@ -214,13 +214,16 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
 
 // The argv for one message (exported for tests; never joined into a shell string, and no quote or % in it: a .cmd shim may be run through cmd.exe).
 // The prompt is read from stdin ("-"). imageFiles: attached pictures. conversation: a thread id to resume.
-function buildArgs({ model = 'default', conversation = null, imageFiles = [], effort = '', fullAccess = false } = {}) {
+// [work folder] workDir: a folder the user picked for the chat or its project. Without full access the sandbox is workspace-write for that
+// one folder (Codex's cwd): it may write there and nowhere else. (Without a work folder it is never workspace-write.)
+function buildArgs({ model = 'default', conversation = null, imageFiles = [], effort = '', fullAccess = false, workDir = '' } = {}) {
   return [
     'exec',
     '--json',
     '--skip-git-repo-check',
     '--color', 'never',
-    '--sandbox', fullAccess ? 'danger-full-access' : 'read-only', // never workspace-write, --full-auto or --dangerously-bypass-approvals-and-sandbox
+    '--sandbox', fullAccess ? 'danger-full-access' : workDir ? 'workspace-write' : 'read-only', // never --full-auto or --dangerously-bypass-approvals-and-sandbox; workspace-write only for a chosen work folder
+    ...(workDir && !fullAccess ? ['--add-dir', workDir] : []),
     ...(model !== 'default' && validModel(model) ? ['-m', model] : []),
     ...effortLib.cliArgs('codex', effort), // Settings → AI → AI providers: -c model_reasoning_effort=<level> (none: Codex's own default)
     ...imageFiles.map((f) => `--image=${f}`),
@@ -399,11 +402,13 @@ class CodexEngine {
   // One message. Resolves { text, sessionId (Codex's thread id), stopped?, failed?, expired?, planLimit?, usage?, rateLimit?, model? };
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false, workDir = '' }) {
     fullAccess = fullAccess === true; // [full access] Settings > AI (codexFullAccess)
+    // [work folder] a folder that is there: the run happens in it (the kept app-server below has no such folder, so it does not take the message)
+    if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
     // [keep connected] The chat's kept `codex app-server` (features/codex-warm.js) takes the message when it can: null means it did not
     // (setting off, no app-server, a thread it can't resume...), and nothing was sent, so a headless run below does it.
-    if (this.keepWarm && scope?.chatId != null) {
+    if (this.keepWarm && scope?.chatId != null && !workDir) {
       const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, emit, runAgent, scope });
       if (warm) return warm;
       this.keepWarm.dropChat(scope.chatId); // (the headless run rewrites this chat's config.toml: no kept process may be left on the old one)
@@ -440,8 +445,8 @@ class CodexEngine {
         await fs.promises.writeFile(f, Buffer.from(img.data, 'base64'), { mode: 0o600 });
         imageFiles.push(f);
       }
-      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles, effort, fullAccess });
-      return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired, fullAccess });
+      const argv = buildArgs({ model, conversation: resume ? sessionId : null, imageFiles, effort, fullAccess, workDir });
+      return await this.attempt({ spec, gate, gateRun, tag, home, userHome, dir, cwd: workDir || dir, argv, input: promptFor({ prompt, systemPrompt, resume }), sessionId, resume, model, signal, emit, runAgent, scope, quietExpired, fullAccess });
     } finally {
       gate.close(tag); // (attempt closes it at the end of the process; this covers a failure before it started)
       const cleanup = async () => {
@@ -478,14 +483,14 @@ class CodexEngine {
     gone.then(() => set.delete(gone));
   }
 
-  async attempt({ spec, gate, gateRun, tag, home, userHome, dir, argv, input, sessionId, resume, model, signal, emit, runAgent, scope = null, quietExpired = false, fullAccess = false }) {
+  async attempt({ spec, gate, gateRun, tag, home, userHome, dir, cwd = dir, argv, input, sessionId, resume, model, signal, emit, runAgent, scope = null, quietExpired = false, fullAccess = false }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true };
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Codex…' });
     let inv;
     try { inv = locate.buildInvocation(spec, argv); } catch (err) { emit({ type: 'error', text: err.message }); return { text: '', sessionId, failed: true }; }
     const env = buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
-    const child = this.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
+    const child = this.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     this.active = active;

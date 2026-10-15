@@ -604,7 +604,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const projects = () => projectList().map((p) => ({ ...p }));
   const projectById = (id) => projectList().find((p) => p.id === id) || null;
   // New project (no id) or an edit; null for an empty name, a full list, a degraded index or an unknown id.
-  function saveProject({ id, name, instructions } = {}) {
+  // Folder fields (features/project-folders.js; all optional, '' clears): `folder` (the project's real folder, an absolute path),
+  // `folderCreated` (Lumen made it: it may offer to rename it with the project), `mirror` (false: chats are not written as Markdown there;
+  // unset means on) and `workFolder` (where the AI works, instead of `folder`).
+  const cleanPath = (v) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 1000);
+  function saveProject({ id, name, instructions, folder, folderCreated, mirror, workFolder } = {}) {
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -617,6 +621,10 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     project.name = clean;
     if (instructions !== undefined) project.instructions = cleanText(instructions, MAX_INSTRUCTIONS);
+    if (folder !== undefined) { const f = cleanPath(folder); if (f) project.folder = f; else { delete project.folder; delete project.folderCreated; delete project.workFolder; } }
+    if (folderCreated !== undefined) { if (folderCreated && project.folder) project.folderCreated = true; else delete project.folderCreated; }
+    if (mirror !== undefined) { if (mirror === false) project.mirror = false; else delete project.mirror; }
+    if (workFolder !== undefined) { const w = cleanPath(workFolder); if (w) project.workFolder = w; else delete project.workFolder; }
     writeIndex();
     return { ...project };
   }

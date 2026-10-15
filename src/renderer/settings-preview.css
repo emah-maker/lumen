@@ -1,0 +1,97 @@
+/* Settings → Home: the live preview of the new-tab page (renderer/settings-preview.js). A page-sized stage (1100 x 440, the page's own sizes) scaled down
+   into a box; the clock, greeting, search box and cards use the new-tab page's looks (renderer/newtab.html has the originals: when one changes, change it here). */
+.bg-preview { position: relative; width: 100%; max-width: 520px; aspect-ratio: 1100 / 440; border-radius: var(--r-xl); overflow: hidden; background: var(--bg); box-shadow: inset 0 0 0 0.5px var(--hairline); isolation: isolate; contain: layout paint style; --k: 0.4; }
+.ntp-bg, .ntp-scrim { position: absolute; inset: 0; }
+/* The page's older presets paint a base and a glow layer that is 140% of the page (newtab.html: #backdrop and ::before at inset -20%): here as one
+   background, the glows' sizes and places worked out for the same 140%. (The tiles use the plainer art in settings.css.) */
+.ntp-bg.bg-aurora { background: radial-gradient(56% 70% at 8% 22%, rgba(46, 213, 170, 0.55), transparent 70%), radial-gradient(63% 77% at 85% 15%, rgba(94, 92, 230, 0.55), transparent 70%), radial-gradient(70% 70% at 57% 99%, rgba(191, 90, 242, 0.4), transparent 70%), #06121f; }
+.ntp-bg.bg-dusk, .ntp-bg.bg-ocean, .ntp-bg.bg-forest, .ntp-bg.bg-sunset { --glow: radial-gradient(49% 56% at 92% 8%, rgba(255, 255, 255, 0.16), transparent 70%), radial-gradient(56% 63% at 1% 92%, rgba(255, 255, 255, 0.08), transparent 70%); }
+.ntp-bg.bg-dusk { background: var(--glow), linear-gradient(160deg, #1d1b4b 0%, #5b2a86 45%, #d9577b 80%, #f7a26a 100%); }
+.ntp-bg.bg-ocean { background: var(--glow), linear-gradient(160deg, #031b34 0%, #0a4a7a 45%, #0e8fa8 80%, #6fd6c8 100%); }
+.ntp-bg.bg-forest { background: var(--glow), linear-gradient(160deg, #07170f 0%, #164430 45%, #2f7d4f 80%, #9fcf7a 100%); }
+.ntp-bg.bg-sunset { background: var(--glow), linear-gradient(160deg, #2a0d2e 0%, #8a1f4b 40%, #f0584a 75%, #ffc26b 100%); }
+.ntp-fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.ntp-fx[hidden] { display: none; }
+.ntp-stage { position: absolute; left: 0; top: 0; width: 1100px; height: 440px; transform-origin: 0 0; transform: scale(var(--k)); box-sizing: border-box; padding: 34px 0 30px; display: flex; flex-direction: column; align-items: center; --search-w: 640px; --clock-size: 88px;
+  --f-display: -apple-system, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; --f-rounded: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display", system-ui, sans-serif;
+  --f-serif: ui-serif, "New York", "Iowan Old Style", Cambria, Georgia, serif; --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; --f-hand: "Segoe Print", "Bradley Hand", "Noteworthy", "Chalkboard SE", cursive; }
+.bg-preview.tone-plain { --t: var(--text); --m: var(--muted); --c: var(--surface); --bd: var(--hairline); --f: var(--field); color: var(--text); }
+.bg-preview.tone-dark { --t: #ffffff; --m: rgba(255, 255, 255, 0.72); --c: rgba(255, 255, 255, 0.1); --bd: rgba(255, 255, 255, 0.16); --f: rgba(255, 255, 255, 0.16); color: #ffffff; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25); }
+.bg-preview.tone-light { --t: #1d1d1f; --m: rgba(29, 29, 31, 0.72); --c: rgba(255, 255, 255, 0.55); --bd: rgba(0, 0, 0, 0.1); --f: rgba(255, 255, 255, 0.62); color: #1d1d1f; }
+.ntp-scrim { background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%); }
+.ntp-scrim[hidden] { display: none; }
+
+.ntp-col { width: var(--search-w); max-width: 1000px; }
+.ntp-head { --hd: 1; margin-bottom: 14px; }
+.ntp-clock-card[hidden], .ntp-date[hidden], .ntp-clock[hidden] { display: none !important; }
+.ntp-clock { margin: 0 0 4px; font-size: var(--clock-size); white-space: nowrap; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; color: var(--t); }
+.ntp-date { margin: 0; font-size: 12px; font-weight: 500; color: var(--m); }
+.ntp-hello { margin: 2px 0 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; color: var(--t); }
+.ntp-s { margin-left: 0.06em; font-size: 0.36em; font-weight: 400; letter-spacing: 0; color: var(--m); }
+.ntp[data-clock-style="rounded"] .ntp-clock { font-family: var(--f-rounded); font-size: calc(var(--clock-size) * 0.92); font-weight: 500; letter-spacing: -0.03em; }
+.ntp[data-clock-style="rounded"] .ntp-date { font-family: var(--f-rounded); font-size: 13px; font-weight: 600; }
+.ntp[data-clock-style="thin"] .ntp-clock-card { display: flex; flex-direction: column-reverse; align-items: flex-start; }
+.ntp[data-clock-style="thin"] .ntp-clock { margin: 0; font-family: var(--f-display); font-size: calc(var(--clock-size) * 1.3); line-height: 0.92; font-weight: 100; letter-spacing: -0.05em; }
+.ntp[data-clock-style="thin"] .ntp-date { margin: 0 0 2px 0.06em; font-family: var(--f-display); font-size: 15px; font-weight: 550; letter-spacing: -0.01em; color: var(--t); opacity: 0.86; }
+.ntp[data-clock-style="serif"] .ntp-clock { font-family: var(--f-serif); font-size: calc(var(--clock-size) * 0.95); font-weight: 400; letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; }
+.ntp[data-clock-style="serif"] .ntp-date { font-family: var(--f-serif); font-size: 15px; font-weight: 400; font-style: italic; letter-spacing: 0; }
+.ntp[data-clock-style="mono"] .ntp-clock { font-family: var(--f-mono); font-size: calc(var(--clock-size) * 0.78); font-weight: 300; letter-spacing: -0.03em; }
+.ntp[data-clock-style="mono"] .ntp-date { margin-top: 4px; font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; }
+.ntp[data-clock-style="bold"] .ntp-clock { display: grid; grid-template-columns: auto auto; justify-content: start; align-items: end; margin-bottom: 8px; font-family: var(--f-display); font-size: calc(var(--clock-size) * 0.82); line-height: 0.86; font-weight: 800; letter-spacing: -0.045em; }
+.ntp[data-clock-style="bold"] .ntp-h { grid-area: 1 / 1; }
+.ntp[data-clock-style="bold"] .ntp-m { grid-area: 2 / 1; }
+.ntp[data-clock-style="bold"] .ntp-s { grid-area: 2 / 2; margin: 0 0 0.3em 0.14em; font-weight: 600; }
+.ntp[data-clock-style="bold"] .ntp-sep { display: none; }
+.ntp[data-clock-style="bold"] .ntp-date { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.ntp[data-greeting-font="rounded"] .ntp-hello { font-family: var(--f-rounded); letter-spacing: -0.02em; }
+.ntp[data-greeting-font="serif"] .ntp-hello { font-family: var(--f-serif); font-size: 30px; font-weight: 500; letter-spacing: -0.015em; }
+.ntp[data-greeting-font="thin"] .ntp-hello { font-family: var(--f-display); font-size: 32px; font-weight: 250; letter-spacing: -0.035em; }
+.ntp[data-greeting-font="mono"] .ntp-hello { font-family: var(--f-mono); font-size: 24px; font-weight: 500; letter-spacing: -0.03em; }
+.ntp[data-greeting-font="hand"] .ntp-hello { margin-top: 4px; font-family: var(--f-hand); font-size: 28px; line-height: 1.3; font-weight: 400; letter-spacing: 0; }
+
+/* Behind the clock: a soft card or glass, as the page draws them. */
+.ntp[data-clock-card="soft"] .ntp-clock-card, .ntp[data-clock-card="glass"] .ntp-clock-card { width: fit-content; max-width: calc(100% + 40px); margin: 0 -20px 12px; padding: 14px 20px 16px; border-radius: 24px; box-sizing: border-box; }
+.ntp[data-clock-card="soft"] .ntp-clock-card { background: var(--c); box-shadow: 0 0 0 0.5px var(--bd); }
+.ntp[data-clock-card="glass"] .ntp-clock-card { background: color-mix(in srgb, var(--bg) 62%, transparent); box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.5), 0 0 0 0.5px var(--bd); backdrop-filter: blur(28px) saturate(1.8); }
+.tone-dark[data-clock-card="glass"] .ntp-clock-card { background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.2), 0 16px 40px -18px rgba(0, 0, 0, 0.5); }
+.tone-light[data-clock-card="soft"] .ntp-clock-card { background: rgba(255, 255, 255, 0.5); }
+.tone-light[data-clock-card="glass"] .ntp-clock-card { background: rgba(255, 255, 255, 0.62); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 16px 40px -18px rgba(0, 0, 0, 0.2); }
+.has-fx.tone-dark[data-clock-card="soft"] .ntp-clock-card, .has-fx.tone-dark[data-clock-card="glass"] .ntp-clock-card { background: rgba(28, 28, 32, 0.68); backdrop-filter: none; }
+.has-fx.tone-light[data-clock-card="soft"] .ntp-clock-card, .has-fx.tone-light[data-clock-card="glass"] .ntp-clock-card { background: rgba(255, 255, 255, 0.62); backdrop-filter: none; }
+.tone-dark[data-clock-shadow="1"] .ntp-head { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 24px rgba(0, 0, 0, 0.38); }
+.tone-light[data-clock-shadow="1"] .ntp-head { text-shadow: 0 0 20px rgba(255, 255, 255, 0.7); }
+
+/* The search box and its Search | Ask AI switch. The accent shows on the active mode and the caret. */
+.ntp-search { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 8px 0 20px; border-radius: 999px; box-sizing: border-box; background: var(--f); box-shadow: 0 0 0 0.5px var(--bd); font-size: 16px; color: var(--m); }
+.tone-dark.has-fx .ntp-search { background: rgba(28, 28, 32, 0.78); }
+.tone-light.has-fx .ntp-search { background: rgba(255, 255, 255, 0.84); }
+.ntp-search .q { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+.ntp-mode { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--c); font-size: 13px; font-weight: 600; }
+.ntp-mode span { padding: 5px 12px; border-radius: 999px; color: var(--m); }
+.ntp-mode .on { background: var(--accent-deep, #0051d5); color: var(--on-accent, #ffffff); text-shadow: none; }
+
+/* Placeholder widget cards: the page's glass (Settings → Home → Widget cards) in this tone. */
+.ntp-cards { display: flex; gap: 16px; margin-top: auto; }
+.ntp-card { width: 236px; height: 112px; box-sizing: border-box; padding: 14px 16px; border-radius: 20px; background: var(--c); box-shadow: 0 0 0 0.5px var(--bd); font-size: 14px; color: var(--t); overflow: hidden; }
+.ntp-card b { display: block; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.ntp-card i { display: block; height: 8px; margin-top: 8px; border-radius: 4px; background: currentColor; opacity: 0.16; }
+.ntp-card i.hi { width: 46%; background: var(--accent, #007aff); opacity: 1; }
+.ntp-card em { font-style: normal; font-size: 30px; font-weight: 300; letter-spacing: -0.03em; }
+.tone-dark:not(.has-fx) .ntp-card, .tone-light:not(.has-fx) .ntp-card { backdrop-filter: blur(24px) saturate(1.5); }
+.has-fx.tone-dark .ntp-card { background: rgba(28, 28, 32, 0.68); }
+.has-fx.tone-light .ntp-card { background: rgba(255, 255, 255, 0.8); }
+.ntp[data-glass="frosted"] .ntp-card { background: color-mix(in srgb, var(--c) 55%, transparent); backdrop-filter: blur(18px) saturate(1.4); }
+.tone-dark[data-glass="frosted"] .ntp-card { background: rgba(255, 255, 255, 0.07); }
+.tone-light[data-glass="frosted"] .ntp-card { background: rgba(255, 255, 255, 0.38); }
+.has-fx.tone-dark[data-glass="frosted"] .ntp-card { background: rgba(28, 28, 32, 0.42); backdrop-filter: none; }
+.has-fx.tone-light[data-glass="frosted"] .ntp-card { background: rgba(255, 255, 255, 0.6); backdrop-filter: none; }
+.ntp[data-glass="clear"] .ntp-card, .has-fx.tone-dark[data-glass="clear"] .ntp-card, .has-fx.tone-light[data-glass="clear"] .ntp-card { background: color-mix(in srgb, var(--c) 14%, transparent); box-shadow: 0 0 0 0.5px var(--bd); backdrop-filter: none; }
+.tone-dark[data-glass="clear"] .ntp-card { background: rgba(255, 255, 255, 0.025); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.35); }
+.tone-light[data-glass="clear"] .ntp-card { background: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12); text-shadow: 0 0 12px rgba(255, 255, 255, 0.8); }
+
+/* Graphics: Light (Settings > Advanced; newtab.html body.gfx-light): no blur behind any surface, denser glass in its place, as on the page. */
+.gfx-light .ntp-clock-card, .gfx-light .ntp-search, .gfx-light .ntp-card { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.gfx-light[data-glass="frosted"] .ntp-card { background: color-mix(in srgb, var(--c) 72%, transparent); }
+.gfx-light.tone-dark[data-glass="frosted"] .ntp-card { background: rgba(255, 255, 255, 0.13); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+.gfx-light.tone-dark.has-fx[data-glass="frosted"] .ntp-card { background: rgba(28, 28, 32, 0.42); }
+.gfx-light.tone-dark[data-clock-card="glass"]:not(.has-fx) .ntp-clock-card { background: rgba(255, 255, 255, 0.18); }

@@ -192,8 +192,20 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   check('after a restart the same tabs are still marked as the AI\'s', Boolean(restored) && JSON.stringify(restored.map((y) => y.url).sort()) === JSON.stringify(wantUrls), JSON.stringify({ restored, wantUrls }));
   check('...with the chat they belong to (the run id is not kept)', Boolean(restored) && restored.every((y) => chatsBefore.includes(y.mark.chatId) && y.mark.runId === null && y.mark.at > 0), JSON.stringify(restored));
   check('...and the pinned AI tab is the user\'s, unmarked', !(await marks()).some((y) => y.url.endsWith('/P-0')));
+  // Right-click on the sidebar's Hide AI tabs toggle: the switch, and Close with the count.
+  const menu = () => app.evaluate(() => global.__hideAiMenu().map(({ label, type, enabled, checked }) => ({ label, type, enabled, checked })));
+  const m1 = await menu();
+  check('right-click menu on Hide AI tabs: a Hide switch and "Close tabs the AI opened (N)"', m1[0]?.type === 'checkbox' && /Hide tabs the AI opened/.test(m1[0].label) && m1[2]?.enabled && m1[2].label.includes(`(${wantUrls.length})`), JSON.stringify(m1));
+  await app.evaluate(() => global.__hideAiMenu()[0].run());
+  const hiddenOn = await waitFor(() => app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs === true));
+  check('...its Hide switch turns hiding on', Boolean(hiddenOn), await app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs));
+  await app.evaluate(() => global.__hideAiMenu()[0].run());
+  check('...and off again', Boolean(await waitFor(() => app.evaluate(() => global.__settings.backend.prefs?.().hideAiTabs !== true))));
+  check('...the toggle in the UI opens the menu on right-click', await ui.evaluate(() => typeof window.browser.hideAiTabsMenu === 'function'));
   const closed = await app.evaluate(() => global.__aiTabs.close({}));
   check('a restored tab can be closed with the all-chats close', closed.closed === wantUrls.length, JSON.stringify(closed));
+  const m2 = await waitFor(async () => { const m = await menu(); return !m[2]?.enabled && m; });
+  check('...and with none left, the menu\'s Close is greyed out', Boolean(m2) && /No tabs the AI opened/.test(m2[2].label), JSON.stringify(m2));
 
   check('no script errors in the UI', errors.length === 0, errors.join(' | '));
   await app.close();
