@@ -793,12 +793,13 @@ body.chat-full .setup { text-align: left; }
 
 .step { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; margin: 3px 0; color: var(--muted); font-size: 12px; transition: color var(--t-base) ease-out; }
 .step::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--border); flex: none; transition: background-color var(--t-base) ease-out; }
-.step.running::before { background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: step-ring 1.4s var(--ease-out) infinite; }
+.step.running::before { box-sizing: border-box; background: transparent; border: 1.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
 @keyframes step-ring { 0% { box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.45); } 100% { box-shadow: 0 0 0 6px rgb(var(--accent-rgb) / 0); } }
 .step.done::before { background: var(--success); animation: dot-pop var(--t-snappy) var(--spring-bouncy); }
 .step.failed::before { background: var(--danger); animation: dot-pop var(--t-snappy) var(--spring-bouncy); }
 @keyframes dot-pop { 0% { transform: scale(1.9); } 100% { transform: scale(1); } }
-.step.failed { color: var(--danger); }
+.step.failed { color: var(--muted); }
+.step .step-why { color: var(--danger); }
 .step.stopped::before { background: var(--faint); }
 .step .step-detail { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .step .step-time { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1622,6 +1623,14 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 
 .pref-gfx-light .composer { backdrop-filter: none; background: color-mix(in srgb, var(--surface-raised) 96%, transparent); }
 .pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
+
+:root.pref-gfx-soft :is(.composer, .attachment-remove, .task-create, .pane-title) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.pref-gfx-soft .composer { transition: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+.pref-gfx-soft .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+.pref-gfx-soft .approval:not(.resolved):hover { transform: none; box-shadow: 0 0 0 1px var(--hairline); }
+.pref-gfx-soft .msg, .pref-gfx-soft .step, .pref-gfx-soft details.thinking, .pref-gfx-soft .notice, .pref-gfx-soft .error, .pref-gfx-soft .empty, .pref-gfx-soft .chip, .pref-gfx-soft body.chat-full .sidebar { animation: none !important; }
+.pref-gfx-soft .msg.assistant.streaming > :is(p, h1, h2, h3, h4):last-child::after, .pref-gfx-soft .msg.assistant.streaming > :is(ul, ol):last-child > li:last-child::after { animation: none; box-shadow: none; }
+.pref-gfx-soft .step.running::before, .pref-gfx-soft .agent-dot::after, .pref-gfx-soft .tab.ai-reading .tab-title { animation: none; }
 .pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
