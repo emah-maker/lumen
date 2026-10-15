@@ -6,7 +6,7 @@ const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
 require('./_tmp-cleanup');
-const { createExternalApps, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS } = require('../src/features/external-apps');
+const { createExternalApps, writeTokenFile, nameKey, cleanName, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS } = require('../src/features/external-apps');
 const clientToken = require('../src/automation/client-token');
 const mcp = require('../src/automation/mcp');
 
@@ -139,12 +139,15 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     // the same trust only by the shared mcp-token: nothing runs without the user's Allow
     const bare = session({ clientName: 'Sneaky' });
     check('shared token only (no app token): no tool runs before Allow', /not been allowed/.test(ext.beginCall(bare).refuse || ''));
-    // a flood of new names
+    // a flood of new names: only MAX_PROMPTS are shown at once, the rest wait their turn (none refused, none lost)
     const floods = [];
     for (let i = 0; i < MAX_PROMPTS + 3; i++) floods.push(ext.admit(session({ clientName: `Flood ${i}` }), {}));
     await new Promise((r) => setImmediate(r));
-    check('open prompts are capped: the rest are refused at once', ext.state().prompts.length <= MAX_PROMPTS && events.prompts.length <= 2 + MAX_PROMPTS, `${ext.state().prompts.length} / ${events.prompts.length}`);
-    for (const p of ext.state().prompts) ext.answer(p.id, 'deny');
+    check('prompts shown at once are capped; the rest queue', ext.state().prompts.length === MAX_PROMPTS && events.prompts.length <= 2 + MAX_PROMPTS, `${ext.state().prompts.length} / ${events.prompts.length}`);
+    const realLate = ext.admit(session({ clientName: 'Real Legacy App' }), {});
+    let served = 0;
+    for (let i = 0; i < 20 && ext.state().prompts.length; i++) { for (const p of ext.state().prompts) { if (p.name === 'Real Legacy App') served++; ext.answer(p.id, p.name === 'Real Legacy App' ? 'allow' : 'deny'); } await new Promise((r) => setImmediate(r)); }
+    check('per client: a later real app is served in its turn, after the flood, never blocked by it', served === 1 && (await realLate) === null);
     await Promise.all(floods);
     // repeat initialize
     const t = ext.add({ name: 'Twice App' });
@@ -162,6 +165,105 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     c.advance(120000);
     check('an unanswered prompt is a Deny, and not remembered', /not allowed/.test((await p) || '') && ext.state().prompts.length === 0);
     check('a bare engine tag is never asked about', (await ext.admit(session({ engine: 'x', clientName: 'Any' }), {})) === null && events.prompts.length === 1);
+  }
+
+  // ---------- review round 2: a name is locked at admission, and the small things
+  {
+    const { ext, events, c } = make();
+    ext.setPolicy(() => 'ask');
+    ext.add({ name: 'Fake App' });
+    const s = session({ clientName: 'Foo' });
+    const p = ext.admit(s, {}); ext.answer(events.prompts[0].prompt.id, 'allow'); await p;
+    s.clientName = 'Claude Desktop'; // what mcp.js does on a second initialize
+    const v = await ext.admit(s, {});
+    check('a second initialize as another name is refused, and the session keeps the name it was admitted with', /can’t change the name/.test(v || '') && s.clientName === 'Foo', JSON.stringify([v, s.clientName]));
+    s.clientName = 'Fake App';
+    check('...also as a token app\'s name', /can’t change the name/.test((await ext.admit(s, {})) || '') && s.clientName === 'Foo');
+    s.clientName = 'Foo';
+    check('the same name again is fine', (await ext.admit(s, {})) === null && s.clientName === 'Foo' && ext.list().filter((x) => x.name === 'Foo').length === 1);
+    check('what the cards and the pill show is the admitted name', (() => { const call = ext.beginCall(s); const n = ext.state().active[0]?.name; call.end(); return n === 'Foo'; })());
+    const tokenApp = session({ client: ext.list().find((x) => x.name === 'Fake App').id, clientName: 'Fake App' });
+    await ext.admit(tokenApp, {}); tokenApp.clientName = 'Whatever'; await ext.admit(tokenApp, {});
+    check('a token app\'s name is always its record\'s, whatever a later initialize says', tokenApp.clientName === 'Fake App');
+
+    // (4) names are normalized before the reserved-name check
+    const variants = ['Claude\u200b Desktop', 'Claude\u202e Desktop', '\uff23ursor', 'VS\u00a0Code', 'Claude\ufeff Code', ' fake   app ', 'CLAUDE DESKTOP', 'Cl\u00adaude Desktop'];
+    for (const name of variants) check(`name normalization: ${JSON.stringify(name)} is still a reserved name`, /can’t call itself/.test((await ext.admit(session({ clientName: name }), {})) || ''));
+    check('...and a name of only invisible characters gets a plain label, not an empty one', cleanName('\u200b\u202e') === '');
+
+    // (2) an Allow after "Require a token" went on is refused
+    const late = session({ clientName: 'Late App' });
+    const lp = ext.admit(late, {});
+    ext.setPolicy(() => 'require');
+    ext.answer(events.prompts.at(-1).prompt.id, 'allow');
+    check('(2) an Allow answered after "Require a token" went on is refused, and no entry is made', /needs a token/.test((await lp) || '') && !ext.list().some((x) => x.name === 'Late App'));
+    ext.setPolicy(() => 'ask');
+
+    // (3) a disconnect while the prompt is open dismisses it and leaves no entry
+    const gone = session({ clientName: 'Gone App' });
+    const gp = ext.admit(gone, {});
+    const before = ext.state().prompts.length;
+    ext.detach(gone);
+    check('(3) a connection that goes while its prompt is open dismisses the prompt, and nothing is listed', before === 1 && ext.state().prompts.length === 0 && /not allowed/.test((await gp) || '') && !ext.list().some((x) => x.name === 'Gone App'));
+    const closedWhileWaiting = session({ clientName: 'Closing App' });
+    const cp = ext.admit(closedWhileWaiting, {});
+    closedWhileWaiting.controller.abort();
+    ext.answer(events.prompts.at(-1).prompt.id, 'allow');
+    check('(3) an Allow that arrives after the connection ended makes no entry', /ended/.test((await cp) || '') && !ext.list().some((x) => x.name === 'Closing App'));
+    const shared = [session({ clientName: 'Shared App' }), session({ clientName: 'Shared App' })];
+    const sp = shared.map((x) => ext.admit(x, {}));
+    ext.detach(shared[0]);
+    check('(3) with two connections on one prompt, it stays until the last one goes', ext.state().prompts.length === 1);
+    ext.detach(shared[1]);
+    check('...and is dismissed then', ext.state().prompts.length === 0);
+    await Promise.all(sp);
+    // Stop clears an unverified app
+    const okSession = session({ clientName: 'Stoppable' });
+    const op = ext.admit(okSession, {}); ext.answer(events.prompts.at(-1).prompt.id, 'allow'); await op;
+    const unv = ext.list().find((x) => x.name === 'Stoppable');
+    ext.stop(unv.id);
+    check('(3) Stop on an unverified app cuts it and removes its entry', okSession.cut === true && !ext.list().some((x) => x.name === 'Stoppable'));
+    check('...so it has to be asked again', (() => { const again = ext.admit(session({ clientName: 'Stoppable' }), {}); const asked = ext.state().prompts.some((x) => x.name === 'Stoppable'); ext.answer(ext.state().prompts[0].id, 'deny'); again.catch(() => {}); return asked; })());
+  }
+  {
+    // (6) no "finished" after Stop or Take over
+    const { ext, events, c } = make();
+    const a = ext.add({ name: 'Quiet App' });
+    const s = session({ client: a.app.id }); await ext.admit(s, {});
+    const call = ext.beginCall(s);
+    ext.stop(a.app.id); call.end();
+    c.advance(RUN_QUIET_MS + 100);
+    check('(6) no "finished" notice for a run that was stopped', events.finished.length === 0, events.finished.join());
+    const s2 = session({ client: a.app.id }); await ext.admit(s2, {});
+    const c2 = ext.beginCall(s2);
+    ext.takeOver(a.app.id); c2.end();
+    c.advance(RUN_QUIET_MS + 100);
+    check('(6) none for a run that was taken over either', events.finished.length === 0, events.finished.join());
+    ext.resume(a.app.id);
+    const c3 = ext.beginCall(s2); c3.end(); c.advance(RUN_QUIET_MS + 100);
+    check('(6) but a run that finishes by itself afterwards still does', events.finished.join() === 'Quiet App', events.finished.join());
+  }
+  {
+    // (1) the token file: made empty, locked down, checked, and only then written; no lock-down, no token
+    const dir = tmp(); const file = path.join(dir, 't', 'x.token');
+    const seen = [];
+    writeTokenFile(file, 'SECRET', { lock: (p) => { seen.push(fs.readFileSync(p, 'utf8')); } });
+    check('(1) the file is empty when it is locked down, and holds the token afterwards', seen.length === 1 && seen[0] === '' && fs.readFileSync(file, 'utf8') === 'SECRET');
+    const bad = path.join(dir, 't', 'y.token');
+    let threw = false;
+    try { writeTokenFile(bad, 'SECRET', { lock: () => { throw new Error('icacls failed'); } }); } catch { threw = true; }
+    check('(1) if the lock-down fails nothing secret is ever written', threw && (!fs.existsSync(bad) || fs.readFileSync(bad, 'utf8') === ''));
+    const { ext, file: jsonFile } = make({ writeToken: () => { throw new Error('icacls failed'); } });
+    let err = '';
+    try { ext.add({ name: 'No Lock' }); } catch (e) { err = e.message; }
+    check('(1) with no private file, Add app fails with an error and no app or token exists', /private file/.test(err) && ext.list().length === 0 && !fs.existsSync(jsonFile));
+    const ok = make(); const made = ok.ext.add({ name: 'Locked App' });
+    check('(1) and the real thing verifies the lock-down', fs.readFileSync(made.tokenFile, 'utf8') === made.token);
+  }
+  {
+    // (7) a launched Lumen is never in test mode because an agent's environment said so
+    const env = mcp.launchEnv({ PATH: 'p', CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', LUMEN_TEST_CLI_SPAWN: 'x', LUMEN_TESTING: 'keep-not-a-test-switch', LUMEN_MCP_BRIDGE: '1' });
+    check('(7) launchEnv drops CLAUDE_BROWSER_TEST and LUMEN_TEST_*', !('CLAUDE_BROWSER_TEST' in env) && !('LUMEN_TEST_BACKGROUND' in env) && !('LUMEN_TEST_CLI_SPAWN' in env) && env.PATH === 'p' && env.LUMEN_TESTING === 'keep-not-a-test-switch', JSON.stringify(env));
   }
 
   // ---------- two apps at once: Stop on one leaves the other alone
@@ -316,6 +418,8 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     ext.answer(events.prompts.find((p) => p.prompt.name === 'Legacy Agent').prompt.id, 'allow');
     const li = await pendingInit;
     check('Allow lets it start (this session)', li.result?.serverInfo?.name === 'lumen');
+    const renamed = await init(legacy, 'Claude Desktop');
+    check('over the real channel, a second initialize as another name is refused and the app keeps its name', /can’t change the name/.test(renamed.error?.message || '') && ext.list().some((x) => x.name === 'Legacy Agent') && !ext.list().some((x) => x.name === 'Claude Desktop'), JSON.stringify(renamed));
     const claim = await connect(undefined);
     const claimed = await init(claim, 'claude-code');
     check('a token-less client calling itself Claude Code (or any app set up in Lumen) is refused, with no prompt', /can’t call itself/.test(claimed.error?.message || ''), JSON.stringify(claimed));

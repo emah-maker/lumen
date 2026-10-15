@@ -27,13 +27,17 @@ const APPS = {
   'claude-code': 'Claude Code',
   other: 'Another app',
 };
-const MAX_PROMPTS = 3; // open "wants to use Lumen" prompts: a program that tries new names cannot flood the window
+const MAX_PROMPTS = 3; // prompts shown at once; more wait their turn in a queue (first come, first served, so a flood of new names delays a real app, never blocks it)
+const MAX_QUEUED = 12;
 const RUN_QUIET_MS = 4000; // an app's run is over once it has made no call for this long
 const PROMPT_WAIT_MS = 90000; // an unanswered "wants to use Lumen" is a Deny (not remembered)
 const DENY_MEMORY_MS = 10 * 60 * 1000; // a Deny holds for this long, so an app that retries does not ask again and again
-const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+// A name as people read it: NFKC (full-width and look-alike forms fold), control characters to spaces, invisible format characters (zero-width,
+// bidi marks and overrides, soft hyphen, BOM) removed, spaces collapsed. Every comparison (reserved names, prompts) uses nameKey().
+const cleanName = (s) => String(s || '').normalize('NFKC').replace(/\p{Cc}/gu, ' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+const nameKey = (s) => cleanName(s).toLowerCase();
 
-function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), writeToken = writeTokenFile, safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let records = [];
   try {
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -41,6 +45,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   } catch {}
   const temp = []; // unverified clients the user allowed for their session (never saved)
   const live = new Map(); // id -> { sessions: Set, busy, controller, paused, ranAt, timer }
+  const queue = []; // prompts waiting for a free place among the MAX_PROMPTS
   const prompts = new Map(); // prompt id -> { id, name, resolve, timer }
   const denied = new Map(); // lower-cased name -> time it was denied
   let promptSeq = 0;
@@ -55,7 +60,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     } catch (err) { console.error('external apps:', err.message); }
   };
   const saveSoon = () => { if (!saveTimer) { saveTimer = setTimer(save, 3000); saveTimer.unref?.(); } }; // (a last-used time is not worth a write per call)
-  const runtime = (id) => { let l = live.get(id); if (!l) { l = { sessions: new Set(), busy: 0, controller: new AbortController(), paused: false, ranAt: 0, timer: null }; live.set(id, l); } return l; };
+  const runtime = (id) => { let l = live.get(id); if (!l) { l = { sessions: new Set(), busy: 0, controller: new AbortController(), paused: false, ranAt: 0, timer: null, epoch: 0 }; live.set(id, l); } return l; };
   const byId = (id) => records.find((r) => r.id === id) || temp.find((r) => r.id === id) || null;
   const pub = (r) => {
     const l = live.get(r.id);
@@ -77,7 +82,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     const { id, token } = clientToken.make();
     const rec = { id, name: label, app: APPS[app] ? app : 'other', secret: safeStorage.encryptString(token).toString('base64'), createdAt: now(), lastUsed: null, ask: ask !== false };
     const tokenFile = tokenFileOf(id);
-    try { writeTokenFile(tokenFile, token); } catch (err) { throw new Error(`Lumen couldn’t write the token file: ${err.message}`); }
+    try { writeToken(tokenFile, token); } catch (err) { try { fs.rmSync(tokenFile, { force: true }); } catch {} throw new Error(`Lumen couldn’t make a private file for the token, so no app was added (${err.message}).`); }
     records.push(rec);
     save();
     onChange();
@@ -90,7 +95,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     return rec;
   }
   // A name a token-less client may not use: it would pass for an app the user set up (or for one they know).
-  const claimed = (name) => { const n = cleanName(name).toLowerCase(); return n && (Object.entries(APPS).some(([k, l]) => k !== 'other' && l.toLowerCase() === n) || records.some((r) => r.secret && r.name.toLowerCase() === n)); };
+  const claimed = (name) => { const n = nameKey(name); return n && (Object.entries(APPS).some(([k, l]) => k !== 'other' && l.toLowerCase() === n) || records.some((r) => r.secret && r.name.toLowerCase() === n)); };
   function revoke(id) {
     const rec = byId(id);
     if (!rec) return false;
@@ -125,6 +130,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     return true;
   }
   function detach(session) {
+    cancelWait(session);
     const id = session?.externalId;
     const l = id && live.get(id);
     if (l && l.sessions.delete(session)) {
@@ -137,7 +143,14 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   // The `onInitialize` hook: null to let the session start, or the words it is refused with.
   async function admit(session, info = {}) {
     if (session.engine) return null; // Lumen's own engines are not other apps (the server serves an engine tag only to a live run of its own: ai-agents.js enabled())
-    if (session.externalId) return null; // a second initialize on a session already admitted
+    if (session.externalId) { // a second initialize on a session already admitted: the name was fixed at admission and stays
+      const rec = byId(session.externalId);
+      const asked = session.clientName;
+      if (rec) session.clientName = rec.name;
+      if (rec && !rec.secret && (claimed(asked) || nameKey(asked) !== nameKey(rec.name))) return 'An app can’t change the name it connected with.';
+      return null;
+    }
+    if (session.pendingPrompt) return 'This connection is already waiting for the user’s answer in Lumen.';
     if (session.client) { // it proved a token (identify)
       if (!attach(session, session.client)) return 'This app’s access to Lumen was revoked. Add it again in Lumen: Settings, AI, Let other apps use Lumen.';
       return null;
@@ -146,42 +159,65 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     const policy = prefs.policy();
     if (policy === 'open') return null;
     if (policy === 'require') return NEEDS_TOKEN;
-    if (claimed(session.clientName)) return `An app without a token can’t call itself “${cleanName(session.clientName)}”: that is the name of an app set up in Lumen. Give it its own token in Lumen: Settings, AI, Let other apps use Lumen.`;
-    if (prompts.size >= MAX_PROMPTS && ![...prompts.values()].some((p) => p.key === cleanName(session.clientName).toLowerCase())) return 'Too many apps are waiting for the user’s answer in Lumen. Try again later.';
-    const answer = await askUser(session.clientName);
-    if (answer.decision !== 'allow') return `${cleanName(session.clientName) || 'The app'} was not allowed to use Lumen. Give it a token in Lumen: Settings, AI, Let other apps use Lumen.`;
-    attach(session, temporary(session.clientName).id);
+    const name = cleanName(session.clientName);
+    if (claimed(name)) return `An app without a token can’t call itself “${name}”: that is the name of an app set up in Lumen. Give it its own token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    if (queue.length >= MAX_QUEUED) return 'Too many apps are waiting for the user’s answer in Lumen. Try again later.';
+    session.pendingPrompt = true;
+    let verdict;
+    try { verdict = await askUser(name, session); } finally { session.pendingPrompt = false; }
+    if (prefs.policy() === 'require') return NEEDS_TOKEN; // "Require a token" went on while the prompt was open: an Allow no longer counts
+    if (verdict.decision !== 'allow') return `${name || 'The app'} was not allowed to use Lumen. Give it a token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    if (session.controller?.signal.aborted) return 'The connection ended before it was allowed.'; // gone while it waited: no entry is made
+    attach(session, temporary(name).id);
     return null;
   }
   const NEEDS_TOKEN = 'Lumen needs a token for every app. Add this app in Lumen: Settings, AI, Let other apps use Lumen, and put its token file in the app’s config.';
   const prefs = { policy: () => 'ask' };
 
   // ---- "Unverified app X wants to use Lumen": Allow (this session) / Deny
-  function askUser(name) {
-    const key = cleanName(name).toLowerCase();
+  // One prompt per name; each connection waits on it. Past MAX_PROMPTS shown, a new name queues (its 90 s start when it is shown).
+  function askUser(name, session = null) {
+    const key = nameKey(name);
     if (now() - (denied.get(key) || -Infinity) < DENY_MEMORY_MS) return Promise.resolve({ decision: 'deny' });
-    const existing = [...prompts.values()].find((p) => p.key === key);
-    if (existing) return existing.promise;
-    const p = { id: `p${++promptSeq}`, key, name: cleanName(name) || 'An AI agent' };
-    p.promise = new Promise((resolve) => {
-      p.resolve = resolve;
-      p.timer = setTimer(() => answer(p.id, 'deny', true), PROMPT_WAIT_MS);
-      p.timer?.unref?.();
-    });
-    prompts.set(p.id, p);
-    try { onPrompt({ type: 'open', prompt: { id: p.id, name: p.name } }); } catch {}
+    let p = [...prompts.values(), ...queue].find((x) => x.key === key);
+    if (!p) {
+      p = { id: `p${++promptSeq}`, key, name: cleanName(name) || 'An AI agent', waiters: new Set() };
+      p.promise = new Promise((resolve) => { p.resolve = resolve; });
+      if (prompts.size < MAX_PROMPTS) show(p); else queue.push(p);
+    }
+    if (session) { p.waiters.add(session); session.promptId = p.id; }
     onChange();
     return p.promise;
   }
+  function show(p) {
+    p.timer = setTimer(() => answer(p.id, 'deny', true), PROMPT_WAIT_MS);
+    p.timer?.unref?.();
+    prompts.set(p.id, p);
+    try { onPrompt({ type: 'open', prompt: { id: p.id, name: p.name } }); } catch {}
+  }
+  // A connection went while it waited: its place goes; a prompt nobody waits for is dismissed (not a Deny).
+  function cancelWait(session) {
+    const id = session?.promptId;
+    if (!id) return;
+    session.promptId = null;
+    const p = prompts.get(id) || queue.find((x) => x.id === id);
+    if (!p) return;
+    p.waiters.delete(session);
+    if (!p.waiters.size) answer(id, 'deny', true);
+  }
   function answer(id, decision, timedOut = false) {
-    const p = prompts.get(id);
-    if (!p) return false;
-    const d = decision === 'allow' ? 'allow' : 'deny';
+    let p = prompts.get(id);
+    const queued = !p && queue.find((x) => x.id === id);
+    if (!p && !queued) return false;
+    p ||= queued;
+    const d = decision === 'allow' && prefs.policy() !== 'require' ? 'allow' : 'deny'; // (an Allow after "Require a token" went on is a refusal)
     prompts.delete(id);
+    if (queued) queue.splice(queue.indexOf(queued), 1);
     clearTimer(p.timer);
     if (d === 'deny' && !timedOut) denied.set(p.key, now());
     p.resolve({ decision: d });
-    try { onPrompt({ type: 'close', id }); } catch {}
+    if (!queued) { try { onPrompt({ type: 'close', id }); } catch {} }
+    while (queue.length && prompts.size < MAX_PROMPTS) show(queue.shift());
     onChange();
     return true;
   }
@@ -208,6 +244,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     l.ranAt = now();
     onChange();
     const controller = l.controller;
+    const epoch = l.epoch;
     let ended = false;
     return {
       signal: controller.signal,
@@ -218,9 +255,10 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
         const cur = live.get(id);
         if (!cur) return;
         cur.busy = Math.max(0, cur.busy - 1);
-        if (cur.busy === 0) {
+        if (cur.epoch === epoch) cur.ranOk = true; // a call that ran to its end since the last Stop / Take over
+        if (cur.busy === 0 && cur.ranOk) { // (a call that ended because of Stop or Take over is not a run that finished)
           clearTimer(cur.timer);
-          cur.timer = setTimer(() => { cur.timer = null; const r = byId(id); if (r && cur.busy === 0 && !cur.paused) { try { onFinished(pub(r)); } catch {} } }, RUN_QUIET_MS);
+          cur.timer = setTimer(() => { cur.timer = null; cur.ranOk = false; const r = byId(id); if (r && cur.busy === 0 && !cur.paused) { try { onFinished(pub(r)); } catch {} } }, RUN_QUIET_MS);
           cur.timer?.unref?.();
         }
         onChange();
@@ -234,10 +272,18 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     if (!l) return;
     l.controller.abort();
     l.controller = new AbortController();
+    l.epoch++;
+    l.ranOk = false;
     if (!keep) for (const s of [...l.sessions]) { l.sessions.delete(s); try { s.disconnect?.(); } catch {} try { s.controller.abort(); } catch {} }
   }
   // Stop: its calls end now and its connections are closed; the app can connect again (it is still approved).
-  function stop(id) { if (!byId(id)) return false; cut(id); runtimeDone(id); onChange(); return true; }
+  function stop(id) {
+    const rec = byId(id);
+    if (!rec) return false;
+    if (!rec.secret) return revoke(id); // an unverified client's Allow ends with Stop: it has to be asked again
+    cut(id); runtimeDone(id); onChange();
+    return true;
+  }
   // Take over: its calls end now and further ones are refused until resume().
   function takeOver(id) { if (!byId(id)) return false; const l = runtime(id); l.paused = true; cut(id, true); onChange(); return true; }
   function resume(id) { const l = live.get(id); if (!l || !byId(id)) return false; l.paused = false; onChange(); return true; }
@@ -259,14 +305,24 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
 }
 
 // A file for the token with the user's access only (0600; on Windows the inherited rights are dropped and only this user is granted).
-function writeTokenFile(file, token) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, token, { mode: 0o600 });
+// The file is made empty, locked down and checked BEFORE the secret is written, so the secret is never in a file others can read; if the lock-down or the
+// check fails, nothing is written and the caller fails closed (no token is made).
+function lockDown(file) {
   try { fs.chmodSync(file, 0o600); } catch {}
   if (process.platform === 'win32') {
+    const cp = require('child_process');
     const who = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
-    try { require('child_process').execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true }); } catch {}
-  }
+    cp.execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true });
+    const acl = cp.execFileSync('icacls', [file], { encoding: 'utf8', windowsHide: true });
+    if (/Everyone|BUILTIN\\Users|Authenticated Users/i.test(acl)) throw new Error('the file is still readable by others');
+  } else if ((fs.statSync(file).mode & 0o077) !== 0) throw new Error('the file is still readable by others');
+}
+function writeTokenFile(file, token, { lock = lockDown } = {}) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.rmSync(file, { force: true });
+  fs.closeSync(fs.openSync(file, 'wx', 0o600)); // empty
+  lock(file);
+  fs.writeFileSync(file, token);
 }
 
 // Where each app keeps its MCP config, when that is a standard place (null: no file to open, e.g. Claude Code's is a command).
@@ -299,4 +355,4 @@ function setupFor({ command, args, tokenFile = null, token = null, name = 'lumen
   };
 }
 
-module.exports = { createExternalApps, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, MAX_PROMPTS, cleanName };
+module.exports = { createExternalApps, writeTokenFile, nameKey, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, MAX_PROMPTS, cleanName };

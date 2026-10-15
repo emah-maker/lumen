@@ -130,7 +130,7 @@ function setupAiAgents(deps) {
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
     return { load, ext: () => load().ext };
   })();
-  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i)), detach: (s) => { if (s.externalId) external.ext().detach(s); } };
+  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i)), detach: (s) => { if (s.externalId || s.promptId) external.ext().detach(s); } };
 
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.

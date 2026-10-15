@@ -231,10 +231,10 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     const out = path.join(dir, 'env.json'); const dump = path.join(dir, 'dump.js');
     fs.writeFileSync(dump, `require('fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(Object.keys(process.env))); process.exit(0);`);
     const electronExe = require('electron');
-    const bridge = require('child_process').spawn(electronExe, [path.join(__dirname, '..', 'mcp.js')], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_MCP_BRIDGE: '1', CLAUDE_BROWSER_TEST: '1', LUMEN_USERDATA: dir, LUMEN_LAUNCH: JSON.stringify({ command: electronExe, args: [dump] }), LUMEN_CLIENT_TOKEN: token, LUMEN_CLIENT_TOKEN_FILE: tokenFile, LUMEN_ENGINE: 'some-tag' }, stdio: 'ignore' });
+    const bridge = require('child_process').spawn(electronExe, [path.join(__dirname, '..', 'mcp.js')], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_MCP_BRIDGE: '1', CLAUDE_BROWSER_TEST: '1', LUMEN_USERDATA: dir, LUMEN_LAUNCH: JSON.stringify({ command: electronExe, args: [dump] }), LUMEN_CLIENT_TOKEN: token, LUMEN_CLIENT_TOKEN_FILE: tokenFile, LUMEN_ENGINE: 'some-tag', LUMEN_TEST_BACKGROUND: '1' }, stdio: 'ignore' });
     const keys = await waitFor(() => (fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null), 40000);
     try { bridge.kill(); } catch {}
-    check('the Lumen a bridge starts has no LUMEN_CLIENT_TOKEN, LUMEN_CLIENT_TOKEN_FILE or LUMEN_ENGINE in its environment', Array.isArray(keys) && keys.length > 3 && !keys.some((k) => /^LUMEN_(CLIENT_TOKEN|ENGINE)/.test(k)), JSON.stringify(keys));
+    check('the Lumen a bridge starts has no LUMEN_CLIENT_TOKEN, LUMEN_CLIENT_TOKEN_FILE, LUMEN_ENGINE, LUMEN_TEST_* or CLAUDE_BROWSER_TEST in its environment', Array.isArray(keys) && keys.length > 3 && !keys.some((k) => /^(LUMEN_(CLIENT_TOKEN|ENGINE|TEST_)|CLAUDE_BROWSER_TEST)/.test(k)), JSON.stringify(keys));
 
     // ---- an older, unmanaged agent is still asked, and an empty token is refused (not treated as "no token")
     const emptyHello = clientToken.hello('', 'n');

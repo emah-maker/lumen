@@ -213,7 +213,7 @@ function connectOnce(userData) {
 // What the bridge hands the Lumen it starts: not its own mode flags, and never the app's token (it would live in Lumen and every process Lumen starts)
 // or an engine tag (Lumen's own engines would then present as this client).
 function launchEnv(env) {
-  for (const k of ['ELECTRON_RUN_AS_NODE', 'LUMEN_MCP_BRIDGE', 'LUMEN_CLIENT_TOKEN', 'LUMEN_CLIENT_TOKEN_FILE', 'LUMEN_ENGINE']) delete env[k];
+  for (const k of Object.keys(env)) if (/^(ELECTRON_RUN_AS_NODE|LUMEN_MCP_BRIDGE|LUMEN_CLIENT_TOKEN(_FILE)?|LUMEN_ENGINE|CLAUDE_BROWSER_TEST|LUMEN_TEST_.*)$/.test(k)) delete env[k]; // (and the test switches: a launched Lumen is never in test mode because an agent's environment said so)
   return env;
 }
 
