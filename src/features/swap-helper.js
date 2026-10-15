@@ -47,47 +47,73 @@ function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 }
 
-async function retry(fn, tries, delayMs) {
-  let last;
-  for (let i = 0; i < tries; i++) {
-    try { return fn(); } catch (err) { last = err; if (i < tries - 1) await sleep(delayMs); }
+// Every wait in this file is a short poll against a deadline, never one long sleep: the user is looking at
+// a closed window the whole time, so a poll that is late by its own length is time they can see.
+const POLL_MS = 50;
+const RETRY_MS = 100;
+const LOCK_WAIT_MS = 10e3; // how long a rename may keep failing (something still has files open) before the old version stays
+
+// fn() until it stops throwing, retrying every delayMs for at most totalMs.
+async function retry(fn, totalMs, delayMs) {
+  const end = Date.now() + totalMs;
+  for (;;) {
+    try { return fn(); } catch (err) {
+      if (Date.now() + delayMs > end) throw err;
+      await sleep(delayMs);
+    }
   }
-  throw last;
 }
 
-// The swap itself. `o`: { pid, dir, root, old, staging, exe, exeArgs, errFile, relaunch (default true), waitMs, retryMs, minBytes }.
+const rmQuick = (p) => { try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {} };
+
+// A leftover `old` folder (from an update that could not finish deleting it) is renamed out of the way, which takes
+// no time, instead of deleted before the swap, which takes seconds for a whole install. Returns the name it was
+// moved to (deleted after Lumen has started) or ''.
+function moveAside(old) {
+  if (!fs.existsSync(old)) return '';
+  const aside = `${old}.stale-${process.pid}`;
+  try { fs.renameSync(old, aside); return aside; } catch { rmQuick(old); return ''; }
+}
+
+// The swap itself. `o`: { pid, dir, root, old, staging, exe, exeArgs, errFile, relaunch (default true), waitMs, lockMs, retryMs, minBytes }.
 // Returns 'swapped', 'kept' or (relaunch false only) 'noop'. `start` launches an exe (injectable for tests).
+// Order matters for how long the user waits: nothing slow runs between Lumen exiting and the new Lumen starting
+// (the two renames are instant); deleting the old install (thousands of files, scanned by antivirus) comes after.
 async function swap(o, start = launch) {
   const waitMs = o.waitMs ?? 60e3;
-  const retryMs = o.retryMs ?? 1000;
+  const lockMs = o.lockMs ?? LOCK_WAIT_MS;
+  const retryMs = o.retryMs ?? RETRY_MS;
   const relaunch = o.relaunch !== false;
   const fail = (why) => {
     try { fs.writeFileSync(o.errFile, `${why || MESSAGE}\n`); } catch {}
     if (relaunch) start(o.exe, o.exeArgs);
     return 'kept';
   };
-  for (let waited = 0; alive(o.pid); waited += 250) {
-    if (waited >= waitMs) return fail('Lumen didn’t quit in time');
-    await sleep(250);
+  for (const end = Date.now() + waitMs; alive(o.pid); await sleep(POLL_MS)) {
+    if (Date.now() >= end) return fail('Lumen didn’t quit in time');
   }
   if (!relaunch && !fs.existsSync(o.root)) return 'noop';
   const bad = checkExe(path.join(o.root, path.basename(o.exe)), o.minBytes);
   if (bad) return fail(`the update looked incomplete (${bad})`);
-  try { fs.rmSync(o.old, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  const aside = moveAside(o.old);
   try {
-    await retry(() => fs.renameSync(o.dir, o.old), 10, retryMs);
+    await retry(() => fs.renameSync(o.dir, o.old), lockMs, retryMs);
   } catch {
+    if (aside) rmQuick(aside);
     return fail();
   }
   try {
-    fs.renameSync(o.root, o.dir);
+    await retry(() => fs.renameSync(o.root, o.dir), Math.min(lockMs, 2e3), retryMs);
   } catch {
     try { fs.renameSync(o.old, o.dir); } catch {}
+    if (aside) rmQuick(aside);
     return fail();
   }
-  try { fs.rmSync(o.old, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
-  try { fs.rmSync(o.staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  rmQuick(o.staging); // (what is left of it is small: the folder was renamed out)
   if (relaunch) start(o.exe, o.exeArgs);
+  // The new Lumen is starting; the old install goes now, in this helper (detached, nobody waits for it).
+  rmQuick(o.old);
+  if (aside) rmQuick(aside);
   return 'swapped';
 }
 
@@ -106,4 +132,4 @@ if (require.main === module) {
   swap(opts).then(() => process.exit(0), () => process.exit(1));
 }
 
-module.exports = { swap, checkExe, MIN_EXE_BYTES, MESSAGE };
+module.exports = { swap, checkExe, MIN_EXE_BYTES, MESSAGE, POLL_MS, RETRY_MS, LOCK_WAIT_MS };

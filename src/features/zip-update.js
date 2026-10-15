@@ -257,6 +257,24 @@ function prepareHelper(execPath, tmp = null, base = os.tmpdir()) {
   return { exe, script, dir: tmp };
 }
 
+// The same, off the main thread: 250 MB of exe copy (and the antivirus scan it triggers) must not stall Lumen's UI, and it is
+// done well before the user clicks Restart, so the click never waits for it. Earlier helper folders are cleared after.
+async function prepareHelperAsync(execPath, base = os.tmpdir()) {
+  const fsp = fs.promises;
+  const tmp = path.join(base, `${HELPER_PREFIX}-${process.pid}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
+  await fsp.mkdir(tmp, { recursive: true });
+  const exe = path.join(tmp, path.basename(execPath));
+  await fsp.copyFile(execPath, exe);
+  for (const f of HELPER_FILES) await fsp.copyFile(path.join(path.dirname(execPath), f), path.join(tmp, f)).catch(() => {});
+  const script = path.join(tmp, 'swap-helper.js');
+  await fsp.copyFile(path.join(__dirname, 'swap-helper.js'), script);
+  fsp.readdir(base).then((names) => Promise.all(names.filter((n) => n.startsWith(HELPER_PREFIX) && path.join(base, n) !== tmp).map((n) => fsp.rm(path.join(base, n), { recursive: true, force: true }).catch(() => {})))).catch(() => {});
+  return { exe, script, dir: tmp };
+}
+
+// A prepared helper whose files are still there (a temp cleaner may have removed them since).
+const helperReady = (h) => Boolean(h) && fs.existsSync(h.exe) && fs.existsSync(h.script);
+
 // Fetch, verify and unpack into paths.staging. Returns what launchSwap needs. `platform` is
 // injectable for tests.
 async function stage({ net, asset, version, files, execPath, onProgress, platform = process.platform }) {
@@ -280,7 +298,7 @@ async function stage({ net, asset, version, files, execPath, onProgress, platfor
     if (bad) throw new Error(`the update looks damaged: ${bad}`);
     carryOver(paths.dir, root);
   }
-  const staged = mac ? { ...paths, root } : { ...paths, root, helper: prepareHelper(execPath) };
+  const staged = mac ? { ...paths, root } : { ...paths, root, helper: await prepareHelperAsync(execPath) };
   const rel = path.relative(paths.staging, root).split(path.sep).join('/');
   fs.writeFileSync(path.join(paths.staging, MARKER), JSON.stringify({ version: version || '', sha512: want, root: rel }));
   return staged;
@@ -306,4 +324,4 @@ function launchSwap({ staged, execPath, errFile, relaunch = true, platform = pro
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, prepareHelperAsync, helperReady, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
