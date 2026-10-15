@@ -66,13 +66,13 @@ function terminalCommand(msg) {
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
 // Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
 // armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
-function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, terminalEnabled = () => true, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
+function startHttp({ tools, extraTools = null, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, terminalEnabled = () => true, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
   const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
   let port = 0;
   const byMcp = (token) => [...runs.values()].find((r) => same(token, r.mcpToken));
   const byHook = (token) => [...runs.values()].find((r) => same(token, r.hookToken));
-  const toolNames = () => tools.map((t) => t.name);
+  const toolNames = (run) => [...tools.map((t) => t.name), ...(extraTools?.({ engine: run?.tag }) || []).map((t) => t.name)]; // (a run's own extras: the connector tool)
 
   // The PreToolUse verdict for run_terminal_command specifically: an automatic allow once this chat
   // has said "always", otherwise held until onTerminalApproval's card is answered (or times out, a
@@ -112,7 +112,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     const name = String(msg.toolCall.name || '');
     const m = AGY_LUMEN_PREFIX.exec(name);
     if (run.fullAccess && !m && !/^(?:mcp[_-]{1,2})?lumen/i.test(name)) return { decision: 'allow' };
-    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames() })) return { decision: 'allow' };
+    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames(run) })) return { decision: 'allow' };
     return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
@@ -120,7 +120,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   function mcpSession(run) {
     if (run.session) return run.session;
     const pending = new Map();
-    const s = createSession({ tools, callTool, enabled, onEvent, engine: run.tag, onListed: () => wake(run), send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
+    const s = createSession({ tools, extraTools, callTool, enabled, onEvent, engine: run.tag, onListed: () => wake(run), send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
     run.session = { ...s, pending };
     return run.session;
   }
@@ -170,7 +170,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
         if (/^user_?prompt_?submit$/i.test(event)) return json(200, await armed(run));
         if (/^pre_?tool_?use$/i.test(event)) {
           const name = msg?.toolName ?? msg?.tool_name;
-          const verdict = run.fullAccess ? fullGateDecision(name, toolNames()) : String(name) === 'run_terminal_command' ? await terminalDecision(run, msg) : gateDecision(name, toolNames());
+          const verdict = run.fullAccess ? fullGateDecision(name, toolNames(run)) : String(name) === 'run_terminal_command' ? await terminalDecision(run, msg) : gateDecision(name, toolNames(run));
           (verdict ? run.denied : run.allowed).push(String(name));
           return json(200, verdict || undefined);
         }

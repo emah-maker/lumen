@@ -2157,6 +2157,27 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .step-group[open] > summary .step-detail::after { transform: rotate(-135deg); }
 .step-items { margin: 2px 0 4px 14px; }
 .notice-continue { margin-left: 4px; }
+/* ---- desktop-card.css */
+.msg.desktop-cards { display: flex; flex-direction: column; gap: 8px; background: transparent; padding-left: 0; padding-right: 0; box-shadow: none; }
+.desktop-card { display: flex; flex-direction: column; gap: 8px; max-width: 100%; padding: 10px; border-radius: var(--r-xl); background: var(--field); box-shadow: 0 0 0 1px var(--hairline); }
+.desktop-card[data-status="working"] { box-shadow: 0 0 0 1px var(--accent, var(--hairline)); }
+.dc-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dc-icon { flex: none; width: 32px; height: 32px; border-radius: var(--r-md); object-fit: contain; }
+.dc-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.dc-app { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-status { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-card[data-status="working"] .dc-status::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #22c55e; vertical-align: 1px; animation: dc-pulse 1.4s ease-in-out infinite; }
+.desktop-card[data-status="paused"] .dc-status { color: var(--text); }
+.dc-bar { display: flex; flex: none; gap: 6px; }
+.dc-btn { font: inherit; font-size: 12px; padding: 5px 10px; border: 0; border-radius: var(--r-md); color: var(--text); background: var(--hover); cursor: pointer; }
+.dc-btn:hover:not(:disabled) { filter: brightness(1.1); }
+.dc-btn:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 1px; }
+.dc-btn:disabled { opacity: .6; cursor: default; }
+.dc-btn[hidden] { display: none; }
+.dc-thumb { display: block; width: 100%; max-height: min(260px, 40vh); border-radius: var(--r-md); object-fit: contain; object-position: top left; background: var(--paper); box-shadow: 0 0 0 1px var(--hairline); }
+.dc-thumb[hidden], .dc-icon[hidden] { display: none; }
+@keyframes dc-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .desktop-card[data-status="working"] .dc-status::before { animation: none; } }
 /* ---- macros.css */
 .macro-toast {
   flex: none; max-width: min(460px, 46vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
@@ -2187,3 +2208,22 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .macro-ask-row button { font: inherit; padding: 4px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); cursor: pointer; }
 .macro-ask-row .macro-ask-run { background: var(--accent-deep); border-color: var(--accent-deep); color: var(--on-accent); font-weight: 600; }
 .macro-ask-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* ---- external-apps.css */
+.external-pills { display: flex; flex: none; align-items: center; gap: 6px; margin-right: 6px; }
+.external-pills[hidden] { display: none; }
+.external-pill {
+  display: flex; position: relative; flex: none; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px;
+  border-radius: var(--r-xl); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border); animation: pill-in var(--t-snappy) var(--spring-snappy);
+}
+.external-pill.paused { box-shadow: 0 0 0 1px var(--warning); }
+.external-pill.paused .agent-dot { background: var(--warning-fill); }
+.external-pill.paused .agent-dot::after { display: none; }
+.external-pill button {
+  -webkit-app-region: no-drag; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text);
+  font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color var(--t-fast) ease-out;
+}
+.external-pill button:hover { background: var(--hover); }
+.external-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-pill-text { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .external-pill { animation: none; } }

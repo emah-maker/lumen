@@ -542,7 +542,9 @@ function createUpdates(deps) {
     }
     swapStarted = true;
     try {
-      zipMod().launchSwap({ staged, execPath: process.execPath, errFile: errFile(), relaunch: relaunchOnQuit });
+      const z = zipMod();
+      if (staged.helper && z.helperReady && !z.helperReady(staged.helper)) staged.helper = null; // (a temp cleaner took the copy of the exe: launchSwap makes a new one)
+      z.launchSwap({ staged, execPath: process.execPath, errFile: errFile(), relaunch: relaunchOnQuit });
       return true;
     } catch {
       swapStarted = false;
@@ -569,7 +571,7 @@ function createUpdates(deps) {
         staged = found.staged;
         Object.assign(state, { status: 'downloaded', version: found.version, progress: 100, error: '' });
         // the copy of the exe that runs the swap: ready before the user needs it
-        if (!staged.helper) setTimeout(() => { try { if (staged && !swapStarted) staged.helper = zip.prepareHelper(process.execPath); } catch {} }, 5000).unref?.();
+        if (!staged.helper) setTimeout(() => { try { const mine = staged; Promise.resolve(zip.prepareHelperAsync ? zip.prepareHelperAsync(process.execPath) : zip.prepareHelper(process.execPath)).then((h) => { if (staged === mine && !swapStarted) mine.helper = h; }, () => {}); } catch {} }, 5000).unref?.(); // (a copy of the exe: off the main thread)
         return;
       }
       stagingDirs.push(zip.swapPaths(execPath).staging);

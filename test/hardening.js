@@ -127,11 +127,14 @@ const http = require('http');
       subframe: await invoke('agent:auto-allow', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }, true),
       uiAllowed: await invoke('agent:auto-allow', { sender: uiWc, senderFrame: uiWc.mainFrame }),
       tabsOpened: global.__settings.tabs().length - before,
+      connectors: Object.fromEntries(await Promise.all(['list', 'detect', 'connect', 'disconnect', 'sign-in'].map(async (n) => [n, await invoke(`connectors:${n}`, { sender: twc, senderFrame: twc.mainFrame }, 'github', {})]))),
+      connectorsSubframe: await invoke('connectors:list', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }),
     };
   }, web);
   check('tab: agent:auto-allow refused', ipc.autoAllow === 'Not allowed', ipc.autoAllow);
   check('tab: settings:set-key refused', ipc.setKey === 'Not allowed', ipc.setKey);
   check('UI webContents but not its main frame: refused', ipc.subframe === 'Not allowed', ipc.subframe);
+  check('connectors:* (a web page could otherwise connect, read or disconnect your accounts) are refused from a tab and from a foreign frame', Object.values(ipc.connectors).length === 5 && Object.values(ipc.connectors).every((v) => v === 'Not allowed') && ipc.connectorsSubframe === 'Not allowed', JSON.stringify([ipc.connectors, ipc.connectorsSubframe]));
   check('tab / foreign frame: tab:new ignored', ipc.tabsOpened === 0, ipc.tabsOpened);
   check('the UI document itself is still allowed', ipc.uiAllowed === 'allowed', ipc.uiAllowed);
   const realUi = await ui.evaluate(async () => typeof (await window.assistant.autoAllow()));

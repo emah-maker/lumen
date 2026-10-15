@@ -2023,6 +2023,262 @@ function buildMcpServers() {
   return el;
 }
 ;
+// ---- settings-external-apps.js
+// Settings → AI → "Let other apps use Lumen": Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) using Lumen's browser tools.
+// Loaded before settings.js and mounted by its buildAi() with one line; it uses that file's h(), row(), stackRow(), armedButton() and tr()
+// helpers. The backend is features/external-apps.js (through external-apps-ipc.js). A token is shown once, when "Add app" makes it: only
+// its copy lives in this page, and it is gone when the page is closed or the note dismissed.
+
+function buildExternalApps() {
+  const X = window.lumenSettings.ai.externalApps;
+  const CLIENTS = [['claude-desktop', 'Claude Desktop'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['claude-code', 'Claude Code']];
+  let info = null;
+  let current = 'claude-desktop';
+  let fresh = null; // { app, setup, added } the app whose setup text is showing (after Add app or "Show setup")
+
+  const root = h('div', { class: 'external-apps', id: 'external-apps' });
+  const switchInput = h('input', { type: 'checkbox', class: 'switch', id: 'ea-switch', role: 'switch', 'aria-label': tr('settings.ea.switch', 'Let other apps use Lumen'), onchange: async (e) => { draw(await X.enable(e.target.checked)); } });
+  const statusLine = h('span', { class: 'note', id: 'ea-status', role: 'status' });
+  const requireInput = h('input', { type: 'checkbox', class: 'switch', id: 'ea-require', role: 'switch', 'aria-label': tr('settings.ea.require', 'Require a token for every app'), onchange: async (e) => { draw(await X.setRequireToken(e.target.checked)); } });
+  const warning = h('p', { class: 'note err', id: 'ea-warning', role: 'status', hidden: true });
+  const requireNow = h('button', { type: 'button', id: 'ea-require-now', class: 'primary', text: tr('settings.ea.requireNow', 'Require a token for every app'), onclick: async () => draw(await X.setRequireToken(true)) });
+  const setupBox = h('div', { class: 'list', id: 'ea-setup' });
+  const appsBox = h('div', { class: 'list', id: 'ea-apps' });
+
+  const ago = (t) => {
+    if (!t) return tr('settings.ea.neverUsed', 'Not used yet');
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return tr('settings.ea.usedNow', 'Used just now');
+    if (s < 3600) return tr('settings.ea.usedMin', 'Used {n} min ago', { n: Math.round(s / 60) });
+    if (s < 86400) return tr('settings.ea.usedHour', 'Used {n} h ago', { n: Math.round(s / 3600) });
+    return tr('settings.ea.usedOn', 'Used {date}', { date: new Date(t).toLocaleDateString() });
+  };
+  const copyButton = (text, label = tr('settings.ea.copy', 'Copy')) => {
+    const b = h('button', { type: 'button', class: 'ea-copy', text: label, onclick: async () => { await navigator.clipboard.writeText(text()).catch(() => {}); b.textContent = tr('settings.ea.copied', 'Copied'); setTimeout(() => { b.textContent = label; }, 1400); } });
+    return b;
+  };
+
+  function drawStatus() {
+    const n = info.connected;
+    statusLine.textContent = !info.enabled ? tr('settings.ea.off', 'Off') : n ? tr(n === 1 ? 'settings.ea.on.one' : 'settings.ea.on.other', n === 1 ? 'On · 1 app connected' : 'On · {n} apps connected', { n }) : tr('settings.ea.on.none', 'On · no apps connected');
+    statusLine.dataset.state = info.enabled ? 'on' : 'off';
+  }
+
+  function drawSetup() {
+    const tabs = h('div', { class: 'ea-tabs', role: 'tablist', 'aria-label': tr('settings.ea.tabs', 'App to set up') }, CLIENTS.map(([id, label]) => h('button', {
+      type: 'button', role: 'tab', id: `ea-tab-${id}`, class: 'ea-tab', 'aria-selected': String(id === current), 'aria-controls': 'ea-panel', tabindex: id === current ? '0' : '-1', 'data-client': id, text: label,
+      onclick: () => { current = id; drawSetup(); },
+      onkeydown: (e) => {
+        const i = CLIENTS.findIndex(([c]) => c === current);
+        const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? CLIENTS.length - 1 : null;
+        if (next === null) return;
+        e.preventDefault();
+        current = CLIENTS[(next + CLIENTS.length) % CLIENTS.length][0];
+        drawSetup();
+        $(`ea-tab-${current}`).focus();
+      },
+    })));
+    const setup = (fresh ? fresh.setup : info.setup)[current];
+    const shownApp = fresh ? fresh.app : null;
+    const label = CLIENTS.find(([id]) => id === current)[1];
+    const nameInput = h('input', { type: 'text', id: 'ea-name', maxlength: '60', value: label, 'aria-label': tr('settings.ea.name', 'Name for this app') });
+    const note = h('span', { class: 'note', id: 'ea-add-note', role: 'status' });
+    const add = h('button', { type: 'button', id: 'ea-add', class: 'primary', text: tr('settings.ea.add', 'Add app'), onclick: async () => {
+      add.disabled = true;
+      const r = await X.add({ name: nameInput.value, app: current }).catch((err) => ({ ok: false, error: err.message }));
+      add.disabled = false;
+      if (!r.ok) return flash(note, r.error, 'err');
+      info = r.info;
+      fresh = { app: r.app, setup: r.setup, added: true };
+      draw(info);
+    } });
+    const openBtn = info.paths[current] ? h('button', { type: 'button', id: 'ea-open', text: tr('settings.ea.openConfig', 'Open the config file'), onclick: async () => {
+      const r = await X.openConfig(current).catch(() => ({ ok: false }));
+      flash(openNote, r.ok ? (r.missing ? tr('settings.ea.noFile', 'That file doesn’t exist yet; its folder is open. Create the file there.') : '') : tr('settings.ea.noFolder', 'Couldn’t find that app’s folder. Is it installed?'), r.ok ? 'ok' : 'err');
+    } }) : null;
+    const openNote = h('span', { class: 'note', id: 'ea-open-note', role: 'status' });
+    setupBox.replaceChildren(
+      tabs,
+      h('div', { class: 'snippet', id: 'ea-panel', role: 'tabpanel', 'aria-labelledby': `ea-tab-${current}` },
+        fresh
+          ? h('div', { class: 'ea-fresh', id: 'ea-fresh' },
+            h('p', { class: 'note ok', text: tr(fresh.added ? 'settings.ea.fresh' : 'settings.ea.shown', fresh.added ? '“{name}” is added. Its token is in a file only you can read; the text below names that file, so it holds no secret.' : 'Setup text for “{name}”. It names the token file; it holds no secret.', { name: shownApp.name }) }),
+            h('div', { class: 'item' }, h('button', { type: 'button', id: 'ea-done', text: tr('settings.ea.done', 'Add another app'), onclick: () => { fresh = null; drawSetup(); } })))
+          : h('div', { class: 'item' }, h('span', { class: 'grow' }, nameInput), add, note),
+        h('p', { class: 'note', text: `${setup.where}.` }),
+        setup.warning ? h('p', { class: 'note err', id: 'ea-config-warning', text: setup.warning }) : null,
+        h('pre', { class: 'mono code', id: 'ea-snippet', text: setup.text }),
+        h('div', { class: 'item' }, copyButton(() => setup.text), openBtn, openNote),
+        fresh ? null : h('p', { class: 'note', text: tr('settings.ea.placeholder', 'Add app first: it makes the token file and puts its path in this text. Without it the text carries a placeholder.') })));
+  }
+
+  function drawApps() {
+    if (!info.apps.length) { appsBox.replaceChildren(h('p', { class: 'note', id: 'ea-none', text: tr('settings.ea.none', 'No apps yet.') })); return; }
+    appsBox.replaceChildren(...info.apps.map((a) => {
+      const unverified = a.kind !== 'token';
+      const ask = unverified ? null : h('input', { type: 'checkbox', 'aria-label': tr('settings.ea.askBefore', 'Ask before {name} acts', { name: a.name }), checked: a.ask, onchange: async (e) => draw((await X.setAsk(a.id, e.target.checked)).info) });
+      const revoke = armedButton(unverified ? tr('settings.ea.disconnect', 'Disconnect') : tr('settings.ea.revoke', 'Revoke'), unverified ? tr('settings.ea.disconnectSure', 'Click again to disconnect') : tr('settings.ea.revokeSure', 'Click again to revoke'), async () => { if (fresh?.app.id === a.id) fresh = null; draw((await X.revoke(a.id)).info); });
+      const show = unverified ? null : h('button', { type: 'button', class: 'ea-show', text: tr('settings.ea.show', 'Show setup'), onclick: async () => { const r = await X.setup(a.id); if (r.ok) { fresh = { app: r.app, setup: r.setup, added: false }; drawSetup(); } } });
+      const state = a.paused ? tr('settings.ea.paused', 'Paused') : a.busy ? tr('settings.ea.working', 'Working now') : a.connected ? tr('settings.ea.connected', 'Connected') : tr('settings.ea.idle', 'Not connected');
+      return h('div', { class: 'snippet ea-app', 'data-app': a.name, 'data-app-id': a.id },
+        h('div', { class: 'item' },
+          h('span', { class: 'grow' }, h('strong', { text: a.name }), h('span', { class: 'note', text: ` · ${state} · ${ago(a.lastUsed)}${unverified ? ` · ${tr('settings.ea.unverified', 'Unverified: no token, allowed for this session')}` : ''}` })),
+          ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, revoke));
+    }));
+  }
+
+  function draw(next) {
+    if (next) info = next;
+    if (!info) return;
+    switchInput.checked = info.enabled;
+    requireInput.checked = info.requireToken;
+    const open = info.enabled && !info.requireToken;
+    warning.hidden = !open;
+    requireNow.hidden = !open;
+    warning.textContent = open ? tr('settings.ea.warning', 'Apps without a token can connect after you click Allow, and any program on this computer can claim to be one of your apps. Turn on “Require a token for every app”.') : '';
+    drawStatus();
+    // (A redraw while the name field has focus or the token note is up would take them away: only the status and the list follow the poll.)
+    drawSetup();
+    drawApps();
+  }
+
+  root.append(
+    row(tr('settings.ea.switch', 'Let other apps use Lumen'), tr('settings.ea.switchDesc', 'Lets Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) read and use pages in a Lumen window of their own. Each app gets a token of its own that you can revoke. Off by default.'), switchInput),
+    h('div', { class: 'row' }, statusLine),
+    row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session, never asks less, and can’t use the name of an app you set up.'), requireInput),
+    h('div', { class: 'row' }, warning, requireNow),
+    stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app, give it a name, and paste the text into its settings. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
+    stackRow(tr('settings.ea.apps', 'Apps that can use Lumen'), tr('settings.ea.appsDesc', 'Revoke deletes an app’s token and cuts it off at once.'), appsBox));
+
+  X.info().then((i) => draw(i)).catch(() => {});
+  // The list follows what happens (an app connects, is used or is stopped) while the page is open.
+  const timer = setInterval(async () => {
+    if (!root.isConnected) { if (root.dataset.seen) clearInterval(timer); return; }
+    root.dataset.seen = '1';
+    if (document.hidden || !info) return;
+    const next = await X.info().catch(() => null);
+    if (!next) return;
+    info = next;
+    switchInput.checked = info.enabled;
+    drawStatus();
+    if (!appsBox.contains(document.activeElement)) drawApps(); // (not under a click in progress)
+  }, 2500);
+  return root;
+}
+;
+// ---- settings-connectors.js
+// Settings → You and AI → Connectors: a gallery of services the AI can use once they are connected (features/connectors/).
+// Each card says what the AI can read and do before anything is connected, shows its state (Not connected, Connected · account,
+// Needs sign-in) and has one button. A token or secret typed here goes to the main process and is saved encrypted; it never comes
+// back to this page, only the state does. Loaded before settings.js and called from its buildAi(); it uses that file's h(),
+// stackRow() and flash() helpers.
+
+function buildConnectors() {
+  const C = window.lumenSettings.ai.connectors;
+  const root = h('div', { class: 'conn', id: 'connectors' });
+  const note = h('p', { class: 'note', id: 'connectors-status', 'aria-live': 'polite' });
+  let open = null; // the card whose connect form is showing
+
+  const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+  function badge(c) {
+    return h('span', { class: 'conn-badge', 'aria-hidden': 'true', style: `background:${c.icon.color}`, text: c.icon.text });
+  }
+
+  function permissions(c) {
+    const lines = [];
+    if (c.reads.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can read: ' }), c.reads.join('; '), '.'));
+    if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
+    if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
+    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
+    if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
+    return lines;
+  }
+
+  function form(c, render) {
+    const msg = h('span', { class: 'note', 'aria-live': 'polite' });
+    const inputs = c.fields.map((f) => h('input', {
+      type: f.secret ? 'password' : 'text', id: `conn-${c.id}-${f.id}`, 'data-field': f.id, placeholder: f.placeholder, autocomplete: 'off', spellcheck: false,
+      'aria-label': `${c.name}: ${f.label}`, value: f.id === 'domain' ? c.config.domain || '' : '',
+    }));
+    const labelled = c.fields.map((f, i) => h('label', { class: 'conn-field', for: inputs[i].id }, h('span', { text: f.label }), inputs[i], f.help ? h('span', { class: 'note', text: f.help }) : null));
+    const chips = h('div', { class: 'conn-chips' });
+    if (c.id === 'canvas') {
+      C.detect(c.id).then((hosts) => {
+        if (!hosts.length) return;
+        if (!inputs[0].value && hosts.length === 1) inputs[0].value = hosts[0];
+        chips.replaceChildren(h('span', { class: 'note', text: 'Found in your browsing: ' }), ...hosts.map((host) => h('button', { type: 'button', class: 'chip', text: host, onclick: () => { inputs[0].value = host; } })));
+      }).catch(() => {});
+    }
+    const go = h('button', {
+      class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
+      onclick: async () => {
+        go.disabled = true;
+        go.textContent = c.id === 'gmail' ? 'Waiting for Google…' : 'Connecting…';
+        flash(msg, '');
+        try {
+          const input = Object.fromEntries(c.fields.map((f, i) => [f.id, inputs[i].value]));
+          open = null;
+          render(await C.connect(c.id, input));
+        } catch (err) {
+          go.disabled = false;
+          go.textContent = 'Connect';
+          flash(msg, clean(err), 'error');
+        }
+      },
+    });
+    const cancel = h('button', { type: 'button', text: 'Cancel', onclick: () => { open = null; refresh(); } });
+    return h('div', { class: 'conn-form' }, ...permissions(c), chips, ...labelled, h('div', { class: 'item' }, go, cancel, msg));
+  }
+
+  function cardFor(c, render) {
+    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token';
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && c.id === 'gmail'); // (Gmail's Google sign-in ended: connect it again)
+    const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
+    const buttons = [];
+    if (c.status === 'soon') {
+      buttons.push(h('button', { disabled: true, text: 'Coming soon', 'aria-label': `${c.name}: coming soon` }));
+    } else if (!connected || again) {
+      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
+    }
+    if (c.status === 'needs-signin') {
+      buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
+    }
+    if (connected) {
+      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
+        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); } catch (err) { flash(note, clean(err), 'error'); }
+      } }));
+    }
+    const showing = open === c.id && c.status !== 'soon';
+    return h('div', { class: `conn-card ${c.status}`, 'data-connector': c.id, 'data-status': c.status },
+      h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
+      h('p', { class: 'conn-summary', text: c.summary }),
+      showing ? form(c, render) : (c.status !== 'soon' ? h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)) : null),
+      showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
+  }
+
+  let last = null;
+  function render(data) {
+    last = data;
+    const sections = data.categories.map((cat) => {
+      const cards = data.connectors.filter((c) => c.category === cat.id);
+      if (!cards.length) return null;
+      return h('section', { class: 'conn-cat', 'aria-label': cat.label }, h('h3', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
+    });
+    root.replaceChildren(...sections.filter(Boolean));
+  }
+  function refresh() { if (last) render(last); }
+
+  C.list().then(render).catch((err) => flash(note, clean(err), 'error'));
+  const el = stackRow('Connectors',
+    'Connect a service and the AI in the sidebar and the full-page chat can use it: “what’s due on Canvas this week”, “summarize my unread email”. Anything that changes something, like adding a task, asks you first. Nothing is connected until you press Connect.',
+    root, note);
+  el.id = 'ai-connectors';
+  return el;
+}
+;
 // ---- settings-skills.js
 // Settings → Skills: the list (search, new, edit, duplicate, delete, reset built-ins, export, import)
 // and the editor with a variable cheat-sheet and a live preview (features/skills.js is the backend).
@@ -3320,6 +3576,8 @@ async function buildAi(card) {
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -3381,6 +3639,22 @@ async function buildAi(card) {
   card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
+
+  // [desktop apps] Apps the AI may always use (src/desktop/): added only from its approval card (Always); revoked here.
+  const appList = h('div', { class: 'list', id: 'ai-desktop-apps' });
+  const clearApps = h('button', { id: 'ai-desktop-apps-clear', text: 'Revoke all', onclick: async () => renderApps(await S.ai.clearDesktopApps()) });
+  const renderApps = async (apps) => {
+    apps ||= await S.ai.desktopApps();
+    clearApps.hidden = !apps.length;
+    appList.replaceChildren(...(apps.length ? apps.map(({ app, name, added }) => h('div', { class: 'item', 'data-app': app },
+      h('span', { class: 'grow', text: name, title: app }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Revoke', 'aria-label': `Revoke ${name}`, onclick: async () => renderApps(await S.ai.removeDesktopApp(app)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it uses any app.' })]));
+  };
+  card.at('ai-privacy').append(stackRow(tr('settings.ai.desktopApps', 'Apps the AI can use'), tr('settings.ai.desktopAppsDesc', 'Apps you chose Always for.'), appList,
+    h('div', { class: 'controls' }, clearApps)));
+  renderApps();
 
   // [screen context] Files on this computer the AI may always see: added only from its card ("Allow always for this file"); removed here.
   const sharedList = h('div', { class: 'list', id: 'ai-shared-files' });
@@ -3580,7 +3854,10 @@ async function buildAi(card) {
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
+
+  agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 
   buildAntigravity(agents, refreshModels);
 

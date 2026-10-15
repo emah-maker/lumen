@@ -256,7 +256,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros|connectors):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -281,6 +281,7 @@ const UI_ONLY_IPC = new Set([
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
+  'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
@@ -1816,6 +1817,7 @@ function tabState() {
           sleeping: true,
           chat: tabChatMark(t.id),
           aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
+          openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...tabTools.state(t, false),
         };
@@ -1848,6 +1850,7 @@ function tabState() {
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
+        openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...tabTools.state(t, true), // audible, muted
       };
@@ -1947,6 +1950,11 @@ function releaseKeptPage(tab) {
 function keptPageHidden(tab) {
   try { const wc = tab.view.webContents; if (!wc.isDestroyed() && unthrottled.get(tab.id) === wc) wc.setBackgroundThrottling(false); } catch { /* gone */ }
 }
+// Chromium's PDF viewer frame can miss a redraw when its tab is shown or resized (features/pdf-repaint.js): PDF tabs only.
+let pdfRepainter = null;
+function pokePdf(tab) {
+  try { const wc = tab?.view?.webContents; if (!wc || !pdfZoom.viewerFrame(wc)) return; /* (not a PDF: the module is not even loaded) */ if (!pdfRepainter) pdfRepainter = require('./features/pdf-repaint').createRepainter({ isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)) }); pdfRepainter.poke(tab?.view?.webContents); } catch { /* the tab is going away */ }
+}
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() { return hang.mark('layout', layoutBody); } // [hang recorder]
 function layoutBody() {
@@ -1969,6 +1977,7 @@ function layoutBody() {
       // WasShown), and the view shown again then drew nothing new: the page froze or went blank when the sidebar opened or closed.
       if (show && tab.awayBySwitch !== false) releaseKeptPage(tab); // (before it is shown: see keptPageHidden)
       tab.view.setVisible(show); viewVisibleCalls++; // (only a change: a switch is one show and one hide, not one call per tab, and each call can cost a GPU frame)
+      if (show) pokePdf(tab); // (a PDF tab coming to the front: Chromium's PDF frame may not have drawn)
       if (!show) { tab.awayBySwitch = !visible; if (!visible) keptPageHidden(tab); }
     } else if (!visible && tab.awayBySwitch === false) { tab.awayBySwitch = true; keptPageHidden(tab); } // (hidden for a moment, then switched away from)
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -1987,6 +1996,8 @@ function layoutBody() {
       } else {
         tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
       }
+      const boundsKey = `${contentBounds.x},${contentBounds.y},${contentBounds.width},${contentBounds.height},${tab.fullscreen ? 1 : 0}`;
+      if (tab.pdfBoundsKey !== boundsKey) { if (tab.pdfBoundsKey !== undefined) pokePdf(tab); tab.pdfBoundsKey = boundsKey; } // (resized while a PDF is open: draw again)
     }
     if (!overlay) setOverlay(tab, null);
   }
@@ -2372,7 +2383,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!popupLimit.allow()) return { action: 'deny' };
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (agentContents.has(wc) && disposition === 'new-window') return { action: 'deny' }; // [agent window] a popup window would come up in front of the user
-    if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
+    const ownBlob = target.startsWith('blob:') && require('./features/pdf-repaint').isSameOriginBlob(target, wc.getURL()); // a blob the page itself made (a PDF it builds and opens), never another site's or blob:null
+    if (!(isWebUrl(target) || ownBlob || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
     // extension page it liked (and whatever that page does with its privileges).
     if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
@@ -2395,7 +2407,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
     // tab is opened the usual way, loading the address, and its page is what Electron gets back.
     // (about:blank too: a page may open a blank window and set its address after an async step, as payments do.)
-    if (WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
+    if (WebContentsView && (isWebUrl(target) || ownBlob || target === 'about:blank')) {
       return {
         action: 'allow',
         outlivesOpener: true,
@@ -7422,6 +7434,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
+  for (const ev of ['restore', 'show']) w.on(ev, () => withWindow(rec, () => pokePdf(tabs.find((t) => t.id === activeId)))); // (a restored window: the PDF in front draws again)
   w.on('close', () => {
     if (quitting) return;
     const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
@@ -7901,6 +7914,86 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
+// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Nothing of it loads at
+// startup: the first thing that needs it (a chat turn while something is connected, the Connectors page, a connect) makes the service.
+// Until then "is anything connected" is answered from the small file itself. A request goes only to that service, and tests point each
+// at 127.0.0.1 (global.__connectorEndpoints), with plain http allowed for that address in test mode only.
+const connectorsOpen = (url) => { if (String(url).startsWith('https://')) openTab(url); };
+// Gmail reuses the widget's Google paths: its own sign-in for the API, the Google sign-in in Lumen for the unread feed.
+// (A test stands in for Google with global.__connectorsGoogle, looked up at each call.)
+const connectorsGoogleReal = {
+  status: async () => {
+    const GA = require('./features/gmail-atom');
+    const auth = widgets.gmailAuthState();
+    let signedIn = false;
+    let email = auth.email;
+    if (!auth.oauth) {
+      try {
+        const res = await googleMailFeed(GA.feedUrl(0));
+        const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+        signedIn = Boolean(parsed?.ok);
+        email = parsed?.email || '';
+      } catch { /* not reachable: not signed in */ }
+    }
+    return { oauth: auth.oauth, oneClick: auth.oneClick, session: signedIn, email };
+  },
+  api: (p) => widgets.gmailApi(p),
+  feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
+  connect: () => widgets.gmailConnect({}),
+  disconnect: () => widgets.gmailDisconnect(),
+};
+const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
+let connectorsLive = null;
+const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
+  userData: app.getPath('userData'),
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+  },
+  fetch: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }), // a token goes in the header; no cookies
+  sessionFetch: (url, options) => session.defaultSession.fetch(url, { ...options, credentials: 'include' }), // the user's signed-in Lumen session (Canvas)
+  endpoints: () => (TEST && global.__connectorEndpoints) || {},
+  testLoopback: TEST,
+  // Hosts that may be a school's Canvas: the Canvas session cookie's own domain first, then history and the sites the AI may read as the user.
+  detectHosts: async () => {
+    const hosts = new Set();
+    try { for (const c of await session.defaultSession.cookies.get({ name: 'canvas_session' })) hosts.add(String(c.domain || '').replace(/^\./, '')); } catch { /* none */ }
+    for (const h of signedInSites.hosts()) hosts.add(h);
+    for (const e of history.values()) { try { hosts.add(new URL(e.url).hostname); } catch { /* not an address */ } }
+    return [...hosts].filter(Boolean);
+  },
+  google: connectorsGoogle,
+  mcp: mcpClient,
+  openSignIn: connectorsOpen,
+}));
+let connectedOnDisk = null; // before the service exists: whether the file lists anything (read once)
+const anyConnected = () => {
+  if (connectorsLive) return connectorsLive.hasAny();
+  if (connectedOnDisk === null) {
+    try { connectedOnDisk = Object.keys(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'connectors.json'), 'utf8')).connected || {}).length > 0; } catch { connectedOnDisk = false; }
+  }
+  return connectedOnDisk;
+};
+const connectorsFacade = {
+  hasAny: () => anyConnected(),
+  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  isWrite: (input) => connectorsSvc().isWrite(input),
+  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  call: (input, opts) => connectorsSvc().call(input, opts),
+  list: () => connectorsSvc().list(),
+};
+ipcMain.handle('connectors:list', () => connectorsSvc().list());
+ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id)));
+ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
+ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
+ipcMain.handle('connectors:sign-in', (_e, id) => {
+  const url = connectorsSvc().signInUrl(String(id));
+  if (url) connectorsOpen(url);
+  return Boolean(url);
+});
+// The connector tool is not in the shared MCP tool list: an outside agent (Claude Code started in a terminal and the like) never sees the user's
+// connected accounts. Only a run Lumen itself started gets it, by its own per-run tag (features/ai-agents.js runTools).
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 // Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
@@ -7935,6 +8028,17 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
 // sidebar's AI reads a page with the user's own session, in a background tab of the run's window grouped
 // "AI: <host> (signed in)". Locked (no popups) while it is read; closed when the run ends unless the user
 // switched to it. Only this Agent gets it: background tasks and outside agents (MCP) read signed out.
+// [desktop apps] src/desktop/ is loaded on first use: the AI's desktop tool, or a click on the Computer card. The Settings list needs only its small settings module.
+let desktopWired = null;
+const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND) }));
+const desktopSettings = () => require('./desktop/settings').createDesktopSettings({ readSettings, writeSettings });
+ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
+ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
+ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
+ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false));
+ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
+app.on('before-quit', () => { try { desktopWired?.controller.destroy(); } catch { /* nothing started */ } }); // [desktop apps] the helper and the banner end with Lumen
+if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSettings };
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
 signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
@@ -8054,6 +8158,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
+  connectors: connectorsFacade, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
@@ -8072,6 +8177,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
@@ -8215,6 +8321,8 @@ if (TEST) {
   global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
+  global.__connectors = connectorsFacade;
+  global.__mcpTools = EXTERNAL_TOOLS;
 }
 
 // ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
@@ -10610,6 +10718,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
+  connectorTools: () => connectorsFacade.defs(), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)

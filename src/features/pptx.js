@@ -31,6 +31,9 @@ const MAX_MEDIA_BYTES = 150 * 1024 * 1024; // all pictures handed to the page
 const EMU_PER_PT = 12700;
 const DEFAULT_SIZE = { width: 12192000, height: 6858000 }; // 16:9, 13.333 x 7.5 in
 
+// A turn of the event loop: a big deck is read in pieces, so the app keeps answering (and the tests' setImmediate probe sees no long stall).
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+
 class PptxError extends Error {}
 const damaged = () => new PptxError('This file is not a PowerPoint presentation, or it is damaged.');
 const tooBig = () => new PptxError('This presentation is too large to open here.');
@@ -220,7 +223,9 @@ async function loadRels(zip, part) {
     const target = r.attrs.Target || '';
     if (!id) continue;
     const external = r.attrs.TargetMode === 'External';
-    rels.set(id, { type: String(r.attrs.Type || '').split('/').pop(), target: external ? null : resolvePart(part, decodeURIComponent(target.split('#')[0])), external });
+    let local = null;
+    if (!external) { try { local = resolvePart(part, decodeURIComponent(target.split('#')[0])); } catch { local = null; } }
+    rels.set(id, { type: String(r.attrs.Type || '').split('/').pop(), target: local, external, url: external ? target.slice(0, 2000) : null });
   }
   return rels;
 }
@@ -296,7 +301,7 @@ function fillIn(node, ctx) {
       return { type: 'gradient', angle: lin ? num(lin.attrs.ang, 0) / 60000 : 90, radial: Boolean(kid(c, 'path')), stops };
     }
     if (c.name === 'pattFill') { const col = colorIn(kid(c, 'fgClr'), ctx); return col ? { type: 'solid', ...col } : null; }
-    if (c.name === 'blipFill') { const image = blipImage(c, ctx); return image ? { type: 'image', image } : null; }
+    if (c.name === 'blipFill') { const pic = blipPicture(c, ctx); return pic ? { type: 'image', ...pic } : null; }
   }
   return null;
 }
@@ -308,6 +313,39 @@ function blipImage(blipFill, ctx) {
   ctx.media.add(rel.target);
   return rel.target;
 }
+// What a picture fill (p:blipFill / a:blipFill) says: the image part, its SVG twin (a:blip > a:extLst > asvg:svgBlip: the PNG is then
+// the fallback), the crop (a:srcRect, fractions of the image), where a stretched image goes in its box (a:stretch > a:fillRect, fractions
+// of the box), a tile (a:tile), and the blip's effects (alpha, gray, black and white, brightness and contrast, duotone).
+const fraction = (v) => Math.max(-5, Math.min(5, num(v, 0) / 100000));
+function blipPicture(blipFill, ctx) {
+  const png = blipImage(blipFill, ctx);
+  const blip = kid(blipFill, 'blip');
+  let svg = null;
+  const svgNode = blip ? [...walk(blip)].find((n) => n.name === 'svgBlip') : null;
+  const svgRel = svgNode ? ctx.rels.get(relAttr(svgNode, 'embed') || '') : null;
+  if (svgRel && svgRel.target) { ctx.media.add(svgRel.target); svg = svgRel.target; }
+  if (!png && !svg) return null;
+  const src = kid(blipFill, 'srcRect');
+  const crop = src ? ['l', 't', 'r', 'b'].map((k) => Math.max(-1, Math.min(0.99, num(src.attrs[k], 0) / 100000))) : null;
+  const rect = at(blipFill, 'stretch', 'fillRect');
+  const fillRect = rect ? ['l', 't', 'r', 'b'].map((k) => fraction(rect.attrs[k])) : null;
+  const tl = kid(blipFill, 'tile');
+  const tile = tl ? { tx: num(tl.attrs.tx, 0), ty: num(tl.attrs.ty, 0), sx: Math.max(0.01, num(tl.attrs.sx, 100000) / 100000), sy: Math.max(0.01, num(tl.attrs.sy, 100000) / 100000), algn: tl.attrs.algn || 'tl' } : null;
+  const fx = {};
+  for (const c of blip ? blip.children : []) {
+    if (c.name === 'alphaModFix') fx.alpha = Math.max(0, Math.min(1, num(c.attrs.amt, 100000) / 100000));
+    else if (c.name === 'grayscl') fx.gray = true;
+    else if (c.name === 'biLevel') fx.bw = true;
+    else if (c.name === 'lum') { fx.bright = Math.max(-1, Math.min(1, num(c.attrs.bright, 0) / 100000)); fx.contrast = Math.max(-1, Math.min(1, num(c.attrs.contrast, 0) / 100000)); }
+    else if (c.name === 'duotone') {
+      const colors = c.children.map((x) => colorIn({ children: [x] }, ctx)).filter(Boolean).slice(0, 2).map((x) => x.color);
+      if (colors.length === 2) fx.duotone = colors;
+    }
+  }
+  return { image: png || svg, svg: png && svg ? svg : null, crop: crop && crop.some(Boolean) ? crop : null, fillRect: fillRect && fillRect.some(Boolean) ? fillRect : null, tile, fx: Object.keys(fx).length ? fx : null };
+}
+// Why a picture has no image: it is linked (r:link, a file elsewhere), else nothing.
+const pictureFormat = (blipFill) => (relAttr(kid(blipFill, 'blip'), 'link') ? 'linked' : null);
 function lineIn(spPr, ctx) {
   const ln = kid(spPr, 'ln');
   if (!ln) return null;
@@ -342,7 +380,36 @@ function xfrmOf(node) {
     chExt: kid(x, 'chExt') ? { w: num(kid(x, 'chExt').attrs.cx, 0), h: num(kid(x, 'chExt').attrs.cy, 0) } : null,
   };
 }
-const applyT = (t, b) => ({ ...b, x: t.ox + b.x * t.sx, y: t.oy + b.y * t.sy, w: b.w * t.sx, h: b.h * t.sy });
+// A group's transform is an affine matrix [a, b, c, d, e, f] (child space to slide space): its offset and scale (chOff / chExt), then its
+// flips and rotation about its own center. A child's box is moved by its center, and takes the matrix's rotation and mirroring.
+const IDENTITY = [1, 0, 0, 1, 0, 0];
+const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+function groupMatrix(parent, g) {
+  const gsx = g.chExt && g.chExt.w ? g.w / g.chExt.w : 1;
+  const gsy = g.chExt && g.chExt.h ? g.h / g.chExt.h : 1;
+  const ch = g.chOff || { x: 0, y: 0 };
+  let m = [gsx, 0, 0, gsy, g.x - ch.x * gsx, g.y - ch.y * gsy]; // child space to the group's frame
+  if (g.rot || g.flipH || g.flipV) {
+    const cx = g.x + g.w / 2; const cy = g.y + g.h / 2;
+    const r = ((g.rot || 0) * Math.PI) / 180;
+    const rotate = [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0];
+    const flip = [g.flipH ? -1 : 1, 0, 0, g.flipV ? -1 : 1, 0, 0];
+    m = mul(mul([1, 0, 0, 1, cx, cy], mul(rotate, mul(flip, [1, 0, 0, 1, -cx, -cy]))), m);
+  }
+  return mul(parent, m);
+}
+function applyT(m, b) {
+  if (m === IDENTITY) return b;
+  const cx = b.x + b.w / 2; const cy = b.y + b.h / 2;
+  const nx = m[0] * cx + m[2] * cy + m[4]; const ny = m[1] * cx + m[3] * cy + m[5];
+  const sx = Math.hypot(m[0], m[1]); const sy = Math.hypot(m[2], m[3]);
+  const mirrored = m[0] * m[3] - m[1] * m[2] < 0;
+  const angle = (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+  const w = b.w * sx; const h = b.h * sy;
+  let rot = mirrored ? angle - (b.rot || 0) : angle + (b.rot || 0);
+  rot = ((rot % 360) + 360) % 360;
+  return { ...b, x: nx - w / 2, y: ny - h / 2, w, h, rot: Math.round(rot * 1000) / 1000, flipH: mirrored ? !b.flipH : b.flipH };
+}
 const LINE_GEOMS = new Set(['line', 'straightConnector1', 'bentConnector2', 'bentConnector3', 'curvedConnector3']);
 // Preset shapes drawn as a clip-path polygon (percent points); the rest are rectangles.
 const POLYGONS = {
@@ -513,7 +580,7 @@ function parseTheme(xml) {
 
 // ---- one part's shapes (a slide, its layout or its master) ----
 // `part`: { kind, doc, rels, phs (its placeholders) }; `owner`: { layout, master } parts, for inheritance.
-function drawTree(spTree, ctx, out, t = { ox: 0, oy: 0, sx: 1, sy: 1 }) {
+function drawTree(spTree, ctx, out, t = IDENTITY) {
   if (!spTree) return;
   for (const node of spTree.children) {
     if (out.length >= MAX_SHAPES) { ctx.warnings.add('Some shapes were left out: the slide has too many.'); return; }
@@ -522,14 +589,7 @@ function drawTree(spTree, ctx, out, t = { ox: 0, oy: 0, sx: 1, sy: 1 }) {
     if (!el) continue;
     if (el.name === 'grpSp') {
       const g = xfrmOf(kid(el, 'grpSpPr'));
-      let inner = t;
-      if (g) {
-        const gsx = g.chExt && g.chExt.w ? g.w / g.chExt.w : 1;
-        const gsy = g.chExt && g.chExt.h ? g.h / g.chExt.h : 1;
-        const ch = g.chOff || { x: 0, y: 0 };
-        inner = { ox: t.ox + (g.x - ch.x * gsx) * t.sx, oy: t.oy + (g.y - ch.y * gsy) * t.sy, sx: gsx * t.sx, sy: gsy * t.sy };
-      }
-      drawTree(el, ctx, out, inner);
+      drawTree(el, ctx, out, g ? groupMatrix(t, g) : t);
     } else if (el.name === 'sp' || el.name === 'cxnSp' || el.name === 'pic' || el.name === 'graphicFrame') {
       const shape = drawShape(el, ctx);
       if (shape) out.push(applyT(t, shape));
@@ -551,10 +611,17 @@ function drawShape(node, ctx) {
   const name = at(nv, 'cNvPr')?.attrs.name || '';
 
   if (node.name === 'pic') {
-    const image = blipImage(kid(node, 'blipFill'), ctx);
-    const src = at(node, 'blipFill', 'srcRect');
-    const crop = src ? ['l', 't', 'r', 'b'].map((k) => Math.max(-1, Math.min(0.99, num(src.attrs[k], 0) / 100000))) : null;
-    return { type: 'pic', ...base, image, crop: crop && crop.some(Boolean) ? crop : null, alt: String(at(nv, 'cNvPr')?.attrs.descr || '').slice(0, 300), line: lineIn(spPr, ctx), placeholder: ph?.type || null };
+    const fill = blipPicture(kid(node, 'blipFill'), ctx);
+    const geom = geometryOf(spPr || kid(layoutPh?.node, 'spPr'));
+    const hl = at(nv, 'cNvPr', 'hlinkClick');
+    const hlRel = hl ? ctx.rels.get(relAttr(hl, 'id') || '') : null;
+    const link = hlRel && hlRel.url && /^(https?:|mailto:)/i.test(hlRel.url) ? hlRel.url : null;
+    const format = !fill ? pictureFormat(kid(node, 'blipFill'), ctx) : null;
+    return {
+      type: 'pic', ...base, image: fill ? fill.image : null, svg: fill ? fill.svg : null, crop: fill ? fill.crop : null, fillRect: fill ? fill.fillRect : null, fx: fill ? fill.fx : null,
+      geom: geom.geom === 'rect' || geom.geom === 'line' ? null : geom.geom, radius: geom.radius, points: geom.points, link, format,
+      alt: String(at(nv, 'cNvPr')?.attrs.descr || '').slice(0, 300), line: lineIn(spPr, ctx), placeholder: ph?.type || null,
+    };
   }
 
   if (node.name === 'graphicFrame') {
@@ -575,7 +642,7 @@ function drawShape(node, ctx) {
     if (dmPart) {
       const inner = [];
       const spTree = dmPart.drawing ? at(dmPart.drawing.doc, 'drawing', 'spTree') : null;
-      if (spTree) drawTree(spTree, { ...ctx, kind: 'slide', rels: dmPart.drawing.rels, layout: null, master: null }, inner, { ox: base.x, oy: base.y, sx: 1, sy: 1 });
+      if (spTree) drawTree(spTree, { ...ctx, kind: 'slide', rels: dmPart.drawing.rels, layout: null, master: null }, inner, [1, 0, 0, 1, base.x, base.y]);
       const items = inner.length ? [] : diagramItems(dmPart.dm);
       if (inner.length || items.length) return { type: 'diagram', ...base, name: name.slice(0, 60), shapes: inner, items };
     }
@@ -636,7 +703,7 @@ function drawTable(tbl, ctx) {
       const tcPr = kid(tc, 'tcPr');
       const paragraphs = textBody(kid(tc, 'txBody'), { chain: [ctx.defaultTextStyle].filter(Boolean), ctx, fontColor, category: 'other' });
       const fill = fillIn(tcPr, ctx);
-      cells.push({ paragraphs, fill: fill && fill.type !== 'none' && fill.type !== 'image' ? fill : null, colSpan: Math.max(1, num(tc.attrs.gridSpan, 1)), rowSpan: Math.max(1, num(tc.attrs.rowSpan, 1)), anchor: { ctr: 'middle', b: 'bottom' }[tcPr?.attrs.anchor] || 'top' });
+      cells.push({ paragraphs, fill: fill && fill.type !== 'none' ? fill : null, colSpan: Math.max(1, num(tc.attrs.gridSpan, 1)), rowSpan: Math.max(1, num(tc.attrs.rowSpan, 1)), anchor: { ctr: 'middle', b: 'bottom' }[tcPr?.attrs.anchor] || 'top' });
     }
     rows.push({ h: Math.max(0, num(tr.attrs.h, 0)), cells });
   }
@@ -931,6 +998,32 @@ function sniffImage(b) {
   if (head.startsWith('<') && /<svg[\s>]/i.test(head)) return 'image/svg+xml';
   return null; // EMF, WMF, TIFF, …: Chromium can't show them
 }
+// A picture's size in pixels from its header (PNG, GIF, JPEG, WebP, BMP): { w, h } or null. Never decodes the picture.
+function imageSize(b, type) {
+  try {
+    if (type === 'image/png' && b.length >= 24) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+    if (type === 'image/gif' && b.length >= 10) return { w: b.readUInt16LE(6), h: b.readUInt16LE(8) };
+    if (type === 'image/bmp' && b.length >= 26) return { w: Math.abs(b.readInt32LE(18)), h: Math.abs(b.readInt32LE(22)) };
+    if (type === 'image/webp' && b.length >= 30) {
+      const kind = b.toString('latin1', 12, 16);
+      if (kind === 'VP8X') return { w: 1 + b.readUIntLE(24, 3), h: 1 + b.readUIntLE(27, 3) };
+      if (kind === 'VP8 ') return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+      if (kind === 'VP8L') { const v = b.readUInt32LE(21); return { w: (v & 0x3fff) + 1, h: ((v >> 14) & 0x3fff) + 1 }; }
+    }
+    if (type === 'image/jpeg') {
+      let p = 2;
+      while (p + 9 < b.length) {
+        if (b[p] !== 0xff) { p++; continue; }
+        const marker = b[p + 1];
+        if (marker === 0xff) { p++; continue; }
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return { h: b.readUInt16BE(p + 5), w: b.readUInt16BE(p + 7) };
+        if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) { p += 2; continue; }
+        p += 2 + b.readUInt16BE(p + 2);
+      }
+    }
+  } catch { /* a damaged header: no size */ }
+  return null;
+}
 
 // ---- the deck ----
 // opts.media: false skips reading pictures (the AI's text). Returns
@@ -972,6 +1065,7 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
 
   const slides = [];
   for (const [i, part] of slideParts.slice(0, maxSlides).entries()) {
+    if (i % 3 === 2) await turn();
     const slide = await loadPart(part, 'slide');
     if (!slide) { slides.push({ number: i + 1, hidden: false, background: null, shapes: [], notes: '', text: '' }); warnings.add('Some slides could not be read.'); continue; }
     const layoutRel = relOfType(slide.rels, 'slideLayout');
@@ -1007,21 +1101,32 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
     slides.push({ number: i + 1, hidden: slide.doc.attrs.show === '0' || slide.doc.attrs.show === 'false', background, shapes, notes, text: slideText(shapes) });
   }
 
+  // media: part -> data: URL (or null); the same bytes under several part names are sent once (alias: part -> the part that holds them);
+  // mediaInfo: part -> { w, h } in pixels, or { missing: 'emf' | 'wmf' | … } for a picture that can't be shown.
   const media = {};
+  const mediaInfo = {};
+  const mediaAlias = {};
+  const seen = new Map();
   let mediaBytes = 0;
   if (wantMedia) {
     for (const part of mediaParts) {
+      await turn();
       let b;
       try { b = zip.has(part) ? await zip.bytes(part) : null; } catch (err) { if (err instanceof PptxError && /too large/.test(err.message)) { warnings.add('Some pictures were left out: the presentation is too large.'); media[part] = null; continue; } throw err; }
       const type = sniffImage(b);
-      if (!b || !type) { media[part] = null; if (b) warnings.add('Some pictures are in a format Lumen cannot show (such as EMF or WMF).'); continue; }
+      if (!b || !type) { media[part] = null; mediaInfo[part] = { missing: (/.([a-z0-9]{2,5})$/i.exec(part)?.[1] || 'unknown').toLowerCase() }; if (b) warnings.add('Some pictures are in a format Lumen cannot show (such as EMF or WMF).'); continue; }
+      const digest = `${type}|${b.length}|${require('crypto').createHash('sha1').update(b).digest('hex')}`;
+      if (seen.has(digest)) { mediaAlias[part] = seen.get(digest); continue; }
+      seen.set(digest, part);
+      const size = imageSize(b, type);
+      if (size) mediaInfo[part] = size;
       if (b.length > MAX_IMAGE_BYTES || mediaBytes + b.length > MAX_MEDIA_BYTES) { media[part] = null; warnings.add('Some pictures were left out: they are too large.'); continue; }
       mediaBytes += b.length;
       media[part] = `data:${type};base64,${b.toString('base64')}`;
     }
   }
   if (truncated) warnings.add(`Only the first ${maxSlides} of ${slideParts.length} slides are shown.`);
-  return { width, height, slides, media, warnings: [...warnings], truncated, slideCount: slideParts.length };
+  return { width, height, slides, media, mediaInfo, mediaAlias, warnings: [...warnings], truncated, slideCount: slideParts.length };
 }
 
 // The text of each slide, for read_pdf (one "page" per slide), the speaker notes after it.
@@ -1033,6 +1138,6 @@ async function extractSlideTexts(buf) {
 const isPptxName = (name) => /\.pptx$/i.test(String(name || '').split(/[?#]/)[0]);
 
 module.exports = {
-  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, PptxError,
+  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, imageSize, PptxError,
   MAX_UNCOMPRESSED, MAX_FILE_BYTES, MAX_SLIDES, EMU_PER_PT, MAX_CHART_POINTS,
 };
