@@ -1,5 +1,5 @@
 // The sidebar's Meeting Helper panel (renderer/meeting.js).
-// Provides live prompting (Mod+Enter), context management (resume, agenda, notes),
+// Provides live prompting (Ctrl+Shift+E), context management (resume, agenda, notes),
 // active screen awareness, live audio transcript capture, stealth mode (setContentProtection),
 // and post-meeting summarization saved to the chat store.
 
@@ -69,7 +69,7 @@
       <div class="mt-view" id="mt-view-qa">
         <div class="mt-prompt-box">
           <div class="mt-prompt-input-row">
-            <input type="text" class="mt-prompt-input" id="mt-prompt-input" placeholder="Type what was just asked (Mod+Enter)..." autocomplete="off" />
+            <input type="text" class="mt-prompt-input" id="mt-prompt-input" placeholder="Type what was just asked, then press Enter..." data-i18n-placeholder="meeting.prompt.placeholder" autocomplete="off" />
             <button type="button" class="btn" id="mt-prompt-send" style="padding: 0 12px; font-size: 12px;">Ask</button>
           </div>
           <div class="mt-prompt-opts">
@@ -158,6 +158,7 @@
   const summaryContent = byId('mt-summary-content');
 
   let currentSummary = '';
+  window.translatePage?.(panel); // (the prompt box's placeholder: no shortcut spelled out in markup)
 
   // Tab switching
   panel.querySelectorAll('.mt-tab').forEach((tabBtn) => {

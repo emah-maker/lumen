@@ -3037,5 +3037,20 @@
   "unloaded.title": "Tab unloaded",
   "unloaded.lead": "Lumen unloaded {host} to free memory. Nothing loads until you press Reload.",
   "unloaded.freed": "About {mb} MB freed.",
-  "unloaded.reload": "Reload"
+  "unloaded.reload": "Reload",
+
+  "shortcuts.section.pagefirst": "Keys that websites also use",
+  "shortcuts.pageFirst": "Sites that use a shortcut themselves (Google Docs, VS Code for the web) get the key first. Use the ⋯ menu for Lumen's action.",
+  "shortcuts.section.newtab": "New tab page",
+  "shortcuts.section.chatpage": "Chat page",
+  "shortcuts.sendNow": "In a chat box while a reply runs: stop it and send now",
+  "shortcuts.newtab.focus": "Go to the search box",
+  "shortcuts.newtab.switch": "Switch between Search and Ask AI",
+  "shortcuts.newtab.ask": "Ask the AI what is in the box",
+  "shortcuts.chatpage.newChat": "New chat",
+  "shortcuts.chatpage.rail": "Fold or open the chat list",
+  "shortcuts.chatpage.home": "Back to the new tab page",
+  "shortcuts.chatpage.stop": "Stop the reply (empty box)",
+  "meeting.button.title": "Meeting helper (Ctrl+Shift+E)",
+  "meeting.prompt.placeholder": "Type what was just asked, then press Enter..."
 }

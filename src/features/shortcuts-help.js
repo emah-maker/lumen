@@ -4,22 +4,28 @@
 // list in Lumen's own dialog overlay (dialogs.showNotes, the card What's New uses), one section per
 // area. The list is data here, written for the platform it runs on (⌘ and ⌥ on macOS, Ctrl and Alt
 // elsewhere), so the sheet and the tests read the same table. Keep it in step with handleShortcut()
-// in main.js: test/shortcuts-units.js checks that each entry's keys are ones handleShortcut knows.
+// in main.js and the accelerators on its menus: test/shortcuts-help-units.js fails when a menu accelerator or a handled key is missing here.
+//
+// Ctrl+Enter means one thing everywhere: "send what is typed in this box now". On the new-tab page it asks the AI, in the sidebar chat box
+// it stops a running reply and sends now. The Meeting helper has its own key (Ctrl+Shift+E) and no longer shares it.
+//
+// Ctrl+Shift+F (Find files) is not here: that shortcut comes with the Files feature (feat/files), which adds its entry to this table.
 
 // One entry: [label key in locales/en.json, keys]. Keys are a list of chords; a chord is
 // 'mod+shift+t'-style text. `mac` / `other` limit an entry or a chord to one platform.
 const SECTIONS = [
+  { id: 'pagefirst', note: 'shortcuts.pageFirst', entries: [] }, // one line: a site that uses a key itself gets it first
   {
     id: 'tabs',
     entries: [
       ['shortcuts.newTab', ['mod+t']],
       ['shortcuts.newWindow', ['mod+n']],
       ['shortcuts.newPrivateWindow', ['mod+shift+n']],
-      ['shortcuts.closeTab', ['mod+w']],
+      ['shortcuts.closeTab', ['mod+w', { other: 'ctrl+f4' }]],
       ['shortcuts.closeWindow', ['mod+shift+w']],
       ['shortcuts.reopenTab', ['mod+shift+t']],
-      ['shortcuts.nextTab', ['mod+tab', 'mod+pagedown', { mac: 'mod+alt+right' }]],
-      ['shortcuts.previousTab', ['mod+shift+tab', 'mod+pageup', { mac: 'mod+alt+left' }]],
+      ['shortcuts.nextTab', ['mod+tab', 'mod+pagedown', { mac: 'mod+alt+right' }, { mac: 'mod+shift+]' }]],
+      ['shortcuts.previousTab', ['mod+shift+tab', 'mod+pageup', { mac: 'mod+alt+left' }, { mac: 'mod+shift+[' }]],
       ['shortcuts.tabByNumber', ['mod+1–8']],
       ['shortcuts.lastTab', ['mod+9']],
       ['shortcuts.moveTab', ['mod+shift+pageup', 'mod+shift+pagedown']],
@@ -69,7 +75,25 @@ const SECTIONS = [
       ['shortcuts.newChat', ['mod+shift+k']],
       ['shortcuts.chatPage', ['mod+shift+l']],
       ['shortcuts.askFromAddress', ['alt+enter']],
-      ['shortcuts.meetingHelper', ['mod+enter']],
+      ['shortcuts.sendNow', ['mod+enter']],
+      ['shortcuts.meetingHelper', ['mod+shift+e']],
+    ],
+  },
+  {
+    id: 'newtab',
+    entries: [
+      ['shortcuts.newtab.focus', ['/']],
+      ['shortcuts.newtab.switch', ['ctrl+/', 'alt+a']],
+      ['shortcuts.newtab.ask', ['mod+enter']],
+    ],
+  },
+  {
+    id: 'chatpage',
+    entries: [
+      ['shortcuts.chatpage.newChat', ['mod+shift+o']],
+      ['shortcuts.chatpage.rail', ['mod+shift+s']],
+      ['shortcuts.chatpage.home', ['alt+home']],
+      ['shortcuts.chatpage.stop', ['escape']],
     ],
   },
   {
@@ -82,8 +106,8 @@ const SECTIONS = [
   },
 ];
 
-const MAC_NAMES = { mod: '⌘', shift: '⇧', alt: '⌥', ctrl: '⌃', left: '←', right: '→', tab: '⇥', enter: '↩', escape: 'Esc', backspace: '⌫', pageup: 'Page Up', pagedown: 'Page Down' };
-const OTHER_NAMES = { mod: 'Ctrl', shift: 'Shift', alt: 'Alt', ctrl: 'Ctrl', left: '←', right: '→', tab: 'Tab', enter: 'Enter', escape: 'Esc', delete: 'Delete', backspace: 'Backspace', pageup: 'Page Up', pagedown: 'Page Down' };
+const MAC_NAMES = { mod: '⌘', shift: '⇧', alt: '⌥', ctrl: '⌃', left: '←', right: '→', tab: '⇥', enter: '↩', escape: 'Esc', backspace: '⌫', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
+const OTHER_NAMES = { mod: 'Ctrl', shift: 'Shift', alt: 'Alt', ctrl: 'Ctrl', left: '←', right: '→', tab: 'Tab', enter: 'Enter', escape: 'Esc', delete: 'Delete', backspace: 'Backspace', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
 
 // 'mod+shift+t' -> '⇧⌘T' on macOS (Apple's order: ⌃ ⌥ ⇧ ⌘), 'Ctrl+Shift+T' elsewhere.
 function formatChord(chord, platform = process.platform) {
@@ -110,15 +134,16 @@ function chordsFor(keys, platform = process.platform) {
 function sheet(platform = process.platform) {
   return SECTIONS.map((s) => ({
     id: s.id,
+    note: s.note || null,
     entries: s.entries
       .map(([label, keys]) => ({ label, keys: chordsFor(keys, platform).map((c) => formatChord(c, platform)) }))
       .filter((e) => e.keys.length),
-  })).filter((s) => s.entries.length);
+  })).filter((s) => s.entries.length || s.note);
 }
 
 // Every label key the sheet can use, on any platform (for the locale check).
 function labelKeys() {
-  return [...SECTIONS.map((s) => `shortcuts.section.${s.id}`), ...SECTIONS.flatMap((s) => s.entries.map(([label]) => label))];
+  return [...SECTIONS.map((s) => `shortcuts.section.${s.id}`), ...SECTIONS.filter((s) => s.note).map((s) => s.note), ...SECTIONS.flatMap((s) => s.entries.map(([label]) => label))];
 }
 
 // deps: { t, showNotes(opts) -> Promise, platform? }
@@ -134,7 +159,7 @@ function createShortcutsHelp(deps) {
         notes: sheet(platform).map((s) => ({
           version: deps.t(`shortcuts.section.${s.id}`),
           date: '',
-          blocks: s.entries.map((e) => ({ type: 'li', text: `${deps.t(e.label)}: ${e.keys.map((k) => `\`${k}\``).join(deps.t('shortcuts.or'))}` })), // `keys` are drawn as <code>
+          blocks: [...(s.note ? [{ type: 'p', text: deps.t(s.note) }] : []), ...s.entries.map((e) => ({ type: 'li', text: `${deps.t(e.label)}: ${e.keys.map((k) => `\`${k}\``).join(deps.t('shortcuts.or'))}` }))], // `keys` are drawn as <code>
         })),
         buttons: [deps.t('shortcuts.close')],
       });
