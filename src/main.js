@@ -5108,7 +5108,17 @@ const chats = () => (chatStore ||= createChatStore({
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
   legacyFile: CHAT_FILE(),
+  onError: (err) => chatSaveFailed(err),
 }));
+// A save that failed (a full disk, a locked file, the keychain): said once per session, in the tab strip's toast, with the reason. The chat stays
+// in memory and the next save tries again.
+let chatSaveWarned = false;
+function chatSaveFailed(err) {
+  console.error('Could not save chat:', err?.message);
+  if (chatSaveWarned) return;
+  chatSaveWarned = true;
+  try { toast(`Couldn't save this chat: ${String(err?.code || err?.message || 'unknown error').slice(0, 80)}`); } catch { /* no window to say it in */ }
+}
 let chatId = null; // the open chat
 // [temporary chat] Chats started with "Temporary chat" on the chat page: never written to disk, never listed (they live only in
 // memory until the user leaves them). Ids are random, so the set simply stays for the session.
@@ -5231,7 +5241,7 @@ function saveChat(generation = chatGeneration) {
     mirrorChatSoon(chatId); // [project folders]
     if (chats().current() !== chatId) chats().setCurrent(chatId, { defer: true });
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // During a long task the chat is saved after each step too, so quitting mid-run keeps what was done.
@@ -5240,12 +5250,18 @@ function saveChatSoon(generation) {
   clearTimeout(saveChatTimer);
   saveChatTimer = setTimeout(() => saveChat(generation), 1000);
 }
-app.on('before-quit', () => {
+// Everything not on disk yet is written now, on this thread: the app is closing, or Windows is logging off or shutting down (no time for more).
+function flushChatsNow() {
   saveChat();
   try { mirrorDebounce.flush().catch(() => {}); } catch { /* [project folders] best effort: a write still waiting starts now */ }
   for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
-  try { chats().flush(); } catch { /* nothing pending */ } // (every save still waiting is written now, on this thread: the app is closing)
-});
+  try { chats().flush(); } catch { /* nothing pending */ }
+}
+app.on('before-quit', flushChatsNow);
+app.on('will-quit', flushChatsNow); // (again: whatever a quit handler saved after the first)
+app.on('session-end', flushChatsNow); // (Windows logoff / shutdown, where the app event exists)
+app.on('browser-window-created', (_e, w) => { try { w.on('session-end', flushChatsNow); } catch { /* not a window that gets it */ } }); // (...and where only the window gets it)
+app.whenReady().then(() => { try { require('electron').powerMonitor.on('shutdown', flushChatsNow); } catch { /* the event is not on this platform */ } }).catch(() => {});
 
 function loadChat() {
   try {
@@ -5331,7 +5347,7 @@ function saveChatOf(id, messages) {
     const snapshot = chatSnapshot(messages);
     if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
   } catch (err) {
-    console.error('Could not save chat:', err.message);
+    chatSaveFailed(err);
   }
 }
 // A chat in use (a message sent, a reply started) goes to the top of the history lists: its activity time is stamped in the index at
@@ -9487,9 +9503,17 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
   };
 }));
 // "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
+// Chats opened one after another: the read of an earlier one is dropped (it answers with whatever is open by then), so the last click is the chat shown.
+let openSeq = 0;
+async function readForOpen(id) {
+  const mine = ++openSeq;
+  const loaded = chatRuns.has(id) || id === chatId ? null : await chats().loadAsync(id); // (read in the background; the switch itself is then quick)
+  return { loaded, stale: mine !== openSeq };
+}
 ipcMain.handle('chats:open', async (event, id) => {
-  syncToSender(event);
-  const loaded = chatRuns.has(String(id)) || String(id) === chatId ? null : await chats().loadAsync(String(id)); // (read in the background; the switch itself is then quick)
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
+  syncToSender(event); // (with the switch, as one step: nothing else runs between them)
   const view = switchChat(String(id), { loaded });
   if (view) {
     bindOpenChatHere(event.sender);
@@ -9500,8 +9524,9 @@ ipcMain.handle('chats:open', async (event, id) => {
 // "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
 // changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
 ipcMain.handle('chats:share', async (event, id) => {
+  const { loaded, stale } = await readForOpen(String(id));
+  if (stale) return chatView();
   syncToSender(event);
-  const loaded = chatRuns.has(String(id)) || String(id) === chatId ? null : await chats().loadAsync(String(id));
   const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;

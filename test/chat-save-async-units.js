@@ -140,6 +140,20 @@ const files = (dir) => fs.readdirSync(dir);
     check('the next save of the same chat is written', mk(dir).load(hexId(1))?.messages.length === 2 && !files(dir).some((n) => n.includes('.tmp')), files(dir).join());
   }
 
+  // ---- deleting a chat whose save is still waiting: the save must not bring it back
+  {
+    const dir = path.join(root, 'k');
+    const store = mk(dir);
+    store.saveAsync(hexId(1), snap('doomed', 2));
+    store.trash(hexId(1));
+    await store.drain();
+    check('a chat trashed with a save waiting stays trashed', store.list().length === 0 && store.trashed().length === 1 && mk(dir).load(hexId(1)) === null /* (trashed: not opened) */, JSON.stringify(store.trashed()));
+    store.saveAsync(hexId(2), snap('removed', 2));
+    store.remove(hexId(2));
+    await store.drain();
+    check('a chat erased with a save waiting is not written back', !files(dir).includes(hexId(2) + '.json') && !store.has(hexId(2)), files(dir).join());
+  }
+
   // ---- no keychain: nothing is kept
   {
     const dir = path.join(root, 'j');

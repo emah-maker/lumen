@@ -689,6 +689,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     const entry = entryOf(id);
     const idx = readIndex();
     if (!entry || idx.degraded || !available()) return false;
+    if (jobs.has(id)) flushJob(id); // (a save still waiting is written first: landing after the delete it would bring the chat back)
     entry.trashed = now();
     if (idx.current === id) idx.current = null;
     writeIndex();
