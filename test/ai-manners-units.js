@@ -315,8 +315,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: app.js sums the toggle from the strip\'s own rule', Boolean(sumFn) && /aiHiddenTab\(x, state\)/.test(sumFn));
     const sctx = { window: { lumenHideAiTabs: true }, drag: null };
     vm.createContext(sctx);
-    const needsFn = /function aiTabNeedsYou(tab) {[^
-]*}/.exec(app)?.[0];
+    const needsFn = /function aiTabNeedsYou\(tab\) \{[^\r\n]*\}/.exec(app)?.[0];
     vm.runInContext(`${fn}; ${sumFn}; ${needsFn}; this.sum = hideAiSummary;`, sctx);
     const sumFull = (...t) => sctx.sum({ activeId: 5, tabs: t });
     const sum = (...t) => { const { needs: _needs, ...rest } = sumFull(...t); return JSON.stringify(rest); }; // (the counts; "needs you" is checked below)
@@ -329,7 +328,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: needs you: a hidden tab with an approval, a dialog or an error is listed, in strip order', JSON.stringify(sumFull({ id: 1, aiOpened: true, chat: 'approval' }, { id: 2, aiOpened: true }, { id: 3, aiOpened: true, alert: true }, { id: 4, aiOpened: true, error: true }).needs) === '[1,3,4]');
     check('hide toggle: needs you: a tab that is merely running or done does not need you', sumFull({ id: 1, aiOpened: true, chat: 'running' }, { id: 2, aiOpened: true, chat: 'done' }).needs.length === 0);
     check('hide toggle: needs you: the tab in front is shown, so it is not "hidden and needs you"', sumFull({ id: 5, aiOpened: true, chat: 'approval' }).needs.length === 0);
-    check('hide toggle: needs you: a tab that is not the AI's never is', sumFull({ id: 1, chat: 'approval' }).needs.length === 0);
+    check('hide toggle: needs you: a tab that is not from the AI never is', sumFull({ id: 1, chat: 'approval' }).needs.length === 0);
     sctx.window.lumenHideAiTabs = false;
     check('hide toggle: summary: off: nothing hidden or shown by the toggle, the total is what it would hide', sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }) === JSON.stringify({ on: false, total: 2, hidden: 0, shown: 0 }));
     const sync = /function syncHideAiToggle\(state\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';

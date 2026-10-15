@@ -30,7 +30,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   const aiKeys = Object.entries(en).filter(([k]) => /ai|tabs?/i.test(k) && /AI|chat/.test(String(en[k])));
   const old = aiKeys.filter(([, v]) => OLD.test(v)).map(([k]) => k);
   check('wording: the old phrasings are gone from en.json', old.length === 0, old.join(', '));
-  const titleCase = Object.entries(en).filter(([k, v]) => /AiTabs|aiTabs/.test(k) && /\b(Tabs|Opened) (Opened|By|the) /.test(v)).map(([k]) => k);
+  const titleCase = Object.entries(en).filter(([k, v]) => /AiTabs|aiTabs/.test(k) && /Opened By|Tabs Opened|Close Tabs|Hide Tabs/.test(v)).map(([k]) => k);
   check('wording: no label is Title Case', titleCase.length === 0, titleCase.join(', '));
   const files = ['src/main.js', 'src/renderer/app.js', 'src/renderer/chat-items.js', 'src/renderer/chat-extras.js', 'src/renderer/settings.js', 'src/features/taskbar-tasks.js', 'src/features/ai-manners.js', 'README.md', 'docs/settings.md', 'src/renderer/index.src.html'];
   const hits = files.filter((f) => OLD.test(read(f)));
@@ -47,7 +47,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   const app = read('src/renderer/app.js');
   check('toggle: the Menu key and Shift+F10 open the same menu as a right-click', /e\.key !== 'ContextMenu' && !\(e\.shiftKey && e\.key === 'F10'\)/.test(app) && /hideAiButton\?\.addEventListener\('contextmenu'/.test(app));
   const settings = read('src/renderer/settings.js');
-  const group = /card\.group\(tr\('settings\.ai\.groupAiTabs', 'AI tabs'\)\)\.append\(([\s\S]*?)\n  \);/.exec(settings)?.[1] || '';
+  const group = /card\.group\(tr\('settings\.ai\.groupAiTabs', 'AI tabs'\)\)\.append\(([\s\S]*?)\n {2}\);/.exec(settings)?.[1] || '';
   check('settings: the AI tabs group holds Hide, When the AI finishes and Bring to front', /toggle\('hideAiTabs'/.test(group) && /select\('closeAiTabs'/.test(group) && /toggle\('aiStayOnMyTab'/.test(group), group.slice(0, 200));
   check('settings: the three rows are not listed anywhere else in the AI section', (settings.match(/select\('closeAiTabs'/g) || []).length === 1 && (settings.match(/toggle\('aiStayOnMyTab'/g) || []).length === 1 && (settings.match(/toggle\('hideAiTabs'/g) || []).length === 1);
   const css = read('src/renderer/styles.css');
