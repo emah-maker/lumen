@@ -4,15 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location.pathname)) {
   const call = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
-  // The first questions the page asks are sent now, while its HTML, stylesheet and script are still loading: by the time its script runs
-  // the answers are here, and it can build its first screen in that one task (renderer/settings-early.js hands them out).
-  const asked = (channel, ...args) => { const p = ipcRenderer.invoke(channel, ...args); p.catch(() => {}); return p; };
-  const prefetched = {
-    get: asked('prefs:get'), strings: asked('settings:strings'), downloads: asked('prefs:downloads'),
-    aiGet: asked('settings:get'), isDefaultBrowser: asked('settings:default-browser', { cached: true }),
-  };
   contextBridge.exposeInMainWorld('lumenSettings', {
-    prefetched,
     get: call('prefs:get'),
     set: call('prefs:set'),
     clearData: call('prefs:clear-data'),

@@ -30,12 +30,11 @@
   };
   const S = window.lumenSettings;
   if (!S) return;
-  const pre = S.prefetched || {}; // (asked by the preload, before the page's script ran)
-  prefetch('get', () => pre.get || S.get());
-  if (S.strings) prefetch('strings', () => pre.strings || S.strings());
-  prefetch('downloads', () => pre.downloads || S.downloads());
+  prefetch('get', () => S.get());
+  if (S.strings) prefetch('strings', () => S.strings());
+  prefetch('downloads', () => S.downloads());
   if (S.ai) {
-    prefetch('ai.get', () => pre.aiGet || S.ai.get());
-    if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => pre.isDefaultBrowser || S.ai.isDefaultBrowser({ cached: true }));
+    prefetch('ai.get', () => S.ai.get());
+    if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();
