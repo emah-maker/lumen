@@ -101,6 +101,7 @@ const DEFAULTS = {
   adblockAllow: [],
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
+  projectsDir: '', // [projects] the folder new projects' folders are made in; empty: <Documents>Lumen Projects (main.js projectsParent)
   askWhereToSave: false,
   pdfViewer: 'lumen', // lumen | chrome: which viewer a PDF opens in (features/pdf-viewer.js)
   spellcheck: true,
@@ -287,6 +288,7 @@ function validate(key, value) {
     case 'permissionDefaults':
       if (!value || typeof value !== 'object') return null;
       return Object.fromEntries(Object.keys(PERMISSIONS).filter((p) => value[p]).map((p) => [p, pick(value[p], ['ask', 'block'], 'ask')]));
+    case 'projectsDir':
     case 'downloadDir': {
       const dir = String(value || '');
       return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir)) ? dir : null;
@@ -1137,6 +1139,10 @@ function create(deps) {
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });
     handle('prefs:widget-reset-layout', () => { deps.widgets.resetLayout(); return deps.widgets.state(); });
     handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
+    handle('prefs:pick-projects-dir', async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: prefs().projectsDir || app.getPath('documents') });
+      return canceled || !filePaths[0] ? state() : set('projectsDir', filePaths[0]);
+    });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);

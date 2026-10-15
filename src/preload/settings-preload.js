@@ -12,6 +12,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
+    pickProjectsDir: call('prefs:pick-projects-dir'), // [projects] Settings > AI > Projects folder
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
     switchTiming: { count: call('prefs:switch-timing-count'), export: call('prefs:switch-timing-export'), clear: call('prefs:switch-timing-clear') }, // [diagnostics] Settings > Advanced
