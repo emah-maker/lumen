@@ -281,6 +281,7 @@ const UI_ONLY_IPC = new Set([
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
+  'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
@@ -7903,6 +7904,16 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
 // sidebar's AI reads a page with the user's own session, in a background tab of the run's window grouped
 // "AI: <host> (signed in)". Locked (no popups) while it is read; closed when the run ends unless the user
 // switched to it. Only this Agent gets it: background tasks and outside agents (MCP) read signed out.
+// [desktop apps] src/desktop/ is loaded on first use: the AI's desktop tool, or a click on the Computer card. The Settings list needs only its small settings module.
+let desktopWired = null;
+const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND) }));
+const desktopSettings = () => require('./desktop/settings').createDesktopSettings({ readSettings, writeSettings });
+ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
+ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
+ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
+ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false));
+ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
+if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSettings };
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
 signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
@@ -8040,6 +8051,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto

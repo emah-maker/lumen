@@ -1516,6 +1516,22 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
+    case 'desktop_card': { // [desktop apps] the "Computer" card: the AI working in another program, with its live thumbnail (renderer/desktop-card.js)
+      const drawn = window.desktopCard?.update(event);
+      if (!drawn) break;
+      if (drawn.created) {
+        settleThinking();
+        finishReply(turn.text, turn.textSource);
+        endStream();
+        turn.text = null;
+        turn.textSource = '';
+        const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant desktop-cards' });
+        bubble.append(drawn.card);
+        appendToTurn(bubble);
+        announce(t('desktopcard.announce', { app: event.app || '' }));
+      }
+      break;
+    }
     case 'tool_update': { // a step shown early (its input still streaming) gets its real label
       const step = turn.steps.get(event.id);
       if (!step) break;
@@ -1551,7 +1567,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, detail: event.detail, allowLabel: event.allowLabel });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -2022,10 +2038,11 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
@@ -2129,7 +2146,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -2138,7 +2155,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
-    textContent: terminal
+    textContent: ownDetail ? String(ownDetail)
+      : terminal
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
@@ -2148,8 +2166,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
-  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('approval.once') });
-  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
+  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');

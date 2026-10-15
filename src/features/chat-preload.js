@@ -86,6 +86,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onSync: on('chat:sync'),
     onTarget: on('chat:target'),
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+    desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps]
     undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
     closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners]
     undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),

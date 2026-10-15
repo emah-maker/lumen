@@ -163,6 +163,9 @@ const DEFAULTS = {
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
+  aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
+  aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
+  aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
@@ -277,6 +280,7 @@ function validate(key, value) {
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
     case 'aiSharedFiles': return require('../features/shared-files').clean(value);
+    case 'aiDesktopApps': return require('../desktop/policy').clean(value);
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
@@ -870,6 +874,7 @@ function create(deps) {
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
+    if (key === 'aiDesktopApps') throw new Error('Apps are added from the AI\'s approval card and removed with settings:remove-desktop-app'); // [desktop apps]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
