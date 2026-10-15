@@ -79,7 +79,7 @@ function Proc-Info($procId) {
   $info = @{ proc = ''; exe = ''; description = ''; original = ''; company = ''; start = 0 }
   try {
     $p = [System.Diagnostics.Process]::GetProcessById([int]$procId)
-    $info.start = [int64]$p.StartTime.Ticks
+    $info.start = [int64]([DateTimeOffset]$p.StartTime).ToUnixTimeMilliseconds() # (milliseconds: small enough to cross JSON as an exact number)
     $key = "$procId-$($info.start)"
     if ($script:procs.ContainsKey($key)) { return $script:procs[$key] }
     $info.proc = $p.ProcessName
@@ -319,9 +319,10 @@ function Send-Guarded($pieces, $pids, $req) {
   return @{ sent = $sent; total = $total; stopped = $why; sink = $sink.ToArray() }
 }
 function Refuse-Partial($r) {
-  if ($TEST -and $r.sink.Count) { $script:testSunk = ($r.sink -join '') }
-  if ($r.stopped -eq 'password') { throw "Stopped: the keyboard focus moved to a password field, which the AI never types into. $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed." }
-  if ($r.stopped) { throw "Stopped: the keyboard focus left the app (the user or another window took it). $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed. Use focus_app and check the app before trying again.$(if ($TEST) { ' [sink: ' + $script:testSunk + ']' })" }
+  $tail = ''
+  if ($TEST) { $tail = ' [sink: ' + ($r.sink -join '') + ']' } # (test runs only: what would have been typed, so a test can see the rest was not)
+  if ($r.stopped -eq 'password') { throw "Stopped: the keyboard focus moved to a password field, which the AI never types into. $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed.$tail" }
+  if ($r.stopped) { throw "Stopped: the keyboard focus left the app (the user or another window took it). $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed. Use focus_app and check the app before trying again.$tail" }
 }
 
 function Cmd-Invoke($req) {

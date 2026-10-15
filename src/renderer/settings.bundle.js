@@ -3391,7 +3391,7 @@ async function buildAi(card) {
     apps ||= await S.ai.desktopApps();
     clearApps.hidden = !apps.length;
     appList.replaceChildren(...(apps.length ? apps.map(({ app, name, added }) => h('div', { class: 'item', 'data-app': app },
-      h('span', { class: 'grow', text: name }),
+      h('span', { class: 'grow', text: name, title: app }),
       added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
       h('button', { text: 'Revoke', 'aria-label': `Revoke ${name}`, onclick: async () => renderApps(await S.ai.removeDesktopApp(app)) })))
       : [h('span', { class: 'note', text: 'None. The AI asks before it uses any app.' })]));

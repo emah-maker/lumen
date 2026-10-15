@@ -22,13 +22,14 @@ The tool is only in the AI's request while the switch is on, or when the convers
 
 ## Who decides
 
-1. **Each app asks first.** "Allow the AI to use Microsoft Word?" with **Allow for this chat** (once), **Always allow this app**, or **Don't allow**. Bypass permissions does not answer this card for you. Always adds the app to **Settings → AI → Apps the AI can use**, where **Revoke** removes it.
+1. **Each app asks first.** "Allow the AI to use Microsoft Word?" with **Allow for this chat** (once), **Always allow this app**, or **Don't allow**. The card shows the program's full path. An app is its **full path**: a program that merely has the same file name (or is a renamed copy of a blocked one: Lumen also reads the name built into the file) does not inherit an approval, and a window whose program cannot be verified is not used. For Store (UWP) apps, which Windows hosts in ApplicationFrameHost windows, the app is the program inside the window, so approving Calculator does not approve other Store apps and the blocked list sees Windows Settings and Windows Security. Bypass permissions does not answer this card for you. Always adds the app to **Settings → AI → Apps the AI can use**, where **Revoke** removes it.
+   After the AI has read untrusted content in a chat (a web page, an email, a connector's answer, or text from an app), **Always and Once no longer cover acting**: every click, type, key press and app start asks a fresh card that says what it wants to do. Reading stays allowed.
 2. **Never available, with no override.** The AI is told plainly why when it tries:
    - password fields (the item is left out of what it reads, and typing into one is refused; fields whose name says password, PIN or secret count too);
    - Windows security, UAC (`consent.exe`), credential, lock-screen and sign-in windows;
    - password managers (1Password, Bitwarden, KeePass and others);
    - banking and finance apps, and a browser window showing a bank;
-   - Windows Settings, the Registry Editor and similar tools that change the computer;
+   - Windows Settings, the Registry Editor, Task Manager, script hosts, installers and similar tools that change the computer or run code;
    - Lumen's own window;
    - terminals (Command Prompt, PowerShell, Windows Terminal), unless you turn on **Also allow terminals**, which warns that a terminal can run anything.
 3. **Hands-off mode** stops the AI clicking and typing in apps too; reading still works.
@@ -36,11 +37,13 @@ The tool is only in the AI's request while the switch is on, or when the convers
 ## You stay in control
 
 - A small banner stays at the top of the screen while it works: **The AI is using Word · Stop**. It never takes focus and clicks go through it, except on its buttons.
-- **Hold Esc** for about a second, or press **Ctrl+Alt+Esc**, to stop at once. The shortcut is registered only while the AI is using an app.
-- **Touch the app** (move the mouse over it, or type in it) and the AI pauses: the banner and the chat card say "You took over. Resume?" and the next step waits for Resume or Stop.
+- **Hold Esc** for about 0.7 seconds, or press **Ctrl+Alt+Esc**, to stop at once. Stop kills the helper process, so typing or a click in progress ends immediately; a fresh helper starts when it is next needed. The shortcut is registered only while the AI is using an app. If the checks behind Esc and "you took over" cannot start, the AI does not use other apps at all.
+- **Touch the app** (move the mouse over it, or type in it) and the AI pauses (a call in progress is cut off): the banner and the chat card say "You took over. Resume?" and the next step waits for Resume or Stop.
 - The chat card has **Open** to bring the app forward, plus Resume and Stop while it works.
 
 ## How it works
+
+Typed text is sent in pieces of at most 16 characters, and before each piece Lumen checks that the foreground window and the keyboard focus belong to the approved program and that the focused item is not a password field; if not, typing stops and the AI is told how much was typed. Where an item can be set directly (the Value pattern) that is used instead of keys, and key-by-key typing is limited to 500 characters. Everything an app tells the AI (titles, names, values) is passed inside an untrusted-content wrapper with any look-alike tag defanged.
 
 A small hidden PowerShell process (`src/desktop/uia-helper.ps1`) talks to Windows UI Automation and answers one JSON line per request. It starts on first use (about 0.3 s), ends on its own when idle, and is started through the same hidden-process path as Lumen's other helpers. Its window pictures and the card's thumbnails (every 1.5 s) are made in that process, so Lumen's main process only handles the small answer. Everything lives in `src/desktop/` and loads on first use, not at startup.
 

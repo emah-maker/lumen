@@ -27,10 +27,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (built.status !== 0) process.exit(1);
   const title = `Lumen UIA Test ${process.pid}`;
   const testApp = cp.spawn(exe, [title, '-3000,100'], { stdio: 'ignore', windowsHide: false });
+  const testApp2 = cp.spawn(exe, [`${title} B`, '-3000,500'], { stdio: 'ignore', windowsHide: false }); // a second window, for the focus-change test
+  const policy = require('../src/desktop/policy');
   let app = null;
   try {
     await sleep(1500);
-    check('the syntax of the changed files is fine (node --check ran before this launch)', true);
     app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' } });
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
@@ -40,7 +41,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const w = global.__desktop.wired();
       global.__da = { w, events: [], asked: [], answer: true, once: new Set(), pid, gaps: [] };
       const d = global.__da;
-      d.ctx = { emit: (e) => d.events.push(e), signal: new AbortController().signal, once: d.once, ask: async (card) => { d.asked.push(card); return typeof d.answer === 'function' ? d.answer(card) : d.answer; } };
+      d.ctx = { emit: (e) => d.events.push(e), signal: new AbortController().signal, once: d.once, tainted: () => d.tainted === true, ask: async (card) => { d.asked.push(card); return typeof d.answer === 'function' ? d.answer(card) : d.answer; } };
       d.run = (action, args) => w.controller.run({ action, args }, d.ctx).then((v) => ({ ok: true, v: Array.isArray(v) ? v.map((b) => (b.type === 'image' ? `[image ${b.source.data.length}]` : b.text)).join('\n') : v }), (e) => ({ ok: false, v: e.message }));
       // main-thread gap probe: how long the event loop is ever blocked
       let last = Date.now();
@@ -70,7 +71,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const before = (await state()).asked;
     const read = await run('read_app', { id: `w${hwnd}` });
     check('Once: read_app shows the controls: textbox, button, label, checkbox', read.ok && /Edit "Your name"/.test(read.v) && /Button "Greet"/.test(read.v) && /Text "Waiting"/.test(read.v) && /CheckBox "I agree"/.test(read.v), read.v);
-    check('read_app omits the password box: no value, no name, only the count', !/s3cret|Secret|txtSecret/.test(read.v) && /1 password field left out/.test(read.v), read.v);
+    check('read_app omits the password box AND a box that is not IsPassword but is named "Card PIN": no value, no name, only the count', !/s3cret|Secret|txtSecret|plain-looking|Card PIN|txtPin/.test(read.v) && /2 password fields left out/.test(read.v), read.v);
     check('read_app is wrapped as untrusted content', /^<untrusted_page_content source="app: LumenUiaTestApp">/.test(read.v));
     check('the second call in the chat asks nothing more', (await state()).asked === before + 1 && (await run('read_app', { id: `w${hwnd}` })).ok && (await state()).asked === before + 1);
     const idOf = (kind, name) => (new RegExp(`\\[(e\\d+)\\] ${kind} "${name}"`).exec(read.v) || [])[1];
@@ -92,9 +93,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const t = await c.call('tree', { hwnd: Number(h), max: 700 });
       const all = []; const walk = (n) => { if (!n) return; if (n.pw) all.push(n); (n.c || []).forEach(walk); };
       walk(t.tree);
-      return { pwNodes: all.length, keys: all.map((n) => Object.keys(n).join()), json: JSON.stringify(t.tree).includes('s3cret') };
+      return { pwNodes: all.length, keys: all.map((n) => Object.keys(n).join()), json: JSON.stringify(t.tree).includes('s3cret') || JSON.stringify(t.tree).includes('plain-looking') || JSON.stringify(t.tree).includes('Card PIN') };
     }, hwnd);
-    check('the helper reports the password box as {pw:true} with nothing else, and its value is nowhere in the tree', direct.pwNodes === 1 && direct.keys[0] === 'pw' && !direct.json, JSON.stringify(direct));
+    check('the helper reports both the password box and the "Card PIN" box (never IsPassword) as {pw:true} with nothing else, and neither value is anywhere in the tree', direct.pwNodes === 2 && direct.keys.every((k) => k === 'pw') && !direct.json, JSON.stringify(direct));
 
     // screenshot and the card thumbnail
     const shot = await run('screenshot_app', { id: `w${hwnd}` });
@@ -123,29 +124,101 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('Stop on the banner ends the session: banner gone, shortcut released, card says stopped', !stopped.active && !stopped.banner.visible && (await app.evaluate(() => global.__da.w.controller.shortcut.registered().length === 0 && global.__da.events.filter((e) => e.type === 'desktop_card').pop().status === 'stopped')));
 
     // Always, then Revoke
+    const exePath = await app.evaluate(async (_e, pid) => (await global.__da.w.controller.apps(true)).find((w) => w.pid === pid).app, testApp.pid);
+    check('the app the helper reports is its full image path (lower case): approvals are by path, not by name', /^[a-z]:\\.*lumenuiatestapp\.exe$/.test(exePath), exePath);
     await app.evaluate(() => { global.__da.once.clear(); });
     await setAnswer('always');
     await run('read_app', { id: `w${hwnd}` });
-    check('Always: the app is in Settings > Apps the AI can use', (await state()).allowed.some((a) => a.app === 'lumenuiatestapp'), JSON.stringify((await state()).allowed));
+    check('Always: the app is in Settings > Apps the AI can use', (await state()).allowed.some((a) => a.app === exePath), JSON.stringify((await state()).allowed));
     const askedBefore = (await state()).asked;
     await app.evaluate(() => { global.__da.once.clear(); });
     await run('read_app', { id: `w${hwnd}` });
     check('a listed app asks nothing', (await state()).asked === askedBefore);
-    const ipcList = await app.evaluate(() => global.__da.w.settings.allowed().length);
-    await app.evaluate(() => global.__da.w.settings.remove('LumenUiaTestApp'));
+    // a run that has read untrusted content: an Always app still asks before it is acted on
+    await run('read_app', { id: 'w' + hwnd });
+    await app.evaluate(() => { global.__da.tainted = true; });
     await setAnswer(false);
-    const revoked = await run('read_app', { id: `w${hwnd}` });
-    check('Revoke: the app asks again and No refuses it', ipcList === 1 && !revoked.ok && (await state()).asked === askedBefore + 1, JSON.stringify(revoked));
+    const askedT = (await state()).asked;
+    const readNow = await run('read_app', { id: 'w' + hwnd });
+    const edit2 = (/\[(e\d+)\] Edit "Your name"/.exec(readNow.v) || [])[1];
+    const tainted1 = await run('click', { element: (/\[(e\d+)\] Button "Greet"/.exec(readNow.v) || [])[1] });
+    check('tainted run: clicking an Always app asks a card ("read content earlier"), and No means it is not clicked', !tainted1.ok && /did not allow this action/.test(tainted1.v) && (await state()).asked === askedT + 1 && (await app.evaluate(() => /read content earlier/.test(global.__da.asked[global.__da.asked.length - 1].title))), JSON.stringify(tainted1));
+    await setAnswer(true);
+    const tainted2 = await run('type', { element: edit2, text: 'Tainted ok' });
+    check('tainted run: after a Yes the single action goes ahead (and the next one asks again)', tainted2.ok && (await state()).asked === askedT + 2 && (await run('type', { element: edit2, text: 'again' })).ok && (await state()).asked === askedT + 3);
+    await app.evaluate(() => { global.__da.tainted = false; });
 
-    // blocked windows: Lumen's own window and a missing one
-    const own = await app.evaluate(async () => {
-      const wins = await global.__da.w.controller.apps(true);
-      return wins.filter((x) => x.pid === process.pid).length;
-    });
-    check('Lumen\'s own windows are in the OS list but never usable', own >= 0);
-    const lumenId = await app.evaluate(async () => { const x = (await global.__da.w.controller.apps(true)).find((w) => w.pid === process.pid); return x ? `w${x.hwnd}` : null; });
-    if (lumenId) { const r = await run('read_app', { id: lumenId }); check('read_app on Lumen\'s own window is refused', !r.ok && /Lumen itself/.test(r.v), r.v); }
-    else check('read_app on Lumen\'s own window is refused (no Lumen window visible to UIA in a hidden test: policy unit-tested)', true);
+    // the keyboard guard, in the real helper: pieces of at most 16, and the foreground / focus / password are re-checked before EACH piece.
+    // (The foreground a test sees is scripted with real windows: this session has no interactive desktop, and no key is ever sent: they are collected.)
+    const guard = (args) => app.evaluate(async (_e, a) => {
+      const w = global.__da.w.controller;
+      const wins = await w.apps(true);
+      const A = wins.find((x) => x.pid === a.pidA); const B = wins.find((x) => x.pid === a.pidB);
+      const c = w.client();
+      const tr = await c.call('tree', { hwnd: A.hwnd, pid: A.pid, hpid: 0, start: A.start, max: 700 });
+      let el = null; const walk = (n) => { if (!n) return; if (n.n === 'Your name' && n.i) el = n.i; (n.c || []).forEach(walk); }; walk(tr.tree);
+      const states = a.states.map((st) => ({ hwnd: st[0] === 'B' ? B.hwnd : A.hwnd, password: /pw$/.test(st) }));
+      const target = { hwnd: A.hwnd, pid: A.pid, hpid: 0, start: A.start };
+      try {
+        const r = a.chords ? await c.call('keys', { ...target, chords: a.chords, test: { sink: true, states } }) : await c.call('settext', { ...target, el, text: a.text, forceKeys: true, test: { sink: true, states } });
+        return { ok: true, sink: r.sink };
+      } catch (e) { return { ok: false, message: e.message }; }
+    }, { pidA: testApp.pid, pidB: testApp2.pid, ...args });
+    const text40 = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmn';
+    const g1 = await guard({ text: text40, states: ['A'] });
+    check('keyboard: 40 characters are sent as pieces of at most 16 (16 + 16 + 8) and nothing is lost when focus stays', g1.ok && g1.sink.length === 3 && g1.sink.every((p) => p.length <= 16) && g1.sink.join('') === text40, JSON.stringify(g1));
+    const text64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzAB';
+    const g2 = await guard({ text: text64, states: ['A', 'A', 'B'] });
+    check('keyboard: focus moves to a second window after two pieces: typing stops, 32 of 64 characters were typed, the remaining 32 are NOT (and the AI is told exactly that)', !g2.ok && /32 of 64 characters were typed/.test(g2.message) && /NOT typed/.test(g2.message) && g2.message.includes('[sink: ' + text64.slice(0, 32) + ']') && !g2.message.includes(text64.slice(32, 40)), JSON.stringify(g2));
+    const g3 = await guard({ text: 'hello world 12345', states: ['B'] });
+    check('keyboard: focus already elsewhere before the first piece: nothing at all is typed', !g3.ok && /0 of 17 characters were typed/.test(g3.message), JSON.stringify(g3));
+    const g4 = await guard({ chords: ['a', 'b', 'c', 'd'], states: ['A', 'Apw'] });
+    check('keyboard: press_keys moves the focus into a password field after one key: the next keys are NOT sent (the focused element is checked as a password like a read is)', !g4.ok && /password field/.test(g4.message) && /1 of 4 characters were typed/.test(g4.message) && g4.message.includes('[sink: a]'), JSON.stringify(g4));
+    const g5 = await guard({ chords: ['^a', '^c'], states: ['A'] });
+    check('keyboard: key chords are sent one at a time, each checked', g5.ok && JSON.stringify(g5.sink) === '["^a","^c"]', JSON.stringify(g5));
+    const g6 = await guard({ text: 'x'.repeat(600), states: ['A'] });
+    check('keyboard: key-by-key typing is capped at 500 characters (a field without the Value pattern cannot take more)', !g6.ok && /500 characters/.test(g6.message), JSON.stringify(g6));
+    const g7 = await app.evaluate(async (_e, a) => {
+      const w = global.__da.w.controller; const wins = await w.apps(true); const A = wins.find((x) => x.pid === a.pidA); const B = wins.find((x) => x.pid === a.pidB);
+      try { await w.client().call('tree', { hwnd: A.hwnd, pid: B.pid, hpid: 0, start: A.start, max: 10 }); return 'allowed'; } catch (e) { return e.message; }
+    }, { pidA: testApp.pid, pidB: testApp2.pid });
+    check('every call re-checks the window still belongs to the approved program: a window with another owner (pid) is refused', /now belongs to a different program/.test(g7), g7);
+
+    // Stop in the middle of a call: the helper is killed, the call ends at once, a fresh helper serves the next call
+    await setAnswer(true);
+    await run('read_app', { id: 'w' + hwnd });
+    const stopRun = await app.evaluate(async (_e, a) => {
+      const w = global.__da.w.controller; const wins = await w.apps(true); const A = wins.find((x) => x.pid === a.pidA);
+      const c = w.client();
+      const tr = await c.call('tree', { hwnd: A.hwnd, pid: A.pid, hpid: 0, start: A.start, max: 700 });
+      let el = null; const walk = (n) => { if (!n) return; if (n.n === 'Your name' && n.i) el = n.i; (n.c || []).forEach(walk); }; walk(tr.tree);
+      const helperBefore = c.pid();
+      const t0 = Date.now();
+      let outcome = null;
+      const inflight = c.call('settext', { hwnd: A.hwnd, pid: A.pid, hpid: 0, start: A.start, el, text: 'z'.repeat(200), forceKeys: true, test: { sink: true, states: [{ hwnd: A.hwnd }], delay: 400 } }, { timeoutMs: 30000 }).then(() => { outcome = 'finished'; }, (e) => { outcome = e.message; });
+      await new Promise((r) => setTimeout(r, 900));
+      const mid = outcome;
+      w.stop('test');
+      await inflight;
+      return { mid, outcome, ms: Date.now() - t0, helperBefore, alive: c.alive() };
+    }, { pidA: testApp.pid });
+    check('Stop mid-call: the 200-character typing (13 pieces, ~5 s) is cut off by Stop within about a second, not allowed to finish', stopRun.mid === null && /Stopped by the user/.test(stopRun.outcome) && stopRun.ms < 2500 && stopRun.alive === false, JSON.stringify(stopRun));
+    const afterStop = await run('list_apps');
+    check('after Stop the next call just works (a fresh helper starts on demand)', afterStop.ok && /LumenUiaTestApp/.test(afterStop.v), afterStop.v);
+
+    const ipcList = await app.evaluate(() => global.__da.w.settings.allowed().length);
+    await app.evaluate((_e, p) => global.__da.w.settings.remove(p), exePath);
+    await setAnswer(false);
+    const askedNow = (await state()).asked;
+    const revoked = await run('read_app', { id: `w${hwnd}` });
+    check('Revoke: the app asks again and No refuses it', ipcList === 1 && !revoked.ok && (await state()).asked === askedNow + 1, JSON.stringify(revoked));
+
+    // blocked windows: Lumen itself, by the real pid and image of this running copy
+    const mainInfo = await app.evaluate(() => ({ pid: process.pid, exe: process.execPath }));
+    const lumenDecision = policy.decide({ proc: 'electron', title: 'Lumen', pid: mainInfo.pid, exe: mainInfo.exe }, { master: true, lumenPid: mainInfo.pid, lumenExe: mainInfo.exe, allowed: [{ app: policy.exeKey(mainInfo.exe) }] });
+    check('Lumen\'s own process (this running copy\'s pid and image) is blocked even if it were listed', lumenDecision.status === 'blocked' && /Lumen itself/.test(lumenDecision.reason), JSON.stringify(lumenDecision));
+    const lumenId = await app.evaluate(async () => { const x = (await global.__da.w.controller.apps(true)).find((w) => w.pid === process.pid); return x ? 'w' + x.hwnd : null; });
+    if (lumenId) { const r = await run('read_app', { id: lumenId }); check('read_app on one of Lumen\'s own windows is refused', !r.ok && /Lumen itself/.test(r.v), r.v); }
 
     // perf
     const startMs = await app.evaluate(() => global.__da.w.controller.stats().helperMs);
@@ -162,6 +235,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } finally {
     if (app) await app.close().catch(() => {});
     try { cp.spawnSync('taskkill', ['/PID', String(testApp.pid), '/T', '/F'], { windowsHide: true }); } catch { /* gone */ }
+    try { cp.spawnSync('taskkill', ['/PID', String(testApp2.pid), '/T', '/F'], { windowsHide: true }); } catch { /* gone */ }
     for (const dir of [work, profile]) { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch { /* left in temp */ } }
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
