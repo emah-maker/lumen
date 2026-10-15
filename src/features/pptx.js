@@ -31,6 +31,9 @@ const MAX_MEDIA_BYTES = 150 * 1024 * 1024; // all pictures handed to the page
 const EMU_PER_PT = 12700;
 const DEFAULT_SIZE = { width: 12192000, height: 6858000 }; // 16:9, 13.333 x 7.5 in
 
+// A turn of the event loop: a big deck is read in pieces, so the app keeps answering (and the tests' setImmediate probe sees no long stall).
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+
 class PptxError extends Error {}
 const damaged = () => new PptxError('This file is not a PowerPoint presentation, or it is damaged.');
 const tooBig = () => new PptxError('This presentation is too large to open here.');
@@ -1062,6 +1065,7 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
 
   const slides = [];
   for (const [i, part] of slideParts.slice(0, maxSlides).entries()) {
+    if (i % 3 === 2) await turn();
     const slide = await loadPart(part, 'slide');
     if (!slide) { slides.push({ number: i + 1, hidden: false, background: null, shapes: [], notes: '', text: '' }); warnings.add('Some slides could not be read.'); continue; }
     const layoutRel = relOfType(slide.rels, 'slideLayout');
@@ -1106,6 +1110,7 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
   let mediaBytes = 0;
   if (wantMedia) {
     for (const part of mediaParts) {
+      await turn();
       let b;
       try { b = zip.has(part) ? await zip.bytes(part) : null; } catch (err) { if (err instanceof PptxError && /too large/.test(err.message)) { warnings.add('Some pictures were left out: the presentation is too large.'); media[part] = null; continue; } throw err; }
       const type = sniffImage(b);

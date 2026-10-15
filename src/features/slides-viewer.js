@@ -36,6 +36,7 @@ const shouldOpenInPlace = ({ url, filename } = {}) => isLocalPptx(url) && pptx.i
 // A finished download from the web: open it, unless the user chose Save As for it.
 const shouldOpenFinished = ({ path: file, saveAs } = {}) => Boolean(file) && !saveAs && pptx.isPptxName(file);
 
+const MEDIA_SLICE = 512 * 1024; // characters of a picture's data: URL sent per call
 const nameOf = (deckUrl) => { try { return path.basename(fileURLToPath(deckUrl)).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120); } catch { return 'Presentation'; } };
 
 // The last decks read, for Reload and Back (and read_pdf right after): keyed by path, size and time.
@@ -76,7 +77,20 @@ function create() {
     const deckUrl = deckUrlOf(url);
     const data = deckUrl ? await loadDeck(deckUrl) : { name: 'Presentation', error: 'Only PowerPoint files (.pptx) on this computer can be shown here.' };
     if (wc.isDestroyed() || wc.getURL() !== url) return;
-    wc.executeJavaScript(`window.lumenSlides && window.lumenSlides(${JSON.stringify(data)})`).catch(() => {});
+    // The deck's structure goes first (small), then the pictures one slice at a time, in the order the slides use them, with a turn of the
+    // event loop between: 100 pictures are 10+ MB, and one call with all of them held the main process for 20 to 50 ms (stringify and send).
+    const { media, ...structure } = data;
+    const pictures = media ? Object.entries(media).filter(([, v]) => typeof v === 'string') : [];
+    const alive = () => !wc.isDestroyed() && wc.getURL() === url;
+    const call = (code) => wc.executeJavaScript(code).catch(() => {});
+    await call(`window.lumenSlides && window.lumenSlides(${JSON.stringify({ ...structure, mediaKeys: pictures.map(([k]) => k) })})`);
+    for (const [key, value] of pictures) {
+      for (let at = 0; at < value.length; at += MEDIA_SLICE) {
+        if (!alive()) return;
+        await call(`window.lumenSlidesMedia && window.lumenSlidesMedia(${JSON.stringify(key)}, ${at}, ${value.length}, ${JSON.stringify(value.slice(at, at + MEDIA_SLICE))})`);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
   }
   // Called for every tab's webContents (wireView in main.js).
   function attach(tab) {

@@ -22,10 +22,15 @@
   let media = {};
   let mediaInfo = {};
   let alias = {};
+  let expected = new Set(); // pictures that are, or are on their way (the main process sends them after the structure, slice by slice)
+  const complete = new Set(); // ...and the ones whole
+  const arrivals = new Map(); // picture part -> { promise, resolve }
+  const arrival = (key) => { if (!arrivals.has(key)) { let resolve; const promise = new Promise((r) => { resolve = r; }); arrivals.set(key, { promise, resolve }); } return arrivals.get(key); };
   let frames = [];
   let current = 0;
   const canon = (key) => (typeof key === 'string' && typeof alias[key] === 'string' ? alias[key] : key);
-  const imageUrl = (key) => { const v = typeof key === 'string' ? media[canon(key)] : null; return typeof v === 'string' && v.startsWith('data:image/') ? v : null; };
+  const imageUrl = (key) => { const k = canon(key); return typeof k === 'string' && expected.has(k) ? k : null; }; // (truthy when that picture is there or coming)
+  const dataOf = (key) => { const v = media[canon(key)]; return typeof v === 'string' && v.startsWith('data:image/') ? v : null; };
 
   // ---- pictures
   // Each distinct picture becomes one blob: URL (made when first needed; a very large one is shrunk first), shared by every use of it.
@@ -54,7 +59,9 @@
     const k = canon(key);
     if (shown.has(k)) return shown.get(k);
     const job = (async () => {
-      const data = imageUrl(k);
+      if (!imageUrl(k)) return null;
+      if (!complete.has(k)) await arrival(k).promise;
+      const data = dataOf(k);
       if (!data) return null;
       let blob = await blobOf(data);
       const info = mediaInfo[k];
@@ -463,6 +470,14 @@
   window.addEventListener('resize', () => { if (presenting) showPresented(); });
   $('present').addEventListener('click', (e) => setCurrent(current + (e.clientX < window.innerWidth / 4 ? -1 : 1)));
   window.lumenPresent = present;
+  // A slice of a picture's data: URL (see slides-viewer.js): the picture is complete when its last slice arrives.
+  window.lumenSlidesMedia = (key, at, total, part) => {
+    if (typeof key !== 'string' || !expected.has(key) || typeof part !== 'string' || !(total > 0)) return;
+    const so_far = typeof media[key] === 'string' && at > 0 ? media[key] : '';
+    if (so_far.length !== at) return;
+    media[key] = so_far + part;
+    if (media[key].length >= total) { complete.add(key); arrival(key).resolve(); }
+  };
   // For tests: what the pictures are doing.
   window.lumenSlidesInfo = () => ({ blobs: shown.size, shrunk: [...shrunk], images: document.querySelectorAll('.stage img').length });
 
@@ -501,6 +516,10 @@
     if (data.error) { showMessage('This presentation can’t be shown', String(data.error)); document.body.dataset.ready = 'error'; return; }
     deck = { width: Number(data.width) || 12192000, height: Number(data.height) || 6858000, slides: Array.isArray(data.slides) ? data.slides : [] };
     media = data.media && typeof data.media === 'object' ? data.media : {};
+    expected = new Set(Array.isArray(data.mediaKeys) ? data.mediaKeys.map(String) : Object.keys(media).filter((k) => typeof media[k] === 'string'));
+    arrivals.clear();
+    complete.clear();
+    if (!Array.isArray(data.mediaKeys)) for (const k of expected) complete.add(k);
     mediaInfo = data.mediaInfo && typeof data.mediaInfo === 'object' ? data.mediaInfo : {};
     alias = data.mediaAlias && typeof data.mediaAlias === 'object' ? data.mediaAlias : {};
     shown.clear(); shrunk.clear();
