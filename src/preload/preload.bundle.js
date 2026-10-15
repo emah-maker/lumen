@@ -694,6 +694,7 @@ contextBridge.exposeInMainWorld('assistant', {
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId), // [content guard]
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab
