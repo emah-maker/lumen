@@ -36,6 +36,10 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
+    if (/^#(ai|you-and-ai|hands-off|ask-before-acting|ai-keys|keys|antigravity|connect-agents|mcp-servers|providers)/.test(location.hash)) { // (the AI page's builder asks for these next: a link to it)
+      prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
+      prefetch('ai.automationInfo', () => S.ai.automationInfo());
+    }
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();
