@@ -389,7 +389,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   function has(id) { return ID_RE.test(String(id)) && readIndex().chats.some((c) => c.id === id && !c.trashed); }
 
   // Writes the chat and its index entry. Returns false when nothing could be kept (no keychain).
-  function save(id, snapshot) {
+  // `indexLater`: the list entry is written in the background (a save finishing a waiting one, on a chat switch, must not also write the index).
+  function save(id, snapshot, { indexLater = false } = {}) {
     if (!ID_RE.test(String(id))) throw new Error('bad chat id');
     if (!available()) return false;
     if (!snapshot?.messages?.length) return true; // an empty chat is not worth a list entry
@@ -409,7 +410,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     let size = 0; // (the messages' content, not their wrappers: a chat that went through restore() and snapshot() again must match)
     for (const m of snapshot.messages) size += JSON.stringify(m.content).length;
     applySaved(idx, id, snapshot, size, !entry);
-    writeIndex();
+    if (indexLater) writeIndexSoon(0); else writeIndex();
     purgeExpiredTrash(idx);
     return true;
   }
@@ -524,7 +525,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (!job) return;
     const latest = job.snapshot || job.inflight;
     cancelJob(id);
-    if (latest) { try { save(id, latest); job.synced = latest; } catch (err) { onError(err); } }
+    if (latest) { try { save(id, latest, { indexLater: true }); job.synced = latest; } catch (err) { onError(err); } }
     if (!job.done) jobs.delete(id);
   }
   // Waits until a chat's saves are on disk.
