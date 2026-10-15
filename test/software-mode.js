@@ -9,6 +9,7 @@
 //   - the UI has no long animation frame (over 50 ms) during the sidebar toggles
 //   - the new-tab page at rest costs at most CPU_RATIO of the CPU that Full effects costs on the same page in the same run, and at most CPU_ABS_PCT of one core
 const S = require('./_software-measure');
+const { spawn } = require('child_process');
 
 const { M, sleep } = S;
 let failures = 0;
@@ -30,6 +31,37 @@ const countCaptures = (app) => app.evaluate(({ webContents }) => {
     wc.__capWrapped = true;
   }
 });
+// A control process (plain node, spinning the same setImmediate chain) beside the app: a stall of the whole machine (another program, a scan) is
+// told from a stall of ours. A violation that overlaps a control gap over CONTROL_NOISE_MS is not the app's: that pass is void and made again (up to
+// 3 passes; the last one counts whatever happens). A violation with a quiet control is a failure. The budget itself is never changed.
+const CONTROL_NOISE_MS = 8;
+const control = () => {
+  const child = spawn(process.execPath, ['-e', 'let last=performance.now(),max=0;const spin=()=>{const n=performance.now();max=Math.max(max,n-last);last=n;setImmediate(spin)};spin();process.stdin.on("data",()=>{process.stdout.write(max+";");max=0;last=performance.now()});'], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  let buf = ''; let wake = null;
+  child.stdout.on('data', (d) => { buf += d; if (buf.includes(';') && wake) { const w = wake; wake = null; w(Number(buf.split(';')[0])); buf = ''; } });
+  return {
+    reset: () => new Promise((r2) => { wake = r2; child.stdin.write('x'); }),
+    read: () => new Promise((r2) => { wake = r2; child.stdin.write('x'); }),
+    stop: () => { try { child.kill(); } catch { /* gone */ } },
+  };
+};
+// Runs pass() (returns { main: { max }, ...}) until its main gap is within budget, or the control was noisy (void, again), at most 3 times.
+async function quietPass(pass) {
+  const ctl = control();
+  try {
+    await ctl.reset();
+    let result; let noisy = 0;
+    for (let i = 0; i < 3; i++) {
+      await ctl.reset();
+      result = await pass();
+      const ctlMax = await ctl.read();
+      if (result.main.max <= MAIN_BUDGET_MS || ctlMax <= CONTROL_NOISE_MS) break; // within budget, or over it with a quiet machine: the result stands
+      noisy++; console.log(`info  main gap ${result.main.max} ms overlapped a stall of the machine (control ${Math.round(ctlMax)} ms): pass ${i + 1} void`);
+      if (i === 2) break;
+    }
+    return result;
+  } finally { ctl.stop(); }
+}
 const captures = (app) => app.evaluate(() => global.__caps);
 
 (async () => {
@@ -74,7 +106,7 @@ const captures = (app) => app.evaluate(() => global.__caps);
       await byName('sidebar-x10').setup(rig, ctx);
       await sleep(1500);
       await countCaptures(rig.app);
-      const side = await S.pacePass(rig, 9500, byName('sidebar-x10').action(rig, ctx), byName('sidebar-x10').page(rig, ctx));
+      const side = await quietPass(() => S.pacePass(rig, 9500, byName('sidebar-x10').action(rig, ctx), byName('sidebar-x10').page(rig, ctx)));
       const caps = await captures(rig.app);
       console.log(`info  ${mode}: sidebar x10: page captures ${caps}, main gap ${side.main.max} ms, UI long frames ${side.ui.loaf} (max ${side.ui.loafMaxMs} ms), UI frame max ${side.ui.maxMs} ms`);
       if (mode === 'auto') {
@@ -90,7 +122,7 @@ const captures = (app) => app.evaluate(() => global.__caps);
         const sc = byName('tabs-x30');
         await sc.setup(rig, ctx);
         await sleep(1500);
-        const tabs = await S.pacePass(rig, 9000, sc.action(rig, ctx), null);
+        const tabs = await quietPass(() => S.pacePass(rig, 9000, sc.action(rig, ctx), null));
         check(`main never blocks over ${MAIN_BUDGET_MS} ms during 30 tab switches (${tabs.main.max} ms)`, tabs.main.max <= MAIN_BUDGET_MS, tabs.main.max);
       }
     } finally { await rig.close(); }
