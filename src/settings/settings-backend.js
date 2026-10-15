@@ -367,8 +367,10 @@ function classifyGpu(devices) {
   const device = active || (real.length === 1 ? real[0] : null);
   if (!device) return { integrated: false, why: 'several GPUs, none reported as active', device: null };
   const name = device.deviceString || device.name;
-  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name };
-  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name }; // one GPU shared with the display: the same budget
+  const other = real.find((d) => d !== device && !isIntegratedGpu(d)); // a discrete card that is not the one drawing (a hybrid laptop): the Settings hint names it
+  const discrete = other ? (other.deviceString || other.name) : null;
+  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name, discrete };
+  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name, discrete: null }; // one GPU shared with the display: the same budget
   return { integrated: false, why: 'the active GPU is a discrete card', device: name };
 }
 
@@ -384,7 +386,7 @@ function createGraphics(deps) {
   // short transitions). Full effects, chosen by hand, keeps every effect even here. See renderer/prefs.css .pref-gfx-soft, newtab.html body.gfx-soft.
   const software = () => softSeen && mode() !== 'full';
   const light = () => mode() === 'light' || (mode() === 'auto' && (detected.integrated || softSeen)) || software();
-  const info = () => ({ mode: mode(), light: light(), software: software(), integrated: detected.integrated, device: detected.device, why: software() ? 'drawing is in software' : detected.why });
+  const info = () => ({ mode: mode(), light: light(), software: software(), integrated: detected.integrated, device: detected.device, why: software() ? 'drawing is in software' : detected.why, drawing: softSeen, discrete: detected.discrete || null });
   const refresh = () => { const now = light(); const soft = software(); if (now !== last || soft !== lastSoft) { last = now; lastSoft = soft; onChange?.(info()); } };
   // Chromium's feature-status words (app.getGPUFeatureStatus): compositing or rasterization not on the GPU.
   const softStatus = (st) => Boolean(st) && (/disabled_software|disabled_off|unavailable/i.test(String(st.gpu_compositing ?? '')) || /disabled_software|unavailable/i.test(String(st.rasterization ?? '')));
@@ -459,7 +461,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -1204,7 +1206,7 @@ function create(deps) {
     handle('prefs:reset', reset);
     handle('prefs:relaunch', () => {
       if (require('../test-mode').isTest()) return false; // tests check the saved value instead
-      app.relaunch();
+      app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu') }); // (a restart from safe drawing is a normal start, as gpu:restart's)
       app.quit();
       return true;
     });

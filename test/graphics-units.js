@@ -11,6 +11,7 @@ const msBasic = dev(0x1414, 'Microsoft Basic Render Driver', false);
 
 // ---- classify
 check('the user\'s laptop: Intel Arc 140T active, an RTX 5080 idle: integrated', G.classify([intel(true), nvidia(false), msBasic, dev(0x8086, null, false)]).integrated === true, JSON.stringify(G.classify([intel(true), nvidia(false)])));
+check('the hybrid laptop names its discrete card for the Settings hint', G.classify([intel(true), nvidia(false)]).discrete === 'NVIDIA GeForce RTX 5080 Laptop GPU' && G.classify([nvidia(false)]).discrete === null, JSON.stringify(G.classify([intel(true), nvidia(false)])));
 check('the same laptop with the RTX active (dGPU mode): not integrated', G.classify([intel(false), nvidia(true), msBasic]).integrated === false, JSON.stringify(G.classify([intel(false), nvidia(true)])));
 check('Intel UHD / Iris Xe active: integrated', ['Intel(R) UHD Graphics 620', 'Intel(R) Iris(R) Xe Graphics'].every((n) => G.classify([dev(0x8086, n, true), nvidia(false)]).integrated), 'no');
 check('a discrete Intel Arc A770 / B580 active: not integrated (with another GPU present)', ['Intel(R) Arc(TM) A770 Graphics', 'Intel(R) Arc(TM) B580 Graphics'].every((n) => !G.classify([dev(0x8086, n, true), intel(false)]).integrated), 'yes');
