@@ -1449,6 +1449,7 @@ function endStream() {
   if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
+let finishedRun = null; // { runId, turn }: the run that just ended, so a thumbnail that lands after its 'done' still reaches its Browser card
 let earlyEnded = null; // { runId, bubble }: the run whose reply ended on reply_complete, until its 'done' (lateDone)
 let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
@@ -1462,6 +1463,8 @@ window.assistant.onEvent((event) => {
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; } // [ai files]
+  // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.
+  if (event.type === 'thumb' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.thumb(finishedRun.turn, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1696,6 +1699,7 @@ function finishTurn(event, { early }) {
     if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
   }
   const stoppedByUser = Boolean(turn.stopRequested && !turn.interrupted);
+  finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
