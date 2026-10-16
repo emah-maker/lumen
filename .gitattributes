@@ -17,3 +17,5 @@ src/preload/preload.bundle.js merge=lumen-bundle
 src/preload/preload.bundle.js text eol=lf
 src/renderer/*.bundle.js text eol=lf
 src/renderer/*.bundle.css text eol=lf
+src/renderer/index.html text eol=lf
+src/renderer/settings.html text eol=lf
