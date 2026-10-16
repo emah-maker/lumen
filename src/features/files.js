@@ -275,12 +275,12 @@ function create(deps) {
       const known = list0.all().filter((e) => e.kind === 'file' && !e.missing);
       const bonus = (e) => (e.pinned ? 60 : 25);
       let rows = fuzzy.rank(q, known, { limit: 5, bonus }).map((r) => r.item);
-      if (!rows.length) rows = fuzzy.rank(q, known, { limit: 5, bonus, loose: true }).map((r) => r.item);
+      if (!rows.length && !strict) rows = fuzzy.rank(q, known, { limit: 5, bonus, loose: true }).map((r) => r.item);
       let hits = await alive(rows, 'known');
       if (hits.length) { stats.known++; return { hits, scanned: false }; }
       try {
         let found = await ix().search(q, { limit: 5 });
-        if (!found.length) found = await ix().search(q, { limit: 5, loose: true });
+        if (!found.length && !strict) found = await ix().search(q, { limit: 5, loose: true });
         hits = await alive(found, 'index');
       } catch { /* no index */ }
       if (hits.length) { stats.known++; return { hits, scanned: false }; }

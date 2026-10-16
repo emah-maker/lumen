@@ -13501,7 +13501,7 @@ const filesPicker = (() => {
     const frag = document.createDocumentFragment();
     let section = null;
     rows.forEach((item, i) => {
-      if (item.group !== section) {
+      if (item.group && item.group !== section) { // (the offer to search the disk has no group, so no heading)
         section = item.group;
         const g = GROUPS.find((x) => x[0] === section);
         const header = Object.assign(document.createElement('li'), { className: 'files-picker-section', textContent: tr(g[2], g[1]) });

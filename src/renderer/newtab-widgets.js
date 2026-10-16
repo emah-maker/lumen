@@ -296,7 +296,7 @@ function fileIcon(e) {
 function ft(key, english, vars) {
   const own = globalThis.lumenFiles?.strings?.[key];
   const raw = typeof own === 'string' ? own : english;
-  return vars ? raw.replace(/{(w+)}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : raw;
+  return vars ? raw.replace(/{(\w+)}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : raw;
 }
 // "just now", "5 min. ago", "3 hr. ago", "yesterday", "4 days ago" (Intl.RelativeTimeFormat, in the page's language), then the date.
 let fileRtf = null;
@@ -419,7 +419,7 @@ function fileUndoOffer(e, how) {
   const timer = setTimeout(() => { fileUndo = null; filesRefresh(); }, FILE_UNDO_MS);
   fileUndo = { id: e.id, message: how === 'unpin' ? ft('files.card.unpinned', 'Unpinned {name}.', { name: e.name }) : ft('files.card.removed', 'Removed {name}.', { name: e.name }), timer };
 }
-const fileTakeOut = (e, how) => filesDo(() => Promise.resolve(globalThis.lumenFiles[how](e.id)).then((ok) => { (window.__fdbg ||= []).push(['ok', how, ok]); if (ok !== false) fileUndoOffer(e, how); }));
+const fileTakeOut = (e, how) => filesDo(() => Promise.resolve(globalThis.lumenFiles[how](e.id)).then((ok) => { if (ok !== false) fileUndoOffer(e, how); }));
 const fileTogglePin = (e) => (e.pinned ? fileTakeOut(e, 'unpin') : filesDo(() => globalThis.lumenFiles.pin({ id: e.id })));
 const fileRemove = (e) => fileTakeOut(e, 'remove');
 function fileUndoRun() {
@@ -1764,7 +1764,6 @@ const WIDGET_RENDERERS = {
         strip.append(undo);
         wrap.append(strip);
       }
-      (window.__fdbg ||= []).push(['draw', Boolean(fileUndo), Boolean(data), wrap.querySelector('.fl-undo') !== null, wrap.isConnected, Date.now() % 100000]);
       if (key) {
         const [role, fid] = key.split('|');
         const again = [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid && n.dataset.role === role) || [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid);
