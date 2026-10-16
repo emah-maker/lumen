@@ -117,11 +117,30 @@ function thumbnail(image) {
   const small = width > THUMB_WIDTH ? image.resize({ width: THUMB_WIDTH }) : image;
   return `data:image/jpeg;base64,${small.toJPEG(THUMB_QUALITY).toString('base64')}`;
 }
+// The same as shrink() and thumbnail(), a step at a time with the event loop let in between: a big tab's resize and JPEG encode are a few
+// tens of milliseconds each, and one block of them froze the main process (typing, tab switches, the thumbnails of a running chat) for
+// 50 ms or more at the moment a message was sent.
+const yieldTurn = () => new Promise((resolve) => setImmediate(resolve));
+async function shrinkYielding(image, { maxEdge = MAX_EDGE, quality = JPEG_QUALITY } = {}) {
+  let img = image;
+  const { width, height } = img.getSize();
+  if (Math.max(width, height) > maxEdge) { img = width >= height ? img.resize({ width: maxEdge }) : img.resize({ height: maxEdge }); await yieldTurn(); }
+  const size = img.getSize();
+  const jpeg = img.toJPEG(quality);
+  await yieldTurn();
+  return { media_type: 'image/jpeg', data: jpeg.toString('base64'), width: size.width, height: size.height, _image: img };
+}
+async function thumbnailYielding(image) {
+  const { width } = image.getSize();
+  let small = image;
+  if (width > THUMB_WIDTH) { small = image.resize({ width: THUMB_WIDTH }); await yieldTurn(); }
+  return `data:image/jpeg;base64,${small.toJPEG(THUMB_QUALITY).toString('base64')}`;
+}
 
 // Capture the tab and build what the message carries. deps: { capture(wc) -> NativeImage }.
 // -> { blocks: [marker text block, image block], image: { media_type, data }, chip: { id, title, kind: 'image', thumb } }
 async function capture(wc, { title = '', url = '', capture: grab } = {}) {
-  const shot = shrink(await grab(wc));
+  const shot = await shrinkYielding(await grab(wc));
   const id = newId();
   const image = { media_type: shot.media_type, data: shot.data };
   return {
@@ -130,7 +149,7 @@ async function capture(wc, { title = '', url = '', capture: grab } = {}) {
       { type: 'text', text: markerText({ id, title, url, kind: 'image' }) },
       { type: 'image', source: { type: 'base64', media_type: image.media_type, data: image.data } },
     ],
-    chip: { id, kind: 'image', title, thumb: thumbnail(shot._image) },
+    chip: { id, kind: 'image', title, thumb: await thumbnailYielding(shot._image) },
   };
 }
 // The chip for a model that can't see images: the text goes in as page text (agent.js pageContextFor); only the marker is added.

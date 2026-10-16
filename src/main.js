@@ -9651,7 +9651,14 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
-    noteThumbs(run, msg, (ev) => { if (!run.deleted) { trackRunDetails(run, ev); out.push(ev); } });
+    noteThumbs(run, msg, (ev) => {
+      if (run.deleted) return;
+      trackRunDetails(run, ev);
+      out.push(ev);
+      // The last frame can land just after 'done' (a capture under way when the run ended, see features/step-thumbs.js stop()): the card shows it
+      // (chat-core.js) and the saved reply keeps it too, so "Open preview" and a reopened chat both name the tab the run ended in.
+      if (run.doneMsg && ev.type === 'thumb') { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); }
+    });
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
     else if (msg.type === 'error') { run.error = msg.text || 'error'; run.errorSummary = msg.summary || ''; }
@@ -9659,6 +9666,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
     if (msg.type === 'done') {
+      run.doneMsg = msg;
       if (!run.deleted) stampRun(run, msg);
       const mine = chatRuns.get(runChat) === run;
       if (mine) chatRuns.delete(runChat);

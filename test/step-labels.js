@@ -119,6 +119,12 @@ process.stdin.on('data', async (d) => {
   await app.evaluate(({ webContents }, u) => { const t = global.__windows.list()[0].tabs[0]; webContents.fromId(t.contentsId).loadURL(u); }, `${base}/c`);
   await sleep(600);
 
+  // ---- let the app finish starting before anything is measured: Lumen loads some modules a few seconds after its window is up (the GPU health
+  // module, main.js: its first read of the GPU info blocks the main process for 20-40 ms). That is start-up, not the chat's cost, and it
+  // used to land inside the 50 ms main-process check at random.
+  await waitFor(() => app.evaluate(() => Boolean(global.__gpuHealth)), 30000);
+  await sleep(500);
+
   // ---- probes: a main-process setImmediate gap, and long tasks in the chat renderer
   await app.evaluate(() => {
     const probe = global.__slProbe = { max: 0, n: 0, on: true, big: [] };
@@ -161,11 +167,14 @@ process.stdin.on('data', async (d) => {
   console.log('      thumbs state:', J(await app.evaluate(() => ({ v: global.__thumbsState.visible(), by: global.__thumbsState.by() }))));
   const p1 = await pixel(card());
   check('the thumbnail is not blank (a coloured page, about 420 px wide)', p1.a === 255 && Math.max(...p1.rgb) > 120 && Math.max(...p1.rgb) - Math.min(...p1.rgb) > 60 && p1.w >= 300 && p1.w <= 460, J(p1));
-  const changed = await waitFor(() => ui.evaluate((s, was) => { const i = document.querySelector(`${s} .act-thumb`); return i && i.src !== was && i.src; }, card(), firstThumb), 14000).catch(() => null);
-  const changedArg = await waitFor(async () => { const src = await ui.evaluate((s) => document.querySelector(`${s} .act-thumb`)?.src, card()); return src && src !== firstThumb; }, 14000);
-  check('the thumbnail updates while the AI works (its src changes)', Boolean(changedArg) || Boolean(changed), 'same frame');
-  const p2 = await pixel(card());
-  check('…and follows the page (the second page has another colour)', Math.abs(p1.rgb[0] - p2.rgb[0]) + Math.abs(p1.rgb[2] - p2.rgb[2]) > 150, J([p1, p2]));
+  const changed = await waitFor(async () => { const src = await ui.evaluate((s) => document.querySelector(`${s} .act-thumb`)?.src, card()); return src && src !== firstThumb; }, 14000);
+  check('the thumbnail updates while the AI works (its src changes)', Boolean(changed), 'same frame');
+  // (the first frame can still show the page that was open before the AI navigated, or already the new one: wait for the card to follow the AI to
+  // another page, whichever came first, instead of reading one frame at a moment that depends on the timing)
+  const colourGap = (a, b) => Math.abs(a.rgb[0] - b.rgb[0]) + Math.abs(a.rgb[2] - b.rgb[2]);
+  let p2 = await pixel(card());
+  const followed = await waitFor(async () => { p2 = await pixel(card()); return colourGap(p1, p2) > 150; }, 14000);
+  check('…and follows the page (the second page has another colour)', Boolean(followed), J([p1, p2]));
     await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop')), 40000);
   const doneSub = await ui.evaluate((s) => document.querySelector(`${s} .act-sub`)?.textContent, card());
   const statusSeq = await ui.evaluate(() => window.__status);
@@ -214,7 +223,7 @@ process.stdin.on('data', async (d) => {
   check('…and back', await waitFor(async () => (await toggleText()) === 'Hide tabs the AI opened (1)' && (await aiTabsInStrip()) === 1, 6000), String(await toggleText()));
 
   // ---- Open preview: a tab still open is switched to; a closed one is reopened from its URL
-  const runTab = thumbsSeen[thumbsSeen.length - 1];
+  const runTab = (await ui.evaluate(() => window.__thumbs)).pop(); // (the last frame the chat was sent, read now: one that landed after the run's end counts, and the card shows it)
   const other = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 4000); }); return t.id; }, `${base}/c?other`);
   await app.evaluate((_e, id) => global.__tabChats.setSidebar(id, true), other); // (the sidebar is per tab: this one shows it too)
   await sleep(500);
