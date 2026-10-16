@@ -162,6 +162,9 @@ function rig(opts = {}) {
   const ui = read('src/renderer/step-ui.js');
   check('the chat reports a card on screen with an IntersectionObserver and the page visibility', /IntersectionObserver/.test(ui) && /visibilitychange/.test(ui) && /thumbsVisible/.test(ui), '');
   check('a saved chat keeps one small final frame (≤ 60 KB as base64 text)', /THUMB_CHARS = 90000/.test(read('src/features/chat-branches.js')) && /maxBytes = 45000/.test(read('src/features/tab-capture.js')), '');
+  const cap = read('src/features/tab-capture.js');
+  check('the live preview is sharp: displayed size (340 CSS px) x the display scale, quality 80; Light / software keep the small one', /SHOW_CSS = 340/.test(cap) && cap.includes('Math.round(SHOW_CSS * scale)') && /quality = 80/.test(cap) && main.includes('captureThumb(wc, { lowRes })') && /const CAP = 340/.test(ui), '');
+  check('the saved reply keeps the small frame: the sharp one is scaled down once when stamped', /shrinkThumb/.test(cap) && main.includes('thumb: savedThumb(d.thumb)'), '');
   check('chats saved before cards fall back to the old rows', /item\.cards && window\.stepUI/.test(read('src/renderer/chat-actions.js')), '');
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

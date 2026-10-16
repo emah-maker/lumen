@@ -9533,7 +9533,8 @@ async function captureRunThumb(run) {
   const wc = tab.wc;
   const url = wc.getURL();
   if (!/^(https?|file):/i.test(url) || aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
-  const data = await require('./features/tab-capture').captureThumb(wc);
+  const lowRes = graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false; // (Light graphics or software drawing: the small picture)
+  const data = await require('./features/tab-capture').captureThumb(wc, { lowRes });
   return data ? { data, url, title: wc.getTitle?.() || '', tabId: tab.id } : null;
 }
 // A tiny signature of the page the card shows (address, scroll, size, how much is on it): a frame is taken when it moves (features/step-thumbs.js).
@@ -9635,6 +9636,12 @@ function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or a
   const snaps = (run.tabSnaps ||= {});
   for (const id of ids) { const snap = rt.snapshot(String(id)); if (snap) snaps[id] = snap; }
 }
+// The saved reply keeps one small frame (the live ones are sharp and bigger): scaled down once, here, not per frame.
+function savedThumb(t) {
+  if (!t || !t.data) return undefined;
+  const data = require('./features/tab-capture').shrinkThumb(t.data);
+  return data ? { ...t, data } : undefined;
+}
 function stampRun(run, done = null) {
   try {
     const d = run.details;
@@ -9643,7 +9650,7 @@ function stampRun(run, done = null) {
       for (const m of run.messages.slice(run.startLen)) if (m.role === 'assistant') for (const b of Array.isArray(m.content) ? m.content : []) if (b.type === 'text') { const ids = tabMarker.idsIn(b.text); if (ids.length) noteRunTabs(run, ids); }
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: d.thumb || undefined, touched: d.touched.length ? d.touched : undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }

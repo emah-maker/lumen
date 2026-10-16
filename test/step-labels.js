@@ -179,7 +179,9 @@ process.stdin.on('data', async (d) => {
   console.log('      card rect:', J(await ui.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { top: r.top, h: r.height, w: r.width, vh: innerHeight, vw: innerWidth, vis: document.visibilityState, io: typeof IntersectionObserver }; }, card())));
   console.log('      thumbs state:', J(await app.evaluate(() => ({ v: global.__thumbsState.visible(), by: global.__thumbsState.by() }))));
   const p1 = await pixel(card());
-  check('the thumbnail is not blank (a coloured page, about 420 px wide)', p1.a === 255 && Math.max(...p1.rgb) > 120 && Math.max(...p1.rgb) - Math.min(...p1.rgb) > 60 && p1.w >= 300 && p1.w <= 460, J(p1));
+  const dpr = await ui.evaluate(() => window.devicePixelRatio);
+  check('the thumbnail is not blank (a coloured page)', p1.a === 255 && Math.max(...p1.rgb) > 120 && Math.max(...p1.rgb) - Math.min(...p1.rgb) > 60, J(p1));
+  check('the thumbnail is pixel-sharp: its displayed width (340 CSS px) times the display scale, 16:10', Math.abs(p1.w - Math.round(340 * dpr)) <= 3 && Math.abs(p1.w / p1.h - 1.6) < 0.05, J({ p1, dpr }));
   const changed = await waitFor(async () => { const src = await ui.evaluate((s) => document.querySelector(`${s} .act-thumb`)?.src, card()); return src && src !== firstThumb; }, 14000);
   check('the thumbnail updates while the AI works (its src changes)', Boolean(changed), 'same frame');
   // (the first frame can still show the page that was open before the AI navigated, or already the new one: wait for the card to follow the AI to
@@ -279,6 +281,7 @@ process.stdin.on('data', async (d) => {
   check('a reopened chat shows the card with its final frame and "Done · <task>"', restored && restored.sub === 'Done · Find lab TA' && restored.btn, J(restored));
   const p3 = await pixel(card());
   check('the saved frame is not blank', p3.a === 255 && Math.max(...p3.rgb) > 120, J(p3));
+  check('…and it is the small one (≤ 60 KB as text): the sharp live frame is scaled down when the reply is saved', (await ui.evaluate((sel) => document.querySelector(`${sel} .act-thumb`).src.length, card())) <= 60000 && p3.w <= 420, J(p3));
   check('…and its steps are there, folded', await ui.evaluate((s) => /^5 steps$/.test(document.querySelector(`${s} .act-steps > summary`)?.textContent || ''), card()), 'summary');
 
   // ---- narration does not split a card: one turn is one card (two steps with a line of narration between them)

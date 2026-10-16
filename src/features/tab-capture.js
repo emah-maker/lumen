@@ -42,7 +42,10 @@ async function captureTab(wc, rect = null) {
 // [activity cards] A small JPEG of the tab for the chat's Browser card: the page is scaled and encoded by the browser engine (the DevTools
 // protocol's Page.captureScreenshot with a clip scale), so the main process only handles a ~40 KB base64 string, never a full-size bitmap.
 // Falls back to captureTab + resize when the protocol call fails. Answers base64 or null; at most about 60 KB.
-async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } = {}) {
+// Sharp by default: the picture is the card's displayed size (SHOW_CSS px, see step-ui.js CAP) times the display's scale, so a screen at 200% gets
+// 680 px, at 150% 510 px, JPEG quality 80. `lowRes` (Graphics on Light, no hardware drawing) keeps the old small picture: `width` px, quality 55.
+const SHOW_CSS = 340;
+async function captureThumb(wc, { lowRes = false, width = 420, quality = 55, maxBytes = 45000 } = {}) {
   const size = wc.getContentSize?.() || [0, 0];
   const w = Math.max(1, size[0] || 1280);
   const h = Math.max(1, size[1] || 800);
@@ -53,9 +56,11 @@ async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } 
     const zoom = wc.getZoomFactor?.() || 1;
     let dpr = 1; // (the picture is `width` device pixels wide, whatever the display's scale)
     try { dpr = Math.max(1, Number((await dbg.sendCommand('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }))?.result?.value) || 1); } catch { /* 1 */ }
+    const scale = Math.max(1, dpr / zoom); // (the display's own scale: the page's devicePixelRatio includes the page zoom)
+    if (!lowRes) { width = Math.round(SHOW_CSS * scale); quality = 80; maxBytes = 220000; }
     const cssW = w / zoom;
     const cssH = Math.min(h / zoom, cssW * 0.625); // the card shows a 16:10 window onto the top of the page
-    for (const [q, k] of [[quality, 1], [38, 1], [32, 0.75]]) {
+    for (const [q, k] of lowRes ? [[quality, 1], [38, 1], [32, 0.75]] : [[80, 1], [68, 1], [56, 0.85], [44, 0.7]]) {
       const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: Math.min(1, (width * k) / (cssW * dpr)) } });
       if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
     }
@@ -64,10 +69,21 @@ async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } 
   }
   try {
     const image = await captureTab(wc);
-    const sized = image.resize({ width, quality: 'good' });
-    for (const q of [quality, 38, 30]) { const jpeg = sized.toJPEG(q); if (jpeg.length <= maxBytes) return jpeg.toString('base64'); }
+    const imgW = image.getSize().width;
+    const sized = image.resize({ width: lowRes ? width : Math.min(imgW, Math.round(SHOW_CSS * imgW / Math.max(1, (wc.getContentSize?.() || [imgW])[0]))), quality: 'good' });
+    for (const q of lowRes ? [quality, 38, 30] : [80, 66, 50]) { const jpeg = sized.toJPEG(q); if (jpeg.length <= maxBytes) return jpeg.toString('base64'); }
   } catch { /* no picture right now */ }
   return null;
 }
 
-module.exports = { captureTab, cssClip, captureThumb };
+// A saved chat keeps one small final frame (≤ 45 KB): a sharp live frame is scaled down once, when the run is stamped.
+function shrinkThumb(base64, { width = 420, maxBytes = 45000 } = {}) {
+  try {
+    if (typeof base64 !== 'string' || base64.length * 0.75 <= maxBytes) return base64;
+    const small = nativeImage().createFromBuffer(Buffer.from(base64, 'base64')).resize({ width, quality: 'good' });
+    for (const q of [55, 40, 30]) { const jpeg = small.toJPEG(q); if (jpeg.length <= maxBytes) return jpeg.toString('base64'); }
+  } catch { /* no saved frame */ }
+  return null;
+}
+
+module.exports = { captureTab, cssClip, captureThumb, shrinkThumb };
