@@ -267,6 +267,7 @@
       if (typeof v === 'string' && v) { const r = redact(v); out[k] = r.length > (k === 'command' ? 600 : 240) ? `${r.slice(0, k === 'command' ? 599 : 239)}…` : r; }
       else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
     }
+    for (const k of ['ids', 'tab_ids']) if (Array.isArray(input[k])) { const list = input[k].filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9).slice(0, 8); if (list.length) out[k] = list; } // (tabs a step names: shown as chips)
     return Object.keys(out).length ? out : null;
   }
 

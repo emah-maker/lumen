@@ -53,6 +53,8 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
 
 ![The sidebar agent after a task, showing each step it took](docs/media/sidebar-agent.png)
 
+When the AI names a tab (in its answer, in a step such as switching to or closing a tab, or on the Browser card), the chat shows a **tab chip**: the tab's icon and current title. Click it to go to that tab, even in another window. A tab that has closed keeps its last title and, when its address is known, a click opens it again. Saved chats keep the chips, and Export chat writes them as "Title (address)".
+
 `Ctrl+J` opens it (and moves the keyboard to its message box). On a web page it slides in over a picture of the page; on the new-tab page, and with Reduce motion or Performance mode on, it opens in one step like Chrome's side panel, so the new-tab page's cards and widgets never move. The AI reads the page and operates the browser.
 
 - **Low-level actions:** click, type, keys and shortcuts, scroll, hover, click at a point on a screenshot, tabs, back/forward/reload.

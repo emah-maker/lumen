@@ -267,6 +267,7 @@ contextBridge.exposeInMainWorld('assistant', {
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
   onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
   showAgentTarget: () => ipcRenderer.send('agent:show-target'),
+  tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') }, // [tab chips] a tab the chat names, as a chip
   openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
