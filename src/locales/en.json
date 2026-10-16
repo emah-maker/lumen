@@ -3128,7 +3128,7 @@
   "settings.files.cleared": "Cleared.",
   "settings.files.privacyRef": "Recent files",
   "settings.files.privacyRefDesc": "Remember and clear them in General > Files.",
-  "settings.files.privacyRefGo": "Open",,
+  "settings.files.privacyRefGo": "Open",
   "step.cmd.write": "Writing {name}",
   "step.cmd.edit": "Editing {name}",
   "step.cmd.editFiles": "Editing files",
