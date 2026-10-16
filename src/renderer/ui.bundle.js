@@ -2641,6 +2641,80 @@ explain describe list find give compare difference summarize summary write rewri
   window.aiFiles = { card, autoOpen };
 })();
 ;
+// ---- desktop-card.js
+// The "Computer" activity card: the AI working in another program on this PC (src/desktop/). One card per app per run, drawn from
+// { type: 'desktop_card', surface: 'app', id, app, title, status, task, thumbnail, icon } events (the same payload shape the browser card
+// uses: surface, app, title, status, thumbnail). Kept in its own module so it can be merged with a shared card component later.
+//   window.desktopCard.update(event) -> the card's element (created on first sight, updated in place after), with
+//   { created: true } when it is new so the caller can place it in the conversation.
+// The thumbnail is a data: image main made from a window capture; the only other input is text, always set with textContent.
+(() => {
+  const tr = (key, vars) => window.t(key, vars);
+  const IMAGE = /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+  const cards = new Map(); // id -> element
+
+  const statusText = (status, task) => {
+    if (status === 'completed') return tr('desktopcard.completed', { task: task || tr('desktopcard.done') });
+    if (status === 'paused') return tr('desktopcard.paused');
+    if (status === 'stopped') return tr('desktopcard.stopped');
+    return tr('desktopcard.working', { task: task || tr('desktopcard.working.default') });
+  };
+
+  function build(event) {
+    const card = el('div', { className: 'desktop-card' });
+    card.dataset.id = event.id;
+    card.setAttribute('role', 'group');
+    const icon = el('img', { className: 'dc-icon', alt: '', hidden: true, draggable: false });
+    const name = el('div', { className: 'dc-app' });
+    const status = el('div', { className: 'dc-status', role: 'status' });
+    const open = el('button', { type: 'button', className: 'dc-btn dc-open', textContent: tr('desktopcard.open') });
+    const resume = el('button', { type: 'button', className: 'dc-btn dc-resume primary', textContent: tr('desktopcard.resume'), hidden: true });
+    const stop = el('button', { type: 'button', className: 'dc-btn dc-stop', textContent: tr('desktopcard.stop'), hidden: true });
+    const thumb = el('img', { className: 'dc-thumb', alt: '', hidden: true, draggable: false });
+    open.onclick = () => { open.disabled = true; Promise.resolve(window.assistant?.desktopOpen?.(card.dataset.id)).catch(() => {}).finally(() => { open.disabled = false; }); };
+    resume.onclick = () => window.assistant?.desktopControl?.('resume');
+    stop.onclick = () => window.assistant?.desktopControl?.('stop');
+    card.append(
+      el('div', { className: 'dc-head' }, icon, el('div', { className: 'dc-meta' }, name, status), el('div', { className: 'dc-bar' }, resume, stop, open)),
+      thumb,
+    );
+    return card;
+  }
+
+  function update(event) {
+    if (!event || typeof event.id !== 'string') return null;
+    let card = cards.get(event.id);
+    let created = false;
+    if (!card || !card.isConnected) {
+      if (card && !card.isConnected) cards.delete(event.id);
+      card = build(event);
+      cards.set(event.id, card);
+      created = true;
+      while (cards.size > 60) cards.delete(cards.keys().next().value);
+    }
+    const q = (sel) => card.querySelector(sel);
+    const live = event.status === 'working' || event.status === 'paused';
+    card.dataset.status = event.status || 'working';
+    q('.dc-app').textContent = String(event.app || tr('desktopcard.app'));
+    q('.dc-status').textContent = statusText(event.status, String(event.task || ''));
+    card.setAttribute('aria-label', `${q('.dc-app').textContent}: ${q('.dc-status').textContent}`);
+    q('.dc-resume').hidden = event.status !== 'paused';
+    q('.dc-stop').hidden = !live;
+    q('.dc-open').hidden = event.status === 'stopped' && !event.thumbnail;
+    if (typeof event.icon === 'string' && IMAGE.test(event.icon)) { const i = q('.dc-icon'); if (i.src !== event.icon) i.src = event.icon; i.hidden = false; }
+    if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) {
+      const t = q('.dc-thumb');
+      if (t.src !== event.thumbnail) t.src = event.thumbnail;
+      t.alt = tr('desktopcard.thumbAlt', { app: q('.dc-app').textContent });
+      t.hidden = false;
+    }
+    return { card, created };
+  }
+
+  window.desktopCard = { update, count: () => cards.size };
+})();
+;
 // ---- run-state.js
 // What a view should do with main's answer about the chat it shows (renderer/chat-core.js reconcile()): 'keep' when the
 // view already matches (same chat, same running state), 'adopt' when only the chat's id was not known yet, 'sync' when
@@ -3341,6 +3415,29 @@ $('model').addEventListener('change', async (e) => {
 // ---------- chat ----------
 
 const messages = $('messages');
+// [step labels] The step cards' code (step-labels.js, step-ui.js, step-ui.css) is not part of the start-up bundle: it loads the first time a message is sent or a
+// chat with cards is drawn (the chat page lists it itself). A step that arrives before it has loaded gets a plain row.
+let stepUILoad = null;
+function loadStepUI() {
+  if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); } // click / Enter on a step opens its details
+  if (stepUILoad) return stepUILoad;
+  const head = document.head;
+  head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
+  const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
+  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => window.stepUI?.init(messages));
+  return stepUILoad;
+}
+if (window.stepUI) window.stepUI.init(messages);
+function plainStep(event, label) {
+  const step = document.createElement('div');
+  step.className = event.id ? 'step running' : 'step done';
+  step.innerHTML = '<span class="step-detail"></span>';
+  step.firstChild.textContent = label;
+  step.title = label;
+  if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); }
+  appendToTurn(step);
+  return step;
+}
 const prompt = $('prompt');
 const send = $('send');
 let running = false;
@@ -4071,6 +4168,7 @@ function fileChips(files) {
   return row;
 }
 function startTurn(text, images, tabs = null) {
+  loadStepUI();
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   const pictures = imageItems(images);
@@ -4124,7 +4222,7 @@ function beginTurn() {
   working.className = 'working';
   working.setAttribute('role', 'status');
   working.setAttribute('aria-label', t('chat.thinking'));
-  turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map() };
+  turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
   setRunning(true);
 }
 
@@ -4139,7 +4237,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, upload: a.upload });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4160,6 +4258,7 @@ function moveWorkingToEnd() {
 // The working line shows while the AI works, not while it waits on the user's answer to an approval card.
 function syncWorking() {
   turn?.working?.classList.toggle('waiting', approvals.size > 0);
+  window.stepUI?.refreshAll(turn); // (a card says "Needs your OK" while a card waits)
 }
 
 // Adds a piece of the running reply above the working line, which stays last without ever moving.
@@ -4180,7 +4279,7 @@ function showStepTime(step, final = false) {
   if (!slot || !t0) return;
   const ms = Date.now() - t0;
   const text = window.stepTime ? window.stepTime.format(ms) : '';
-  slot.textContent = !final && ms < 3000 ? '' : text;
+  slot.textContent = !final && ms < 1000 ? '' : text;
   if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
 }
 function startStepClock() {
@@ -4210,14 +4309,14 @@ function annotateChip(step) {
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
   screenshot: () => t('tool.screenshot'),
-  navigate: (i) => t('tool.navigate', { url: i.url }),
+  navigate: (i) => t('tool.navigate', { url: window.stepLabels?.hostOf(i.url || '') ?? i.url }), // (the site, not the whole address)
   click: () => t('tool.click'),
   type_text: (i) => t('tool.type_text', { text: i.text }),
   press_key: (i) => t('tool.press_key', { key: i.key }),
   scroll: (i) => t('tool.scroll', { direction: i.direction }),
   go_back: () => t('tool.go_back'),
   list_tabs: () => t('tool.list_tabs'),
-  open_tab: (i) => t('tool.open_tab', { url: i.url }),
+  open_tab: (i) => t('tool.open_tab', { url: window.stepLabels?.hostOf(i.url || '') ?? i.url }),
   switch_tab: (i) => t('tool.switch_tab', { tab: i.tab_id }),
   wait: (i) => t('tool.wait', { seconds: i.seconds }),
   web_search: (i) => t('tool.web_search', { query: i.query ?? '' }),
@@ -4358,6 +4457,7 @@ window.assistant.onEvent((event) => {
       settleThinking();
       endStream();
       turn.text = null; // next text starts a fresh block after any tool steps
+      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
       turn.textSource = '';
       turn.thinking = null;
       break;
@@ -4399,12 +4499,13 @@ window.assistant.onEvent((event) => {
       bubble.append(cardEl);
       appendToTurn(bubble);
       if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
+      window.stepUI?.fileMade(turn, event.file); // the Terminal / Files card offers it too
       announce(t('aifile.added', { name: event.file.name }));
       break;
     }
     case 'text': {
       settleThinking();
-      if (!turn.text) turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
+      if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
       break;
@@ -4420,38 +4521,51 @@ window.assistant.onEvent((event) => {
     case 'tool': {
       settleThinking(); // (it thought, then acted: "Thought for 3s", not "Thinking" for ever)
       finishReply(turn.text, turn.textSource);
-      const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
-      const step = document.createElement('div');
-      step.className = event.id ? 'step running' : 'step done';
+      turn.approvalsWaiting ||= () => approvals.size > 0;
+      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
-      if (event.id) turn.steps.set(event.id, step);
+      if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
       if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
-      step.innerHTML = '<span class="step-detail"></span>';
-      step.firstChild.textContent = label;
-      step.title = label;
-      if (event.id) { step.dataset.t0 = String(Date.now()); step.append(Object.assign(document.createElement('span'), { className: 'step-time' })); startStepClock(); } // how long it has been going / took
-      appendToTurn(step);
       endStream();
       turn.text = null;
       turn.textSource = '';
       break;
     }
+    case 'desktop_card': { // [desktop apps] the "Computer" card: the AI working in another program, with its live thumbnail (renderer/desktop-card.js)
+      const drawn = window.desktopCard?.update(event);
+      if (!drawn) break;
+      if (drawn.created) {
+        settleThinking();
+        finishReply(turn.text, turn.textSource);
+        endStream();
+        turn.text = null;
+        turn.textSource = '';
+        const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant desktop-cards' });
+        bubble.append(drawn.card);
+        appendToTurn(bubble);
+        announce(t('desktopcard.announce', { app: event.app || '' }));
+      }
+      break;
+    }
     case 'tool_update': { // a step shown early (its input still streaming) gets its real label
       const step = turn.steps.get(event.id);
       if (!step) break;
-      const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
-      step.firstChild.textContent = label;
-      step.title = label;
+      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      if (window.stepUI) window.stepUI.update(turn, step, { ...event, label: event.label || fallback }); else if (event.label) { step.firstChild.textContent = event.label; step.title = event.label; }
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       break;
     }
     case 'tool_done': {
       const step = turn.steps.get(event.id);
       if (!step) break;
-      step.className = event.ok ? 'step done' : event.stopped ? 'step stopped' : 'step failed';
+      step.classList.remove('running', 'done', 'failed', 'stopped');
+      step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
       showStepTime(step, true);
+      const plain = window.stepUI?.done(turn, step, event); // a built-in tool's failure reads as a sentence with a short reason
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
-      if (!event.ok && event.error) {
+      if (!event.ok && event.error && !plain) {
         const lines = String(event.error).split('\n').map((l) => l.trim()).filter(Boolean);
         const reason = lines.find((l) => /failed/i.test(l) && !/^\d+ of \d+ fields failed:?$/i.test(l)) || lines[0] || '';
         const why = document.createElement('span');
@@ -4462,6 +4576,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'thumb': // the tab the AI works in, as a small picture for its Browser card
+      window.stepUI?.thumb(turn, event);
+      break;
     case 'screen_attached': // [screen context] the tab's screenshot (or its text) went along with the message
       screenChip([...messages.querySelectorAll('.msg.user')].pop(), event);
       break;
@@ -4471,7 +4588,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -4553,6 +4670,7 @@ function finishTurn(event, { early }) {
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
+  window.stepUI?.finalize(turn, event);
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {
@@ -4942,10 +5060,11 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
@@ -5049,7 +5168,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -5058,18 +5177,19 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
-    textContent: terminal
+    textContent: ownDetail ? String(ownDetail)
+      : terminal
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
-        : t('approval.tool.details'),
+        : note === 'connector' ? t('approval.connector.details') : t('approval.tool.details'), // (a connected service: the change it would make, in the user's own account)
   });
   const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
-  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('approval.once') });
-  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
+  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -5246,7 +5366,8 @@ function resolveApproval(approvalId, ok, names) {
 const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) => f && typeof f.ref === 'string' && typeof f.name === 'string').map((f) => ({ file: true, name: f.name, size: Number(f.size) || 0, type: String(f.type || ''), ref: f.ref }));
 
 // Also used by renderer/chats.js to show a chat picked from the history list.
-function showHistory(items) {
+function showHistory(items, loaded = false) {
+  if (!loaded && !window.stepUI && Array.isArray(items) && items.some((i) => i && i.cards)) { loadStepUI().then(() => showHistory(items, true)); return; } // (a chat with cards waits for their code)
   restoring = true;
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom(); // (the "jump to latest" button follows where the view ended)
@@ -5869,7 +5990,8 @@ function startChat() {
       out.push(box);
     }
     const tools = Array.isArray(item.tools) ? item.tools : [];
-    if (item.steps || tools.length) {
+    if (tools.length && item.cards && window.stepUI) out.push(...window.stepUI.restoreNodes(item)); // [step labels] cards for the browser and the shell, readable lines, details on demand
+    else if (item.steps || tools.length) {
       const count = item.steps || tools.length;
       const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });
       if (!tools.length) {
@@ -5884,7 +6006,7 @@ function startChat() {
         summary.firstChild.textContent = label;
         const list = el('div', { className: 'step-items' });
         for (const tool of tools) {
-          const text = tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : tool.name || '');
+          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : t('step.tool')); // (an older chat keeps its rows; a command it still has is named plainly)
           const row = el('div', { className: tool.ok === false ? 'step failed restored' : 'step done restored', title: text });
           row.innerHTML = '<span class="step-detail"></span>';
           row.firstChild.textContent = text;
@@ -5896,7 +6018,7 @@ function startChat() {
     }
     return out;
   }
-  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return tool.name || ''; } }
+  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return t('step.tool'); } }
 
   // ---- Ctrl+Shift+C: copy the latest reply
   document.addEventListener('keydown', (e) => {
@@ -8196,9 +8318,9 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened ? t('tabs.aiOpened') : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
-  el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
+  el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
@@ -8483,10 +8605,10 @@ function fillHoverCard(el) {
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
-  if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
+  if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
-  hostEl.hidden = !host && !tab.aiOpened && !tab.aiKeepOff && !tab.sleeping;
+  hostEl.hidden = !host && !tab.aiOpened && !tab.openedByApp && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
 
@@ -8637,21 +8759,25 @@ let gpuCalm = false;
 window.browser.onGpuCalm?.((on) => { gpuCalm = Boolean(on); document.documentElement.toggleAttribute('data-gpu-calm', gpuCalm); window.setBackdropCalm?.(gpuCalm); });
 // The one-time notice: a reset left Lumen drawing in software. It has a Restart button (never an automatic restart); same note as Organize's.
 window.browser.onGpuLost?.(() => { if (snapshot) thawPage(); });
-window.browser.onGpuNote?.((info) => {
+const showGpuNote = (info) => {
+  const safe = info?.kind === 'safe'; // this session started in safe drawing: a strip says so, with a way back to normal
   const unstable = info?.kind === 'unstable'; // the driver keeps failing: offer safe drawing mode (this run only) instead of a plain restart
   const old = document.querySelector('.gpu-note');
-  if (old && (old.dataset.kind === 'unstable' || !unstable)) return;
+  if (old && !safe && old.dataset.kind !== 'safe' && (old.dataset.kind === 'unstable' || !unstable)) return;
+  if (old && safe) return;
   old?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note gpu-note', role: 'status' });
-  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text gpu-note-text', textContent: t(unstable ? 'gpu.unstable' : 'gpu.softwareMode') });
+  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text gpu-note-text', textContent: t(safe ? 'gpu.safeOn' : unstable ? 'gpu.unstable' : 'gpu.softwareMode') });
   note.title = words.textContent;
-  note.dataset.kind = unstable ? 'unstable' : 'software';
-  const restart = Object.assign(document.createElement('button'), { textContent: t(unstable ? 'gpu.safeMode' : 'gpu.restart'), title: t(unstable ? 'gpu.safeMode.title' : 'gpu.restart.title'), onclick: () => { restart.disabled = true; window.browser.gpuRestart(unstable); } });
+  note.dataset.kind = safe ? 'safe' : unstable ? 'unstable' : 'software';
+  const restart = Object.assign(document.createElement('button'), { textContent: t(safe ? 'gpu.safeOff' : unstable ? 'gpu.safeMode' : 'gpu.restart'), title: t(safe ? 'gpu.safeOff.title' : unstable ? 'gpu.safeMode.title' : 'gpu.restart.title'), onclick: () => { restart.disabled = true; window.browser.gpuRestart(unstable); } });
   const dismiss = Object.assign(document.createElement('button'), { textContent: '×', title: t('gpu.dismiss'), onclick: () => note.remove() });
   dismiss.setAttribute('aria-label', t('gpu.dismiss'));
   note.append(words, restart, dismiss);
   (document.querySelector('.organize-note') ? document.querySelector('.organize-note') : organizeBtn).after(note);
-});
+};
+window.browser.onGpuNote?.(showGpuNote);
+window.lumenPrefs?.get().then((p) => { if (p?.safeDrawing) showGpuNote({ kind: 'safe' }); }).catch(() => {}); // (a safe-drawing session says so once the UI is up; Restart normally drops the flag)
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
 window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo }) => {
   document.querySelector('.organize-note')?.remove();
@@ -9504,7 +9630,7 @@ async function showSidebar(visible, { fromTab = false, instant = false, newTab =
   settleStill?.(); // (an earlier no-slide change is finished first, so this one starts from a settled layout)
   const early = earlyFreeze; // a snapshot started on pointerdown
   earlyFreeze = null;
-  const still = instant || newTab || motionReduced() || gpuCalm; // (gpuCalm: no snapshot while the GPU recovers)
+  const still = instant || newTab || motionReduced() || gpuCalm || window.lumenSoftwareGfx === true; // (gpuCalm: no snapshot while the GPU recovers; lumenSoftwareGfx: drawing is in software, a capture is a CPU readback)
   let frozen = false;
   if (!still) {
     const pending = early || (snapshot ? null : freezePage());
@@ -9634,7 +9760,7 @@ $('toggle-sidebar').onclick = () => {
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && window.lumenSoftwareGfx !== true && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
@@ -9968,6 +10094,45 @@ startChat();
 // External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
+// "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
+const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
+
+// ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
+// A pill per app that is working (or paused), with Stop and Take over; and a bar under the toolbar when an app that has not been allowed
+// yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
+(() => {
+  const pills = $('external-pills');
+  const bar = $('external-bar');
+  if (!pills || !bar || !window.assistant.externalApps) return;
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
+  const button = (cls, label, onclick) => Object.assign(el('button', cls, label), { type: 'button', onclick });
+  function render(state) {
+    const active = state?.active || [];
+    pills.replaceChildren(...active.map((a) => {
+      const pill = el('div', 'external-pill' + (a.paused ? ' paused' : ''));
+      pill.setAttribute('role', 'status');
+      pill.dataset.appId = a.id;
+      const text = el('span', 'external-pill-text', t(a.paused ? 'external.paused' : 'external.using', { client: a.name }));
+      pill.title = text.textContent;
+      pill.append(el('span', 'agent-dot'), text,
+        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalApps.send('resume', a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalApps.send('takeover', a.id)),
+        button('external-stop', t('external.stop'), () => window.assistant.externalApps.send('stop', a.id)));
+      return pill;
+    }));
+    pills.hidden = !active.length;
+    const ask = (state?.prompts || [])[0];
+    if (!ask) { bar.hidden = true; bar.replaceChildren(); delete bar.dataset.promptId; return; }
+    if (bar.dataset.promptId === ask.id) return;
+    bar.dataset.promptId = ask.id;
+    const answer = (decision) => window.assistant.externalApps.answer(ask.id, decision);
+    bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
+      button('primary', t('external.allow'), () => answer('allow')),
+      button('', t('external.deny'), () => answer('deny')));
+    bar.hidden = false;
+  }
+  window.assistant.externalApps.on(render);
+  window.assistant.externalApps.state().then(render).catch(() => {});
+})();
 let mcpPillText = null;
 // The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)
 // is attached. A connected-but-idle MCP agent (Claude Code keeps its session open all day) and Lumen's own
@@ -10000,7 +10165,7 @@ function mcpPillRefresh() {
 }
 
 function mcpStepRow(event) {
-  const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+  const label = event.label || (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
   if (document.body.classList.contains('agent-window')) { mcpStepNow = `${event.clientName}: ${label}`; return; } // the pill says it; no chat row
   const step = document.createElement('div');
   step.className = 'step running mcp-step';
@@ -12928,6 +13093,8 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-gfx-light', Boolean(p.lightGfx)); // Settings > System > Graphics: Light (or Automatic on an integrated GPU): no backdrop blur (settings-backend.js [igpu])
+    root.classList.toggle('pref-gfx-soft', Boolean(p.softwareGfx)); // software drawing (no GPU): Light plus no blur anywhere, short transitions, no page snapshot (settings-backend.js [igpu], prefs.css)
+    if ('softwareGfx' in p) window.lumenSoftwareGfx = Boolean(p.softwareGfx); // app.js: the sidebar moves without a snapshot
     root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs

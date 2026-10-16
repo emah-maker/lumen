@@ -166,7 +166,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ## Use Lumen from Claude Code, Codex, Antigravity
 
-Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
+Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. For Claude Desktop, Cursor, VS Code and Claude Code outside Lumen, **Settings → AI → Let other apps use Lumen** gives each app a token of its own, shows a pill while it works, and lets you Stop, Take over or Revoke it ([guide](docs/external-apps.md)). The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
 ```powershell
 # Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
@@ -228,6 +228,10 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 - CDP clients don't get approval cards. Any program on your computer that has the address can use the port while it's on, including on signed-in sites. Turning the setting off closes the proxy immediately.
 - The proxy is the only way in, and no debugging port is ever opened. On Windows and Linux, Lumen starts through a small launcher (`src/automation/launcher.js`) that gives Chromium a private pipe. On macOS there is no launcher (it would lose links opened from other apps): `src/automation/cdp-inproc.js` answers the protocol inside Lumen from each tab's own debugger.
 - Through the macOS (in-process) backend, some browser-level features aren't available and answer with an error: `browser.newContext()`, `context.grantPermissions()`, download events and blocking downloads, window bounds. Clients share one debugger session per tab, so Fetch interception (`page.route`) works for one client at a time, and an iframe or worker that starts paused may already be running when a client resumes it.
+
+### The AI using other apps (Windows)
+
+Settings → AI → **Let the AI use other apps on this computer** (off by default) lets the AI read and operate programs such as Word, File Explorer or MATLAB. It asks before each app, a banner shows it working with a Stop button, Esc held stops it, and a card in the chat shows the app with a live thumbnail. Passwords, security prompts, password managers, banking apps and Lumen itself are never available. Details: [docs/desktop-apps.md](docs/desktop-apps.md).
 
 ## Token-efficient tools (all AIs)
 
@@ -323,11 +327,14 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 ## Documentation
 
 - [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
+- [Let other apps use Lumen](docs/external-apps.md): set up Claude Desktop, Cursor, VS Code and Claude Code with a token each, and watch, stop or revoke them
+- [Connectors](docs/connectors.md): let the AI use Canvas, Gmail, Google Calendar, GitHub, Todoist and Notion once you connect them, what each can read and do, and where the secrets go
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
 - [Meeting helper](docs/meeting-helper.md): real-time answers with Ctrl+Shift+E, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [The AI using other apps](docs/desktop-apps.md): Word, File Explorer and more on your PC (Windows): per-app approval, what is never available, the banner and Stop
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 

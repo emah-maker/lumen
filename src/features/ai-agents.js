@@ -118,6 +118,19 @@ function setupAiAgents(deps) {
   // Settings → AI → "Agents in their own window don't ask" (on by default): an outside agent's calls in its own Lumen window run
   // without approval cards (agent.js autoAllows); AI-off sites, kept-off tabs and hands-off mode still apply. Off: every new site asks.
   const agentsNoAsk = () => readSettings().agentsNoAsk !== false;
+  // [external apps] Other apps (Claude Desktop, Cursor, VS Code, Claude Code) with a token and a name of their own: Settings → AI → Let other apps use
+  // Lumen (features/external-apps.js). They reach the MCP server below through its identify / onInitialize hooks and mcpCallTool's wrapper.
+  const external = (() => {
+    let real = null;
+    // (an engine session is skipped by the hooks below: the server serves an engine tag only to a live run of Lumen's own, enabled() under startMcp; keep it so)
+    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
+    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
+    ipcMain.handle('mcp:external-state', () => (real ? real.invoke.state() : { active: [], prompts: [] })); // (every window asks at start: that must not load it)
+    for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
+    if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
+    return { load, ext: () => load().ext };
+  })();
+  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i)), detach: (s) => { if (s.externalId || s.promptId) external.ext().detach(s); } };
 
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
@@ -344,7 +357,7 @@ function setupAiAgents(deps) {
   // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
   function startGrokGate() {
-    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
+    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, extraTools: runTools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
@@ -354,6 +367,10 @@ function setupAiAgents(deps) {
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
   const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : codex?.owns(session?.engine) ? codex : codex?.keepWarm?.owner(session?.engine) || warmChats.owner(session?.engine) || grokBuild?.keepWarm?.owner(session?.engine) || [...sideEngines, ...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
+  // [connectors] The connector tool (the user's connected accounts) is offered only to a run Lumen itself started and still owns: its per-run
+  // random tag (mcp config / bearer token Lumen writes into that run's own temp config) is what proves it. An outside client has no such tag,
+  // so it never sees the tool and is refused if it names it. A background task's run is left out too (nobody there to confirm a write).
+  const runTools = (session) => (session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)) ? deps.connectorTools?.() || [] : []);
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
   // own, so its MCP token file is never another chat's).
@@ -408,6 +425,7 @@ function setupAiAgents(deps) {
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
+    global.__mcpToolsFor = (session) => [...deps.tools.map((t) => t), ...(session?.engine ? runTools(session) : [])].map((t) => t.name); // what tools/list gives this session
     global.__bgEngineCount = () => bgEngines.size;
   }
 
@@ -416,7 +434,14 @@ function setupAiAgents(deps) {
   const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
   const LABEL_WAIT_MS = 150;
   const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
+  // [external apps] An app with its own token may be revoked, paused (Take over) or stopped between calls; its call carries a signal for Stop and
+  // its "ask before it acts" choice. A refusal says why.
   async function mcpCallTool(name, args, session) {
+    const call = externalApps.beginCall(session);
+    if (call.refuse) return { content: [{ type: 'text', text: call.refuse }], isError: true };
+    try { return await mcpCallToolFor(name, args, session, call); } finally { call.end(); }
+  }
+  async function mcpCallToolFor(name, args, session, call) {
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
@@ -463,7 +488,7 @@ function setupAiAgents(deps) {
       if (event.type === 'approval') mineApprovals.add(event.approvalId); else if (event.type === 'approval_done') mineApprovals.delete(event.approvalId);
       mcpEvent(event, agentRec);
     };
-    const signal = engineRun ? engineRun.signal : session.controller.signal;
+    const signal = engineRun ? engineRun.signal : call.signal ? AbortSignal.any([session.controller.signal, call.signal]) : session.controller.signal;
     const scope = engineRun && (engineRun.scope || runAgent.engineScope()); // [parallel CLI chats] the run's own scope, carried by its connection
     if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
     if (engineRun && !scope) return refuse('No message is in progress in Lumen for this call.'); // (never the tab in front: a sidebar run always brings its own scope)
@@ -472,7 +497,7 @@ function setupAiAgents(deps) {
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
       ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : owner.kind === 'antigravity' ? 'Antigravity' : owner.kind === 'codex' ? 'Codex' : 'Claude', input: args, run: scope || engineRun }
-      : { hosts: session.approvedHosts, who: session.clientName, external: true, noAsk: Boolean(agentRec) && agentsNoAsk(), input: args, run: session }; // outside agents ask, unless they work in their own window and the setting says not to
+      : { hosts: session.approvedHosts, who: session.clientName, external: true, noAsk: Boolean(agentRec) && agentsNoAsk() && !call.ask, input: args, run: session }; // outside agents ask, unless they work in their own window and the setting says not to
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     // An outside agent's own window: the tab in front THERE (not the user's, not the sidebar run's).
@@ -535,6 +560,7 @@ function setupAiAgents(deps) {
     mcpServer = require('../automation/mcp').startServer({
       userData: app.getPath('userData'),
       tools: deps.tools,
+      extraTools: runTools,
       callTool: mcpCallTool,
       // A bridge that names a run (LUMEN_ENGINE) is served only while that run is live: a stale or foreign
       // tag is refused, never treated as an outside agent.
@@ -544,7 +570,9 @@ function setupAiAgents(deps) {
       // (an editor, a terminal, a hook, another app) connects and lists Lumen's tools at start-up, most of them never to use
       // them: a window made for each popped up "randomly" and loaded the app for nothing. The window is made by the session's
       // first call that needs a tab (mcpCallTool), which pays ~1 s once.
-      onClose: (session) => { if (!session.engine) deps.agentWindows?.windows.release(session); }, // its window closes after a grace period
+      identify: (hello) => (hello.client === undefined ? null : externalApps.identify(hello)), // [external apps] an app that names itself must prove its token
+      onInitialize: (session, info) => externalApps.admit(session, info),
+      onClose: (session) => { if (!session.engine) { externalApps.detach(session); deps.agentWindows?.windows.release(session); } }, // its window closes after a grace period
     });
   }
 

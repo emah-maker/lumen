@@ -439,6 +439,8 @@ async function buildAi(card) {
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -500,6 +502,22 @@ async function buildAi(card) {
   card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
+
+  // [desktop apps] Apps the AI may always use (src/desktop/): added only from its approval card (Always); revoked here.
+  const appList = h('div', { class: 'list', id: 'ai-desktop-apps' });
+  const clearApps = h('button', { id: 'ai-desktop-apps-clear', text: 'Revoke all', onclick: async () => renderApps(await S.ai.clearDesktopApps()) });
+  const renderApps = async (apps) => {
+    apps ||= await S.ai.desktopApps();
+    clearApps.hidden = !apps.length;
+    appList.replaceChildren(...(apps.length ? apps.map(({ app, name, added }) => h('div', { class: 'item', 'data-app': app },
+      h('span', { class: 'grow', text: name, title: app }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Revoke', 'aria-label': `Revoke ${name}`, onclick: async () => renderApps(await S.ai.removeDesktopApp(app)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it uses any app.' })]));
+  };
+  card.at('ai-privacy').append(stackRow(tr('settings.ai.desktopApps', 'Apps the AI can use'), tr('settings.ai.desktopAppsDesc', 'Apps you chose Always for.'), appList,
+    h('div', { class: 'controls' }, clearApps)));
+  renderApps();
 
   // [screen context] Files on this computer the AI may always see: added only from its card ("Allow always for this file"); removed here.
   const sharedList = h('div', { class: 'list', id: 'ai-shared-files' });
@@ -699,7 +717,10 @@ async function buildAi(card) {
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
+
+  agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 
   buildAntigravity(agents, refreshModels);
 
@@ -2838,19 +2859,29 @@ function buildSystem(card) {
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
-  // [igpu] Graphics: Automatic (Light on an integrated GPU, decided once at start-up) / Full effects / Light (settings-backend.js [igpu]).
-  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Graphics'), tr('settings.graphics.desc', 'Light drops the blur behind glass surfaces and runs the new-tab effect lighter (fewer particles, 20 frames a second), which saves a lot on an integrated GPU. Full effects keeps every blur. Automatic picks Light on an integrated GPU.'),
-    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full effects')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
+  // [igpu] Visual effects (the graphicsMode key; was "Graphics"): Automatic (Light on an integrated GPU, decided once at start-up) / Full / Light (settings-backend.js [igpu]).
+  // One status line says what is on right now (with Performance mode), a Restart button when drawing is in software, and a hint on a hybrid-GPU laptop.
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Visual effects'), tr('settings.graphics.desc', 'Light removes the blur behind glass surfaces and runs the new-tab effect lighter, which saves a lot on an integrated GPU or without graphics acceleration. Automatic uses Light on an integrated GPU and in software drawing.'),
+    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
   const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
+  const gfxRestart = h('button', { class: 'primary', id: 'graphics-restart', text: tr('settings.graphics.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
+  const gfxHint = h('span', { class: 'note', id: 'graphics-hint', hidden: true });
   const showGfxNote = () => {
     const g = st.graphics;
     const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.drawing) && mode !== 'full';
     const on = mode === 'light' || (mode === 'auto' && g?.integrated);
-    const why = mode === 'auto' ? (g?.why || '') : tr('settings.graphics.chosen', 'your choice');
-    gfxNote.textContent = tr(on ? 'settings.graphics.note.light' : 'settings.graphics.note.full', on ? 'Light is on ({why}{device}).' : 'Full effects are on ({why}{device}).', { why, device: g?.device ? `: ${g.device}` : '' });
+    const perf = tr(st.performance?.active ? 'settings.graphics.status.perfOn' : 'settings.graphics.status.perfOff', st.performance?.active ? 'Performance mode is on.' : 'Performance mode is off.');
+    const effects = soft ? tr('settings.graphics.status.software', 'Right now: software drawing, Light effects, a still background and no blur. Choose Full to keep every effect.')
+      : tr(on ? 'settings.graphics.status.light' : 'settings.graphics.status.full', on ? 'Right now: Light effects{device}.' : 'Right now: Full effects.', { device: g?.device ? ` (${g.device})` : '' });
+    gfxNote.textContent = soft ? effects : `${effects} ${perf}`;
+    gfxRestart.hidden = !soft; // (a restart is what brings hardware drawing back; the next start is normal)
+    const hybrid = mode === 'auto' && on && !soft && st.platform === 'win32' && g?.discrete;
+    gfxHint.hidden = !hybrid;
+    gfxHint.textContent = hybrid ? tr('settings.graphics.hybrid', 'Your PC also has {gpu}. To use it, open Windows Settings > System > Display > Graphics, add Lumen and choose High performance.', { gpu: g.discrete }) : '';
   };
   showGfxNote();
-  gfxRow.querySelector('.text').append(gfxNote);
+  gfxRow.querySelector('.text').append(gfxNote, gfxRestart, gfxHint);
   card.append(gfxRow);
   buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
   buildSwitchTiming(card.at('advanced-more'));

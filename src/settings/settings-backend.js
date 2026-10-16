@@ -163,6 +163,9 @@ const DEFAULTS = {
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
+  aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
+  aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
+  aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   filesRemember: true, // [files] Settings > General > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
@@ -278,6 +281,7 @@ function validate(key, value) {
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
     case 'aiSharedFiles': return require('../features/shared-files').clean(value);
+    case 'aiDesktopApps': return require('../desktop/policy').clean(value);
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
@@ -370,8 +374,10 @@ function classifyGpu(devices) {
   const device = active || (real.length === 1 ? real[0] : null);
   if (!device) return { integrated: false, why: 'several GPUs, none reported as active', device: null };
   const name = device.deviceString || device.name;
-  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name };
-  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name }; // one GPU shared with the display: the same budget
+  const other = real.find((d) => d !== device && !isIntegratedGpu(d)); // a discrete card that is not the one drawing (a hybrid laptop): the Settings hint names it
+  const discrete = other ? (other.deviceString || other.name) : null;
+  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name, discrete };
+  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name, discrete: null }; // one GPU shared with the display: the same budget
   return { integrated: false, why: 'the active GPU is a discrete card', device: name };
 }
 
@@ -380,17 +386,26 @@ function createGraphics(deps) {
   const { app, readSettings, onChange } = deps;
   let detected = { integrated: false, why: 'not checked yet', device: null };
   let last = null;
+  let softSeen = deps.launchSoftware === true; // drawing is in software: hardware acceleration off at launch (the setting or --lumen-safe-gpu), or Chromium fell back / was started with --disable-gpu
+  let lastSoft = null;
   const mode = () => (GFX_MODES.includes(readSettings().graphicsMode) ? readSettings().graphicsMode : 'auto');
-  const light = () => mode() === 'light' || (mode() === 'auto' && detected.integrated);
-  const info = () => ({ mode: mode(), light: light(), integrated: detected.integrated, device: detected.device, why: detected.why });
-  const refresh = () => { const now = light(); if (now !== last) { last = now; onChange?.(info()); } };
+  // Software drawing: Automatic is Light, and the software level goes further (no backdrop blur anywhere, a still new-tab effect, the sidebar without a page snapshot,
+  // short transitions). Full effects, chosen by hand, keeps every effect even here. See renderer/prefs.css .pref-gfx-soft, newtab.html body.gfx-soft.
+  const software = () => softSeen && mode() !== 'full';
+  const light = () => mode() === 'light' || (mode() === 'auto' && (detected.integrated || softSeen)) || software();
+  const info = () => ({ mode: mode(), light: light(), software: software(), integrated: detected.integrated, device: detected.device, why: software() ? 'drawing is in software' : detected.why, drawing: softSeen, discrete: detected.discrete || null });
+  const refresh = () => { const now = light(); const soft = software(); if (now !== last || soft !== lastSoft) { last = now; lastSoft = soft; onChange?.(info()); } };
+  // Chromium's feature-status words (app.getGPUFeatureStatus): compositing or rasterization not on the GPU.
+  const softStatus = (st) => Boolean(st) && (/disabled_software|disabled_off|unavailable/i.test(String(st.gpu_compositing ?? '')) || /disabled_software|unavailable/i.test(String(st.rasterization ?? '')));
+  const markSoftware = (on = true) => { softSeen = on === true; refresh(); }; // (gpu-health.js calls this when drawing falls to software during the session)
   // Once, after the GPU process has reported.
   async function detect() {
     try { detected = classifyGpu((await app.getGPUInfo('complete')).gpuDevice); } catch { /* keep "not checked" */ }
+    try { if (softStatus(app.getGPUFeatureStatus?.())) softSeen = true; } catch { /* keep what is known */ }
     refresh();
     return detected;
   }
-  return { mode, light, info, refresh, detect, setDetected: (d) => { detected = d; refresh(); } };
+  return { mode, light, software, info, refresh, detect, markSoftware, softStatus, setDetected: (d) => { detected = d; refresh(); } };
 }
 
 const graphics = { MODES: GFX_MODES, classify: classifyGpu, isIntegrated: isIntegratedGpu, create: createGraphics };
@@ -453,7 +468,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -494,7 +509,7 @@ function create(deps) {
       background,
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
-      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()),
+      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor, wallpaperSeed(p)),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
@@ -871,6 +886,7 @@ function create(deps) {
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
+    if (key === 'aiDesktopApps') throw new Error('Apps are added from the AI\'s approval card and removed with settings:remove-desktop-app'); // [desktop apps]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
@@ -1218,7 +1234,7 @@ function create(deps) {
     handle('prefs:reset', reset);
     handle('prefs:relaunch', () => {
       if (require('../test-mode').isTest()) return false; // tests check the saved value instead
-      app.relaunch();
+      app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu') }); // (a restart from safe drawing is a normal start, as gpu:restart's)
       app.quit();
       return true;
     });

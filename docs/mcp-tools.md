@@ -6,6 +6,7 @@ A few things apply to every tool:
 
 - **The active tab.** An agent works in a Lumen window of its own, opened on its first call that needs a tab; `list_tabs` shows only that window's tabs (an empty list before it has one), and you never see or reach the user's tabs. Page tools (`read_page`, `click`, `type_text`, `find`, `batch`, `screenshot`, …) work on the tab in front in that window. Use `list_tabs` and `switch_tab` to pick another of its tabs.
 - **Element ids.** `read_page` and `find` number the page's links, buttons and fields. `click`, `type_text`, `hover`, `upload_file`, `fill_form` and `batch` (`ref`) take those numbers. They stay valid until the page changes; read again after a navigation.
+- **Other apps.** Claude Desktop, Cursor, VS Code and Claude Code can connect with a token of their own; see [Let other apps use Lumen](external-apps.md). Their calls are paused or refused after Take over, Stop or Revoke, and show a toolbar pill.
 - **Approvals.** The first time an agent acts on a site in a chat, Lumen asks you in the sidebar. Once it has read page content, opening, fetching or searching a site not yet approved asks too. See [Asking before it acts](../README.md#asking-before-it-acts). A refused call returns an error that says so.
 - **Cheaper reads.** `read_page` with `mode: "compact"` or `since_last: true`, `find` and `batch` cost far fewer tokens than a full read. See [Token-efficient tools](../README.md#token-efficient-tools-all-ais).
 

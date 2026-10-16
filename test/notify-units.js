@@ -84,7 +84,7 @@ const found = [];
     if (e.isDirectory()) { if (!/vendor|node_modules/.test(e.name)) walk(p); } else if (/\.js$/.test(e.name) && !/\.(bundle|min)\.js$/.test(e.name) && /new Notification\(/.test(fs.readFileSync(p, 'utf8'))) found.push(path.relative(root, p).replace(/\\/g, '/'));
   }
 }(path.join(root, 'src')));
-check('notifications: the only OS notification makers are main.js (chat runs) and background-runner.js (tasks, routines, watches); a new one must be added here', found.sort().join() === 'src/features/background-runner.js,src/main.js', found.join());
+check('notifications: the only OS notification makers are main.js (chat runs) background-runner.js (tasks, routines, watches) and external-apps-ipc.js (another app wants to use Lumen, or finished: quiet); a new one must be added here', found.sort().join() === 'src/features/background-runner.js,src/features/external-apps-ipc.js,src/main.js', found.join());
 
 const runner = read('src', 'features', 'background-runner.js');
 check('tasks, routines and watches: title and body both go through notifyText', /new Notification\(\{ title: notifyText\(task\.title, \d+\), body: notifyText\(text, \d+\)/.test(runner), '');

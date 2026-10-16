@@ -2844,7 +2844,14 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
+  // connected (and as whom, and whether one click can start it), and one read-only Gmail API request with its token. Nothing else leaves here.
+  function gmailAuthState() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
+  }
+  const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
