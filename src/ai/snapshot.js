@@ -315,7 +315,7 @@ const READ_PAGE_EXTRA = {
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
-  max_width: { type: 'integer', description: 'Default 1024, max 1600.' },
+  max_width: { type: 'integer', description: 'Default 720, max 1600.' },
   quality: { type: 'integer', description: '30-90, default 60.' },
   region: {
     type: 'object',
@@ -535,7 +535,7 @@ ${diff}`;
 }
 
 async function screenshot(agent, wc, input, h) {
-  const maxWidth = Math.min(Math.max(Number(input.max_width) || 1024, 320), 1600);
+  const maxWidth = Math.min(Math.max(Number(input.max_width) || 720, 320), 1600);
   const quality = Math.min(Math.max(Number(input.quality) || 60, 30), 90);
   if (!input.region) {
     const shot = await captureJpeg(wc, { maxWidth, quality });

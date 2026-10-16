@@ -87,7 +87,7 @@ const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
 
   // Screenshots: smaller by default, region crop.
   const shot = JSON.parse(await run('screenshot', {}));
-  check('screenshot defaults to 1024 px', shot[1].text.includes('1024x'), shot[1].text);
+  check('screenshot defaults to 720 px (smaller captures keep the main process responsive: test/mcp-perf.js)', shot[1].text.includes('720x'), shot[1].text);
   const crop = JSON.parse(await run('screenshot', { region: { x: 0, y: 0, width: 200, height: 100 } }));
   check('screenshot region crop is small', crop[0].image < shot[0].image / 2 && crop[1].text.includes('Region'), `${crop[0].image} vs ${shot[0].image}`);
   const bad = await run('screenshot', { region: { x: 0 } });
