@@ -22,11 +22,11 @@ const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLower
 (async () => {
   // ---- 1. leaveInstallDir ----
   const winExe = 'C:\\Users\\u\\AppData\\Local\\Programs\\Lumen\\Lumen.exe';
-  const winInstall = path.dirname(winExe);
+  const winInstall = path.win32.dirname(winExe);
   const run = (cwd, o = {}) => { const moves = []; const to = U.leaveInstallDir({ cwd: () => cwd, chdir: (d) => moves.push(d), execPath: winExe, platform: 'win32', home: () => 'C:\\Users\\u', ...o }); return { to, moves }; };
   let r = run(winInstall);
   check('start-up chdir: a cwd that is the install folder moves to the home folder', r.to === 'C:\\Users\\u' && r.moves.length === 1, JSON.stringify(r));
-  r = run(path.join(winInstall, 'resources', 'app'));
+  r = run(path.win32.join(winInstall, 'resources', 'app'));
   check('start-up chdir: a cwd inside the install folder (a subfolder) moves too', r.moves.length === 1);
   r = run(winInstall.toUpperCase() + '\\');
   check('start-up chdir: case and a trailing slash do not hide the install folder (Windows)', r.moves.length === 1);
@@ -36,7 +36,7 @@ const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLower
   check('start-up chdir: a sibling folder that only shares the name prefix is not the install', r.moves.length === 0);
   r = run(winInstall, { userData: 'C:\\Users\\u\\AppData\\Roaming\\Lumen' });
   check('start-up chdir: userData is preferred when given', r.to === 'C:\\Users\\u\\AppData\\Roaming\\Lumen');
-  r = run(winInstall, { userData: path.join(winInstall, 'data') });
+  r = run(winInstall, { userData: path.win32.join(winInstall, 'data') });
   check('start-up chdir: a target inside the install is never chosen (falls to home)', r.to === 'C:\\Users\\u');
   const wrong = []; const t = U.leaveInstallDir({ cwd: () => winInstall, chdir: (d) => { wrong.push(d); if (wrong.length === 1) throw new Error('EPERM'); }, execPath: winExe, platform: 'win32', home: () => 'C:\\Users\\u', userData: 'C:\\gone' });
   check('start-up chdir: a target that cannot be entered falls through to the next', wrong.length === 2 && t === 'C:\\Users\\u', JSON.stringify(wrong));
@@ -52,7 +52,7 @@ const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLower
   const linuxMoves = [];
   U.leaveInstallDir({ cwd: () => '/opt/Lumen', chdir: (d) => linuxMoves.push(d), execPath: '/opt/Lumen/lumen', platform: 'linux', home: () => '/home/u' });
   check('start-up chdir: Linux, the install folder is the exe\'s folder', linuxMoves.length === 1);
-  check('an unpackaged run (Electron\'s own exe) does not treat the checkout as the install', !U.insideInstall(path.join(__dirname, '..'), 'C:\\x\\node_modules\\electron\\dist\\electron.exe', 'win32'));
+  check('an unpackaged run (Electron\'s own exe) does not treat the checkout as the install', !U.insideInstall('C:\\Users\\u\\lumen', 'C:\\x\\node_modules\\electron\\dist\\electron.exe', 'win32'));
 
   // ---- 2. main.js does it first ----
   const main = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
@@ -61,27 +61,23 @@ const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLower
   check('main.js leaves the install folder before the profile guard, the launcher, the instance lock or anything else', at > 0 && at < firstUse, `${at} < ${firstUse}`);
   check('main.js adds no new module for it (it uses ai/cli-utils.js, which it loads anyway)', /require\('\.\/ai\/cli-utils'\)\.leaveInstallDir\(\)/.test(main));
 
-  // ---- 3. the spawn helper ----
-  const here = process.cwd();
-  const exeDir = path.dirname(process.execPath);
-  const cp = require('child_process');
-  const real = { spawn: cp.spawn };
-  const seen = [];
-  cp.spawn = (file, args, o) => { seen.push(o); return {}; };
-  try {
-    process.chdir(exeDir); // this process "sits in its install folder"
-    U.spawn('x', []);
-    U.spawn('x', [], { cwd: path.join(exeDir, 'resources') });
-    process.chdir(os.tmpdir());
-    U.spawn('x', []);
-    U.spawn('x', [], { cwd: 'C:\\somewhere' });
-    U.spawn('x', [], { cwd: exeDir });
-  } finally { cp.spawn = real.spawn; process.chdir(here); }
-  check('spawn helper: no cwd given while in the install folder -> the home folder', same(seen[0].cwd, os.homedir()), seen[0].cwd);
-  check('spawn helper: a cwd given inside the install folder -> the home folder', same(seen[1].cwd, os.homedir()), seen[1].cwd);
-  check('spawn helper: no cwd given from somewhere else -> still inherits (nothing is changed for a development run)', seen[2].cwd === undefined);
-  check('spawn helper: a cwd elsewhere is kept as given', seen[3].cwd === 'C:\\somewhere');
-  check('spawn helper: the install folder itself as cwd -> the home folder', same(seen[4].cwd, os.homedir()), seen[4].cwd);
+  // ---- 3. the spawn helper (each layout read with its own platform's path rules, whatever the host) ----
+  const home = os.homedir();
+  const layouts = [
+    ['win32', 'C:\\Users\\u\\AppData\\Local\\Programs\\Lumen\\Lumen.exe', 'C:\\Users\\u\\AppData\\Local\\Programs\\Lumen', 'C:\\Users\\u\\AppData\\Local\\Programs\\Lumen\\resources', 'C:\\Users\\u\\Documents'],
+    ['linux', '/opt/Lumen/lumen', '/opt/Lumen', '/opt/Lumen/resources', '/home/u/work'],
+    ['darwin', '/Applications/Lumen.app/Contents/MacOS/Lumen', '/Applications/Lumen.app/Contents/MacOS', '/Applications/Lumen.app/Contents/Resources', '/Users/u/work'],
+  ];
+  for (const [platform, execPath, installDir, inside, elsewhere] of layouts) {
+    const H = (opts, cwd) => U.hiddenOptions(opts, { execPath, platform, cwd });
+    check(`spawn helper (${platform}): no cwd given while in the install folder -> the home folder`, H({}, installDir).cwd === home, H({}, installDir).cwd);
+    check(`spawn helper (${platform}): a cwd given inside the install folder -> the home folder`, H({ cwd: inside }, elsewhere).cwd === home, H({ cwd: inside }, elsewhere).cwd);
+    check(`spawn helper (${platform}): no cwd given from somewhere else -> still inherits (nothing is changed for a development run)`, H({}, elsewhere).cwd === undefined);
+    check(`spawn helper (${platform}): a cwd elsewhere is kept as given`, H({ cwd: elsewhere }, installDir).cwd === elsewhere);
+    check(`spawn helper (${platform}): the install folder itself as cwd -> the home folder`, H({ cwd: installDir }, elsewhere).cwd === home);
+  }
+  const hs = U.hiddenOptions({}, { execPath: layouts[0][1], platform: 'win32', cwd: layouts[0][2] });
+  check('spawn helper: it still hides the window, uses no shell and never inherits stdio', hs.windowsHide === true && hs.shell === false && hs.stdio === 'pipe');
 
   // ---- 4. the direct spawns (outside the helper) pass a cwd ----
   const code = (f) => fs.readFileSync(path.join(SRC, f), 'utf8').split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');

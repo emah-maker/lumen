@@ -25,13 +25,15 @@ const real = () => cp || (cp = require('child_process'));
 // main.js: every child, shell.openExternal and shell.openPath then inherit a neutral cwd), and no spawn below keeps one inside it.
 // The install folder is the exe's folder, or the whole .app bundle on macOS. (An unpackaged run's exe is Electron's own, so the checkout
 // the developer stands in is not "inside the install".)
+// (Paths are read with the rules of the platform they belong to, not the host's: path.win32 for 'win32', path.posix otherwise.)
+const pathFor = (platform) => (platform === 'win32' ? require('path').win32 : require('path').posix);
 function installRoot(execPath = process.execPath, platform = process.platform) {
   const p = String(execPath || '');
   if (platform === 'darwin') { const m = /^(.*?\.app)(?:[\\/]|$)/.exec(p); if (m) return m[1]; }
-  return p ? require('path').dirname(p) : '';
+  return p ? pathFor(platform).dirname(p) : '';
 }
 function insideInstall(dir, execPath = process.execPath, platform = process.platform) {
-  const path = require('path');
+  const path = pathFor(platform);
   const root = installRoot(execPath, platform);
   if (!dir || !root) return false;
   const fold = (x) => { const r = path.resolve(String(x)).replace(/[\\/]+$/, ''); return platform === 'win32' || platform === 'darwin' ? r.toLowerCase() : r; };
@@ -51,10 +53,12 @@ function leaveInstallDir({ cwd = () => process.cwd(), chdir = (d) => process.chd
 }
 
 // Options every spawn gets. The caller's own values win for cwd/env/etc., but not for these four, and never a cwd inside the install.
-function hiddenOptions(options) {
+// (ctx: { execPath, platform, cwd } stand in for this process's, for tests.)
+function hiddenOptions(options, ctx = {}) {
   const o = { ...(options || {}) };
-  if (o.cwd === undefined) { let here = ''; try { here = process.cwd(); } catch { /* none */ } if (insideInstall(here)) o.cwd = require('os').homedir(); }
-  else if (insideInstall(o.cwd)) o.cwd = require('os').homedir();
+  const execPath = ctx.execPath ?? process.execPath; const platform = ctx.platform ?? process.platform;
+  if (o.cwd === undefined) { let here = ctx.cwd ?? ''; if (ctx.cwd === undefined) { try { here = process.cwd(); } catch { /* none */ } } if (insideInstall(here, execPath, platform)) o.cwd = require('os').homedir(); }
+  else if (insideInstall(o.cwd, execPath, platform)) o.cwd = require('os').homedir();
   o.windowsHide = true;
   o.shell = false;
   if (o.stdio === undefined) o.stdio = 'pipe';
