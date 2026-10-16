@@ -6,7 +6,7 @@
 //   - what the sessions leave behind once they have closed (window grace period included)
 //   - processes per session (bridge included)
 //   - per-call latency (p50, p95 per tool)
-//   - the longest main-process stall during the calls (a 1 ms timer chain in main; gap = how late a tick ran)
+//   - the longest main-process stall during the calls (a setImmediate chain in main; gap = how long the event loop was away from it)
 //   - payload sizes (read_page text, screenshot base64)
 // STRICT: the bounds below are set from the measured values with margin and are never to be loosened. If this is noisy, fix the
 // measurement. LUMEN_MCP_PERF_REPORT=<file> writes the measurements as JSON; LUMEN_MCP_PERF_MEASURE=1 only measures (no bounds).
@@ -136,7 +136,9 @@ function startAgent({ env, clientName }) {
     // The stall probe: a 1 ms timer chain in main; every tick records how late it ran.
     await app.evaluate(() => {
       const p = global.__mcpGap = { max: 0, list: [], last: Date.now(), over: 0, on: false, timer: null };
-      const tick = () => { const now = Date.now(); const gap = now - p.last - 1; if (p.on) { if (gap > p.max) p.max = gap; if (gap > 20) { p.over++; p.list.push([now, gap]); } } p.last = now; p.timer = setTimeout(tick, 1); };
+      // A setImmediate chain, not a 1 ms timer: on Windows a timer fires on a 15.6 ms clock tick when nothing else asks for finer, so an idle main
+      // process read as a 14 ms gap and every real stall came out about 15 ms too long. gap = how long the event loop was away from this chain.
+      const tick = () => { const now = performance.timeOrigin + performance.now(); const gap = Math.round((now - p.last) * 10) / 10; if (p.on) { if (gap > p.max) p.max = gap; if (gap > 20) { p.over++; p.list.push([Math.round(now), gap]); } } p.last = now; p.timer = setImmediate(tick); };
       tick();
     });
     const gap = (on) => app.evaluate((_e, flag) => { const p = global.__mcpGap; if (flag === 'read') { const out = { max: p.max, over: p.over, list: p.list }; p.max = 0; p.over = 0; p.list = []; return out; } p.on = flag; p.max = 0; p.over = 0; p.last = Date.now(); return null; }, on);
