@@ -107,7 +107,8 @@ const r = kid(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], {
 process.stdout.write(JSON.stringify({ own: process.cwd(), kid: String(r.stdout || '') }));
 `);
     const go = (mode) => { const o = spawnSync(exe, [probe, mode], { cwd: install, encoding: 'utf8', windowsHide: true, env: { ...process.env } }); try { return JSON.parse(o.stdout); } catch { return { err: `${o.stdout} ${o.stderr} ${o.error}` }; } };
-    const inInstall = (d) => d && (same(d, install) || path.resolve(d).toLowerCase().startsWith(path.resolve(install).toLowerCase() + path.sep));
+    const real = (d) => { try { return fs.realpathSync.native(d); } catch { return path.resolve(d); } }; // macOS: the temp folder is /var/…, which processes report as /private/var/…
+    const inInstall = (d) => d && (same(real(d), real(install)) || real(d).toLowerCase().startsWith(real(install).toLowerCase() + path.sep));
     const chdirRun = go('chdir');
     check('real process in a temp install: leaveInstallDir moves it, and a plain child_process child inherits the new cwd', chdirRun.own && !inInstall(chdirRun.own) && !inInstall(chdirRun.kid), JSON.stringify(chdirRun));
     const helperRun = go('helper');

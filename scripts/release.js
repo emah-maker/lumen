@@ -77,6 +77,7 @@ function runStage(wt, stage, logFile, timeoutMs) {
   return new Promise((resolve) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-rel-'));
     const env = { ...process.env, LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_TEST: '1', TEMP: tmp, TMP: tmp, TMPDIR: tmp, CLAUDE_BROWSER_PROFILE: path.join(tmp, 'profile') };
+    fs.mkdirSync(path.dirname(logFile), { recursive: true }); // (the logs folder is in TEMP, which a cleaner can empty while the lock is awaited)
     const fd = fs.openSync(logFile, 'a');
     fs.writeSync(fd, `\n=== ${new Date().toISOString()} ${stage.name}: ${stage.cmd} ${stage.args.join(' ')}\n`);
     const t0 = Date.now();
