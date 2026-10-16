@@ -65,6 +65,8 @@ module.exports = [
   { files: ['src/renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', resumeLive: 'readonly', shownChatId: 'writable' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },
+  // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
+  { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
     files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],

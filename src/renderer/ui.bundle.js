@@ -9735,22 +9735,21 @@ let snapshot = null;
 let freezeToken = 0;
 let earlyFreeze = null; // a snapshot started on pointerdown
 
-// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers.
+// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers. Async: only the 2 px strip is decoded, off the
+// main thread (drawing the whole decoded snapshot and reading it back cost ~9 ms inside the frame that shows a freeze).
 function edgeColor(img) {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 24;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); // (a CPU canvas: reading 24 pixels back from a GPU one stalled the UI for 40 ms or more, the first time)
-    ctx.drawImage(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, 0, 0, 1, 24);
+  return createImageBitmap(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, { resizeWidth: 1, resizeHeight: 24, resizeQuality: 'low' }).then((bitmap) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.canvas.width = 1;
+    ctx.canvas.height = 24;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
     const d = ctx.getImageData(0, 0, 1, 24).data;
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
     const n = d.length / 4;
     return `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
-  } catch {
-    return '';
-  }
+  }).catch(() => '');
 }
 
 // fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
@@ -9780,8 +9779,7 @@ async function freezePage() {
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  lastSnapshotEdge = edgeColor(img);
-  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
+  edgeColor(img).then((colour) => { if (!colour || img !== snapshot) return; lastSnapshotEdge = colour; viewport.style.setProperty('--snapshot-edge', colour); });
   viewport.append(img);
   // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
   // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
@@ -10154,6 +10152,30 @@ window.browser.onAttachImage?.(async (base64) => {
     await addFiles([new File([bytes], 'screenshot.png', { type: 'image/png' })]);
     prompt.focus();
   } catch { /* an unreadable image is skipped, as with a pasted one */ }
+});
+
+// [files] The quick picker (Ctrl+Shift+F; files-picker.js and .css, 19 KB) is loaded in an idle moment after start, or by the first key that
+// asks for it, instead of being part of the bundle every window parses: the key opens it once it is there.
+let filesPickerLoad = null;
+function loadFilesPicker() {
+  filesPickerLoad ||= new Promise((resolve) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
+    document.head.append(css);
+    document.body.append(js);
+  });
+  return filesPickerLoad;
+}
+window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
+setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
+
+// [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
+window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
+  showSidebar(true);
+  try {
+    await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);
+    prompt.focus();
+  } catch { /* an unreadable file is skipped, as with a dropped one */ }
 });
 
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------

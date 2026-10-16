@@ -26,12 +26,13 @@ const KINDS = {
   countdown: ['Countdown', 'Days until a date'],
   timer: ['Timer', 'A timer or Pomodoro focus and break'],
   aistatus: ['AI status', 'Which AIs are ready, working or at a limit'],
+  files: ['Files', 'Pinned and recent files, opened with a click'],
   custom: ['Custom', 'Your own card from a JSON recipe'],
   muse: ['Muse', 'Ask Meta’s Muse model with a saved prompt'],
   embed: ['Web page', 'Any page that allows being shown in a frame'],
 };
 // The order the Add widget picker lists them in: everyday first, accounts and keys after.
-const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
+const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'files', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
 
 const kindName = (type) => (KINDS[type] ? KINDS[type][0] : String(type || 'Widget'));
 const kindHint = (type) => (KINDS[type] ? KINDS[type][1] : 'Set up in Settings');
@@ -154,6 +155,7 @@ function widgetSummary(w, ctx = {}) {
       case 'countdown': { const c = w.cd || {}; parts.push([c.date, c.time].filter(Boolean).join(' ') || 'No date yet'); break; }
       case 'timer': { const t = w.tm || {}; parts.push(t.pomodoro === false ? `${t.work || 25} minutes` : `${t.work || 25} min focus · ${t.rest || 5} min break`); break; }
       case 'aistatus': parts.push('Ready, working and limits'); break;
+      case 'files': parts.push('Pinned and recent files'); break;
       case 'applemusic': parts.push(w.mode === 'web' ? 'Web player' : 'Status card'); if (w.mode !== 'web' && w.art === false) parts.push('no album art'); break;
       case 'custom': { const r = w.recipe || {}; parts.push(host(r.url) || 'No recipe yet'); if (r.every) parts.push(`every ${r.every} min`); break; }
       case 'muse': {

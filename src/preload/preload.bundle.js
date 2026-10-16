@@ -537,6 +537,7 @@ contextBridge.exposeInMainWorld('browser', {
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
+  onOpenFilesPicker: on('files:picker'),
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).
@@ -737,6 +738,10 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
+contextBridge.exposeInMainWorld('lumenFiles', {
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
+  open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
+});
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).
 contextBridge.exposeInMainWorld('macrosApi', {

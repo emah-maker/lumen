@@ -283,6 +283,7 @@ const UI_ONLY_IPC = new Set([
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
+  'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
@@ -987,6 +988,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
+  session.defaultSession.registerPreloadScript({ id: 'lumen-files-newtab', type: 'frame', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }); // [files] the new-tab page's Files widget (features/files.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-newtab-ai', type: 'frame', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }); // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
   // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
@@ -1513,6 +1515,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: reopenLastClosed },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+        { label: t('menu.findFiles'), accelerator: 'CmdOrCtrl+Shift+F', click: openFilesPicker },
         ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
@@ -1767,6 +1770,17 @@ ipcMain.on('downloads:drag', (event, id) => { if (fromDownloadsPanel(event) && t
 ipcMain.on('downloads:clear', (event) => { if (fromDownloadsPanel(event)) downloads.clearFinished(); });
 ipcMain.on('downloads:folder', (event) => { if (fromDownloadsPanel(event)) { downloads.openFolder(); hideDownloadsPanel(); } });
 ipcMain.on('downloads:close', (event) => { if (fromDownloadsPanel(event)) hideDownloadsPanel(); });
+// Right-click on a row of the panel: Open, Show in folder and Pin to Files for a finished download (features/downloads.js act). [files]
+ipcMain.on('downloads:row-menu', (event, id) => {
+  const d = fromDownloadsPanel(event) && typeof id === 'number' ? downloads.list.find((x) => x.id === id) : null;
+  if (!d || d.state !== 'completed') return;
+  Menu.buildFromTemplate([
+    { label: t('dlpage.action.open'), click: () => downloads.act(id, 'open') },
+    { label: t('dlpage.action.show'), click: () => downloads.act(id, 'show') },
+    { type: 'separator' },
+    { label: t('menu.pinToFiles'), click: () => downloads.act(id, 'pin') },
+  ]).popup({ window: BrowserWindow.fromWebContents(event.sender) || win });
+});
 ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event) && Number.isFinite(height)) placeDownloadsPanel(Math.max(120, Math.min(height, 640))); });
 
 // ---------- tabs ----------
@@ -2529,6 +2543,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       return;
     }
     if (!tab.isolated) recordVisit(pdfViewer.pdfUrlOf(url) || url, wc.getTitle()); // research pages stay out of the user's History (a PDF in Lumen's viewer: its own address)
+    if (!tab.isolated) noteFileTab(tab, url); // [files] a local file opened in a tab goes on the Files list
     tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
@@ -4109,6 +4124,11 @@ function openTabSearch() {
   ui()?.focus();
   ui()?.send('tabsearch:open');
 }
+// [files] The quick file picker (renderer/files-picker.js): pinned and recent files, and what is in pinned folders.
+function openFilesPicker() {
+  ui()?.focus();
+  ui()?.send('files:picker');
+}
 function reopenClosed(index, url) {
   if (!Number.isInteger(index) || closedTabs[index] !== url) return false; // the list changed meanwhile
   closedTabs.splice(index, 1);
@@ -4119,6 +4139,14 @@ function reopenClosed(index, url) {
 
 // The tab strip's right-click menu, in Chrome's order. Close Other Tabs / Close Tabs to the Right
 // leave pinned tabs alone, as Chrome does.
+// [files] "Pin to Files" on a tab that shows a local file (a PDF, deck, email or file: page): its path goes on the new-tab page's Files widget.
+function pinToFilesItem(url) {
+  const address = fileTabs.addressOf(url);
+  if (!address.startsWith('file:')) return [];
+  let file;
+  try { file = require('url').fileURLToPath(address); } catch { return []; }
+  return [{ label: t('menu.pinToFiles'), click: () => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); } }];
+}
 function tabMenuTemplate(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return null;
@@ -4159,6 +4187,7 @@ function tabMenuTemplate(id) {
     ...moveWindowItems(id),
     { type: 'separator' },
     { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
+    ...pinToFilesItem(url), // [files] a file tab: Pin to Files
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { type: 'separator' },
@@ -4693,6 +4722,8 @@ const downloads = createDownloads({
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
   onChange: () => managers?.pushDownloads(),
+  onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
+  onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
   // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
   openInstead: (item, contents) => {
@@ -5002,6 +5033,7 @@ function handleShortcut(event, input) {
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') reopenLastClosed();
   else if (mod && input.shift && key === 'a') openTabSearch();
+  else if (mod && input.shift && !input.alt && key === 'f') openFilesPicker(); // (before Find: Ctrl+F is Find in page, Ctrl+Shift+F is the file picker)
   else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
   else if (mod && input.shift && !input.alt && key === 'w') closeCurrentWindow();
@@ -6131,6 +6163,7 @@ function macMenu() {
         { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: pv('reopenTab', reopenLastClosed) },
         normal({ label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch }),
         normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
+        normal({ label: t('menu.findFiles'), ...shown('Cmd+Shift+F'), click: openFilesPicker }),
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
@@ -7604,6 +7637,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow && !TEST) seedFirstRunWidgets(); // a new profile's new-tab page starts with the Files card (an existing profile's page is left as it is)
     if (firstWindow && crashRecovery.pending()) setTimeout(() => { offerCrashRestore().catch((err) => console.error('[lumen] crash recovery:', err.message)); }, 600); // the last run crashed and the startup setting wouldn't bring its tabs back
     if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
   }
@@ -8159,6 +8193,8 @@ const agent = new Agent({
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
+  homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/files-ai.js)
+  findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
@@ -8596,6 +8632,15 @@ const widgets = createWidgets({
 aiStatusSoon = widgets.aiStatusSoon;
 scheduler.every('ai-status', 15e3, () => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, { whenHidden: 60e3 }); // (runs at once when a window is back) // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
+// A profile that had no settings file when Lumen started (a fresh install) and has no cards yet gets the Files card: the new-tab page is not empty
+// the first time, and Files has a place to start from. Only the first launch (the settings file exists from then on); tests do not call it
+// unless they ask (global.__seedFirstRunWidgets), so the default layout they assume stays empty.
+function seedFirstRunWidgets({ force = false } = {}) {
+  if (!force && settingsFileExisted !== false) return Promise.resolve(false);
+  if ((readSettings().homeWidgets || []).length) return Promise.resolve(false);
+  return widgets.save({ type: 'files', title: t('newtab.edit.type.files') }).then(() => true).catch(() => false);
+}
+if (TEST) global.__seedFirstRunWidgets = seedFirstRunWidgets;
 
 // [widgets] Gmail through the Google sign-in in Lumen (features/gmail-atom.js): one GET of an account's inbox Atom feed,
 // read with the normal session's cookies. Only https://mail.google.com/mail/u/N/feed/atom (checked again here), no
@@ -8993,6 +9038,7 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
   freezeSeq.set(rec, seq);
   try {
     const image = await wc.capturePage();
+    await new Promise((r) => setImmediate(r)); // (the capture's own hand-over to main is a task of its own; the work on it starts in the next one)
     if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
     // The live view stays where it is until the UI has the snapshot on screen (view:frozen below). Hiding it here, before the image
     // had been decoded and painted, left the page area blank for a few frames at the start of every sidebar open and close.
@@ -9001,10 +9047,11 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
-    return hang.mark('freeze:encode', () => { // [hang recorder] the part after the await, where a block would be
-      const shot = target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image;
-      return shot.toJPEG(snapshotSizer.JPEG_QUALITY);
-    });
+    // [hang recorder] In two bands, a turn of the event loop between them (features/snapshot-size.js): the whole resize is ~9 ms of main.
+    const shot = target ? await snapshotSizer.resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick: () => new Promise((r) => setImmediate(r)), mark: hang.mark }) : image;
+    await new Promise((r) => setImmediate(r)); // (the resize and the JPEG encode are each ~5 ms of main: as two tasks, input and frames get a turn between them)
+    if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // (thawed in that turn)
+    return hang.mark('freeze:encode', () => shot.toJPEG(snapshotSizer.JPEG_QUALITY));
   } catch {
     return null;
   }
@@ -9014,7 +9061,17 @@ ipcMain.handle('view:warm', async () => {
   if (graphicsMode.software()) return false; // [software mode] no capture to warm up
   const wc = activeTab()?.webContents;
   if (!wc) return false;
-  try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one
+  try {
+    const image = await wc.capturePage(); // full size: the first full readback is the slow one
+    // The first resize, bitmap copy and JPEG encode of a capture this size are cold (about twice a warm one): done now, a task each, so the first
+    // freeze a user sees (the Ctrl+Shift+F picker, the sidebar) is as short as the rest.
+    const { width, height } = image.getSize();
+    const target = { width: Math.max(64, Math.round(width * 0.66)), height: Math.max(64, Math.round(height * 0.66)) };
+    const tick = () => new Promise((r) => setImmediate(r));
+    const small = await snapshotSizer.resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick });
+    await tick();
+    small.toJPEG(snapshotSizer.JPEG_QUALITY);
+  } catch {}
   return true;
 });
 ipcMain.on('view:frozen', () => { // the snapshot is painted in the UI under the live view: now the view can go
@@ -9039,6 +9096,107 @@ ipcMain.on('chat:full', (_e, on) => {
   chatFullTab = on ? activeId : null;
   layout();
 });
+// ---------- [files] pinned and recent files (features/files.js; loaded on first use) ----------
+// The browser UI (files:*, gated by UI_ONLY_IPC), Settings (settings:files-*, gated by PRIVILEGED_IPC) and the new-tab page's own preload
+// (newtab-files:*, checked here: it must be a tab's top frame showing renderer/newtab.html) call the same functions.
+let filesRt = null;
+const insidePath = (dir, p) => { const rel = path.relative(dir, p); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
+// A local file's address in a tab: a PDF, email or deck in Lumen's own viewer, anything else as the file itself (as File > Open does).
+function fileTabUrl(file) {
+  const href = pathToFileURL(file).href;
+  if (/\.pdf$/i.test(file)) return pdfViewer.viewerUrl(href);
+  if (emlViewer.shouldOpenInPlace({ url: href, filename: file })) return emlViewer.viewerUrl(href);
+  if (slidesViewer.shouldOpenInPlace({ url: href, filename: file })) return slidesViewer.viewerUrl(href);
+  return href;
+}
+const filesShell = (name, p) => (TEST && global.__filesShell ? global.__filesShell(name, p) : name === 'show' ? shell.showItemInFolder(p) : shell.openPath(p)); // tests do not start the OS's programs
+function filesBroadcast() { // the list changed: the UI, every new-tab page and Settings look again
+  for (const rec of winRecs) {
+    const live = rec === curRec ? { win, tabs } : rec;
+    if (!live.win || live.win.isDestroyed()) continue;
+    try { live.win.webContents.send('files:changed'); } catch { /* closing */ }
+    for (const t of live.tabs) {
+      const wc = t.view?.webContents;
+      if (!wc || wc.isDestroyed()) continue;
+      const url = wc.getURL();
+      if (isNewTab(url)) wc.send('newtab-files:changed');
+      else if (t.settings) wc.send('settings:files-changed');
+    }
+  }
+}
+const filesApi = () => (filesRt ||= require('./features/files').create({
+  file: path.join(app.getPath('userData'), 'files.json'),
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'), // encrypted like the chats (the OS keychain)
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+  remember: () => readSettings().filesRemember !== false, // Settings > General > Files > Remember files I open
+  ignore: (p) => insidePath(app.getPath('userData'), p) || insidePath(__dirname, p), // Lumen's own profile and pages are never "files the user opened"
+  openFile: (p) => { openTab(fileTabUrl(p)); focusWindow(); },
+  openPath: (p) => filesShell('open', p),
+  showItem: (p) => filesShell('show', p),
+  pick: async (kind) => {
+    if (TEST && global.__filesPick) return global.__filesPick(kind); // tests answer for the OS dialog
+    const owner = win && !win.isDestroyed() ? win : undefined;
+    const picked = await electronDialog.showOpenDialog(owner, { title: t(kind === 'folder' ? 'files.pickFolder' : 'files.pickFile'), properties: [kind === 'folder' ? 'openDirectory' : 'openFile'] });
+    return picked.canceled ? null : picked.filePaths[0];
+  },
+  send: (channel, payload) => { ui()?.send(channel, payload); },
+  broadcast: filesBroadcast,
+  // The picker's "Search Documents, Desktop and Downloads" (a click by the user, so no AI-access setting): these folders when they exist,
+  // minus what the AI's file access keeps out of reach too (credentials folders, Lumen's own profile).
+  scanRoots: () => {
+    const home = TEST && global.__homeDir ? global.__homeDir : null; // (tests give a throwaway home, as for the AI's folder lookups)
+    const opts = { profile: app.getPath('userData'), ...(home ? { home } : {}) };
+    const deviceAccessMod = require('./features/device-access');
+    const roots = [];
+    for (const name of ['documents', 'desktop', 'downloads']) {
+      if (home) { roots.push(path.join(home, name[0].toUpperCase() + name.slice(1))); continue; }
+      try { roots.push(app.getPath(name)); } catch { /* this system has no such folder */ }
+    }
+    return { roots, blocked: (p) => Boolean(deviceAccessMod.blockedReason(p, opts)) };
+  },
+}));
+if (TEST) Object.defineProperty(global, '__files', { get: filesApi, configurable: true });
+// A file tab, viewer or download opened a local file: remembered (Settings > General > Files > Remember files I open turns this off). Loads the
+// feature only for a file: address, so ordinary browsing never touches it.
+function noteFileTab(tab, url) {
+  if (typeof url !== 'string' || !(url.startsWith('file:') || url.startsWith('lumen-pdf:'))) return;
+  const address = fileTabs.addressOf(url);
+  if (!address.startsWith('file:')) return;
+  let file;
+  try { file = require('url').fileURLToPath(address); } catch { return; }
+  filesApi().note(file, { source: manners.isAiTab(tab) ? 'ai' : 'tab' }).catch(() => {});
+}
+// Start-up: with a list on disk, the pinned folders are indexed a little after the window is up (never during start-up itself).
+setTimeout(() => { fs.promises.access(path.join(app.getPath('userData'), 'files.json')).then(() => filesApi().load()).catch(() => {}); }, 12000).unref?.();
+app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* nothing pending */ } });
+{
+  // (the same names as files.js OPS / channelFor, spelled here so this file need not load it at start-up)
+  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'];
+  const CHANNELS = { ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`), newtab: (op) => `newtab-files:${op}`, settings: (op) => `settings:files-${op}` };
+  const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender));
+  for (const [kind, name] of Object.entries(CHANNELS)) {
+    for (const op of OPS) {
+      ipcMain.handle(name(op), (event, ...args) => {
+        if (kind === 'newtab' && !newTabSender(event) && !syntheticTestEvent(event)) return null;
+        if (kind === 'newtab' && op === 'pin' && args[0]?.path) args[0] = { pick: args[0].pick }; // (the new-tab page names no path: it only opens the picker)
+        return filesApi()[op](...args);
+      });
+    }
+  }
+  // The Files card's own strings (locales/en.json files.card.*, widgets.files.*), for the new-tab page, which has no string table of its own.
+  ipcMain.on('newtab-files:strings', (event) => {
+    const mine = (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender))) || syntheticTestEvent(event);
+    const all = i18n().strings;
+    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.')).map((k) => [k, all[k]])) : {};
+  });
+  // The card's "Turn on" (when Remember files I open is off): this one setting, and nothing else, can be switched on from the new-tab page.
+  ipcMain.handle('newtab-files:remember', (event) => {
+    if (!newTabSender(event) && !syntheticTestEvent(event)) return false;
+    if (readSettings().filesRemember === false) { writeSettings({ ...readSettings(), filesRemember: true }); filesBroadcast(); }
+    return true;
+  });
+}
 // Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
 // ---------- [newtab-images] the new-tab page's Ask AI: text and pictures reach the full-page chat through these calls, never the page's URL ----------
 // Only a tab's top frame showing renderer/newtab.html may call them (the page's own preload, preload/newtab-preload.js, exposes them).

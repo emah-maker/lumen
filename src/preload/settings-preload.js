@@ -51,6 +51,23 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       spotifyCancel: call('spotify:cancel'),
       spotifyDisconnect: call('spotify:disconnect'),
     },
+    // [files] Privacy and security → Files (features/files.js)
+    files: {
+      list: call('settings:files-list'),
+      pin: call('settings:files-pin'),
+      unpin: call('settings:files-unpin'),
+      remove: call('settings:files-remove'),
+      clear: call('settings:files-clear'),
+      open: call('settings:files-open'),
+      show: call('settings:files-show'),
+      find: call('settings:files-find'),
+      relocate: call('settings:files-relocate'),
+      search: call('settings:files-search'),
+      attach: call('settings:files-attach'),
+      scan: call('settings:files-scan'),
+      restore: call('settings:files-restore'),
+      onChanged: (cb) => ipcRenderer.on('settings:files-changed', () => cb()),
+    },
     // [passwords] Privacy and security → Passwords (features/passwords.js). No password comes out
     // except through reveal, which asks for Touch ID (or a confirmation) first.
     passwords: {

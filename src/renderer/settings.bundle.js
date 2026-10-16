@@ -1362,12 +1362,13 @@ const KINDS = {
   countdown: ['Countdown', 'Days until a date'],
   timer: ['Timer', 'A timer or Pomodoro focus and break'],
   aistatus: ['AI status', 'Which AIs are ready, working or at a limit'],
+  files: ['Files', 'Pinned and recent files, opened with a click'],
   custom: ['Custom', 'Your own card from a JSON recipe'],
   muse: ['Muse', 'Ask Meta’s Muse model with a saved prompt'],
   embed: ['Web page', 'Any page that allows being shown in a frame'],
 };
 // The order the Add widget picker lists them in: everyday first, accounts and keys after.
-const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
+const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'files', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
 
 const kindName = (type) => (KINDS[type] ? KINDS[type][0] : String(type || 'Widget'));
 const kindHint = (type) => (KINDS[type] ? KINDS[type][1] : 'Set up in Settings');
@@ -1490,6 +1491,7 @@ function widgetSummary(w, ctx = {}) {
       case 'countdown': { const c = w.cd || {}; parts.push([c.date, c.time].filter(Boolean).join(' ') || 'No date yet'); break; }
       case 'timer': { const t = w.tm || {}; parts.push(t.pomodoro === false ? `${t.work || 25} minutes` : `${t.work || 25} min focus · ${t.rest || 5} min break`); break; }
       case 'aistatus': parts.push('Ready, working and limits'); break;
+      case 'files': parts.push('Pinned and recent files'); break;
       case 'applemusic': parts.push(w.mode === 'web' ? 'Web player' : 'Status card'); if (w.mode !== 'web' && w.art === false) parts.push('no album art'); break;
       case 'custom': { const r = w.recipe || {}; parts.push(host(r.url) || 'No recipe yet'); if (r.every) parts.push(`every ${r.every} min`); break; }
       case 'muse': {
@@ -3340,7 +3342,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -3375,7 +3377,7 @@ const ALIASES = {
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -4240,6 +4242,7 @@ const WIDGET_ICONS = {
   notes: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
   countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
   timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
+  files: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5a1.2 1.2 0 0 1 1.2-1.2h3L7.6 5h5.2A1.2 1.2 0 0 1 14 6.2v6.1a1.2 1.2 0 0 1-1.2 1.2H3.2A1.2 1.2 0 0 1 2 12.3z"/></svg>',
   aistatus: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.3"/><circle cx="4" cy="11.5" r="1.3"/><path d="M7.5 4.5h6M7.5 11.5h6"/></svg>',
   custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
   tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
@@ -4995,6 +4998,8 @@ async function buildWidgets(card) {
         inputs.mode.addEventListener('change', syncMode);
         syncMode();
         fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox);
+      } else if (type === 'files') {
+        fields.replaceChildren(section(tr('settings.files.group', 'Files'), [h('div', { class: 'row' }, h('span', { class: 'note', text: tr('widgets.files.desc', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.') }))]));
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
@@ -5363,6 +5368,12 @@ async function buildPrivacy(card) {
     withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
   );
 
+  // [files] The remembered files live in General > Files (buildFiles); a pointer here, for people who look for them under Privacy.
+  card.group(tr('settings.files.group', 'Files')).append(
+    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Remember and clear them in General > Files.'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
+  );
+
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
   await buildPasswords(card);
   buildPasskeys(card);
@@ -5637,6 +5648,19 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+// [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
+async function buildFiles(card) {
+  const filesNote = status('files-clear-status');
+  card.append(
+    withKeywords(toggle('filesRemember', tr('settings.files.remember', 'Remember files I open'), tr('settings.files.rememberDesc', 'Lumen remembers names and places of files you open, on this computer only. Never their contents.')), 'files recent opened history pdf documents pinned folder'),
+    withKeywords(row(tr('settings.files.clear', 'Clear Files list'), tr('settings.files.clearDesc', 'Forgets the recent files and the pinned ones. The files themselves are not touched.'),
+      filesNote, armedButton(tr('settings.files.clearGo', 'Clear Files list'), tr('settings.files.clearSure', 'Clear it? Click again'), async () => {
+        flash(filesNote, '');
+        try { await S.files.clear(); flash(filesNote, tr('settings.files.cleared', 'Cleared.')); } catch (err) { flash(filesNote, String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+      }, 'danger', 'files-clear')), 'files recent pinned forget clear remove list'),
+  );
 }
 
 async function buildDownloads(card) {
@@ -6389,7 +6413,7 @@ async function init() {
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
     ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
-    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
+    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];
@@ -6397,7 +6421,7 @@ async function init() {
   // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
   const FOOT = {
     'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
-    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
+    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
   const SUBS = new Set(['ai-providers', 'skills', 'macros', 'usage', 'extensions-page', 'internals']);
