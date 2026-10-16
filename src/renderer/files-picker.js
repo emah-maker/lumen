@@ -19,6 +19,7 @@ const filesPicker = (() => {
   let selected = 0;
   let asked = 0; // the newest question's number
   let timer = 0;
+  let scanShown = false; // the disk search's answer is on screen: a change in the list (the hit being noted as opened) must not replace it
 
   const isOpen = () => Boolean(panel && !panel.hidden);
   const bridge = () => window.lumenFiles;
@@ -183,6 +184,7 @@ const filesPicker = (() => {
   // Ask main (nothing typed: the pinned and recent lists, which are cheap; else its fuzzy search). Only the newest answer is drawn.
   async function query(q) {
     const mine = ++asked;
+    scanShown = false;
     const files = bridge();
     if (!files) { render([], '', tr('filesPicker.none', 'Files are not available.')); return; }
     try {
@@ -208,11 +210,13 @@ const filesPicker = (() => {
     const files = bridge();
     if (!q || typeof files?.scan !== 'function') return;
     const mine = ++asked;
+    scanShown = true; // (from now: the search, then its answer)
     render([], q, '', { status: tr('filesPicker.searching', 'Searching Documents, Desktop and Downloads…') });
     let found = [];
     try { found = await files.scan(q); } catch { /* shown as nothing found */ }
     if (mine !== asked) return;
     selected = 0;
+    scanShown = true;
     render(Array.isArray(found) ? found : [], q, tr('filesPicker.scanNone', 'Nothing found in Documents, Desktop or Downloads'), { found: true });
   }
 
@@ -264,7 +268,7 @@ const filesPicker = (() => {
   }
 
   // (opened by app.js's stub, which loads this file the first time Ctrl+Shift+F asks, or in an idle moment after start)
-  window.lumenFiles?.on('changed', () => { if (isOpen()) query(input.value); }); // a file opened or moved meanwhile
+  window.lumenFiles?.on('changed', () => { if (isOpen() && !scanShown) query(input.value); }); // a file opened or moved meanwhile
   return { open, close, isOpen };
 })();
 window.filesPicker = filesPicker; // (app.js's stub opens it)
