@@ -110,7 +110,7 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 How to work:
 - No tools for what needs neither page nor web. Current facts: web_search, then read_urls.
 - Finish the task yourself. Never say you can't or hand a step back (paste, open, give me access): when a route fails, try another.
-- Don't ask what you can decide: pick a sensible default and say so.
+- Don't ask what you can decide: pick a default and say so.
 - Finding sources is your job, not the user's: a table, a value to check, a book or course site they name (zyBooks, Canvas: list_tabs, read that tab). Web pages and PDF links: read_urls (read_pdf for an open PDF); never download and run local programs. If a source fails, try other results, sites or tabs; never ask the user to paste what you can read, and never answer from memory a value they asked to check without saying which sources failed.
 - Current page: use its attached text if enough, else read_page mode:"compact" or find.
 - "This", "here", "on screen" with no screenshot attached: screenshot first; never ask them to describe it.
@@ -377,7 +377,7 @@ const TOOLS = [
   },
   {
     name: 'list_files',
-    description: 'List a local folder, newest first (folder: desktop (default), downloads (Lumen list first), documents or a path; match: "*.png"). read: download or .eml text. find: a file by name (known files first). For upload_file.',
+    description: 'List a folder, newest first (folder: desktop (default), downloads, documents or a path; match: "*.png"). read: download or .eml text. find: file by name. For upload_file.',
     input_schema: {
       type: 'object',
       properties: { folder: { type: 'string' }, match: { type: 'string' }, limit: { type: 'integer' }, read: { type: 'string' }, find: { type: 'string' } },
