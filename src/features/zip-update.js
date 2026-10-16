@@ -272,6 +272,17 @@ async function prepareHelperAsync(execPath, base = os.tmpdir()) {
   return { exe, script, dir: tmp };
 }
 
+// What an update that swapped entry by entry (some program had files of the install open) could not delete while that
+// program still ran: the old install folder and its numbered siblings. Cleared at the next start, off the main thread.
+// (The swap itself is features/swap-helper.js.) Windows only; the old folder is never the running one.
+async function clearOld(execPath, platform = process.platform) {
+  if (platform === 'darwin') return;
+  const { old } = swapPaths(execPath, platform);
+  const dir = path.dirname(old);
+  const names = (await fs.promises.readdir(dir).catch(() => [])).filter((n) => n === path.basename(old) || n.startsWith(`${path.basename(old)}-`) || n.startsWith(`${path.basename(old)}.stale-`));
+  await Promise.all(names.map((n) => fs.promises.rm(path.join(dir, n), { recursive: true, force: true }).catch(() => {})));
+}
+
 // A prepared helper whose files are still there (a temp cleaner may have removed them since).
 const helperReady = (h) => Boolean(h) && fs.existsSync(h.exe) && fs.existsSync(h.script);
 
@@ -324,4 +335,4 @@ function launchSwap({ staged, execPath, errFile, relaunch = true, platform = pro
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, prepareHelperAsync, helperReady, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, prepareHelperAsync, helperReady, clearOld, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
