@@ -99,7 +99,7 @@ const jobs = {
     all.sort((a, b) => (b.name.toLowerCase() === lower) - (a.name.toLowerCase() === lower) || b.mtime - a.mtime);
     return all.slice(0, 8).map(({ path: p, name: n, size: s, mtime }) => ({ path: p, name: n, size: s, mtime }));
   },
-  async scan({ roots, query, depth = 4, cap = 30000, timeMs = 8000, limit = 8 }) {
+  async scan({ roots, query, depth = 4, cap = 30000, timeMs = 8000, limit = 8, loose = true }) {
     const rows = [];
     const deadline = Date.now() + timeMs;
     let left = cap;
@@ -108,7 +108,7 @@ const jobs = {
       left -= res.count;
       if (left <= 0 || Date.now() > deadline) break;
     }
-    const ranked = rank(query, rows, { limit, loose: true, where: (x) => x.path.slice(x.root.length) });
+    const ranked = rank(query, rows, { limit, loose, where: (x) => x.path.slice(x.root.length) });
     return withStats(ranked.map((x) => x.item));
   },
 };

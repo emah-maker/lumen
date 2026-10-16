@@ -250,7 +250,7 @@ function create(deps) {
       const roots = [];
       for (const r of Array.isArray(cfg?.roots) ? cfg.roots : []) { try { if (isAbs(r) && (await fsp.stat(r)).isDirectory()) roots.push(r); } catch { /* not there */ } }
       if (!roots.length) return [];
-      const { hits } = await api.findFile(q, { scan: true, roots, blocked: cfg?.blocked || (() => false) });
+      const { hits } = await api.findFile(q, { scan: true, roots, strict: true, blocked: cfg?.blocked || (() => false) });
       const out = hits.map((h) => {
         const m = fuzzy.matchText(q, h.name, { where: h.path });
         const known = list0.byPath(h.path);
@@ -264,7 +264,7 @@ function create(deps) {
     // The AI's lookup (list_files find:). Pinned and recent files first, then the pinned folders' index, and only then a bounded fresh
     // walk of `roots` (when the AI may use files). The hit the slow way is remembered, so the next lookup is the first kind.
     // -> { hits: [{ path, name, size, mtime, from: 'known' | 'index' | 'disk' }], scanned }
-    async findFile(query, { scan = false, roots = [], blocked = () => false } = {}) {
+    async findFile(query, { scan = false, roots = [], blocked = () => false, strict = false } = {}) {
       await load();
       const q = String(query || '').slice(0, 200).trim();
       if (!q) return { hits: [], scanned: false };
@@ -287,7 +287,7 @@ function create(deps) {
       if (!scan || !roots.length) return { hits: [], scanned: false };
       stats.scans++;
       let slow = [];
-      try { slow = await ix().scan({ roots, query: q }); } catch { /* the walk failed or timed out */ }
+      try { slow = await ix().scan({ roots, query: q, loose: !strict }); } catch { /* the walk failed or timed out */ }
       hits = await alive(slow.slice(0, 5), 'disk');
       if (hits[0]) await api.note(hits[0].path, { source: 'found' }); // (only the best: a list of guesses would not be "remembered")
       return { hits, scanned: true };
