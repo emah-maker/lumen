@@ -149,6 +149,38 @@ const run = (bin, args) => new Promise((resolve, reject) => {
   execFile(bin, args, { timeout: 5000 }, (err, out) => (err ? reject(err) : resolve(String(out))));
 });
 
+// Which programs run from inside `dir` (their exe is in the install folder: an AI assistant's Lumen.exe bridge, a bundled tool), as
+// [{ pid, exe }]. Only the process list is read (Win32_Process.ExecutablePath), never another process's memory; [] when it can't be told.
+// This runs here, in the running Lumen, after a swap failed: the swap helper itself runs no script host (test/units.js).
+// (A program that merely has its working directory in the install is not listed; Lumen no longer starts any such program: ai/cli-utils.js.)
+const HOLDERS_SCRIPT = '$d = $env:LUMEN_SWAP_DIR.TrimEnd([char]92) + [char]92; Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.ProcessId + [char]9 + $_.ExecutablePath }';
+async function holders(dir, { platform = process.platform, exec } = {}) {
+  if (platform !== 'win32') return [];
+  const go = exec || ((file, args, env) => new Promise((resolve, reject) => execFile(file, args, { timeout: 8000, env: { ...process.env, ...env }, cwd: require('os').homedir() }, (err, out) => (err ? reject(err) : resolve(String(out))))));
+  try {
+    const out = await go('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', HOLDERS_SCRIPT], { LUMEN_SWAP_DIR: dir });
+    return String(out).split(/\r?\n/).map((l) => l.split('\t')).filter((p) => /^\d+$/.test(p[0]) && p[1]).map((p) => ({ pid: Number(p[0]), exe: p[1].trim() }));
+  } catch { return []; }
+}
+
+const KNOWN_APPS = { 'ms-teams.exe': 'Microsoft Teams', 'teams.exe': 'Microsoft Teams', 'claude.exe': 'Claude Code', 'codex.exe': 'Codex', 'agy.exe': 'Antigravity', 'node.exe': 'Node.js', 'grok.exe': 'Grok Build' };
+// The cause for Settings and the pill when the swap found the install in use ("files were in use (...)"): names the programs found holding it
+// ("close Microsoft Teams and try again"), else null (the helper's general message stands). Lumen's own copies (Lumen.exe: an assistant's
+// connection, which that message already explains) and the pids in `self` are left out.
+function blockedMessage(found, { self = [] } = {}) {
+  const names = [];
+  for (const h of found || []) {
+    if (self.includes(h.pid)) continue;
+    const base = path.win32.basename(h.exe).toLowerCase();
+    if (base === 'lumen.exe') continue;
+    const n = KNOWN_APPS[base] || path.win32.basename(h.exe);
+    if (!names.includes(n)) names.push(n);
+  }
+  if (!names.length) return null;
+  const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+  return 'files were in use (close ' + list + ' and try again)';
+}
+
 // The version of the Lumen.app at `bundle`, or null when it can't be read (then the downgrade check
 // is skipped, with a warning). XML plist first; a binary one goes through plutil, then `defaults`.
 async function readBundleVersion(bundle, { readFile = fs.promises.readFile, exec = run, warn = console.warn } = {}) {
@@ -619,6 +651,14 @@ function createUpdates(deps) {
       const msg = fs.readFileSync(errFile(), 'utf8').trim();
       fs.rmSync(errFile(), { force: true });
       if (msg) state.error = msg.slice(0, 200), state.status = 'error', lastSwapFailed = true;
+      // "files were in use": name the programs that hold the install (a moment later: the process list takes a second)
+      if (msg && /^files were in use/.test(msg) && (deps.platform || process.platform) === 'win32') {
+        const shown = state.error;
+        (deps.holders || holders)(path.dirname(process.execPath)).then((found) => {
+          const named = blockedMessage(found, { self: [process.pid] });
+          if (named && state.status === 'error' && state.error === shown) setState({ error: named.slice(0, 200) });
+        }).catch(() => {});
+      }
     } catch {}
     // An update that was unpacked but never applied leaves a big folder next to the install: use it
     // if it is complete and newer, else clear it (a relocating copy only clears it).
@@ -668,5 +708,5 @@ function createUpdates(deps) {
 
 module.exports = {
   createUpdates, disabledReason, installKind, updateMode, macPlacement, isNewer, stageAsset, manualAsset,
-  plistVersion, readBundleVersion, readBundleVersionSync, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
+  plistVersion, holders, blockedMessage, readBundleVersion, readBundleVersionSync, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
 };
