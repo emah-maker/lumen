@@ -23,7 +23,7 @@ function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-pkgfiles-'));
   const put = (rel, text = 'x') => { const f = path.join(dir, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
   fs.copyFileSync(path.join(root, 'package.json'), path.join(dir, 'package.json'));
-  for (const rel of ['src/main.js', 'src/preload/webauthn-preload.js', 'mcp.js', 'CHANGELOG.md', 'LICENSE',
+  for (const rel of ['src/main.js', 'src/preload/webauthn-preload.js', 'src/renderer/slides-vector.js', 'src/renderer/vendor/emfjs.min.js', 'src/renderer/vendor/wmfjs.min.js', 'src/renderer/vendor/rtfjs-LICENSE.txt', 'mcp.js', 'CHANGELOG.md', 'LICENSE',
     '.git/HEAD', '.git/objects/pack/pack-1.idx', '.claude/worktrees/w/src/main.js', '.claude/settings.json',
     'test/units.js', 'docs/index.md', 'scripts/build.js', 'site/index.html', '.github/workflows/release.yml',
     'README.md', 'package-lock.json', 'eslint.config.js', 'build/icon.png', 'dist/Lumen-Setup.exe',
@@ -54,7 +54,7 @@ async function appFiles(dir, config, platform) {
     for (const platform of ['mac', 'win']) {
       const { matchers, files, moduleShips } = await appFiles(dir, config, platform);
       check(`${platform}: one file matcher for the app (all filters in one list)`, matchers.length === 1, matchers.map(String).join('\n'));
-      for (const must of ['package.json', 'src/main.js', 'src/preload/webauthn-preload.js', 'mcp.js', 'CHANGELOG.md', 'LICENSE']) {
+      for (const must of ['package.json', 'src/main.js', 'src/preload/webauthn-preload.js', 'src/renderer/slides-vector.js', 'src/renderer/vendor/emfjs.min.js', 'src/renderer/vendor/wmfjs.min.js', 'src/renderer/vendor/rtfjs-LICENSE.txt', 'mcp.js', 'CHANGELOG.md', 'LICENSE']) {
         check(`${platform}: ships ${must}`, files.includes(must), files.join(', '));
       }
       for (const prefix of ['.git/', '.claude/', 'test/', 'docs/', 'scripts/', 'site/', '.github/', 'build/', 'dist/', 'node_modules/']) {
