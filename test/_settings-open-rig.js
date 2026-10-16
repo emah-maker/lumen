@@ -15,10 +15,13 @@ const { seed } = require('./_chat-seed');
 
 const root = path.join(__dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Where a run is, said as it goes (and kept for a suite's deadline message): a hang then names its step.
+const stage = (msg) => { global.__stage = msg; console.log(`      [${new Date().toISOString().slice(11, 19)}] ${msg}`); };
 const env = (profile) => ({ ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' });
 
 // A profile that looks used for a long time: many saved chats and a spread of changed settings.
 async function seedProfile(profile) {
+  stage('seeding the profile (chats, settings)');
   await seed(profile, { chats: 40, big: 20, kb: 3 });
   const app = await electron.launch({ args: [root], env: env(profile) });
   try {
@@ -34,7 +37,7 @@ async function seedProfile(profile) {
 // Runs in the Settings page from dom-ready: records when the visible category first has rows and no placeholder, and long tasks.
 const PAGE_PROBE = `(() => {
   if (window.__rig) return;
-  const rig = window.__rig = { origin: performance.timeOrigin, paint: 0, filled: 0, ready: 0, input: 0, sent: 0, vis: 0, raf1: 0, vis0: document.visibilityState, longtasks: [], loafs: [] };
+  const rig = window.__rig = { origin: performance.timeOrigin, paint: 0, filled: 0, ready: 0, input: 0, sent: 0, vis: 0, raf1: 0, ticks: [], vis0: document.visibilityState, longtasks: [], loafs: [] };
   const now = () => performance.timeOrigin + performance.now();
   for (const [type, list] of [['longtask', rig.longtasks], ['long-animation-frame', rig.loafs]]) {
     try { new PerformanceObserver((l) => { for (const e of l.getEntries()) list.push({ start: Math.round(performance.timeOrigin + e.startTime), dur: Math.round(e.duration), block: Math.round(e.blockingDuration || 0) }); }).observe({ type, buffered: true }); } catch {}
@@ -43,6 +46,7 @@ const PAGE_PROBE = `(() => {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !rig.vis) rig.vis = now(); });
   const tick = () => {
     if (!rig.raf1) rig.raf1 = now();
+    if (rig.ticks.length < 40) rig.ticks.push([Math.round(now()), Boolean(visible()), Boolean(visible()?.querySelector('.row'))]);
     const p = visible();
     if (p && p.querySelector('.row')) {
       if (!rig.paint) rig.paint = now();
@@ -86,6 +90,7 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
   const opened = await app.evaluate((_e, s) => { const at = Date.now(); const id = global.__settings.open(s); return { at, id }; }, section);
   if (!ui) t0 = opened.at;
   const id = opened.id;
+  const pool = await app.evaluate(() => ({ taken: global.__settingsProcTaken || null, why: JSON.stringify(global.__settingsProc?.why?.() ?? null) }));
   const inPage = (code) => app.evaluate(async (_e, [i, c]) => { try { const wc = global.__settings.contents(i); return wc ? await wc.executeJavaScript(c, true) : null; } catch { return null; } }, [id, code]);
   // as soon as the first paint is seen, focus a toggle and press Space
   const end = Date.now() + 15000;
@@ -93,8 +98,9 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
   while (Date.now() < end) {
     const r = await inPage('window.__rig ? [window.__rig.paint, window.__rig.input] : null');
     if (r && r[0] && !sentAt) {
-      await inPage(`(() => { const t = [...document.querySelectorAll('.pane:not([hidden]) input[type=checkbox]')].find((i) => i.offsetParent !== null || i.closest('label,.switch')?.offsetParent); if (t) t.focus(); return !!t; })()`);
-      sentAt = await app.evaluate((_e, i) => {
+      // (the first toggle on screen: the lists below the first screen come a frame after the first paint, so look again until one is there)
+      const found = await inPage(`(() => { const t = [...document.querySelectorAll('.pane:not([hidden]) input[type=checkbox]')].find((i) => i.offsetParent !== null || i.closest('label,.switch')?.offsetParent); if (t) t.focus(); return !!t; })()`);
+      if (found) sentAt = await app.evaluate((_e, i) => {
         const wc = global.__settings.contents(i);
         const at = Date.now();
         wc.focus();
@@ -120,22 +126,39 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
     mainMax: gap.max, mainOver: gap.over.filter((o) => o.at >= t0).map((o) => ({ at: o.at - t0, d: o.d })),
     longtasks: after(rig.longtasks).map((e) => ({ at: e.start - t0, dur: e.dur })),
     loafs: after(rig.loafs).map((e) => ({ at: e.start - t0, dur: e.dur, block: e.block })),
-    placeholders: Boolean(placeholders),
-    origin: rel(rig.origin), vis: rel(rig.vis), vis0: rig.vis0, raf1: rel(rig.raf1), opened: opened.at - t0, marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
+    placeholders: Boolean(placeholders), pool: pool.taken, poolWhy: pool.why,
+    ticks: (rig.ticks || []).map((t) => [rel(t[0]), t[1] ? 1 : 0, t[2] ? 1 : 0].join("/")).join(" "), origin: rel(rig.origin), vis: rel(rig.vis), vis0: rig.vis0, raf1: rel(rig.raf1), opened: opened.at - t0, marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
   };
 }
 
 // cold: the first open in a fresh app; warm: close that tab and open again in the same app.
 async function measure(profile, section = '', { intent = false } = {}) {
-  const app = await electron.launch({ args: [root], env: env(profile) });
+  // (LUMEN_TEST_SPARES: spare renderers are off in tests unless asked, as in test/perf-newtab.js: Settings is measured with its pooled process)
+  stage(`launching the app (${section || 'default'})`);
+  const app = await electron.launch({ args: [root], env: { ...env(profile), LUMEN_TEST_SPARES: '1' } });
   const pid = app.process().pid;
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
-    await sleep(9000); // let the browser's own startup work finish (ad-block lists, looking for the CLIs): the first open is "cold" for Settings, not for the browser
+    // the page probe goes into every Settings page from dom-ready, including one loading in a view that was made before this open (the pooled process)
+    await app.evaluate(({ app: electronApp, webContents }, code) => {
+      global.__rigCode = code; global.__rigHook = true;
+      const hook = (wc) => wc.on('dom-ready', () => { if (/settings\.html/.test(wc.getURL())) wc.executeJavaScript(global.__rigCode, true).catch(() => {}); });
+      for (const wc of webContents.getAllWebContents()) hook(wc);
+      electronApp.on('web-contents-created', (_e, wc) => hook(wc));
+    }, PAGE_PROBE);
+    await sleep(6000);
+    // The browser's own start-up work (ad-block lists, looking for the CLIs, ...) must be over: the first open is "cold" for Settings, not for the browser. Waited for by
+    // the main process itself: two 1.5 s windows in a row with no stall over 12 ms.
+    for (let quiet = 0, tries = 0; quiet < 2 && tries < 30; tries++) {
+      const worst = await app.evaluate(() => new Promise((resolve) => { let max = 0; let last = Date.now(); const end = last + 1500; const tick = () => { const n = Date.now(); max = Math.max(max, n - last); last = n; if (n < end) setImmediate(tick); else resolve(max); }; setImmediate(tick); }));
+      quiet = worst <= 12 ? quiet + 1 : 0;
+    }
+    stage(`cold open (${section || 'default'})`);
     const cold = await openOnce(app, section, { ui: intent ? ui : null });
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
     await sleep(1200);
+    stage(`warm open (${section || 'default'})`);
     const warm = await openOnce(app, section, { ui: intent ? ui : null });
     return { cold, warm };
   } finally { await app.close().catch(() => { try { process.kill(pid); } catch {} }); }
@@ -143,4 +166,4 @@ async function measure(profile, section = '', { intent = false } = {}) {
 
 const tmpProfile = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ss-settingsperf-'));
 
-module.exports = { seedProfile, measure, tmpProfile, openOnce, env, root, sleep };
+module.exports = { stage, seedProfile, measure, tmpProfile, openOnce, env, root, sleep };

@@ -3,6 +3,7 @@
 // same API with those first calls answered from here. An answer is only reused in the first moment (and never after the first click or key),
 // so a setting changed on the page is always read afresh.
 (() => {
+  if (/^Win/.test(navigator.platform)) document.documentElement.classList.add('win'); // (for the font stack in settings.css)
   const start = performance.now();
   const TTL = 1500;
   let live = true;
@@ -35,6 +36,10 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
+    if (/^#(ai|you-and-ai|hands-off|ask-before-acting|ai-keys|keys|antigravity|connect-agents|mcp-servers|providers)/.test(location.hash)) { // (the AI page's builder asks for these next: a link to it)
+      prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
+      prefetch('ai.automationInfo', () => S.ai.automationInfo());
+    }
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();

@@ -5,6 +5,7 @@
 // same API with those first calls answered from here. An answer is only reused in the first moment (and never after the first click or key),
 // so a setting changed on the page is always read afresh.
 (() => {
+  if (/^Win/.test(navigator.platform)) document.documentElement.classList.add('win'); // (for the font stack in settings.css)
   const start = performance.now();
   const TTL = 1500;
   let live = true;
@@ -37,6 +38,10 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
+    if (/^#(ai|you-and-ai|hands-off|ask-before-acting|ai-keys|keys|antigravity|connect-agents|mcp-servers|providers)/.test(location.hash)) { // (the AI page's builder asks for these next: a link to it)
+      prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
+      prefetch('ai.automationInfo', () => S.ai.automationInfo());
+    }
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();
@@ -3392,8 +3397,12 @@ const later = (fn) => {
   laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
   return turn.then(fn);
 };
+// The AI page's sign-in and version checks start programs; they run when the AI page is looked at (or searched), not while another page opens.
+let aiShownResolve = () => {};
+const aiShown = new Promise((resolve) => { aiShownResolve = resolve; });
+const laterOnAi = (fn) => aiShown.then(() => later(fn));
 let isBuilt = () => true; // set up by init(): is the builder (by id) done
-let neededBuilds = () => []; // ...the builders a page needs before it is shown
+let neededBuilds = () => []; // ...the builders a page needs before it is shown (the second argument: for the very first paint)
 let buildOne = () => Promise.resolve();
 let buildAll = () => Promise.resolve();
 let allDone = false;
@@ -3782,7 +3791,7 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
+  laterOnAi(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
@@ -3813,7 +3822,7 @@ async function buildAi(card) {
     const ccState = snip.id === 'claude' ? status() : null;
     const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      later(() => S.ai.claudeCodeStatus()).then((s) => {
+      laterOnAi(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
@@ -3846,7 +3855,7 @@ async function buildAi(card) {
       cxActions.replaceChildren(...buttons);
     }
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
-    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
+    if (cxState) laterOnAi(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
@@ -5646,7 +5655,7 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
+  laterOnAi(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
@@ -6166,8 +6175,11 @@ function applyPageClasses() {
 let view = { cat: DEFAULT_CATEGORY, sub: null }; // what the right pane shows
 const query = () => $('search').value.trim().toLowerCase();
 const REMEMBER = 'lumen.settings.category';
-const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
-const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
+// (localStorage is a call into the browser process: read once, and written a moment after the page is up, not while it opens)
+let rememberedRead; let rememberedId = null;
+const remembered = () => { if (!rememberedRead) { rememberedRead = true; try { const id = localStorage.getItem(REMEMBER); rememberedId = categories.has(id) ? id : null; } catch { rememberedId = null; } } return rememberedId; };
+let rememberTimer = 0;
+const remember = (id) => { rememberedId = id; clearTimeout(rememberTimer); rememberTimer = setTimeout(() => { try { localStorage.setItem(REMEMBER, id); } catch {} }, 800); };
 
 let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
@@ -6176,6 +6188,7 @@ function show() {
   const searching = words.length > 0;
   const wasSearching = searchedBefore;
   searchedBefore = searching;
+  if (searching || view.cat === 'ai') aiShownResolve();
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
@@ -6304,8 +6317,10 @@ function guessView() {
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
+  performance.mark('route:start');
   const r = resolveRoute();
-  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  performance.mark('route:resolved');
+  const need = neededBuilds(view, !firstRouteDone).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -6336,6 +6351,10 @@ function foldBelowTheFirstScreen() {
     if (rows >= FOLD_ROWS) { g.classList.add('later'); later.push(g); } else rows += g.querySelectorAll('.row').length;
   }
   return later;
+}
+const navIcons = [];
+function fillNavIcons() {
+  for (const [icon, id] of navIcons.splice(0)) icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[id]}</svg>`; // constant markup
 }
 function revealFolded() {
   if (!foldedGroups.length) return;
@@ -6385,7 +6404,7 @@ async function init() {
   for (const def of CATEGORIES) {
     def.title = tr(`settings.section.${def.id}`, def.title);
     const icon = h('span', { class: `ic ic-${def.id}`, 'aria-hidden': 'true' });
-    icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[def.id]}</svg>`; // constant markup
+    navIcons.push([icon, def.id]); // (their drawings are put in after the first paint: the coloured squares are there from the start)
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
     if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
@@ -6430,7 +6449,11 @@ async function init() {
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-  neededBuilds = (v) => {
+  // The very first paint of the General page (opened with no link) needs only the lists on its first screen; the others are built right after.
+  const FIRST_SCREEN = { general: ['import', 'startup', 'search'] };
+  const SLOT_OWNER = { 'default-browser': 'import', import: 'import', startup: 'startup', search: 'search', languages: 'languages', downloads: 'downloads' }; // (a list is tidied once its own builder is done)
+  neededBuilds = (v, first = false) => {
+    if (first && !v.sub && FIRST_SCREEN[v.cat] && (!location.hash.slice(1) || location.hash.slice(1) === v.cat)) return FIRST_SCREEN[v.cat];
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
     return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
@@ -6457,7 +6480,7 @@ async function init() {
     for (const [sid, slot] of slots) {
       if (slot.tidied) continue;
       const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
-      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      const done = owner ? finished.has(owner) || !buildFn.has(owner) : SLOT_OWNER[sid] ? finished.has(SLOT_OWNER[sid]) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
       if (done) { slot.tidied = true; tidy(slot); }
     }
   };
@@ -6491,12 +6514,11 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, true).map(buildOne));
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
-  document.fonts?.ready.then(fitDescs).catch(() => {});
   $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
@@ -6519,9 +6541,12 @@ async function init() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
     revealFolded();
+    fillNavIcons();
+    document.fonts?.ready.then(fitDescs).catch(() => {}); // (after the first paint: asking for the font set makes the page update its styles)
     paintedResolve();
     performance.mark('settings:visible');
-    buildAll();
+    for (const sid of neededBuilds(view)) buildOne(sid); // (the rest of this page: now, in the next frame)
+    setTimeout(buildAll, 250); // (the other pages are built a moment later, not in the first frames' way: the page answers a click or a key at once)
   }));
 }
 
