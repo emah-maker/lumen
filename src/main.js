@@ -9035,8 +9035,8 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
-    // [hang recorder] In two bands, a turn of the event loop between them (features/snapshot-bands.js): the whole resize is ~9 ms of main.
-    const shot = target ? await require('./features/snapshot-bands').resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick: () => new Promise((r) => setImmediate(r)), mark: hang.mark }) : image;
+    // [hang recorder] In two bands, a turn of the event loop between them (features/snapshot-size.js): the whole resize is ~9 ms of main.
+    const shot = target ? await snapshotSizer.resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick: () => new Promise((r) => setImmediate(r)), mark: hang.mark }) : image;
     await new Promise((r) => setImmediate(r)); // (the resize and the JPEG encode are each ~5 ms of main: as two tasks, input and frames get a turn between them)
     if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // (thawed in that turn)
     return hang.mark('freeze:encode', () => shot.toJPEG(snapshotSizer.JPEG_QUALITY));
@@ -9056,7 +9056,7 @@ ipcMain.handle('view:warm', async () => {
     const { width, height } = image.getSize();
     const target = { width: Math.max(64, Math.round(width * 0.66)), height: Math.max(64, Math.round(height * 0.66)) };
     const tick = () => new Promise((r) => setImmediate(r));
-    const small = await require('./features/snapshot-bands').resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick });
+    const small = await snapshotSizer.resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick });
     await tick();
     small.toJPEG(snapshotSizer.JPEG_QUALITY);
   } catch {}

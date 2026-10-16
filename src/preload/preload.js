@@ -113,7 +113,7 @@ contextBridge.exposeInMainWorld('browser', {
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
-  onOpenFilesPicker: on('files:picker'), // Ctrl+Shift+F (renderer/files-picker.js)
+  onOpenFilesPicker: on('files:picker'),
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).
@@ -313,25 +313,12 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
-// Files (features/files.js): the pinned and recent files, the quick picker (Ctrl+Shift+F) and Settings > Privacy. Ids come from list();
-// main acts on its own record of an id, never on a path the page supplies (pin's { path } is the one exception, from the UI itself).
-// (window.browser.files is taken: it is the AI file cards.)
+// Files (features/files.js, ids from list(); window.browser.files is the AI file cards): one channel per op, open is files:open-entry.
+const fop = (op, ch = 'files:' + op) => [op, (a, b) => ipcRenderer.invoke(ch, a, b)];
 contextBridge.exposeInMainWorld('lumenFiles', {
-  list: () => ipcRenderer.invoke('files:list'), // { pinned, recent, remember }
-  pin: (arg) => ipcRenderer.invoke('files:pin', arg), // { path } or { pick: 'file' | 'folder' } -> Entry | null
-  unpin: (id) => ipcRenderer.invoke('files:unpin', id),
-  remove: (id) => ipcRenderer.invoke('files:remove', id),
-  clear: () => ipcRenderer.invoke('files:clear'),
-  open: (id) => ipcRenderer.invoke('files:open-entry', id), // a file in a tab (Lumen's own viewers), a folder in Explorer
-  show: (id) => ipcRenderer.invoke('files:show', id),
-  find: (id) => ipcRenderer.invoke('files:find', id), // { candidates: [{ path, name, size, mtime }] } for a missing file
-  relocate: (id, newPath) => ipcRenderer.invoke('files:relocate', id, newPath),
-  search: (query) => ipcRenderer.invoke('files:search', query), // Entry[] (fuzzy over pinned, recent and indexed folders, top 30)
-  attach: (id) => ipcRenderer.invoke('files:attach', id), // to the sidebar chat
-  scan: (query) => ipcRenderer.invoke('files:scan', query), // Entry[]: the picker's "Search Documents, Desktop and Downloads" (a bounded walk, in the index worker)
-  restore: (id) => ipcRenderer.invoke('files:restore', id), // Undo of unpin / remove (kept 30 s)
+  ...Object.fromEntries(['list', 'pin', 'unpin', 'remove', 'clear', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'].map((op) => fop(op)).concat([fop('open', 'files:open-entry')])),
   onChanged: on('files:changed'),
-  onAttach: on('files:attach-file'), // { name, type, data (bytes) }: Alt+Enter in the picker: add it to the sidebar's composer like a dropped file
+  onAttach: on('files:attach-file'),
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).
