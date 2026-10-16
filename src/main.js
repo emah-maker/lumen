@@ -2329,7 +2329,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (curRec?.agent) tab.muted = true; // [agent window] no sound from the agent's window unless the user unmutes a tab
   tabs.push(tab);
   win.contentView.addChildView(view);
-  view.setVisible(false);
+  if (!(settings && adopted)) view.setVisible(false); // (the Settings view made ready is already shown, under the others: hiding it for an instant would make its first frame wait for the page to be told it is visible again)
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare || chatSpare) }); // `history`: Duplicate's copy of back/forward
   if (chatSpare) adoptSpareChat(chatSpare); // its held calls go out: it starts as this tab's chat page
   if (curRec?.agent) prepareAgentTab(wc); // [agent window]
@@ -8952,7 +8952,6 @@ function takeSpareSettings() {
   clearTimeout(s.timer);
   const wc = s.view.webContents;
   if (wc.isDestroyed() || wc.isCrashed()) { try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ } try { wc.close(); } catch { /* gone */ } return null; }
-  try { s.view.setVisible(false); } catch { /* the tab shows it */ }
   return s.view;
 }
 ipcMain.on('prepare-settings', () => prepareSettings());
