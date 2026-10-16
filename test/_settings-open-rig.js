@@ -15,10 +15,13 @@ const { seed } = require('./_chat-seed');
 
 const root = path.join(__dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Where a run is, said as it goes (and kept for a suite's deadline message): a hang then names its step.
+const stage = (msg) => { global.__stage = msg; console.log(`      [${new Date().toISOString().slice(11, 19)}] ${msg}`); };
 const env = (profile) => ({ ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' });
 
 // A profile that looks used for a long time: many saved chats and a spread of changed settings.
 async function seedProfile(profile) {
+  stage('seeding the profile (chats, settings)');
   await seed(profile, { chats: 40, big: 20, kb: 3 });
   const app = await electron.launch({ args: [root], env: env(profile) });
   try {
@@ -87,6 +90,7 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
   const opened = await app.evaluate((_e, s) => { const at = Date.now(); const id = global.__settings.open(s); return { at, id }; }, section);
   if (!ui) t0 = opened.at;
   const id = opened.id;
+  const pool = await app.evaluate(() => ({ taken: global.__settingsProcTaken || null, has: global.__settingsProc?.has() ?? null }));
   const inPage = (code) => app.evaluate(async (_e, [i, c]) => { try { const wc = global.__settings.contents(i); return wc ? await wc.executeJavaScript(c, true) : null; } catch { return null; } }, [id, code]);
   // as soon as the first paint is seen, focus a toggle and press Space
   const end = Date.now() + 15000;
@@ -122,7 +126,7 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
     mainMax: gap.max, mainOver: gap.over.filter((o) => o.at >= t0).map((o) => ({ at: o.at - t0, d: o.d })),
     longtasks: after(rig.longtasks).map((e) => ({ at: e.start - t0, dur: e.dur })),
     loafs: after(rig.loafs).map((e) => ({ at: e.start - t0, dur: e.dur, block: e.block })),
-    placeholders: Boolean(placeholders),
+    placeholders: Boolean(placeholders), pool: pool.taken,
     ticks: (rig.ticks || []).map((t) => [rel(t[0]), t[1] ? 1 : 0, t[2] ? 1 : 0].join("/")).join(" "), origin: rel(rig.origin), vis: rel(rig.vis), vis0: rig.vis0, raf1: rel(rig.raf1), opened: opened.at - t0, marks: Object.fromEntries((rig.marks || []).map(([n, v]) => [n, rel(v)])),
   };
 }
@@ -130,6 +134,7 @@ async function openOnce(app, section, { settleMs = 2500, ui = null, pickMs = 90 
 // cold: the first open in a fresh app; warm: close that tab and open again in the same app.
 async function measure(profile, section = '', { intent = false } = {}) {
   // (LUMEN_TEST_SPARES: spare renderers are off in tests unless asked, as in test/perf-newtab.js: Settings is measured with its pooled process)
+  stage(`launching the app (${section || 'default'})`);
   const app = await electron.launch({ args: [root], env: { ...env(profile), LUMEN_TEST_SPARES: '1' } });
   const pid = app.process().pid;
   try {
@@ -149,9 +154,11 @@ async function measure(profile, section = '', { intent = false } = {}) {
       const worst = await app.evaluate(() => new Promise((resolve) => { let max = 0; let last = Date.now(); const end = last + 1500; const tick = () => { const n = Date.now(); max = Math.max(max, n - last); last = n; if (n < end) setImmediate(tick); else resolve(max); }; setImmediate(tick); }));
       quiet = worst <= 12 ? quiet + 1 : 0;
     }
+    stage(`cold open (${section || 'default'})`);
     const cold = await openOnce(app, section, { ui: intent ? ui : null });
     await app.evaluate((_e, id) => global.__closeTabInteractive(id), cold.id);
     await sleep(1200);
+    stage(`warm open (${section || 'default'})`);
     const warm = await openOnce(app, section, { ui: intent ? ui : null });
     return { cold, warm };
   } finally { await app.close().catch(() => { try { process.kill(pid); } catch {} }); }
@@ -159,4 +166,4 @@ async function measure(profile, section = '', { intent = false } = {}) {
 
 const tmpProfile = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ss-settingsperf-'));
 
-module.exports = { seedProfile, measure, tmpProfile, openOnce, env, root, sleep };
+module.exports = { stage, seedProfile, measure, tmpProfile, openOnce, env, root, sleep };

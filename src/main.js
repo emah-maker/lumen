@@ -8884,7 +8884,7 @@ function dropSpareSettings() {
 // Performance mode on, and after sparePolicy IDLE_MS without a Settings open; another is made a moment after one is used.
 let settingsProc = null; // { view, prefs }
 let settingsProcUsedAt = Date.now();
-const settingsProcOn = () => (!TEST || spareForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+const settingsProcOn = () => (!TEST || (spareForTest && !process.env.LUMEN_TEST_NO_SETTINGS_POOL)) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
 // The first layout of the page was ~30 ms of creating the system font's instances (each weight of Segoe UI Variable takes ~7 ms the first time): done here,
 // in the pooled process while it waits, so the Settings page finds them made.
 const WARM_FONTS_JS = `(() => {
