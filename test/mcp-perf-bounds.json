@@ -8,11 +8,11 @@
   "bridgeMb": 130,
   "maxGapMs": 20,
   "gapOver": {
-    "s1": 10,
-    "s3": 25,
-    "s6": 60,
-    "five": 40,
-    "tabs": 30
+    "s1": 4,
+    "s3": 10,
+    "s6": 30,
+    "five": 20,
+    "tabs": 8
   },
   "p95Ms": {
     "navigate": 1400,
