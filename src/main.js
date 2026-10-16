@@ -9511,8 +9511,9 @@ const thumbKey = (t) => (!t ? '' : t.kind === 'site' ? 'site:' + t.url : 'tab:' 
 function thumbTabOf(run) {
   const t = run.thumbTarget;
   const id = t?.kind === 'tab' ? t.tabId : t?.kind === 'site' ? null : (agent.runTabIdFor(run.messages) ?? run.tabId);
+  if (id != null && run.thumbHold === id) return null; // (a step is closing this tab: nothing is asked of a page on its way out)
   const hit = id != null ? tabAnywhere(id) : null;
-  return hit && alive(hit.t) ? { id, wc: hit.t.view.webContents } : null;
+  return hit && alive(hit.t) ? { id, wc: hit.t.view.webContents, favicon: hit.t.favicon || null } : null;
 }
 // What the card shows right away when the target changes (before the new picture): the tab's name for the chip, or "Reading <site>".
 function thumbTargetEvent(run) {
@@ -9532,10 +9533,14 @@ async function captureRunThumb(run) {
   if (!tab) return null;
   const wc = tab.wc;
   const url = wc.getURL();
-  if (!/^(https?|file):/i.test(url) || aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
+  if (aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
+  const named = { url, title: wc.getTitle?.() || '', tabId: tab.id, favicon: typeof tab.favicon === 'string' ? tab.favicon : null };
+  if (!/^(https?|file|lumen-pdf):/i.test(url)) return { blank: true, ...named }; // (one of Lumen's own pages: no picture of it, its name)
   const lowRes = graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false; // (Light graphics or software drawing: the small picture)
-  const data = await require('./features/tab-capture').captureThumb(wc, { lowRes });
-  return data ? { data, url, title: wc.getTitle?.() || '', tabId: tab.id } : null;
+  const state = {};
+  const data = await require('./features/tab-capture').captureThumb(wc, { lowRes, state });
+  if (data) return { data, ...named };
+  return state.blank ? { blank: true, ...named } : null;
 }
 // A tiny signature of the page the card shows (address, scroll, size, how much is on it): a frame is taken when it moves (features/step-thumbs.js).
 const THUMB_PROBE = '(()=>{try{const d=document,e=d.scrollingElement||d.documentElement;return location.href+"|"+d.readyState+"|"+Math.round(e.scrollTop)+"|"+Math.round(e.scrollLeft)+"|"+e.scrollHeight+"|"+innerWidth+"x"+innerHeight+"|"+d.getElementsByTagName("*").length+"|"+d.title}catch(_){return ""}})()';
@@ -9543,7 +9548,7 @@ async function probeRunThumb(run) {
   const tab = thumbTabOf(run);
   if (!tab || tab.wc.isLoading?.()) return tab ? 'loading' : null; // (a page still loading changes by the moment: a frame while it does)
   const url = tab.wc.getURL();
-  if (!/^(https?|file):/i.test(url) || aiSites.isOff(url)) return null;
+  if (!/^(https?|file|lumen-pdf):/i.test(url) || aiSites.isOff(url)) return null;
   const sig = await tab.wc.executeJavaScript(THUMB_PROBE, false);
   return typeof sig === 'string' ? tab.id + '|' + sig : null;
 }
@@ -9557,6 +9562,7 @@ function noteThumbs(run, msg, push) {
     const name = String(msg.name || '');
     if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
+      if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
       const fresh = !run.thumbs;
       const thumbs = (run.thumbs ||= stepThumbs.createThumbs({
         capture: () => timedCapture(run), probe: () => probeRunThumb(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
@@ -9575,6 +9581,7 @@ function noteThumbs(run, msg, push) {
     }
   } else if (msg.type === 'tool_done') {
     const name = run.toolNames?.get(msg.id);
+    if (name && /(^|__)close_tab$/.test(name)) run.thumbHold = null;
     if (name && /(^|__)open_tab$/.test(name) && msg.ok !== false && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now
       run.thumbTarget = { kind: 'tab', tabId: msg.tabId };
       const ev = thumbTargetEvent(run);

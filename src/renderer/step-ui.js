@@ -149,7 +149,7 @@
       + '<div class="act-tabs-note" hidden></div>'
       + '<span class="act-live" role="status" aria-live="polite"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
@@ -349,6 +349,22 @@
     card.shot.dataset.mode = 'pending';
     card.img.removeAttribute('src');
   }
+  // The tab only gave blank (one-colour) frames, e.g. a viewer drawn on a canvas in a hidden view: never a solid rectangle. The last good picture
+  // of the same tab stays; otherwise "Reading <name>" with the tab's icon, while the tab's chip stays.
+  function setBlank(card, event) {
+    card.siteMode = false;
+    if (card.shot.dataset.mode === 'frame' && card.img.getAttribute('src') && card.goodTab === (event.tabId ?? null)) return;
+    card.shot.hidden = false;
+    card.shot.dataset.mode = 'site';
+    card.img.removeAttribute('src');
+    let name = event.title || '';
+    if (!name) { try { name = new URL(event.url).host; } catch { /* none */ } }
+    card.siteName.textContent = tr('card.site.reading', { site: name });
+    const icon = typeof event.favicon === 'string' ? event.favicon : '';
+    card.siteIco.hidden = !icon;
+    if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src');
+    card.shot.style.maxWidth = '';
+  }
   // A step that reads an address with no tab (read_urls): "Reading <site>" with its icon, no picture of another tab.
   function setSite(card, event) {
     card.siteMode = true;
@@ -464,7 +480,7 @@
     card.tab = tab;
     if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId], { [event.tabId]: { t: tab.title, u: tab.url } });
     if (Number.isFinite(event.aiTabs)) card.aiTabs = event.aiTabs;
-    if (kind === 'site') setSite(card, event); else if (kind === 'pending') setPending(card); else setThumb(card, src);
+    if (kind === 'site') setSite(card, event); else if (kind === 'blank') setBlank(card, event); else if (kind === 'pending') setPending(card); else { setThumb(card, src); card.goodTab = tab.tabId; }
     refreshCard(turn, card);
   }
   // A file the AI made: the latest shell card offers it (Open file / Show in folder) and, for a picture, shows it.

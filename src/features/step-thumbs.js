@@ -38,7 +38,10 @@ function createThumbs({ capture, probe = null, send, light = () => false, visibl
     const mine = gen;
     try {
       const shot = await capture();
-      if (mine === gen && shot && shot.data && shot.data !== lastData) { lastData = shot.data; send({ type: 'thumb', data: shot.data, url: shot.url || '', title: shot.title || '', tabId: shot.tabId ?? null }); }
+      if (mine === gen && shot && shot.blank) { // (only blank frames: the card shows the tab's name; the last good picture stays when it is the same tab)
+        const key = 'blank:' + (shot.tabId ?? '');
+        if (key !== lastData) { lastData = key; send({ type: 'thumb', kind: 'blank', data: '', url: shot.url || '', title: shot.title || '', tabId: shot.tabId ?? null, favicon: shot.favicon || null }); }
+      } else if (mine === gen && shot && shot.data && shot.data !== lastData) { lastData = shot.data; send({ type: 'thumb', data: shot.data, url: shot.url || '', title: shot.title || '', tabId: shot.tabId ?? null }); }
     } catch { /* the tab is gone or not paintable right now: the next tick tries again */ } finally { inflight = false; }
     if (mine !== gen && dirty) take(); // (the tab changed while it was taken: take the new one now, even after the run ended)
   }

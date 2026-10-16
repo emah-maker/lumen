@@ -10,6 +10,8 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { pathToFileURL } = require('url');
+const F = require('./_pptx-fixtures');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { try { v = await fn(); if (v) return v; } catch { /* not yet */ } await sleep(100); } return v; };
@@ -88,6 +90,10 @@ process.stdin.on('data', async (d) => {
   });
   const ui = await app.firstWindow({ timeout: 90000 });
   const errors = [];
+  const stderr = []; // (what the app said, shown when its window goes away mid-run)
+  app.process().stderr?.on('data', (d) => stderr.push(String(d)));
+  ui.on('crash', () => console.log('UI CRASHED'));
+  ui.on('close', () => console.log('UI CLOSED', stderr.join('').slice(-1500)));
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
   await app.evaluate(() => { global.__settings.backend.set('sidebarNewChat', false); global.__settings.backend.set('graphicsMode', 'full'); }); // (Light, which an integrated GPU picks on its own, refreshes only on navigation: covered below)
@@ -104,6 +110,8 @@ process.stdin.on('data', async (d) => {
       tabs: [{ text: 'Peeking at the other tab.', tool: ['get_console', { tab_id: '#B' }] }, { text: 'Back here.', delay: 3000, tool: ['get_console', { tab_id: '#A' }] }, { text: 'Finished.', delay: 1500 }],
       // the AI uses tab B, then tab A, then closes tab B
       closing: [{ text: 'Looking at the other tab.', tool: ['get_console', { tab_id: '#B' }] }, { text: 'And this one.', tool: ['get_console', { tab_id: '#A' }] }, { text: 'Closing the other one.', tool: ['close_tab', { tab_id: '#B' }] }, { text: 'Closed it.', delay: 1500 }],
+      // a slides-viewer tab, then a PDF-viewer tab, both read in the background
+      viewers: [{ text: 'Looking at the deck.', tool: ['get_console', { tab_id: '#S' }] }, { text: 'And the PDF.', delay: 3500, tool: ['get_console', { tab_id: '#P' }] }, { text: 'Seen both.', delay: 1500 }],
       // an address read with no tab
       reading: [{ text: 'Reading quietly.', tool: ['read_urls', { urls: ['@a'] }] }, { text: 'Read it.', delay: 1500 }],
       // a page that keeps changing, then one that stands still
@@ -114,13 +122,13 @@ process.stdin.on('data', async (d) => {
       const users = params.messages.filter((m) => m.role === 'user');
       const lastAsk = [...users].reverse().find((m) => !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result')));
       const asked = JSON.stringify(lastAsk?.content || '');
-      const key = /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
+      const key = /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /the viewers/.test(asked) ? 'viewers' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
       const idx = users.length - 1 - users.indexOf(lastAsk);
       const step = scripts[key][Math.min(idx, scripts[key].length - 1)];
       const base = global.__slBase;
       const content = [];
       if (step.text) content.push({ type: 'text', text: step.text });
-      if (step.tool) content.push({ type: 'tool_use', id: `tu_${key}_${idx}`, name: step.tool[0], input: JSON.parse(JSON.stringify(step.tool[1]).replace(/@(\w)/, `${base}/$1`).replace(/"#([AB])"/, (_m, k) => String((global.__slTabs || {})[k]))) });
+      if (step.tool) content.push({ type: 'tool_use', id: `tu_${key}_${idx}`, name: step.tool[0], input: JSON.parse(JSON.stringify(step.tool[1]).replace(/@(\w)/, `${base}/$1`).replace(/"#([ABSP])"/, (_m, k) => String((global.__slTabs || {})[k]))) });
       const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: step.tool ? 'tool_use' : 'end_turn', content, usage: { input_tokens: 10, output_tokens: 5 } };
       return {
         async *[Symbol.asyncIterator]() { if (step.delay) await new Promise((r) => setTimeout(r, step.delay)); if (step.text) yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: step.text } }; },
@@ -381,13 +389,92 @@ process.stdin.on('data', async (d) => {
     const host = document.createElement('div');
     document.body.append(host);
     const turn = { cards: [], card: null, plain: null, working: null };
-    for (let i = 1; i <= 5; i++) window.stepUI.add(turn, { name: 'get_console', input: { tab_id: 9000 + i }, id: 'x' + i, label: 'Reading the page console' }, { messages: [], append: (n) => host.append(n), task: '' });
+    for (let i = 1; i <= 5; i++) window.stepUI.add(turn, { name: 'get_console', input: { tab_id: 9000 + i }, id: 'x' + i, label: 'Reading the page console' }, { messages: host, append: (n) => host.append(n), task: '' });
     const d = host.querySelector('.act-tabs');
     const r = { open: d.open, head: d.querySelector('summary').textContent, n: host.querySelectorAll('.act-tab').length };
     host.remove();
     return r;
   });
   check('more than 4 tabs: the list is folded by default and says how many', folded.open === false && folded.n === 5 && folded.head === 'Tabs · 5 opened', J(folded));
+
+  // ---- a blank frame is never shown: the tab's name instead (or the last good picture of the same tab)
+  const blankCase = await ui.evaluate(async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const turn = { cards: [], card: null, plain: null, working: null };
+    window.stepUI.add(turn, { name: 'get_console', input: { tab_id: 77 }, id: 'b1', label: 'Reading the page console' }, { messages: host, append: (n) => host.append(n), task: '' });
+    const c = host.querySelector('.act-card');
+    const state = () => { const sh = c.querySelector('.act-shot'); return { hidden: sh.hidden, mode: sh.dataset.mode || '', text: c.querySelector('.act-site-name').textContent, src: c.querySelector('.act-thumb').hasAttribute('src') }; };
+    const out = {};
+    window.stepUI.thumb(turn, { type: 'thumb', kind: 'blank', data: '', tabId: 77, url: 'file:///x/Chapter%205%20Final.pptx', title: 'Chapter 5 Final.pptx', favicon: null });
+    out.first = state();
+    const cv = document.createElement('canvas'); cv.width = 20; cv.height = 12; const x = cv.getContext('2d'); x.fillStyle = '#c33'; x.fillRect(0, 0, 10, 12); x.fillStyle = '#33c'; x.fillRect(10, 0, 10, 12);
+    window.stepUI.thumb(turn, { type: 'thumb', data: cv.toDataURL('image/jpeg').split(',')[1], tabId: 77, url: 'file:///x/a', title: 'A' });
+    out.frame = state();
+    window.stepUI.thumb(turn, { type: 'thumb', kind: 'blank', data: '', tabId: 77, url: 'file:///x/a', title: 'A' });
+    out.sameTab = state();
+    window.stepUI.thumb(turn, { type: 'thumb', kind: 'blank', data: '', tabId: 78, url: 'lumen-pdf://app/viewer.html', title: 'Report.pdf' });
+    out.otherTab = state();
+    host.remove();
+    return out;
+  });
+  check('a blank frame shows "Reading <name>" instead of a rectangle', blankCase.first.mode === 'site' && blankCase.first.text === 'Reading Chapter 5 Final.pptx' && !blankCase.first.src && !blankCase.first.hidden, J(blankCase.first));
+  check('…a real frame replaces it; a blank one of the same tab then leaves that picture; one of another tab shows its name', blankCase.frame.mode === 'frame' && blankCase.frame.src && blankCase.sameTab.mode === 'frame' && blankCase.sameTab.src && blankCase.otherTab.mode === 'site' && blankCase.otherTab.text === 'Reading Report.pdf' && !blankCase.otherTab.src, J(blankCase));
+
+  // ---- the slides viewer and the PDF viewer, read in the background: a real picture or the name, never a solid black rectangle
+  const docsDir = path.join(root, 'docs');
+  fs.mkdirSync(docsDir, { recursive: true });
+  const deckFile = path.join(docsDir, 'Chapter 5 Final.pptx');
+  fs.writeFileSync(deckFile, F.deck({ slides: [{ shapes: F.rect({ id: 2, box: { x: 100, y: 100, w: 500, h: 150 }, color: 'FFFFFF', text: 'Explain last two bullet' }) }] }));
+  const pdfObjects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>'];
+  const pdfStream = '0 0 0 rg 72 560 300 120 re f BT /F1 36 Tf 72 500 Td (Page 1 of 1) Tj ET';
+  pdfObjects.push(`<< /Length ${pdfStream.length} >>\nstream\n${pdfStream}\nendstream`);
+  let pdfText = '%PDF-1.4\n';
+  const pdfOffsets = pdfObjects.map((body, i) => { const at = pdfText.length; pdfText += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const pdfXref = pdfText.length;
+  pdfText += `xref\n0 ${pdfObjects.length + 1}\n0000000000 65535 f \n${pdfOffsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${pdfObjects.length + 1} /Root 1 0 R >>\nstartxref\n${pdfXref}\n%%EOF\n`;
+  const pdfFile = path.join(docsDir, 'Report.pdf');
+  fs.writeFileSync(pdfFile, Buffer.from(pdfText, 'latin1'));
+  const openFile = async (file, hint) => {
+    const id = await app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, pathToFileURL(file).href);
+    await waitFor(() => app.evaluate((_e, [i, h]) => { const t = global.__agent.browser.tabById?.(i); return Boolean(t) && h.test(t.webContents.getURL()); }, [id, hint]).catch(() => false), 20000);
+    return id;
+  };
+  const tabS = await openFile(deckFile, /slides\.html/);
+  const tabP = await openFile(pdfFile, /lumen-pdf|\.pdf/i);
+  await sleep(1500);
+  await app.evaluate((_e, ids) => { global.__slTabs = ids; global.__agent.browser.switchTab(ids.A); global.__tabChats.setSidebar(ids.A, true); }, { A: tabA, B: tabB2, S: tabS, P: tabP });
+  await sleep(600);
+  const shotState = () => ui.evaluate(async (s) => {
+    const c = document.querySelector(s);
+    const sh = c.querySelector('.act-shot');
+    const mode = sh.hidden ? 'hidden' : sh.dataset.mode;
+    const out = { mode, site: sh.querySelector('.act-site-name').textContent, chip: c.querySelector('.act-tabref .tab-ref-title')?.textContent || '' };
+    const img = c.querySelector('.act-thumb');
+    if (mode === 'frame' && img.getAttribute('src')) {
+      await img.decode().catch(() => {});
+      const cv = document.createElement('canvas'); cv.width = 40; cv.height = 25;
+      const x = cv.getContext('2d'); x.drawImage(img, 0, 0, 40, 25);
+      const d = x.getImageData(0, 0, 40, 25).data;
+      const lo = [255, 255, 255]; const hi = [0, 0, 0];
+      for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], d[i + k]); hi[k] = Math.max(hi[k], d[i + k]); }
+      out.range = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      out.max = Math.max(...hi);
+    }
+    return out;
+  }, card());
+  const okShot = (st) => (st.mode === 'frame' && st.range > 12 && st.max > 30) || (st.mode === 'site' && /^Reading .{3,}/.test(st.site));
+  await fresh('Look at the viewers please');
+  const settled = () => waitFor(async () => { const st = await shotState().catch(() => null); return st && (st.mode === 'frame' || st.mode === 'site') && st; }, 15000);
+  const slidesShot = await settled();
+  console.log('      viewer preview (slides):', J(slidesShot));
+  check('the AI reads a slides-viewer tab: the preview is a real picture or "Reading <name>", never a solid black rectangle', Boolean(slidesShot) && okShot(slidesShot), J(slidesShot));
+  await waitFor(() => ui.evaluate(() => window.__tools.length >= 2), 20000);
+  await sleep(1500);
+  const pdfShot = await settled();
+  console.log('      viewer preview (pdf):', J(pdfShot));
+  check('…and for a PDF-viewer tab', Boolean(pdfShot) && okShot(pdfShot) && pdfShot.chip !== slidesShot?.chip, J({ slidesShot, pdfShot }));
+  await finished();
 
   // ---- an address read with no tab: "Reading <site>" with its icon, never a picture of another tab
   await fresh('Please read the site quietly');
