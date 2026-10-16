@@ -202,11 +202,12 @@ function locate(id) {
     }
     const ring = document.createElement('div');
     ring.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:28px;height:28px;margin:-14px 0 0 -14px;' +
-      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);transition:opacity .5s .3s;' +
+      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);' + (matchMedia('(prefers-reduced-motion: reduce)').matches ? '' : 'transition:opacity .5s .3s;') +
       'left:' + x + 'px;top:' + y + 'px';
     document.documentElement.appendChild(ring);
-    requestAnimationFrame(() => { ring.style.opacity = '0'; });
-    setTimeout(() => ring.remove(), 900);
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches; // (no fade: it stays a moment, then goes)
+    if (!still) requestAnimationFrame(() => { ring.style.opacity = '0'; });
+    setTimeout(() => ring.remove(), still ? 600 : 900);
     return { x: Math.round(x), y: Math.round(y), covered, tag: el.tagName.toLowerCase(), label: entry.label || accessibleName(el) };
   })()`;
 }
