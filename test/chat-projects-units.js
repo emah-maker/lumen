@@ -94,6 +94,13 @@ const readIndexFile = (dir) => JSON.parse(dec(JSON.parse(fs.readFileSync(path.jo
   check('empty text gives nothing', chunks('').length === 0 || chunks('   ').every((s) => !s.trim()));
 }
 
+// ---- a {name} placeholder in a string is filled in (the pattern once read (w+), so "{name}" was shown as written)
+{
+  const rdir = path.join(__dirname, '..', 'src', 'renderer');
+  const bad = fs.readdirSync(rdir).filter((n) => n.endsWith('.js') && !n.includes('bundle') && /\{\(w\+\)\}/.test(fs.readFileSync(path.join(rdir, n), 'utf8')));
+  check('placeholders: no renderer script matches "{(w+)}" (a word character needs \\w)', bad.length === 0, JSON.stringify(bad));
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
 console.log('\nall passed');
