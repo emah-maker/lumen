@@ -9038,6 +9038,7 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
   freezeSeq.set(rec, seq);
   try {
     const image = await wc.capturePage();
+    await new Promise((r) => setImmediate(r)); // (the capture's own hand-over to main is a task of its own; the work on it starts in the next one)
     if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
     // The live view stays where it is until the UI has the snapshot on screen (view:frozen below). Hiding it here, before the image
     // had been decoded and painted, left the page area blank for a few frames at the start of every sidebar open and close.

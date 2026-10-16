@@ -48,8 +48,8 @@ const { start, waitFor, makeChecker } = require('./_files-rig');
 
     // ---- searching ----
     await ui.type('#files-picker-input', 'chap slide', { delay: 20 });
-    // (the answer to the typed query, not the list that was showing before it: only the search's rows carry marked letters)
-    check('a query finds a file inside a pinned folder', await waitFor(async () => (await names()).includes('Chapter 4 slides.txt') && await ui.evaluate(() => document.querySelectorAll('#files-picker-results mark').length > 0)), JSON.stringify(await names()));
+    // (the answer to the whole typed query, not the list that was showing before it or the answer to its first letters: its marks include the last word)
+    check('a query finds a file inside a pinned folder', await waitFor(async () => (await names()).includes('Chapter 4 slides.txt') && await ui.evaluate(() => [...document.querySelectorAll('#files-picker-results mark')].map((m) => m.textContent).join('').toLowerCase().includes('slide'))), JSON.stringify(await names()));
     check('it is listed under "In pinned folders"', (await heads()).includes('In pinned folders'), JSON.stringify(await heads()));
     check('the matching letters are marked', await ui.evaluate(() => [...document.querySelectorAll('#files-picker-results mark')].map((m) => m.textContent).join('').toLowerCase().includes('chap')), await ui.evaluate(() => document.getElementById('files-picker-results').innerHTML.slice(0, 300)));
     check('the best match is selected first', (await selectedName()) === 'Chapter 4 slides.txt', await selectedName());
