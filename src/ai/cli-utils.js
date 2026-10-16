@@ -19,9 +19,42 @@ const fs = require('fs');
 let cp = null;
 const real = () => cp || (cp = require('child_process'));
 
-// Options every spawn gets. The caller's own values win for cwd/env/etc., but not for these four.
+// [working directory] Windows keeps every process's current directory open, so a program Lumen starts that inherits a cwd inside the
+// install folder (the Start-menu shortcut's "Start in") stops the next update from renaming that folder for as long as it runs: Teams
+// opened by a msteams: link held it for days. So Lumen leaves the install folder at start-up (leaveInstallDir, called first thing in
+// main.js: every child, shell.openExternal and shell.openPath then inherit a neutral cwd), and no spawn below keeps one inside it.
+// The install folder is the exe's folder, or the whole .app bundle on macOS. (An unpackaged run's exe is Electron's own, so the checkout
+// the developer stands in is not "inside the install".)
+function installRoot(execPath = process.execPath, platform = process.platform) {
+  const p = String(execPath || '');
+  if (platform === 'darwin') { const m = /^(.*?\.app)(?:[\\/]|$)/.exec(p); if (m) return m[1]; }
+  return p ? require('path').dirname(p) : '';
+}
+function insideInstall(dir, execPath = process.execPath, platform = process.platform) {
+  const path = require('path');
+  const root = installRoot(execPath, platform);
+  if (!dir || !root) return false;
+  const fold = (x) => { const r = path.resolve(String(x)).replace(/[\\/]+$/, ''); return platform === 'win32' || platform === 'darwin' ? r.toLowerCase() : r; };
+  const d = fold(dir); const r = fold(root);
+  return d === r || d.startsWith(r + path.sep);
+}
+// Move the process out of the install folder when it is in it. Returns the folder it moved to, or '' (nothing to do / could not).
+function leaveInstallDir({ cwd = () => process.cwd(), chdir = (d) => process.chdir(d), execPath = process.execPath, platform = process.platform, home = () => require('os').homedir(), userData } = {}) {
+  let here;
+  try { here = cwd(); } catch { here = ''; } // (a deleted cwd throws: also not somewhere to stay)
+  if (here && !insideInstall(here, execPath, platform)) return '';
+  for (const to of [userData, home()]) {
+    if (!to || insideInstall(to, execPath, platform)) continue;
+    try { chdir(to); return to; } catch { /* the next one */ }
+  }
+  return '';
+}
+
+// Options every spawn gets. The caller's own values win for cwd/env/etc., but not for these four, and never a cwd inside the install.
 function hiddenOptions(options) {
   const o = { ...(options || {}) };
+  if (o.cwd === undefined) { let here = ''; try { here = process.cwd(); } catch { /* none */ } if (insideInstall(here)) o.cwd = require('os').homedir(); }
+  else if (insideInstall(o.cwd)) o.cwd = require('os').homedir();
   o.windowsHide = true;
   o.shell = false;
   if (o.stdio === undefined) o.stdio = 'pipe';
@@ -199,4 +232,4 @@ function fullAccessRejected(text, { name, setting }) {
   return { text: `${name} didn't accept the options Lumen uses to give it full access to this computer (${String(text).trim().split('\n')[0].slice(0, 160)}). Nothing ran. Update ${name}, or turn off "${setting}" in Settings > AI.` };
 }
 
-module.exports = { testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
+module.exports = { installRoot, insideInstall, leaveInstallDir, testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
