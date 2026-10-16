@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Updates no longer fail with "files were in use" because of a program Lumen started.** Lumen was started from its own install folder (the Start-menu shortcut's "Start in"), so Microsoft Teams (opened from a msteams: link), the app that opens a downloaded file, or an AI assistant inherited that folder as its working directory, and Windows kept the folder locked, and the update unable to swap it, for as long as that program ran, often days. Lumen now leaves the install folder as it starts, and nothing it starts keeps one. If an update still finds the install in use, the message names the program (for example "close Microsoft Teams and try again").
 - **"Restart to update" now works while an AI assistant is connected to Lumen.** Claude Code, Codex and other apps set up with "Let other apps use Lumen" keep a copy of `Lumen.exe` running from Lumen's install folder, and Windows refuses to rename a folder with that running, so the update failed with "files were in use" and the old version came back. When the folder can't be renamed, the update now swaps the files one by one (a running exe can be renamed aside), puts everything back if a step fails, and deletes the old files at the next start. The error text also names the cause. If you are stuck on 0.5.35 or earlier, quit every app that uses Lumen (Claude Code, Codex) and click Restart to update once; later updates no longer need that.
 
 ## 0.5.37 (2026-10-16)
