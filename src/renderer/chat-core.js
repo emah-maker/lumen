@@ -1417,6 +1417,7 @@ function flushStreaming(el) {
 // Each code block in a finished reply: its language, and a Copy button for just that code.
 // `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
 function decorateCode(root, { colour = false } = {}) {
+  window.tabRef?.decorate(root, root?._tabs); // [tab chips] [[tab:ID]] in the AI's own words: a chip for the tab
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
   window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
@@ -1448,6 +1449,7 @@ function endStream() {
   if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
+let finishedRun = null; // { runId, turn }: the run that just ended, so a thumbnail that lands after its 'done' still reaches its Browser card
 let earlyEnded = null; // { runId, bubble }: the run whose reply ended on reply_complete, until its 'done' (lateDone)
 let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
@@ -1461,6 +1463,8 @@ window.assistant.onEvent((event) => {
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; } // [ai files]
+  // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.
+  if (event.type === 'thumb' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.thumb(finishedRun.turn, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1695,6 +1699,7 @@ function finishTurn(event, { early }) {
     if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
   }
   const stoppedByUser = Boolean(turn.stopRequested && !turn.interrupted);
+  finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
@@ -2487,6 +2492,7 @@ function drawItems(items, userEntries, replyEntries) {
       }
       bubble.className = 'msg assistant';
       bubble.innerHTML = window.renderMarkdown(item.text);
+      bubble._tabs = item.tabs || null; // [tab chips] the tabs it names, as they were
       decorateCode(bubble);
       finishReply(bubble, item.text);
       if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)

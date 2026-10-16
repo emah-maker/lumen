@@ -26,7 +26,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ask-before-acting', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
   'skills', 'macros', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
-  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys'];
+  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys', 'files'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -167,6 +167,7 @@ const DEFAULTS = {
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
+  filesRemember: true, // [files] Settings > General > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)

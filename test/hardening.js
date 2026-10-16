@@ -35,6 +35,10 @@ const http = require('http');
     .filter((c) => c !== 'ui-preload:loaded'); // open to every sender on purpose: it only restricts the view that sends it
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
   check(`every preload.js channel (${channels.length}) is gated to the UI`, channels.length > 30 && ungated.length === 0, ungated.join(', '));
+  // The Files bridge builds its channels from a list (`files:${op}`, to keep the preload small), which the pattern above cannot see: each op of the list is checked here.
+  const filesOps = (/Object\.fromEntries\('([a-z ]+)'\.split\(' '\)/.exec(preloadSrc) || [])[1]?.split(' ') || [];
+  const filesUngated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), filesOps.map((o) => `files:${o}`));
+  check(`every op of the Files bridge (${filesOps.length}) is gated to the UI`, filesOps.length >= 12 && filesUngated.length === 0, filesUngated.join(', ') || 'no ops found');
 
   // ---- the UI window runs sandboxed, and its bundled preload still works there
   const prefs = await app.evaluate(({ BrowserWindow }) => {

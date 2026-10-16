@@ -548,6 +548,52 @@
     .w-btn.primary { background: var(--accent-deep); color: var(--on-accent); }
     .w-empty { margin: auto 0; color: var(--muted); font-size: 13px; padding: 4px 0; }
 
+    /* Files card (renderer/newtab-widgets.js "the Files card"): a heading and a list of rows for pinned, then recent files. The icon is
+       tinted by the kind of file (colour is never the only signal: each kind has its own shape) and goes plain on a Monochrome card. */
+    .w-card.files { --fl-pdf: #c4262e; --fl-doc: #2f6fdb; --fl-sheet: #1f8a4c; --fl-slides: #c25f0a; --fl-mail: #7d49c0; --fl-image: #0e7f86; --fl-zip: #8a6a12; --fl-code: #4f58c9; --fl-folder: #3d86d6; }
+    @media (prefers-color-scheme: dark) { .w-card.files { --fl-pdf: #ff7a72; --fl-doc: #6aa5ff; --fl-sheet: #4bd166; --fl-slides: #ffa04d; --fl-mail: #b98cf2; --fl-image: #4fd0d6; --fl-zip: #e0b84a; --fl-code: #8e97ff; --fl-folder: #6cb0ff; } }
+    body.on-media .w-card.files { --fl-pdf: #ff9a94; --fl-doc: #8ab8ff; --fl-sheet: #6ce085; --fl-slides: #ffb877; --fl-mail: #cba6f7; --fl-image: #6fe0e6; --fl-zip: #efca6a; --fl-code: #a7aeff; --fl-folder: #8cc2ff; }
+    body.on-media.tone-light .w-card.files { --fl-pdf: #b3261e; --fl-doc: #1f5fcb; --fl-sheet: #17772f; --fl-slides: #a85d00; --fl-mail: #6b3aae; --fl-image: #0b6e74; --fl-zip: #7a5a0a; --fl-code: #3f48b8; --fl-folder: #2b74c4; }
+    .w-card.files .w-body { overflow: hidden; }
+    .fl-wrap { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .fl-sec { min-width: 0; }
+    .fl-h { margin: 0 0 2px; padding: 0 0 0 2px; color: var(--muted); font: 600 11px/1.4 system-ui, sans-serif; letter-spacing: 0.02em; text-transform: uppercase; }
+    .fl-empty { margin: 0; padding: 2px 2px 4px; color: var(--muted); font-size: 12px; }
+    .fl-first { display: flex; flex-direction: column; justify-content: center; min-height: 60px; }
+    .fl-first .w-note { margin: 0; }
+    .fl-first .w-btn { margin-top: 8px; }
+    .fl-row { align-items: center; gap: 4px; padding: 2px 6px 2px 2px; }
+    .fl-main { appearance: none; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 0; padding: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: default; outline: none; }
+    .fl-main .w-main { min-width: 0; }
+    .fl-main:focus-visible, .fl-cand:focus-visible, .fl-find:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .fl-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--muted); }
+    .fl-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+    .fl-icon.k-folder { color: var(--fl-folder); } .fl-icon.k-folder svg { fill: color-mix(in srgb, currentColor 16%, transparent); }
+    .fl-icon.k-pdf { color: var(--fl-pdf); } .fl-icon.k-doc { color: var(--fl-doc); } .fl-icon.k-sheet { color: var(--fl-sheet); } .fl-icon.k-slides { color: var(--fl-slides); }
+    .fl-icon.k-mail { color: var(--fl-mail); } .fl-icon.k-image { color: var(--fl-image); } .fl-icon.k-zip { color: var(--fl-zip); } .fl-icon.k-code { color: var(--fl-code); }
+    .w-card.files[data-colors="mono"] .fl-icon { color: var(--muted); }
+    .fl-main .w-title { font-size: 13px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .fl-row.pinned .w-title { font-weight: 550; }
+    .fl-row.missing .fl-icon, .fl-row.missing .w-title { opacity: 0.5; }
+    .fl-row.missing .w-title { text-decoration: line-through; text-decoration-color: var(--faint); }
+    .fl-row .fl-find { flex: none; margin: 0; padding: 2px 10px; font-size: 12px; }
+    .fl-row .fl-more { opacity: 0; }
+    .fl-row:hover .fl-more, .fl-row:focus-within .fl-more, .fl-more[aria-expanded="true"] { opacity: 1; }
+    @media (hover: none) { .fl-row .fl-more { opacity: 0.6; } }
+    .fl-cands { margin: 0 0 4px 26px; padding: 4px; display: flex; flex-direction: column; gap: 2px; border-radius: 8px; background: var(--field); }
+    .fl-cand { appearance: none; display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: default; outline: none; }
+    .fl-cand:hover { background: var(--hover); }
+    .fl-row.missing { cursor: pointer; }
+    .fl-undo { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0 6px; color: var(--muted); font-size: 12px; }
+    .fl-undo .w-btn { flex: none; margin: 0; padding: 2px 10px; font-size: 12px; }
+    .fl-cand .w-title { font-size: 13px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .fl-none { margin: 0; padding: 2px 4px; color: var(--muted); font-size: 12px; }
+    .fl-cands .w-btn { margin: 2px 0 0; align-self: flex-start; }
+    /* A narrow card keeps the names and drops the second line; a short one shows only what fits whole (fitLists adds "+N more"). */
+    @container card (max-width: 189px) { .fl-main .w-sub { display: none; } .fl-icon { width: 16px; height: 16px; } .fl-icon svg { width: 15px; height: 15px; } .fl-row .fl-more { display: none; } }
+    @container card (max-height: 129px) { .fl-h { display: none; } }
+    @media (prefers-reduced-motion: reduce) { .fl-row, .fl-main { transition: none; } }
+
     /* Loading: quiet placeholder bars. */
     .w-skel { display: flex; flex-direction: column; gap: 9px; padding: 4px 0; }
     .w-skel i { display: block; height: 10px; border-radius: 4px; background: var(--field); background-image: linear-gradient(90deg, transparent, var(--hover), transparent); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }

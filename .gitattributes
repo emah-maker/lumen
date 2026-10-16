@@ -13,3 +13,9 @@ src/renderer/settings.bundle.css merge=lumen-bundle
 src/renderer/settings.html merge=lumen-bundle
 src/renderer/index.html merge=lumen-bundle
 src/preload/preload.bundle.js merge=lumen-bundle
+# Generated bundles are shipped as checked out: keep them LF on every checkout (CRLF adds ~2% to each; perf-budget measures the real file)
+src/preload/preload.bundle.js text eol=lf
+src/renderer/*.bundle.js text eol=lf
+src/renderer/*.bundle.css text eol=lf
+src/renderer/index.html text eol=lf
+src/renderer/settings.html text eol=lf

@@ -140,14 +140,14 @@
     const el0 = el('section', { className: 'act-card' });
     el0.dataset.surface = surface;
     el0.dataset.state = ''; // (the first refresh sets it: a browser card starts being watched then)
-    el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div></div></div>'
+    el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div><div class="act-tabref" hidden></div></div></div>'
       + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"></div>'
       + '<div class="act-actions"><button type="button" class="act-btn" hidden></button>'
       + '<button type="button" class="act-toggle" hidden></button><button type="button" class="act-closeall" hidden></button></div>'
       + '<div class="act-tabs-note" hidden></div>'
       + '<span class="act-live" role="status"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
@@ -186,8 +186,21 @@
     card.btn.hidden = !label;
     if (label && card.btn.textContent !== label) { card.btn.textContent = label; card.btn.title = card.surface === 'browser' ? tr('card.openPreview.title') : ''; }
     refreshTabs(card, state);
+    cardChip(card);
     // The screen reader hears a card's state change (Working, Needs your OK, Done, Stopped), once each, never its steps.
     if (card.said !== state) { card.said = state; card.live.textContent = tr('card.live', { title: card.title.textContent, state: tr(`card.state.${state}`) }); }
+  }
+  // The tab a Browser card works in, as a chip (live title; clicking it switches to the tab).
+  function cardChip(card) {
+    const t = card.tab;
+    if (card.surface !== 'browser' || !t || !window.tabRef) return;
+    const sig = `${t.tabId ?? ''}|${t.s || ''}|${t.tabId == null ? t.url : ''}`;
+    if (card.tabref.dataset.sig === sig) return;
+    if (t.tabId == null && !t.url) return;
+    card.tabref.dataset.sig = sig;
+    card.tabref.textContent = '';
+    card.tabref.append(window.tabRef.chip(t.tabId != null ? { id: t.tabId, s: t.s || '' } : null, { t: t.title, u: t.url }));
+    card.tabref.hidden = false;
   }
   // ---- the tabs the AI opened: hide / show them in the strip (the sidebar's own toggle, the hideAiTabs setting) and close them with Undo
   const hidingTabs = () => window.lumenHideAiTabs === true;
@@ -266,6 +279,7 @@
     const row = makeRow(label, running, data);
     const surface = window.stepLabels.surfaceOf(event.name);
     const info = SL().groupInfo(event.name, data.input, label);
+    window.tabRef?.forStep(row, event.name, data.input, null); // [tab chips] a step that names a tab
     const tail = (e) => !turn.working || e.nextElementSibling === turn.working || !e.nextElementSibling;
     if (surface) {
       let card = turn.card;
@@ -296,6 +310,7 @@
     const label = labelFor(event);
     if (label) { setLabel(row, label); if (row._s) row._s.baseLabel = label; }
     if (row._s && event.input && typeof event.input === 'object') row._s.input = event.input;
+    if (row._s?.input) window.tabRef?.forStep(row, row._s.name, row._s.input, null);
     if (row._s?.input && !row.dataset.more) { row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-expanded', 'false'); row.dataset.more = '1'; }
     const card = row._card;
     if (card) { card.latest = row.firstChild.textContent; if (card.count === 1) card.first = card.latest; refreshCard(turn, card); }
@@ -308,6 +323,7 @@
     s.done = true;
     if (typeof event.output === 'string') s.output = event.output;
     if (!event.ok && event.error) s.error = String(event.error);
+    if (Number.isInteger(event.tabId)) window.tabRef?.forStep(row, s.name, s.input, null, event.tabId); // [tab chips] the tab open_tab made
     let plain = false;
     const known = window.stepLabels && SL().label(s.name, s.input || {});
     if (!event.ok && !event.stopped && event.error && known) {
@@ -374,6 +390,7 @@
       const row = makeRow(label, false, data);
       if (tool.ok === false) { row.className = 'step failed restored'; } else row.className = 'step done restored';
       const info = SL().groupInfo(name, input, label);
+      window.tabRef?.forStep(row, name, input, item.tabs, Number.isInteger(tool.tab) ? tool.tab : null);
       if (surface) {
         flushLegacy();
         let card = turn.card;
@@ -403,7 +420,7 @@
     const t = item.thumb;
     if (t && t.data) {
       const last = [...turn.cards].reverse().find((c) => c.surface === 'browser');
-      if (last) { last.tab = { tabId: null, url: t.url || '', title: t.title || '' }; setThumb(last, `data:image/jpeg;base64,${t.data}`); }
+      if (last) { last.tab = { tabId: Number.isInteger(t.tabId) ? t.tabId : null, s: t.s || '', url: t.url || '', title: t.title || '' }; setThumb(last, `data:image/jpeg;base64,${t.data}`); }
     }
     for (const card of turn.cards) { card.running = 0; refreshCard(turn, card); if (card.surface === 'browser' && t?.url) { /* button shown by refreshCard when a tab is known */ } }
     return out;

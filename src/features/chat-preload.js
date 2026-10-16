@@ -88,6 +88,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
     desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps]
     hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [activity cards] the card's "Hide tabs the AI opened" (no argument: read it)
+    tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') }, // [tab chips] a tab the chat names, as a chip
     openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
     thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
     undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),

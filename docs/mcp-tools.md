@@ -286,6 +286,9 @@ List a folder on this computer, newest first, with sizes and dates (folders end 
 | `folder` | string |  |
 | `match` | string |  |
 | `limit` | integer (1–200, default 50) |  |
+| `find` | string |  |
+
+`find` looks a file up by name or description ("chapter 4 slides") instead of listing a folder. It answers from the user's Files list first (what they pinned and opened lately, and the files inside their pinned folders: Lumen's own list and index, no disk search, so it answers at once and needs no setting). Only when none of those matches, and the setting above is on, one bounded search of Desktop, Documents and Downloads runs; the file it finds that way is added to the Files list, so the next lookup is instant. It returns names, paths and dates, never contents.
 
 ### `clipboard`
 
