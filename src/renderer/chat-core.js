@@ -1417,6 +1417,7 @@ function flushStreaming(el) {
 // Each code block in a finished reply: its language, and a Copy button for just that code.
 // `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
 function decorateCode(root, { colour = false } = {}) {
+  window.tabRef?.decorate(root, root?._tabs); // [tab chips] [[tab:ID]] in the AI's own words: a chip for the tab
   window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   window.researchUi?.decorate(root); // a ```sources block (/research): the research board's entries with their quality chips
   window.codeExtras?.decorateTables(root); // a wide table: a Fit / Scroll switch
@@ -2491,6 +2492,7 @@ function drawItems(items, userEntries, replyEntries) {
       }
       bubble.className = 'msg assistant';
       bubble.innerHTML = window.renderMarkdown(item.text);
+      bubble._tabs = item.tabs || null; // [tab chips] the tabs it names, as they were
       decorateCode(bubble);
       finishReply(bubble, item.text);
       if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)

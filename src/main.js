@@ -268,7 +268,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:thumbs-visible', 'agent:open-preview', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
@@ -352,6 +352,7 @@ let tabs = []; // { id, view, favicon }
 let activeId = null;
 let nextTabId = 1;
 let contentBounds = { x: 0, y: 0, width: 800, height: 600 };
+const closedChipTabs = new Map(); // [tab chips] id -> { t, u }: the last title and address of a tab that closed (a chip for it still reads)
 const closedTabs = []; // URLs, most recent last
 const closedInfo = []; // what each closedTabs entry was besides its address: pinned, group, place, back/forward (features/closed-tabs.js)
 const closedTabsKept = require('./features/closed-tabs');
@@ -1866,6 +1867,7 @@ let sessionTimer = null;
 const sessionGate = saveGates.sessionWriteGate(); // an identical session is not written again
 let sessionDirtySince = 0; // when the first unsaved tab change came
 let tabsQuiet = false; // set while sendTabs runs for events that change nothing the session keeps (a background tab's title, loading flags)
+let tabChipsRt = null; // [tab chips] features/tab-chips.js, made when a chat first shows a chip
 let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 // Tab moves made as one (several tabs going to another window) send each window's strip one update at the
 // end, instead of one per step, so the strips never show the halfway states.
@@ -1891,6 +1893,7 @@ function sendTabsBody(coalesced) {
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
   if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
   agentTargetHook?.();
+  tabChipsRt?.changed(); // [tab chips] a chip's title or icon follows the tab
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose navigation keeps changing).
   // A background tab's title tick or a loading flag changes nothing worth a write (quitting saves the latest titles).
@@ -3570,6 +3573,13 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+  { // [tab chips]
+    const chipUrl = tab.isolated || isInternal(url) ? '' : url;
+    closedChipTabs.delete(id);
+    closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.pendingCloseTitle || tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000) });
+    if (closedChipTabs.size > 300) closedChipTabs.delete(closedChipTabs.keys().next().value);
+    tabChipsRt?.changed();
+  }
   const reopenUrl = isInternal(url) ? sessionFiles.savedUrl(url) : url; // (a file in its viewer reopens from the file's own address)
   if (reopenUrl && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
     closedTabs.push(reopenUrl);
@@ -3609,6 +3619,7 @@ function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
+  tab.pendingCloseTitle = tab.view.webContents.getTitle() || ''; // [tab chips] (the page is gone by the time closeTab runs)
   tab.pendingCloseHistory = navSnapshot(tab); // (the page is gone by the time closeTab runs)
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
@@ -9275,6 +9286,7 @@ const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
+const tabMarker = new Proxy({}, { get: (_t, k) => require('./renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
 const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
@@ -9287,14 +9299,16 @@ function trackRunDetails(run, msg) {
   if (msg.type === 'retry') { d.thinking = ''; d.thinkingMs = 0; }
   else if (msg.type === 'tool') {
     if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: stepLabelsLib.compactInput(msg.name, msg.input) || msg.input, ok: true });
+    try { const ids = tabMarker.stepTabs(msg.name, msg.input); if (ids.length) noteRunTabs(run, ids); } catch { /* none */ } // [tab chips] a step that names a tab: how it looks before the step (a close) changes it
   } else if (msg.type === 'thumb') {
-    if (msg.data) d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '' };
+    if (msg.data) { d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '', ...(Number.isInteger(msg.tabId) ? { tabId: msg.tabId, s: require('./features/tab-chips').BOOT } : {}) }; if (Number.isInteger(msg.tabId)) noteRunTabs(run, [msg.tabId]); }
   } else if (msg.type === 'tool_update') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
     if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = stepLabelsLib.compactInput(t.name, msg.input) || msg.input; }
   } else if (msg.type === 'tool_done') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
     if (t) t.ok = Boolean(msg.ok);
+    if (t && Number.isInteger(msg.tabId)) { t.tab = msg.tabId; noteRunTabs(run, [msg.tabId]); } // [tab chips] the tab open_tab made
   } else if (msg.type === 'auto') d.auto = { label: msg.label, reason: msg.reason };
 }
 // [activity cards] The Browser card's live thumbnail of the tab a run works in (features/step-thumbs.js). The chat reports whether any card
@@ -9361,10 +9375,53 @@ ipcMain.handle('agent:open-preview', (event, target) => {
   const tab = rec ? withWindow(rec, () => openTab(url)) : openTab(url);
   return { ok: Boolean(tab), tabId: tab?.id ?? null, reopened: true };
 });
+// [tab chips] A tab the chat names, as a chip: its title and icon live, "closed" once it is gone (features/tab-chips.js).
+function tabChips() {
+  return tabChipsRt ||= require('./features/tab-chips').create({
+    closed: closedChipTabs,
+    lookup: (id) => {
+      const hit = tabAnywhere(id);
+      if (!hit) return null;
+      const t = hit.t;
+      const url = tabUrl(t);
+      return { title: (alive(t) ? (!warmPending.has(t.view.webContents) && t.view.webContents.getTitle()) : t.sleepTitle) || '', url: isInternal(url) ? '' : url, favicon: t.favicon || null, sleeping: !alive(t) };
+    },
+    raise: (id, senderWc) => {
+      const hit = tabAnywhere(id);
+      if (!hit) return false;
+      withWindow(hit.rec, () => switchTab(id)); // an AI tab hidden from the strip shows again while it is the one in front, as with Open preview
+      const from = senderWc ? recOfSender(senderWc) : null;
+      if (hit.rec !== from && rcAlive(hit.rec) && !(TEST && process.env.LUMEN_TEST_BACKGROUND)) raiseWindow(hit.rec.win); // another window comes to the front
+      return true;
+    },
+    openUrl: (url, wc) => { const rec = recOfSender(wc); return rec ? withWindow(rec, () => openTab(url)) : openTab(url); },
+    isInternal: (url) => isInternal(url),
+    aliveSender: (wc) => Boolean(wc) && !wc.isDestroyed(),
+  });
+}
+const chipSenders = new Set();
+function chipsFor(event) {
+  const rt = tabChips();
+  if (!chipSenders.has(event.sender.id)) { const id = event.sender.id; chipSenders.add(id); event.sender.once('destroyed', () => { chipSenders.delete(id); rt.forget(id); }); }
+  return rt;
+}
+ipcMain.handle('chips:info', (event, keys, snaps) => tabChips().infos(keys, snaps && typeof snaps === 'object' ? snaps : {}));
+ipcMain.handle('chips:watch', (event, keys) => chipsFor(event).watch(event.sender, keys));
+ipcMain.handle('chips:open', (event, request) => { syncToSender(event); return chipsFor(event).open(event.sender, request); });
+if (TEST) global.__tabChips = { rt: () => tabChips(), boot: () => require('./features/tab-chips').BOOT, closed: () => [...closedChipTabs] };
+function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or as they last looked): kept with the reply
+  const rt = tabChips();
+  const snaps = (run.tabSnaps ||= {});
+  for (const id of ids) { const snap = rt.snapshot(String(id)); if (snap) snaps[id] = snap; }
+}
 function stampRun(run, done = null) {
   try {
     const d = run.details;
     const info = { at: Date.now() };
+    try { // [tab chips] the tabs the replies name
+      for (const m of run.messages.slice(run.startLen)) if (m.role === 'assistant') for (const b of Array.isArray(m.content) ? m.content : []) if (b.type === 'text') { const ids = tabMarker.idsIn(b.text); if (ids.length) noteRunTabs(run, ids); }
+      if (run.tabSnaps) info.tabs = run.tabSnaps;
+    } catch { /* none */ }
     if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: d.thumb || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
@@ -9431,6 +9488,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
+    if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
+      const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
+      if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
+    }
     trackRunDetails(run, msg);
     noteThumbs(run, msg, (ev) => {
       if (run.deleted) return;
