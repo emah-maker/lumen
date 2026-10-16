@@ -623,6 +623,8 @@ function createUpdates(deps) {
     // An update that was unpacked but never applied leaves a big folder next to the install: use it
     // if it is complete and newer, else clear it (a relocating copy only clears it).
     if (canSelfUpdate() || relocate()) restoreStaged(lastSwapFailed);
+    // (an update swapped while another program had files open leaves the old install to delete once that program ended)
+    if (canSelfUpdate() && kind !== 'mac') setTimeout(() => { try { zipMod().clearOld?.(process.execPath)?.catch?.(() => {}); } catch {} }, 20e3).unref?.();
     // A standard user's stale copy hands over first; the move prompt and the checks only start when it didn't.
     openNewerUserCopy().catch(() => false).then((handedOff) => {
       if (handedOff) return;
