@@ -691,6 +691,7 @@ contextBridge.exposeInMainWorld('assistant', {
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
   onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
   showAgentTarget: () => ipcRenderer.send('agent:show-target'),
+  tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') }, // [tab chips] a tab the chat names, as a chip
   openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
@@ -737,12 +738,9 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
-// Files (features/files.js, ids from list(); window.browser.files is the AI file cards): one channel per op, open is files:open-entry.
-const fop = (op, ch = 'files:' + op) => [op, (a, b) => ipcRenderer.invoke(ch, a, b)];
 contextBridge.exposeInMainWorld('lumenFiles', {
-  ...Object.fromEntries(['list', 'pin', 'unpin', 'remove', 'clear', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'].map((op) => fop(op)).concat([fop('open', 'files:open-entry')])),
-  onChanged: on('files:changed'),
-  onAttach: on('files:attach-file'),
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke('files:' + o, a, b)])),
+  open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).

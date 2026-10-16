@@ -8,7 +8,7 @@
 //   Settings              settings:files-<op>  (lumenSettings.files, settings-preload.js)
 // Ops: list pin unpin remove clear open show find relocate search attach scan restore. The change event goes to all three:
 // files:changed (UI), newtab-files:changed (every new-tab page), settings:files-changed (Settings). A file chosen with Alt+Enter goes to the
-// sidebar's composer as files:attach-file { name, type, data (the bytes) } (window.lumenFiles.onAttach).
+// sidebar's composer as files:attach-file { name, type, data (the bytes) } (window.lumenFiles.on('attach-file', cb)).
 //
 // Nothing here waits on the disk on the main thread: every call is fs.promises, and walking folders, ranking them and looking for a moved
 // file are the indexer's worker thread (files-index-worker.js). A missing file is noticed with fs.promises.access, at most every 5 s per

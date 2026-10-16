@@ -263,7 +263,7 @@ const filesPicker = (() => {
     thawPage();
   }
 
-  window.browser.onOpenFilesPicker?.(open);
-  window.lumenFiles?.onChanged(() => { if (isOpen()) query(input.value); }); // a file opened or moved meanwhile
+  window.lumenFiles?.on('picker', open); // (Ctrl+Shift+F, from main)
+  window.lumenFiles?.on('changed', () => { if (isOpen()) query(input.value); }); // a file opened or moved meanwhile
   return { open, close, isOpen };
 })();

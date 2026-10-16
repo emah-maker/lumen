@@ -2873,7 +2873,7 @@ window.browser.onAttachImage?.(async (base64) => {
 });
 
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
-window.lumenFiles?.onAttach?.(async ({ name, type, data }) => {
+window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
   showSidebar(true);
   try {
     await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);

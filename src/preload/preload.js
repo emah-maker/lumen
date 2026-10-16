@@ -314,12 +314,9 @@ contextBridge.exposeInMainWorld('skillsApi', {
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
-// Files (features/files.js, ids from list(); window.browser.files is the AI file cards): one channel per op, open is files:open-entry.
-const fop = (op, ch = 'files:' + op) => [op, (a, b) => ipcRenderer.invoke(ch, a, b)];
 contextBridge.exposeInMainWorld('lumenFiles', {
-  ...Object.fromEntries(['list', 'pin', 'unpin', 'remove', 'clear', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'].map((op) => fop(op)).concat([fop('open', 'files:open-entry')])),
-  onChanged: on('files:changed'),
-  onAttach: on('files:attach-file'),
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke('files:' + o, a, b)])),
+  open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
 // them is in lumen://settings (settings-preload.js).
