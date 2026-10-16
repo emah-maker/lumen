@@ -49,6 +49,7 @@ function cleanMeta(raw) {
     }
     if (Object.keys(tabs).length) out.tabs = tabs;
   }
+  if (Array.isArray(raw.touched)) { const ids = [...new Set(raw.touched.filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9))].slice(0, 24); if (ids.length) out.touched = ids; } // [activity cards] the tabs the turn used
   if (raw.cards === true) out.cards = true;
   if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };

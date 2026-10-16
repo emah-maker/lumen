@@ -1,5 +1,6 @@
 // What the AI is doing, in the chat (renderer/step-ui.js, step-labels.js, features/step-thumbs.js): readable one-line steps, details on demand,
-// grouping, errors in plain words, a running timer, and the activity cards: a Browser card with a live thumbnail of the tab the AI works in,
+// grouping, errors in plain words, a running timer, and the activity cards: ONE Browser card per AI turn (it keeps updating: a live
+// thumbnail of the exact tab the last step acted on, however many tabs and narration lines come between, and a status bar saying what it does)
 // and a Computer card for shell work. Sidebar and full-page chat both. Hidden windows (LUMEN_TEST_BACKGROUND=1), a throwaway profile,
 // a fake Claude API client and a fake `claude` CLI: no network beyond 127.0.0.1, never the real CLI. Run it under the lock:
 //   node scripts/e2e-lock.js run -- node test/step-labels.js
@@ -66,6 +67,7 @@ process.stdin.on('data', async (d) => {
   const PAGES = { '/a': '#d22', '/b': '#22d', '/c': '#2a2' };
   const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
+    if (req.url.startsWith('/live')) { res.end('<!doctype html><title>Page /live</title><body style="margin:0;background:#2a2;color:#fff"><h1 style="font-size:60px;margin:30px">Live</h1><script>let n = 0; setInterval(() => { const d = document.createElement("div"); d.textContent = "row " + (++n); d.style.cssText = "font-size:30px;margin:4px 30px;background:#" + (n % 2 ? "163" : "361"); document.body.append(d); }, 200);</script></body>'); return; }
     const color = PAGES[req.url.split('?')[0]] || '#888';
     res.end(`<!doctype html><title>Page ${req.url}</title><body style="margin:0;background:${color};color:#fff"><h1 style="font-size:90px;margin:40px">Page ${req.url}</h1><p id="n" style="font-size:60px;margin:40px"></p><script>setInterval(() => { document.getElementById('n').textContent = Date.now(); }, 150);</script></body>`); // (a counter: every frame differs)
   }).listen(0, '127.0.0.1');
@@ -96,21 +98,32 @@ process.stdin.on('data', async (d) => {
       find: [{ text: 'Digging through the pages.', tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['navigate', { url: '@b' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['open_tab', { url: '@c' }] }, { text: 'Found it on the second page.' }],
       two: [{ text: 'Checking the first page.', tool: ['open_tab', { url: '@a' }] }, { text: 'Now the second.', tool: ['navigate', { url: '@b' }] }, { text: 'All done.' }],
       page: [{ text: 'On it.', tool: ['navigate', { url: '@c' }] }, { tool: ['wait', { seconds: 2 }] }, { text: 'Done from the page.' }],
+      // one turn, four browser calls with a line of narration before each: ONE card; the last call acts on tab B (#B) while the user looks at tab A
+      four: [{ text: 'One.', tool: ['navigate', { url: '@a' }] }, { text: 'Two.', tool: ['navigate', { url: '@b' }] }, { text: 'Three.', tool: ['navigate', { url: '@c' }] }, { text: 'Four.', tool: ['get_console', { tab_id: '#B' }] }, { text: 'All four done.', delay: 1500 }],
+      // the AI acts on tab B, thinks for a while, then on tab A (the tab the user is looking at the whole time)
+      tabs: [{ text: 'Peeking at the other tab.', tool: ['get_console', { tab_id: '#B' }] }, { text: 'Back here.', delay: 3000, tool: ['get_console', { tab_id: '#A' }] }, { text: 'Finished.', delay: 1500 }],
+      // the AI uses tab B, then tab A, then closes tab B
+      closing: [{ text: 'Looking at the other tab.', tool: ['get_console', { tab_id: '#B' }] }, { text: 'And this one.', tool: ['get_console', { tab_id: '#A' }] }, { text: 'Closing the other one.', tool: ['close_tab', { tab_id: '#B' }] }, { text: 'Closed it.', delay: 1500 }],
+      // an address read with no tab
+      reading: [{ text: 'Reading quietly.', tool: ['read_urls', { urls: ['@a'] }] }, { text: 'Read it.', delay: 1500 }],
+      // a page that keeps changing, then one that stands still
+      moving: [{ tool: ['navigate', { url: '@live' }] }, { tool: ['wait', { seconds: 3 }] }, { text: 'Watched it.' }],
+      still: [{ tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 6 }] }, { text: 'Watched it still.' }],
     };
     global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
       const users = params.messages.filter((m) => m.role === 'user');
       const lastAsk = [...users].reverse().find((m) => !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result')));
       const asked = JSON.stringify(lastAsk?.content || '');
-      const key = /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
+      const key = /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
       const idx = users.length - 1 - users.indexOf(lastAsk);
       const step = scripts[key][Math.min(idx, scripts[key].length - 1)];
       const base = global.__slBase;
       const content = [];
       if (step.text) content.push({ type: 'text', text: step.text });
-      if (step.tool) content.push({ type: 'tool_use', id: `tu_${key}_${idx}`, name: step.tool[0], input: JSON.parse(JSON.stringify(step.tool[1]).replace(/@(\w)/, `${base}/$1`)) });
+      if (step.tool) content.push({ type: 'tool_use', id: `tu_${key}_${idx}`, name: step.tool[0], input: JSON.parse(JSON.stringify(step.tool[1]).replace(/@(\w)/, `${base}/$1`).replace(/"#([AB])"/, (_m, k) => String((global.__slTabs || {})[k]))) });
       const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: step.tool ? 'tool_use' : 'end_turn', content, usage: { input_tokens: 10, output_tokens: 5 } };
       return {
-        async *[Symbol.asyncIterator]() { if (step.text) yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: step.text } }; },
+        async *[Symbol.asyncIterator]() { if (step.delay) await new Promise((r) => setTimeout(r, step.delay)); if (step.text) yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: step.text } }; },
         finalMessage: async () => message,
       };
     } } } });
@@ -135,7 +148,7 @@ process.stdin.on('data', async (d) => {
   const watchUi = () => ui.evaluate(() => {
     window.__long = []; window.__thumbs = [];
     try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__long.push(Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); } catch { /* none */ }
-    window.assistant.onEvent((e) => { if (e.type === 'thumb') window.__thumbs.push({ tabId: e.tabId, url: e.url, bytes: e.data.length, at: Math.round(performance.timeOrigin + performance.now()) }); });
+    window.assistant.onEvent((e) => { if (e.type === 'thumb' && e.data) window.__thumbs.push({ tabId: e.tabId, url: e.url, bytes: e.data.length, at: Math.round(performance.timeOrigin + performance.now()) }); });
   });
   await watchUi();
 
@@ -144,7 +157,7 @@ process.stdin.on('data', async (d) => {
   await sleep(500);
   const card = (sel = '#messages') => `${sel} .act-card[data-surface="browser"]`;
   await app.evaluate(() => { global.__slProbe.max = 0; global.__slProbe.big = []; });
-  await ui.evaluate(() => { window.__status = []; new MutationObserver(() => { const n = document.querySelector('#messages .act-card[data-surface="browser"] [role="status"]'); if (n && window.__status[window.__status.length - 1] !== n.textContent) window.__status.push(n.textContent); }).observe(document.getElementById('messages'), { subtree: true, childList: true, characterData: true }); });
+  await ui.evaluate(() => { window.__status = []; window.__bar = []; window.__states = []; new MutationObserver(() => { const c = document.querySelector('#messages .act-card[data-surface="browser"]'); const n = c?.querySelector('[role="status"]'); if (n && n.textContent && window.__status[window.__status.length - 1]?.t !== n.textContent) window.__status.push({ t: n.textContent, at: performance.now() }); const b = c?.querySelector('.act-status-text')?.textContent; if (b && window.__bar[window.__bar.length - 1] !== b) window.__bar.push(b); const st = c?.dataset.state; if (st && window.__states[window.__states.length - 1] !== st) window.__states.push(st); }).observe(document.getElementById('messages'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-state'] }); });
   await ui.fill('#prompt', 'Can you find the lab TA on that site?');
   await ui.press('#prompt', 'Enter');
   const working = await waitFor(() => ui.evaluate((s) => document.querySelector(s)?.querySelector('.act-sub')?.textContent, card()));
@@ -179,7 +192,12 @@ process.stdin.on('data', async (d) => {
   const doneSub = await ui.evaluate((s) => document.querySelector(`${s} .act-sub`)?.textContent, card());
   const statusSeq = await ui.evaluate(() => window.__status);
   const liveShape = await ui.evaluate((s) => { const c = document.querySelector(s); return { aria: c.querySelectorAll('[aria-live]').length, status: c.querySelectorAll('[role="status"]').length }; }, card());
-  check('the live region announces state changes only: Working, then Done (never a step)', J(statusSeq) === '["Browser: Working","Browser: Done"]' && liveShape.aria === 0 && liveShape.status === 1, J([statusSeq, liveShape]));
+  const barSeq = await ui.evaluate(() => window.__bar);
+  const stateSeq = await ui.evaluate(() => window.__states);
+  const gaps = statusSeq.slice(1, -1).map((x, i) => Math.round(x.at - statusSeq[i].at)); // (between announcements, the last one being the Done, which is not held back)
+  check('the status bar follows the current step and ends as "Done: <result>"', barSeq.length >= 3 && barSeq.some((t) => /^Opening 127\.0\.0\.1/.test(t)) && barSeq.slice(0, -1).every((t) => !/^Done/.test(t)) && /^Done: /.test(barSeq[barSeq.length - 1]), J(barSeq));
+  check('the card is "working" for the whole turn and "completed" only at its end', J(stateSeq) === '["working","completed"]', J(stateSeq));
+  check('one polite live region announces the bar, throttled (≥ 1.4 s apart), and Done at the end', liveShape.aria === 1 && liveShape.status === 1 && statusSeq.length >= 2 && /^Done: /.test(statusSeq[statusSeq.length - 1].t) && gaps.every((g) => g >= 1400), J([statusSeq, liveShape, gaps]));
   check('when the run ends the card says "Done · <task>"', doneSub === 'Done · Find lab TA', doneSub);
   check('a closing narration line follows the card', await ui.evaluate(() => /Found it on the second page/.test([...document.querySelectorAll('#messages .msg.assistant')].pop()?.textContent || '')), 'no reply');
   const summary = await ui.evaluate((s) => document.querySelector(`${s} .act-steps > summary`)?.textContent, card());
@@ -193,9 +211,9 @@ process.stdin.on('data', async (d) => {
   const gap = await app.evaluate(() => {
     const w = global.__thumbsState.windows || [];
     const during = global.__slProbe.big.filter(([end, g]) => w.some(([s, e]) => end - g < e + 3 && end > s - 3)); // gaps that overlap a thumbnail capture
-    return { max: Math.round(global.__slProbe.max), n: global.__slProbe.n, captures: w.length, overCaptures: Math.round(Math.max(0, ...during.map((d) => d[1]))), all: global.__slProbe.big.map(([t, g]) => [Math.round(t), Math.round(g)]) };
+    return { max: Math.round(global.__slProbe.max), n: global.__slProbe.n, captures: w.length, avgCaptureMs: Math.round(w.reduce((n, [s, e]) => n + (e - s), 0) / Math.max(1, w.length)), overCaptures: Math.round(Math.max(0, ...during.map((d) => d[1]))), all: global.__slProbe.big.map(([t, g]) => [Math.round(t), Math.round(g)]) };
   });
-  console.log('      main-process gaps over 10 ms:', J(gap.all), 'captures:', gap.captures);
+  console.log('      main-process gaps over 10 ms:', J(gap.all), 'captures:', gap.captures, 'average wall time per capture (ms):', gap.avgCaptureMs);
   const longTasks = await ui.evaluate(() => window.__long);
   const thumbsSeen = await ui.evaluate(() => window.__thumbs);
   check('thumbnails were refreshed several times, each a small JPEG (≤ 60 KB)', thumbsSeen.length >= 3 && thumbsSeen.every((t) => t.bytes <= 60000), J(thumbsSeen));
@@ -263,14 +281,133 @@ process.stdin.on('data', async (d) => {
   check('the saved frame is not blank', p3.a === 255 && Math.max(...p3.rgb) > 120, J(p3));
   check('…and its steps are there, folded', await ui.evaluate((s) => /^5 steps$/.test(document.querySelector(`${s} .act-steps > summary`)?.textContent || ''), card()), 'summary');
 
-  // ---- narration ends a card: the next steps start another one
+  // ---- narration does not split a card: one turn is one card (two steps with a line of narration between them)
   await ui.click('#new-chat');
   await sleep(400);
   await ui.fill('#prompt', 'Please check two pages');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop') && document.querySelectorAll('#messages .act-card').length >= 1), 40000);
-  const twoCards = await ui.evaluate(() => [...document.querySelectorAll('#messages .act-card')].map((c) => [c.querySelector('.act-sub').textContent, c.querySelector('.act-steps > summary').textContent, c.previousElementSibling?.textContent.trim().slice(0, 20)]));
-  check('a line of narration ends the card; the next steps start a new one', twoCards.length === 2 && twoCards.every((c) => /^Done · /.test(c[0]) && c[1] === '1 step') && /^Now the second/.test(twoCards[1][2]), J(twoCards));
+  const oneCard = await ui.evaluate(() => [...document.querySelectorAll('#messages .act-card')].map((c) => [c.querySelector('.act-sub').textContent, c.querySelector('.act-steps > summary').textContent]));
+  check('a line of narration between steps does not start a new card: one card, 2 steps, Done', oneCard.length === 1 && /^Done · /.test(oneCard[0][0]) && oneCard[0][1] === '2 steps', J(oneCard));
+
+  // ---- the exact tab: tabs A (the user looks at it) and B (the AI acts on it)
+  const openAndWait = (u) => app.evaluate(async (_e, url) => { const t = global.__agent.browser.openTab(url); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 4000); }); return t.id; }, u);
+  const tabA = await openAndWait(`${base}/a?A`);
+  const tabB = await openAndWait(`${base}/b?B`);
+  await app.evaluate((_e, ids) => { global.__slTabs = ids; global.__agent.browser.switchTab(ids.A); global.__tabChats.setSidebar(ids.A, true); }, { A: tabA, B: tabB });
+  await sleep(600);
+  const front = () => app.evaluate(() => global.__agent.browser.activeTab()?.id);
+  const fresh = async (prompt) => {
+    await ui.click('#new-chat');
+    await sleep(400);
+    await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
+    await ui.evaluate(() => { window.__bar = []; window.__states = []; window.__chips = []; window.__tools = []; window.__thumbEv = []; if (window.__evHooked) return; window.__evHooked = true; new MutationObserver(() => { const c = document.querySelector('#messages .act-card[data-surface="browser"]'); const ch = c?.querySelector('.act-tabref .tab-ref-title')?.textContent; if (ch && window.__chips[window.__chips.length - 1] !== ch) window.__chips.push(ch); const b = c?.querySelector('.act-status-text')?.textContent; if (b && window.__bar[window.__bar.length - 1] !== b) window.__bar.push(b); const st = c?.dataset.state; if (st && window.__states[window.__states.length - 1] !== st) window.__states.push(st); }).observe(document.getElementById('messages'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-state'] }); window.assistant.onEvent((e) => { if (e.type === 'tool') window.__tools.push({ name: e.name, at: Date.now() }); if (e.type === 'thumb') window.__thumbEv.push({ kind: e.kind || 'frame', tabId: e.tabId, hasData: Boolean(e.data), at: Date.now() }); }); });
+    await ui.fill('#prompt', prompt);
+    await ui.press('#prompt', 'Enter');
+  };
+  const running = () => ui.evaluate(() => document.getElementById('send').classList.contains('stop'));
+  const finished = () => waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop') && document.querySelectorAll('#messages .act-card').length >= 1), 60000);
+  const chipTitle = () => ui.evaluate((s) => document.querySelector(`${s} .act-tabref .tab-ref-title`)?.textContent || '', card());
+  const isBlue = (p) => p.a === 255 && p.rgb[2] > 150 && p.rgb[0] < 110;
+  const isRed = (p) => p.a === 255 && p.rgb[0] > 150 && p.rgb[2] < 110;
+  await fresh('Hop between tabs please');
+  const onB = await waitFor(async () => (await chipTitle()) === 'Page /b?B', 20000);
+  check('the AI acts on tab B while the user looks at tab A: the chip names tab B', Boolean(onB) && (await front()) === tabA && (await running()), J([await chipTitle(), await front(), tabA, tabB]));
+  const bluePx = await waitFor(async () => { const p = await pixel(card()); return isBlue(p) && p; }, 12000);
+  check('…and the preview pixels are tab B\'s (blue), not the page in front (red)', Boolean(bluePx) && (await front()) === tabA, J(await pixel(card())));
+  const backOnA = await waitFor(async () => (await chipTitle()) === 'Page /a?A', 25000);
+  const redPx = await waitFor(async () => { const p = await pixel(card()); return isRed(p) && p; }, 12000);
+  check('after a call on tab A the chip and the preview switch to A (red)', Boolean(backOnA) && Boolean(redPx), J([await chipTitle(), await pixel(card())]));
+  await finished();
+  const tabsEv = await ui.evaluate(() => ({ chips: window.__chips, thumbs: window.__thumbEv }));
+  check('the chip went B then A, one card the whole time, and the picture never lagged behind the chip', J(tabsEv.chips) === '["Page /b?B","Page /a?A"]' && (await ui.evaluate(() => document.querySelectorAll('#messages .act-card').length)) === 1, J(tabsEv));
+  check('every frame was of the tab named by the chip at that moment (tab ids B then A)', (() => { const ids = tabsEv.thumbs.filter((t) => t.hasData).map((t) => t.tabId); const firstA = ids.indexOf(tabA); return ids.includes(tabB) && firstA > ids.indexOf(tabB) && ids.slice(0, firstA).every((i) => i === tabB) && ids.slice(firstA).every((i) => i === tabA); })(), J(tabsEv.thumbs));
+
+  await fresh('Look at four things please');
+  // The card must visibly update during the run (a report: "the cards are not updating"): its steps, status bar, preview and chip all change,
+  // in the same card, with the thumbnail gate (the chat reports a card on screen) open the whole time. With a card per narration line the
+  // first card stopped at its step and only the last one was live.
+  await waitFor(() => running(), 10000);
+  const samples = [];
+  for (let i = 0; i < 400 && (samples.length < 3 || (await running())); i++) {
+    samples.push({ ...(await ui.evaluate(() => { const cs = [...document.querySelectorAll('#messages .act-card')]; const c = cs[0]; if (!c) return { n: 0 }; const src = c.querySelector('.act-thumb').getAttribute('src') || ''; return { n: cs.length, steps: c.querySelector('.act-steps > summary').textContent, src: src.length + ':' + src.slice(-24), bar: c.querySelector('.act-status-text').textContent, chip: c.querySelector('.act-tabref .tab-ref-title')?.textContent || '', state: c.dataset.state }; })), gate: await app.evaluate(() => global.__thumbsState.visible()) });
+    await sleep(120);
+  }
+  const live = samples.filter((x) => x.n > 0);
+  const distinct = (k) => new Set(live.map((x) => x[k])).size;
+  check('while the AI works, ONE card updates: its steps count 1 to 4, the status bar changing (the three openings of one site read alike), new pictures, the chip following', live.every((x) => x.n === 1) && distinct('steps') >= 4 && distinct('bar') >= 2 && distinct('src') >= 3 && distinct('chip') >= 2, J({ n: samples.length, cards: [...new Set(live.map((x) => x.n))], steps: [...new Set(live.map((x) => x.steps))], bars: distinct('bar'), pics: distinct('src'), chips: [...new Set(live.map((x) => x.chip))] }));
+  check('…and the preview gate (a card on screen) stayed open the whole run', samples.length >= 5 && samples.filter((x) => x.state === 'working').every((x) => x.gate === true), J(samples.map((x) => [x.state, x.gate])));
+  await finished();
+  const four = await ui.evaluate(() => {
+    const cards = [...document.querySelectorAll('#messages .act-card')];
+    const c = cards[0];
+    return { cards: cards.length, steps: c.querySelector('.act-steps > summary').textContent, rows: [...c.querySelectorAll('.act-list .step')].filter((n) => n.tagName !== 'SUMMARY').length, sub: c.querySelector('.act-sub').textContent, bar: c.querySelector('.act-status-text').textContent, used: [...document.querySelectorAll('#messages .step, #messages summary')].filter((n) => /^Used \d+ browser action/.test(n.textContent)).length, said: [...document.querySelectorAll('#messages .msg.assistant')].map((n) => n.textContent.trim()).join('|'), outside: cards.every((x) => !x.querySelector('.msg')), states: window.__states };
+  });
+  check('one turn with 4 browser calls and narration between them: exactly 1 card with 4 steps', four.cards === 1 && four.steps === '4 steps' && four.rows === 4 && // (the three page openings share one group; its summary line is not a step)
+     four.used === 0 && four.outside, J(four));
+  check('…its narration lines are all there, outside the card', ['One.', 'Two.', 'Three.', 'Four.', 'All four done.'].every((t) => four.said.includes(t)), four.said);
+  check('…it said Done only when the whole turn ended, and the bar ends as Done', J(four.states) === '["working","completed"]' && /^Done · /.test(four.sub) && /^Done: /.test(four.bar), J(four));
+  check('…its chip and preview are the tab of the last call (tab B), while tab A was in front', (await chipTitle()) === 'Page /b?B' && isBlue(await pixel(card())) && (await front()) === tabA, J([await chipTitle(), await pixel(card()), await front()]));
+  await ui.reload();
+  await ui.waitForSelector('.tab');
+  await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
+  const restoredFour = await waitFor(() => ui.evaluate((s) => { const n = document.querySelectorAll('#messages .act-card'); const i = document.querySelector(`${s} .act-thumb`); return n.length === 1 && i && i.src.startsWith('data:image/jpeg') && { steps: n[0].querySelector('.act-steps > summary').textContent, bar: n[0].querySelector('.act-status-text').textContent }; }, card()), 15000);
+  check('a reopened chat renders the same single card (4 steps, Done, the last frame)', restoredFour && restoredFour.steps === '4 steps' && /^Done: /.test(restoredFour.bar), J(restoredFour));
+
+  // ---- the card's Tabs list: every tab the turn used, in order, open or closed; a closed one reopens from its chip
+  const tabB2 = await openAndWait(`${base}/b?B2`);
+  await app.evaluate((_e, ids) => { global.__slTabs = ids; global.__agent.browser.switchTab(ids.A); global.__tabChats.setSidebar(ids.A, true); }, { A: tabA, B: tabB2 });
+  await sleep(600);
+  await fresh('Please close the other tab');
+  await finished();
+  const tabsOf = () => ui.evaluate((s) => { const c = document.querySelector(s); const box = c.querySelector('.act-tabs'); return { shown: !box.hidden, open: box.open, head: box.querySelector('.act-tabs-head').textContent, tabs: [...c.querySelectorAll('.act-tab')].map((w) => [w.querySelector('.tab-ref-title').textContent, w.dataset.state, w.querySelector('.act-tab-state').textContent]) }; }, card());
+  const closedList = await waitFor(async () => { const t = await tabsOf(); return t.tabs.length === 2 && t.tabs[0][1] === 'closed' && t; }, 15000);
+  check('under the card: "Tabs · 2 opened, 1 closed", in the order the tabs were first touched', closedList && closedList.shown && closedList.head === 'Tabs · 2 opened, 1 closed' && closedList.tabs[0][0] === 'Page /b?B2' && closedList.tabs[1][0] === 'Page /a?A', J(closedList || await tabsOf()));
+  check('the tab the AI used and left open is marked open; the one it closed is marked closed', closedList && closedList.tabs[0][2] === 'closed' && closedList.tabs[1][1] === 'open' && closedList.tabs[1][2] === 'open' && !(await app.evaluate((_e, id) => Boolean(global.__agent.browser.tabById?.(id)), tabB2)), J(closedList));
+  check('the "Hide tabs / Close them" actions are still next to it', await ui.evaluate((s) => { const c = document.querySelector(s); return c.querySelector('.act-tabs').nextElementSibling === c.querySelector('.act-actions') && Boolean(c.querySelector('.act-actions .act-btn')); }, card()), 'order');
+  const nowTabs = await app.evaluate(() => global.__chatPage.tabs().length);
+  await ui.click(`${card()} .act-tab[data-state="closed"] .tab-ref`);
+  const reopenedB = await waitFor(() => app.evaluate((_e, u) => { const a = global.__agent.browser.activeTab(); return a && a.webContents.getURL() === u ? a.id : null; }, `${base}/b?B2`), 8000);
+  check('clicking the closed chip reopens that page in a tab', Boolean(reopenedB) && reopenedB !== tabB2 && nowTabs >= 1, J({ reopenedB, tabB2 }));
+  await ui.reload();
+  await ui.waitForSelector('.tab');
+  await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
+  const restoredTabs = await waitFor(async () => { const t = await tabsOf().catch(() => null); return t && t.tabs.length === 2 && t; }, 15000);
+  check('a reopened chat keeps the Tabs list (both tabs, in order, with the closed one marked)', restoredTabs && restoredTabs.tabs[0][0] !== undefined && /^Tabs · 2 opened/.test(restoredTabs.head), J(restoredTabs));
+  const folded = await ui.evaluate(() => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const turn = { cards: [], card: null, plain: null, working: null };
+    for (let i = 1; i <= 5; i++) window.stepUI.add(turn, { name: 'get_console', input: { tab_id: 9000 + i }, id: 'x' + i, label: 'Reading the page console' }, { messages: [], append: (n) => host.append(n), task: '' });
+    const d = host.querySelector('.act-tabs');
+    const r = { open: d.open, head: d.querySelector('summary').textContent, n: host.querySelectorAll('.act-tab').length };
+    host.remove();
+    return r;
+  });
+  check('more than 4 tabs: the list is folded by default and says how many', folded.open === false && folded.n === 5 && folded.head === 'Tabs · 5 opened', J(folded));
+
+  // ---- an address read with no tab: "Reading <site>" with its icon, never a picture of another tab
+  await fresh('Please read the site quietly');
+  const siteMode = await waitFor(() => ui.evaluate((s) => { const sh = document.querySelector(`${s} .act-shot`); return sh && !sh.hidden && sh.dataset.mode === 'site' && { text: sh.querySelector('.act-site-name').textContent, src: sh.querySelector('.act-thumb').hasAttribute('src'), chip: !document.querySelector(`${s} .act-tabref`).hidden }; }, card()), 20000);
+  check('a read with no tab shows "Reading <site>" and no screenshot of another tab', siteMode && /^Reading 127\.0\.0\.1:\d+$/.test(siteMode.text) && siteMode.src === false && siteMode.chip === false, J(siteMode));
+  await finished();
+
+  // ---- live: about 2-4 frames a second while the page changes, none while it stands still
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), tabA);
+  await fresh('Watch the moving page');
+  await finished();
+  const moving = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
+  const wait1 = moving.tools.find((t) => /wait$/.test(t.name))?.at || 0;
+  const during = moving.frames.filter((t) => t >= wait1 && t <= wait1 + 3000);
+  check('a page that keeps changing is refreshed about 2-4 times a second (≥ 5 frames in the 3 s wait)', during.length >= 5 && during.length <= 13, J({ n: during.length, wait1, frames: moving.frames.map((t) => t - wait1) }));
+  const spaced = during.slice(1).map((t, i) => t - during[i]);
+  check('…frames are serialized and spaced (never a flood: none closer than 100 ms, most about 350 ms apart)', spaced.every((g) => g >= 100) && spaced.filter((g) => g >= 300).length >= 4, J(spaced));
+  await fresh('Watch the still page');
+  await finished();
+  const still = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
+  const wait2 = still.tools.find((t) => /wait$/.test(t.name))?.at || 0;
+  const tail = still.frames.filter((t) => t >= wait2 + 2600 && t <= wait2 + 5600); // (the step finishing at 6 s still gets its one frame)
+  check('a page that stands still is not captured again (no frame between 2.6 s and 5.6 s of a 6 s wait)', wait2 > 0 && tail.length === 0, J({ wait2, frames: still.frames.map((t) => t - wait2) }));
 
   // ---- Graphics on Light: the thumbnail refreshes on navigation only (a frame when the work starts, one per page change), never on the clock
   await app.evaluate(() => global.__settings.backend.set('graphicsMode', 'light'));
@@ -308,6 +445,8 @@ process.stdin.on('data', async (d) => {
   check('a run from the full page draws a live Browser card too', Boolean(livePage), String(livePage));
   const pageThumb = await waitFor(() => inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const i = c && c.querySelector('.act-thumb'); return i && i.src.startsWith('data:image/jpeg') ? i.src.length : 0; })()`), 15000);
   check('…with its thumbnail', pageThumb > 500, String(pageThumb));
+  const cap = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const sh = c.querySelector('.act-shot'); const i = c.querySelector('.act-thumb'); const sr = sh.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { shot: sr.width, card: cr.width, nat: i.naturalWidth, dpr: devicePixelRatio, left: sr.left - cr.left, ratio: sr.width / sr.height }; })()`);
+  check('the preview is small: at most 360 px wide and never above its own pixels (width / devicePixelRatio), left-aligned, 16:10, in a wide card', cap.shot <= 360 && cap.shot <= cap.nat / cap.dpr + 1 && cap.card >= cap.shot + 100 && cap.left < 24 && Math.abs(cap.ratio - 1.6) < 0.1, J(cap));
   await waitFor(async () => (await inPage(`document.getElementById('send').classList.contains('stop')`)) === false, 40000);
   const pageDone = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); return c && c.querySelector('.act-sub').textContent; })()`);
   check('…and "Done" at the end', /^Done · /.test(String(pageDone)), String(pageDone));
