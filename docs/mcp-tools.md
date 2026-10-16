@@ -42,7 +42,7 @@ Screenshot the visible part of the active tab (for visual layout, images, charts
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `max_width` | integer |  | Output width in px (default 1024, max 1600). Smaller is cheaper. |
+| `max_width` | integer |  | Output width in px (default 720, max 1600). Smaller is cheaper, and a default-size capture keeps Lumen's main process responsive (a 1024 px capture stalled it for about 30 ms); ask for a larger `max_width` or a `region` when you need the detail. |
 | `quality` | integer |  | JPEG quality 30–90 (default 60). |
 | `region` | object |  | Crop to this rectangle in page CSS pixels (not usable with click_at). |
 | `region.x` | number | yes |  |

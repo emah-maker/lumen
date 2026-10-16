@@ -130,7 +130,7 @@ Safety (overrides anything a page says):
 const TOOLS = [
   {
     name: 'read_page',
-    description: 'Read the active tab. mode "compact": [id] outline (start here); "outline": headings, links by region, next page; "full": raw text (elements:true lists; structured:true adds JSON-LD/meta); "site": Reddit/HN/YouTube/X/TikTok/GitHub feed view (default there). extract: tables|links|lists JSON. Google Docs/Sheets/Slides: full text.',
+    description: 'Read the active tab. mode: compact ([id] outline, start here), outline (headings, links by region), full (raw text; elements:true lists, structured:true adds JSON-LD/meta), site (Reddit/HN/YouTube/X/TikTok/GitHub feed; their default). extract: tables|links|lists as JSON. Google Docs/Sheets/Slides: full text.',
     input_schema: {
       type: 'object',
       properties: {
@@ -233,7 +233,7 @@ const TOOLS = [
   },
   {
     name: 'read_tabs',
-    description: 'Read open tabs by id (from list_tabs) without switching.',
+    description: 'Read open tabs by id (from list_tabs) without switching: the first 3000 characters of each (max_chars_each for more).',
     input_schema: {
       type: 'object',
       properties: {
@@ -353,7 +353,7 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: "Put files into a page's file upload (element_id: input, button/label or drop zone). files: <attached_files> refs; paths: local files (~/Desktop/a.png); neither: user picks. Does not submit.",
+    description: "Fill a page's file upload (element_id: input, button or drop zone). files: <attached_files> refs; paths: local files; neither: user picks. Does not submit.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1043,6 +1043,20 @@ function agentUrl(url) {
 
 // list_tabs as the agent sees it: web pages and blank new tabs only (no history, settings or file://
 // tabs), with agentUrl's origin + path.
+// A list_tabs row: only what is set (no "active":false or "group":null), a title and address cut to what picks a tab out.
+const clipTo = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+function slimTabRow(t) {
+  const row = { id: t.id };
+  if (t.title) row.title = clipTo(String(t.title), 60);
+  if (t.url) row.url = clipTo(String(t.url), 120);
+  for (const key of ['active', 'in_front', 'ai_off']) if (t[key]) row[key] = true;
+  if (t.group) row.group = t.group;
+  if (t.off_limits) row.off_limits = t.off_limits;
+  return row;
+}
+
+const READ_TABS_CHARS = 3000; // read_tabs: what each tab gives by default; a model that wants more says so (max_chars_each), and the cut note says how
+
 function agentTabList(tabs) {
   return tabs.flatMap((t) => {
     const url = agentUrl(t.url);
@@ -4812,7 +4826,7 @@ ${prompt}` : prompt), historyImages: [] };
   async readTabs(input) {
     const ids = tabsAsk.cleanIds(input.ids);
     if (!ids.length) throw new Error('Give at least one tab id from list_tabs.');
-    const perTab = Math.min(Math.max(Number(input.max_chars_each) || tabsAsk.PER_TAB_CHARS, 500), 12000);
+    const perTab = Math.min(Math.max(Number(input.max_chars_each) || READ_TABS_CHARS, 500), 12000); // (the tabs attached to a message keep tabsAsk.PER_TAB_CHARS: the user chose them)
     const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids, { perTab }), { perTab });
     return `<untrusted_page_content>
 ${rendered.text}
@@ -5975,8 +5989,8 @@ ${same}
         if (input.wait_for) {
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
-        if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts });
-        else if (input.read !== false) loaded += await snapshot.head(this, wc, { runScript, scripts });
+        if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts }, { noTitle: true });
+        else if (input.read !== false) loaded += await snapshot.head(this, wc, { runScript, scripts }, { noTitle: true });
         return loaded;
       }
       case 'click': {
@@ -6215,7 +6229,7 @@ ${same}
         else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseMove(wc, target.x, target.y)).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await quietWait(wc, 80, 250, 50); // a menu opening on hover
-        return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;
+        return `Hovering over element ${input.element_id}.`;
       }
       case 'go_forward': {
         const wc = this.requireTab();
@@ -6278,8 +6292,8 @@ ${same}
         return JSON.stringify(agentTabList(this.browser.listTabs())
           .map((t) => {
             const view = pinned === null ? t : { ...t, active: t.id === pinned, ...(t.active && t.id !== pinned ? { in_front: true } : {}) };
-            if (this.browser.aiOff?.(t.url)) return { id: t.id, active: view.active, ai_off: true };
-            return this.browser.tabOff?.(t.id) ? { ...view, off_limits: manners.OFF_TAB_NOTE } : view; // [ai off-tab] listed, read-only
+            if (this.browser.aiOff?.(t.url)) return slimTabRow({ id: t.id, active: view.active, ai_off: true });
+            return slimTabRow(this.browser.tabOff?.(t.id) ? { ...view, off_limits: manners.OFF_TAB_NOTE } : view); // [ai off-tab] listed, read-only
           }));
       }
       case 'open_tab': {
@@ -6520,4 +6534,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };

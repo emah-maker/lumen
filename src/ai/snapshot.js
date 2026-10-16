@@ -67,9 +67,14 @@ function compactOutline(opts) {
   // buttons, a bare "Main menu" / "Appearance" label. (The controls keep their refs: only the lines go.)
   const NOISE_LINE = /^(- )?(\[\d+\] (link|button) ")?(\[\d+\])?((skip|jump) to [^"]*|toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar|main menu)|main menu|move to sidebar|appearance)"?$/i;
   const NOISE_INLINE = / ?\[\d+\] button "(toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar))"/gi;
+  // A nav, footer or sidebar is mostly a long list of links the task rarely needs: its first lines show, the rest is counted (the
+  // refs stay valid: find reaches any of them). `cap` is the one being walked.
+  const BOILER_LINES = 15;
+  let cap = null;
   const push = (line) => {
     if (!line || seen.has(line) || NOISE_LINE.test(line)) return;
     if (size + line.length > opts.maxChars) { clipped = true; return; }
+    if (cap) { if (cap.n >= BOILER_LINES) { cap.skipped++; return; } cap.n++; }
     seen.add(line);
     lines.push(line);
     size += line.length + 1;
@@ -156,6 +161,14 @@ function compactOutline(opts) {
   const NESTED = 'table,ul,ol,dl,h1,h2,h3,h4,h5,h6,form';
   const CELLS = new Set(['LI', 'TD', 'TH', 'DD', 'DT']);
   const holdsStructure = (n) => n.nodeType === 1 && (n.matches(NESTED) || Boolean(n.querySelector(NESTED)));
+  // The words of a cookie / consent banner are noise (its buttons keep their refs: "Accept" stays clickable).
+  const CONSENT = '[id*=cookie i],[class*=cookie i],[aria-label*=cookie i],[id*=consent i],[class*=consent i],[aria-label*=consent i],[id*=gdpr i],[class*=gdpr i]';
+  const inConsent = (el) => {
+    try {
+      const box = el.closest(CONSENT);
+      return Boolean(box) && !['BODY', 'HTML', 'MAIN', 'ARTICLE'].includes(box.tagName) && String(box.innerText || '').length < 1500;
+    } catch { return false; }
+  };
   const visit = (child) => {
     if (clipped) return;
     if (SKIP.has(child.tagName) || !visible(child)) return;
@@ -165,8 +178,17 @@ function compactOutline(opts) {
     if (h) { push(`${'#'.repeat(Number(h[1]))} ${clean(child.innerText).slice(0, 120)}`); return; }
     const mark = landmark(child);
     if (mark) push(mark);
+    if (mark && /^\[(nav|footer|aside|navigation|contentinfo|complementary)\b/.test(mark) && !cap) {
+      cap = { n: 0, skipped: 0 };
+      walk(child);
+      const skipped = cap.skipped;
+      cap = null;
+      if (skipped) push(`… ${skipped} more lines in this ${mark.slice(1).split(/[:\]]/)[0]} (find reaches them)`);
+      return;
+    }
     if (TEXT_BLOCKS.has(child.tagName)) {
       if (CELLS.has(child.tagName) && !child.shadowRoot && child.querySelector(NESTED)) { mixed(child); return; }
+      if (inConsent(child)) return;
       const text = inline(child);
       if (text.length > 1) push(child.tagName === 'LI' ? `- ${text}` : text);
       return;
@@ -174,6 +196,7 @@ function compactOutline(opts) {
     // A div/span that holds its own text (not just other blocks) is a text block too.
     const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
     if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
+      if (inConsent(child)) return;
       const text = inline(child);
       if (text.length > 1) push(text);
       return;
@@ -315,7 +338,7 @@ const READ_PAGE_EXTRA = {
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
-  max_width: { type: 'integer', description: 'Default 1024, max 1600.' },
+  max_width: { type: 'integer', description: 'Default 720, max 1600.' },
   quality: { type: 'integer', description: '30-90, default 60.' },
   region: {
     type: 'object',
@@ -441,17 +464,18 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
     const after = new Set(result.lines);
     const added = result.lines.filter((l) => !before.has(l));
     const removed = previous.lines.filter((l) => !after.has(l)).length;
+    const shownAdded = added.length > DIFF_LINES ? [...added.slice(0, DIFF_LINES), `… ${added.length - DIFF_LINES} more added lines (read_page or find)`] : added;
     body = added.length || removed
-      ? `Changes since your last read (+${added.length} / -${removed} lines):\n${added.join('\n')}`
+      ? `Changes since your last read (+${added.length} / -${removed} lines):\n${shownAdded.join('\n')}`
       : 'No changes since your last read.';
   } else if (input.head) {
     // After navigate / open_tab: the title, URL and the top of the page, enough to see where it landed.
-    body = pageHead(result.lines, result.totalLines, result.clipped);
+    body = input.noTitle ? pageHead(result.lines.slice(1), result.totalLines - 1, result.clipped) : pageHead(result.lines, result.totalLines, result.clipped);
   } else if (input.summary) {
     // After a batch lands on a new page: just its top, the model can read more if it needs to.
     body = `Now on a new page:\n${result.lines.slice(0, 12).join('\n')}\n… (${result.totalLines} lines; use find or read_page mode:"compact")`;
   } else {
-    body = `${input.since_last && previous ? '(new page)\n' : ''}${result.lines.join('\n')}`;
+    body = `${input.since_last && previous ? '(new page)\n' : ''}${(input.noTitle ? result.lines.slice(1) : result.lines).join('\n')}`;
     if (result.clipped) body += `\n… outline clipped at ${result.totalLines} lines (${result.elements} controls). Use find, or start_line:${result.startLine + result.lines.length}.`;
     const same = dedupe && !input.since_last && h.dedupe?.() ? reads.check(wc.id, url, `c|${input.start_line || 0}|${Boolean(input.hrefs)}`, body) : null;
     if (same) body = same;
@@ -461,6 +485,7 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
 
 // The first ~600 characters of an outline (whole lines), with a pointer to the rest.
 const HEAD_CHARS = 600;
+const DIFF_LINES = 25; // a diff longer than this lists its first lines and counts the rest
 function pageHead(lines, total, clipped = false) {
   const out = [];
   let size = 0;
@@ -499,18 +524,19 @@ async function frameOutlines(agent, wc, input, h) {
 }
 
 // The page's outline after a navigation (navigate / open_tab read:true), or '' when it can't be shown.
-async function outline(agent, wc, h) {
+// noTitle: navigate's own line already says the title and address, so the outline's first line (the same two) is left out.
+async function outline(agent, wc, h, { noTitle = false } = {}) {
   if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
   try { return `
-${await compact(agent, wc, { mode: 'compact', max_chars: 4000 }, h)}`; } catch { return ''; }
+${await compact(agent, wc, { mode: 'compact', max_chars: 4000, noTitle }, h)}`; } catch { return ''; }
 }
 
 // The short head of the page after a navigation ('' when it can't be shown): navigate / open_tab return it by
 // default (read:false opts out), so the model often needs no read_page step to see where it landed.
-async function head(agent, wc, h) {
+async function head(agent, wc, h, { noTitle = false } = {}) {
   if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
   try { return `
-${await compact(agent, wc, { mode: 'compact', max_chars: 1500, head: true }, h)}`; } catch { return ''; }
+${await compact(agent, wc, { mode: 'compact', max_chars: 1500, head: true, noTitle }, h)}`; } catch { return ''; }
 }
 
 // True when the last compact read of this tab (same URL, few calls ago) is still the baseline for the
@@ -535,7 +561,7 @@ ${diff}`;
 }
 
 async function screenshot(agent, wc, input, h) {
-  const maxWidth = Math.min(Math.max(Number(input.max_width) || 1024, 320), 1600);
+  const maxWidth = Math.min(Math.max(Number(input.max_width) || 720, 320), 1600);
   const quality = Math.min(Math.max(Number(input.quality) || 60, 30), 90);
   let image;
   if (input.region) {
