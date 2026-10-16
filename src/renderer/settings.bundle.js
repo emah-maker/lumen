@@ -6421,7 +6421,7 @@ async function init() {
   // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
   const FOOT = {
     'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
-    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
+    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
   const SUBS = new Set(['ai-providers', 'skills', 'macros', 'usage', 'extensions-page', 'internals']);
