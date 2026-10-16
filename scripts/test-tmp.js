@@ -9,7 +9,7 @@ const path = require('path');
 // Folders the suites make that an interrupted run may leave in the real temp folder, by name. Lumen's own
 // temp folders (lumen-cc-*, lumen-cc1-*, lumen-usage-*, cb-ant-*, cb-import-*, the compile cache) are not matched: a Lumen
 // the user is running may hold them.
-const TEST_PROFILE = /^(claude-browser-test-|playwright-artifacts-|cb-(?!ant-[A-Za-z0-9]{6}$|import-)|lumen-(?!cc-|cc1-|usage-(?!test)|compile-cache|apple-music-art))/;
+const TEST_PROFILE = /^(claude-browser-test-|playwright-artifacts-|cb-(?!ant-[A-Za-z0-9]{6}$|import-)|lumen-(?!cc-|cc1-|usage-(?!test)|compile-cache|apple-music-art|release-|rel-|update-|e2e-lock))/;
 
 function removeDir(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch (err) { console.error(`could not remove ${dir}: ${err.message}`); }
