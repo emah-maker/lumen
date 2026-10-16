@@ -8938,7 +8938,17 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
 ipcMain.handle('view:warm', async () => {
   const wc = activeTab()?.webContents;
   if (!wc) return false;
-  try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one
+  try {
+    const image = await wc.capturePage(); // full size: the first full readback is the slow one
+    // The first resize, bitmap copy and JPEG encode of a capture this size are cold (about twice a warm one): done now, a task each, so the first
+    // freeze a user sees (the Ctrl+Shift+F picker, the sidebar) is as short as the rest.
+    const { width, height } = image.getSize();
+    const target = { width: Math.max(64, Math.round(width * 0.66)), height: Math.max(64, Math.round(height * 0.66)) };
+    const tick = () => new Promise((r) => setImmediate(r));
+    const small = await require('./features/snapshot-bands').resizeInBands(image, target, { createFromBitmap: require('electron').nativeImage.createFromBitmap, tick });
+    await tick();
+    small.toJPEG(snapshotSizer.JPEG_QUALITY);
+  } catch {}
   return true;
 });
 ipcMain.on('view:frozen', () => { // the snapshot is painted in the UI under the live view: now the view can go
