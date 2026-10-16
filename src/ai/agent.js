@@ -53,7 +53,7 @@ const postAnalysis = require('./post-analysis'); // [research pack] analyze_post
 const macroPage = require('./macro-page'); // [macros] run_macro: a stored locator -> the element id click / type_text take
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
 const idle = require('./idle-tracker'); // wait_for url / gone / network_idle
-const tabMarker = require('../renderer/tab-marker'); // [tab chips] [[tab:ID]] in a reply
+const tabMarker = new Proxy({}, { get: (_t, k) => require('../renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
 const contentGuard = require('./content-guard'); // [content guard] what typing / Delete / scripts take out of an editor: card, undo, journal, verify_changes
 const { captureTab } = require('../features/tab-capture');
 const videoCapture = require('../features/video-capture'); // video_overview, video_frames
@@ -1466,7 +1466,7 @@ const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'drag', 'type_text', 'pr
 // settings.compactedItems: turns an API chat's /compact replaced with a summary (features/chat-compact.js), still shown.
 // The extra fields of a transcript item (see transcriptFor).
 function itemExtras(chatMessages, m, mi) {
-  const meta = branches.getMeta(m) || {};
+  const meta = branches.getMeta(m) || (m && m.meta ? branches.cleanMeta(m.meta) : null) || {}; // (a saved chat not yet loaded into messages, as the Markdown export reads it, carries its meta as a field)
   const out = {};
   if (meta.id) out.id = meta.id;
   if (meta.at) out.at = meta.at;

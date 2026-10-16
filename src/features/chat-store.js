@@ -19,7 +19,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
-const tabMarker = require('../renderer/tab-marker'); // [tab chips] a [[tab:ID]] in an exported reply
+const tabMarker = new Proxy({}, { get: (_t, k) => require('../renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
 const { plainScripts } = require('../renderer/markdown.js'); // <sub>/<sup> as clean text in exports
 
 const ID_RE = /^[a-f0-9]{16}$/;

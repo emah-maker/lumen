@@ -3576,7 +3576,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   { // [tab chips]
     const chipUrl = tab.isolated || isInternal(url) ? '' : url;
     closedChipTabs.delete(id);
-    closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000) });
+    closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.pendingCloseTitle || tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000) });
     if (closedChipTabs.size > 300) closedChipTabs.delete(closedChipTabs.keys().next().value);
     tabChipsRt?.changed();
   }
@@ -3619,6 +3619,7 @@ function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
+  tab.pendingCloseTitle = tab.view.webContents.getTitle() || ''; // [tab chips] (the page is gone by the time closeTab runs)
   tab.pendingCloseHistory = navSnapshot(tab); // (the page is gone by the time closeTab runs)
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
@@ -9285,7 +9286,7 @@ const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
-const tabMarker = require('./renderer/tab-marker'); // [tab chips] tiny and pure
+const tabMarker = new Proxy({}, { get: (_t, k) => require('./renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
 const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
