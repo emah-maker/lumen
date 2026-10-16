@@ -8927,7 +8927,7 @@ function takeSettingsProc() {
   forgetBlank(wc);
   return s.view;
 }
-if (TEST) global.__settingsProc = { has: () => Boolean(settingsProc), ready: () => Boolean(settingsProc && !settingsProc.view.webContents.isLoading()), drop: dropSettingsProc };
+if (TEST) global.__settingsProc = { why: () => ({ firstTabDone, spares: spareForTest, noPool: Boolean(process.env.LUMEN_TEST_NO_SETTINGS_POOL), on: settingsProcOn(), perf: perfMode.mode(), perfReasons: perfMode.reasons().map((r) => r.key), has: Boolean(settingsProc), taken: global.__settingsProcTaken || null }), has: () => Boolean(settingsProc), ready: () => Boolean(settingsProc && !settingsProc.view.webContents.isLoading()), drop: dropSettingsProc };
 function prepareSettings() {
   if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
   const view = takeSettingsProc() || new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } }); // (the pooled one: its process is up)

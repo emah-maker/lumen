@@ -27,7 +27,7 @@ const LIMITS = { paint: 150, filled: 150, input: 250, main: 20, longtask: 50 };
       const m = r[when];
       const name = `${section || 'default'} ${when}`;
       console.log(`      ${name}: paint ${m.paint} filled ${m.filled} input ${m.input} ready ${m.ready} | main max ${m.mainMax} | longtasks ${JSON.stringify(m.longtasks)} | pooled process: ${m.pool}`);
-      check(`${name}: the open was taken by the pooled Settings process (${m.pool})`, m.pool === 'pooled', 'not pooled: ' + m.pool + ' (made 3 s after the first tab; freed when memory is tight)');
+      check(`${name}: the open was taken by the pooled Settings process (${m.pool})`, m.pool === 'pooled', 'not pooled: ' + m.pool + ' ' + m.poolWhy);
       check(`${name}: first paint of the visible section under ${LIMITS.paint} ms (${m.paint} ms)`, m.paint !== null && m.paint < LIMITS.paint, m.paint);
       check(`${name}: the section is filled in, with no placeholders, under ${LIMITS.filled} ms (${m.filled} ms)`, m.filled !== null && m.filled < LIMITS.filled && !m.placeholders, `${m.filled} placeholders=${m.placeholders}`);
       check(`${name}: the page answers input under ${LIMITS.input} ms (${m.input} ms)`, m.input !== null && m.input < LIMITS.input, m.input);
