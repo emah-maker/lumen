@@ -592,10 +592,17 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
 
 .body { flex: 1; display: flex; min-height: 0; }
 .viewport { position: relative; overflow: hidden; flex: 1; min-width: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--hairline); }
-/* While the AI drives the tab, the page is inset 2px inside a solid accent frame. */
-body.agent-active .viewport { background: var(--accent); }
-/* The user is looking at a different tab than the one the AI works in: no frame around the wrong page. */
-body.agent-active.agent-away .viewport { background: var(--surface); }
+/* While the AI drives the tab, the page is inset 2px inside a thin accent frame. The frame is its own layer (::after, behind the page view, so
+   only the 2px ring shows) and the viewport keeps its surface colour: the frame used to be the viewport's whole background, so every moment the page
+   view was hidden, resized or not yet painted (a tab the AI opened, a navigation, a sidebar move) showed the whole page area in the accent, again and
+   again as a flash. The frame fades in once when the run starts and out once when it ends (an opacity change, nothing is laid out). */
+.viewport::after { content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none; box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; transition: opacity 240ms ease-out; }
+body.agent-active .viewport::after { opacity: 1; }
+/* The user is looking at a different tab than the one the AI works in: no frame around the wrong page. Only once that has held for a moment, so
+   the AI opening or switching its own tabs between actions never blinks the frame. */
+body.agent-active.agent-away .viewport::after { opacity: 0; transition-delay: 1200ms; }
+@media (prefers-reduced-motion: reduce) { .viewport::after, body.agent-active.agent-away .viewport::after { transition: none; } }
+.pref-reduce-motion .viewport::after, .pref-reduce-motion body.agent-active.agent-away .viewport::after { transition: none; }
 .working-in { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: var(--r-md); background: var(--accent-soft); color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .working-in[hidden] { display: none; }
 .working-in:hover { background: var(--hover); }
