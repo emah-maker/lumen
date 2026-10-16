@@ -75,7 +75,15 @@ async function captureThumb(wc, { width = 420, quality = 55, maxBytes = 45000 } 
 // the full-size bitmap (2160 px wide on a high-DPI screen); nativeImage.resize() of it then ran 14 to 45 ms on the main thread per
 // screenshot (a CPU profile of 6 agents at once: 800 ms of resize in 5 s), toJPEG 4 to 13 ms more. Here the main process receives only
 // the finished JPEG.
-async function captureJpeg(wc, { maxWidth, quality }) {
+// One at a time, with the main process's event loop let through in between: several agents' screenshots no longer stack their readback
+// and encode work (8 to 30 ms each, in Chromium, on the main thread) into one stall of 100 ms and more.
+let captureChain = Promise.resolve();
+function captureJpeg(wc, opts) {
+  const run = captureChain.then(() => captureJpegNow(wc, opts));
+  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve)));
+  return run;
+}
+async function captureJpegNow(wc, { maxWidth, quality }) {
   const dbg = wc.debugger;
   let attachedHere = false;
   try {
