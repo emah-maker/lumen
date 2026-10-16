@@ -2872,6 +2872,21 @@ window.browser.onAttachImage?.(async (base64) => {
   } catch { /* an unreadable image is skipped, as with a pasted one */ }
 });
 
+// [files] The quick picker (Ctrl+Shift+F; files-picker.js and .css, 19 KB) is loaded in an idle moment after start, or by the first key that
+// asks for it, instead of being part of the bundle every window parses: the key opens it once it is there.
+let filesPickerLoad = null;
+function loadFilesPicker() {
+  filesPickerLoad ||= new Promise((resolve) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
+    document.head.append(css);
+    document.body.append(js);
+  });
+  return filesPickerLoad;
+}
+window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
+setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
+
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
 window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
   showSidebar(true);

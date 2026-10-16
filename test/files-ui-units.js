@@ -35,7 +35,7 @@ module.exports = async function filesUiUnits(check) {
 
   // ---- the picker ----
   const picker = read('src', 'renderer', 'files-picker.js');
-  check('files picker: it is in the UI bundle (script and stylesheet) and the bundle is current', read('src', 'renderer', 'index.src.html').includes('files-picker.js') && read('src', 'renderer', 'ui.bundle.js').includes('const filesPicker') && read('src', 'renderer', 'ui.bundle.css').includes('.files-picker-box'), '');
+  check('files picker: it is not in the UI bundle (19 KB it need not parse at start): app.js loads files-picker.js and .css when asked or in an idle moment', !read('src', 'renderer', 'index.src.html').includes('files-picker') && !read('src', 'renderer', 'ui.bundle.js').includes('const filesPicker') && /files-picker.css/.test(read('src', 'renderer', 'app.js')) && /files-picker.js/.test(read('src', 'renderer', 'app.js')) && read('src', 'renderer', 'files-picker.css').includes('.files-picker-box'), '');
   check('files picker: searches 60 ms after the last key, draws at most 30 rows, drops a late answer', /DEBOUNCE_MS = 60/.test(picker) && /MAX_ROWS = 30/.test(picker) && /mine !== asked/.test(picker), '');
   check('files picker: Enter opens, Ctrl+Enter shows in the folder, Alt+Enter attaches, Esc closes', /e\.ctrlKey \|\| e\.metaKey/.test(picker) && /attach: e\.altKey/.test(picker) && /files\.attach\(id\)/.test(picker) && /files\.show\(id\)/.test(picker) && /files\.open\(id\)/.test(picker) && /'Escape'/.test(picker), '');
   check('files picker: a file name is only ever set as text, never as markup', !/innerHTML[^;\n]*(\.name|\.path|entry)/.test(picker), '');

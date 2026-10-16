@@ -263,7 +263,8 @@ const filesPicker = (() => {
     thawPage();
   }
 
-  window.lumenFiles?.on('picker', open); // (Ctrl+Shift+F, from main)
+  // (opened by app.js's stub, which loads this file the first time Ctrl+Shift+F asks, or in an idle moment after start)
   window.lumenFiles?.on('changed', () => { if (isOpen()) query(input.value); }); // a file opened or moved meanwhile
   return { open, close, isOpen };
 })();
+window.filesPicker = filesPicker; // (app.js's stub opens it)
